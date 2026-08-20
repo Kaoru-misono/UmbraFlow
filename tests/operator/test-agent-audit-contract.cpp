@@ -4,6 +4,9 @@
 #include "project-fixture.hpp"
 #include "schema-binding.hpp"
 
+#include <json/schema.hpp>
+#include <json/value.hpp>
+
 #include <domain/content-hash.hpp>
 
 #include <doctest/doctest.h>
@@ -11,6 +14,7 @@
 #include <array>
 #include <chrono>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <optional>
@@ -1335,14 +1339,64 @@ namespace uf::operator_runtime
     TEST_CASE("schema-agent-a05")
     {
         auto const workspaceSchema    = readSchema("umbraflow-annotation-workspace-v2.schema.json");
-        auto const registrationSchema = readSchema("umbraflow-project-registration-v1.schema.json");
+        auto const registrationSchema = readSchema("umbraflow-project-registration-v2.schema.json");
+        auto const attestationSchema = readSchema("umbraflow-project-attestation-v2.schema.json");
         auto const replayGate         = definition(workspaceSchema, "ReplayGate");
         checkStrictObject(replayGate);
         CHECK(replayGate.find("\"ui_model_replay\"") != std::string::npos);
         CHECK(replayGate.find("\"project_operation_replay\"") != std::string::npos);
         CHECK(replayGate.find("\"passed\"") != std::string::npos);
-        CHECK(registrationSchema.find("\"plugin_hash\"") != std::string::npos);
+        CHECK(registrationSchema.find("\"plugin_module_manifest_hash\"") != std::string::npos);
+        CHECK(registrationSchema.find("\"plugin_environment_hash\"") != std::string::npos);
         CHECK(registrationSchema.find("\"project_registration_hash\"") == std::string::npos);
+
+        auto const compiled = json::Schema::compile(json::Schema::Document{
+            .label      = "umbraflow-project-attestation-v2.schema.json",
+            .exactBytes = attestationSchema,
+        });
+        REQUIRE(compiled.has_value());
+        auto const digest = std::string(64U, 'a');
+        auto valid = std::format(
+            R"json({{"set_version":2,"predecessor_set_id":null,"bundle_root_hash":"{}","plugin_id":"fixture.project","attestations":[{{"attestation_id":"{}","requirement_id":"A-05","bundle_root_hash":"{}","plugin_id":"fixture.project","project_registration_hash":"{}","content_pack_hash":"{}","recognition_pack_hash":"{}","source_snapshot_hash":"{}","build_recipe_hash":"{}","passed":true,"report_hash":"{}","attestor_principal":"fixture","capability_hash":"{}","created_at":"2026-08-20T00:00:00Z"}}]}})json",
+            digest,
+            digest,
+            digest,
+            digest,
+            digest,
+            digest,
+            digest,
+            digest,
+            digest,
+            digest
+        );
+        auto const accepts = [&compiled](std::string_view bytes)
+        {
+            auto const parsed = json::parse(bytes);
+            return parsed.has_value() && compiled->validate(*parsed).has_value();
+        };
+        auto const replaced = [](std::string source, std::string_view from, std::string_view to)
+        {
+            auto const at = source.find(from);
+            REQUIRE(at != std::string::npos);
+            source.replace(at, from.size(), to);
+            return source;
+        };
+        CHECK(accepts(valid));
+        CHECK_FALSE(accepts(replaced(valid, "\"set_version\":2", "\"set_version\":1")));
+        CHECK_FALSE(accepts(replaced(
+            valid,
+            std::format("\"project_registration_hash\":\"{}\",", digest),
+            ""
+        )));
+        CHECK_FALSE(accepts(replaced(
+            valid,
+            std::format("\"project_registration_hash\":\"{}\",", digest),
+            std::format(
+                "\"project_registration_hash\":\"{}\",\"plugin_hash\":\"{}\",",
+                digest,
+                digest
+            )
+        )));
     }
 
     TEST_CASE("contract-agent-a06")

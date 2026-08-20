@@ -1381,14 +1381,14 @@ namespace uf::deployment
         CHECK(valueOf(policy).identity == "https://umbraflow.local/schema/policy-v1");
 
         auto const registration = framework_schema::findFrameworkSchema(
-            "schema/umbraflow-project-registration-v1.schema.json"
+            "schema/umbraflow-project-registration-v2.schema.json"
         );
         REQUIRE_MESSAGE(
             registration.has_value(),
             "framework schema catalog must include project registration"
         );
         CHECK(valueOf(registration).identity
-              == "https://umbraflow.local/schema/project-registration-v1");
+              == "https://umbraflow.local/schema/project-registration-v2");
 
         // umbraflow-project.json's shape, published because two readers that
         // cannot link one another both compile it: the runtime loader and the
@@ -1396,7 +1396,7 @@ namespace uf::deployment
         // repository's own document and is not a member of the consumer's
         // interface lock, so a digest here would be pinned against nothing.
         auto const directory = framework_schema::findFrameworkSchema(
-            "schema/umbraflow-project-v1.schema.json"
+            "schema/umbraflow-project-v2.schema.json"
         );
         REQUIRE_MESSAGE(
             directory.has_value(),

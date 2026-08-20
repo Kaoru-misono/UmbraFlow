@@ -80,6 +80,21 @@ namespace uf::script
         auto operator=(PureDataProgram&&) noexcept -> PureDataProgram& = default;
         ~PureDataProgram() = default;
 
+        // Admission without compilation, shared by offline builders and
+        // deployment loaders so an earlier boundary cannot accept a closure
+        // this runtime later refuses for canonical names, kinds, encoding, or
+        // fixed source/resource quotas.
+        [[nodiscard]]
+        static auto validateModuleClosure(
+            std::string_view entryModule,
+            std::span<Module const> modules
+        ) -> Status;
+
+        [[nodiscard]]
+        static auto validateResourceClosure(
+            std::span<Resource const> resources
+        ) -> Status;
+
         [[nodiscard]]
         static auto compile(
             std::string_view pluginId,

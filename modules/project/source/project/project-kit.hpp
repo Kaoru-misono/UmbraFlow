@@ -38,13 +38,7 @@ namespace uf::project
         "umbraflow-project.json"
     };
     inline constexpr auto k_projectSchemaPath = std::string_view{
-        "schema/umbraflow-project-v1.schema.json"
-    };
-
-    struct ProjectArtifactBlobSpec final
-    {
-        std::string           name{};
-        std::filesystem::path sourceInput{};
+        "schema/umbraflow-project-v2.schema.json"
     };
 
     // The bytes behind one content hash, obtained however the caller obtains
@@ -64,11 +58,6 @@ namespace uf::project
         Result<std::vector<std::byte>>(ContentHash const&)
     >;
 
-    struct ProjectRegistrationBuildSpec final
-    {
-        std::vector<std::string> artifactBlobNames{};
-    };
-
     struct ProjectInitSpec final
     {
         std::filesystem::path              sourceDirectory{};
@@ -78,11 +67,9 @@ namespace uf::project
 
     struct ProjectBuildSpec final
     {
-        std::filesystem::path                sourceDirectory{};
-        std::filesystem::path                buildDirectory{};
-        std::vector<ToolCatalogDeclaration>  toolCatalogs{};
-        std::vector<ProjectArtifactBlobSpec> artifactBlobs{};
-        ProjectRegistrationBuildSpec         registration{};
+        std::filesystem::path               sourceDirectory{};
+        std::filesystem::path               buildDirectory{};
+        std::vector<ToolCatalogDeclaration> toolCatalogs{};
     };
 
     struct ProjectFreezeSpec final

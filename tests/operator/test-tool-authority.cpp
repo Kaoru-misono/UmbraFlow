@@ -234,7 +234,13 @@ namespace uf::operator_runtime
             auto registrar = ProjectPluginRegistrar{};
             return registrar.registerPlugin(
                 prepared.project.registration,
-                test_support::pluginSource("fixture.control"),
+                "main",
+                {
+                    ProjectPluginRegistrar::ModuleBlob{
+                        .name   = "main",
+                        .source = test_support::pluginSource("fixture.control"),
+                    },
+                },
                 {},
                 std::move(schemaOwner)
             );
@@ -997,5 +1003,63 @@ namespace uf::operator_runtime
         CHECK_FALSE(
             VerifiedPolicyArtifact::verifyExact(prepared.manifest, other).has_value()
         );
+    }
+
+    TEST_CASE("ProjectPlugin registrar refuses a forged running environment")
+    {
+        auto const source = test_support::pluginSource("fixture.control");
+        auto const project = test_support::makeProject(
+            "fixture.control",
+            source,
+            test_support::k_projectObservationSchema,
+            test_support::k_toolPreconditionSchema,
+            test_support::hashOf("forged-plugin-environment")
+        );
+        auto registrar = ProjectPluginRegistrar{};
+        auto const refused = registrar.registerPlugin(
+            project.registration,
+            "main",
+            {
+                ProjectPluginRegistrar::ModuleBlob{
+                    .name   = "main",
+                    .source = source,
+                },
+            },
+            {},
+            project.schemaOwner
+        );
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(refused.error().message().contains(
+            "environment does not match the verified registration"
+        ));
+    }
+
+    TEST_CASE("module manifest identity covers bytes names and entry but not authored order")
+    {
+        using Module = ProjectPluginRegistrar::ModuleBlob;
+        auto const authored = std::vector<Module>{
+            Module{.name = "main", .source = "return require('./worker')"},
+            Module{.name = "worker", .source = "return 1"},
+        };
+        auto const reordered = std::vector<Module>{authored[1], authored[0]};
+        auto renamed = authored;
+        renamed[1].name = "helper";
+        auto changedBytes = authored;
+        changedBytes[1].source = "return 2";
+
+        auto const identity = derivePluginModuleManifestHash("main", authored);
+        auto const reorderedIdentity = derivePluginModuleManifestHash("main", reordered);
+        auto const renamedIdentity = derivePluginModuleManifestHash("main", renamed);
+        auto const changedEntryIdentity = derivePluginModuleManifestHash("worker", authored);
+        auto const changedBytesIdentity = derivePluginModuleManifestHash("main", changedBytes);
+        REQUIRE(identity.has_value());
+        REQUIRE(reorderedIdentity.has_value());
+        REQUIRE(renamedIdentity.has_value());
+        REQUIRE(changedEntryIdentity.has_value());
+        REQUIRE(changedBytesIdentity.has_value());
+        CHECK(*identity == *reorderedIdentity);
+        CHECK(*identity != *renamedIdentity);
+        CHECK(*identity != *changedEntryIdentity);
+        CHECK(*identity != *changedBytesIdentity);
     }
 }

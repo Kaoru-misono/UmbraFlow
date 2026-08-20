@@ -192,8 +192,9 @@ namespace uf::operator_runtime::conformance
         auto registrar  = ProjectPluginRegistrar{};
         auto result     = registrar.registerPlugin(
             one.registration,
-            one.pluginBytes,
-            one.artifactBlobs,
+            one.pluginEntryModule,
+            one.pluginModules,
+            one.projectResources,
             one.schemaOwner
         );
         REQUIRE(result.has_value());

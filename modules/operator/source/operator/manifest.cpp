@@ -31,7 +31,9 @@ namespace uf::operator_runtime
         auto validateDottedName(
             std::string_view value,
             std::string_view field,
-            bool requireNamespace
+            bool requireNamespace,
+            std::size_t maximumSegments = 0U,
+            std::size_t maximumSegmentBytes = 0U
         ) -> Status
         {
             if (
@@ -48,6 +50,8 @@ namespace uf::operator_runtime
 
             auto atSegmentStart = true;
             auto hasNamespace   = false;
+            auto segments       = std::size_t{1U};
+            auto segmentBytes   = std::size_t{0U};
             for (auto const character : value)
             {
                 if (character == '.')
@@ -59,8 +63,27 @@ namespace uf::operator_runtime
                             std::format("{} is not a canonical dotted name", field)
                         );
                     }
+                    if (
+                        maximumSegmentBytes != 0U
+                        && segmentBytes > maximumSegmentBytes
+                    )
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            std::format("{} has an overlong segment", field)
+                        );
+                    }
                     atSegmentStart = true;
                     hasNamespace   = true;
+                    segmentBytes   = 0U;
+                    ++segments;
+                    if (maximumSegments != 0U && segments > maximumSegments)
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            std::format("{} has too many segments", field)
+                        );
+                    }
                     continue;
                 }
                 auto const lower = character >= 'a' && character <= 'z';
@@ -76,8 +99,13 @@ namespace uf::operator_runtime
                     );
                 }
                 atSegmentStart = false;
+                ++segmentBytes;
             }
-            if (atSegmentStart || (requireNamespace && !hasNamespace))
+            if (
+                atSegmentStart
+                || (requireNamespace && !hasNamespace)
+                || (maximumSegmentBytes != 0U && segmentBytes > maximumSegmentBytes)
+            )
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
@@ -130,13 +158,15 @@ namespace uf::operator_runtime
                 true
             ));
 
-            for (auto index = std::size_t{0}; index < claims.projectArtifactRoots.size(); ++index)
+            for (auto index = std::size_t{0}; index < claims.projectResources.size(); ++index)
             {
-                auto const& root = claims.projectArtifactRoots[index];
+                auto const& resource = claims.projectResources[index];
                 UF_TRY(validateDottedName(
-                    root.name,
-                    "project artifact root name",
-                    false
+                    resource.name,
+                    "project resource name",
+                    false,
+                    16U,
+                    64U
                 ));
                 // JCS orders by UTF-16 code unit, which is not byte order.
                 // Comparing the names directly is right only while
@@ -148,14 +178,14 @@ namespace uf::operator_runtime
                 if (
                     index != 0U
                     && !jsonMemberNameLess(
-                        claims.projectArtifactRoots[index - 1U].name,
-                        root.name
+                        claims.projectResources[index - 1U].name,
+                        resource.name
                     )
                 )
                 {
                     return fail(
                         AutomationErrorKind::InvalidResource,
-                        "ProjectRegistration artifact roots must be unique and JCS-ordered"
+                        "ProjectRegistration resources must be unique and JCS-ordered"
                     );
                 }
             }
@@ -242,9 +272,14 @@ namespace uf::operator_runtime
         return m_claims.pluginId;
     }
 
-    auto VerifiedProjectRegistration::pluginHash() const -> ContentHash
+    auto VerifiedProjectRegistration::pluginModuleManifestHash() const -> ContentHash
     {
-        return m_claims.pluginHash;
+        return m_claims.pluginModuleManifestHash;
+    }
+
+    auto VerifiedProjectRegistration::pluginEnvironmentHash() const -> ContentHash
+    {
+        return m_claims.pluginEnvironmentHash;
     }
 
     auto VerifiedProjectRegistration::projectStateSchemaHash() const
@@ -287,10 +322,10 @@ namespace uf::operator_runtime
         return m_claims.baselineEventType;
     }
 
-    auto VerifiedProjectRegistration::projectArtifactRoots() const noexcept
-        -> std::vector<NamedArtifactRoot> const&
+    auto VerifiedProjectRegistration::projectResources() const noexcept
+        -> std::vector<ProjectResource> const&
     {
-        return m_claims.projectArtifactRoots;
+        return m_claims.projectResources;
     }
 
     auto VerifiedProjectRegistration::observedInstanceIdentitySchemaHashes()

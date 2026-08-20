@@ -10,7 +10,7 @@ and arch, and refuses a mismatch on the declared sha256. The framework schema
 catalog does not carry this document -- no C++ reader consumes it -- so the
 wire tag is owned by this script, exactly as the project kit's own manifests
 are (``umbraflow-project-kit-artifact-manifest/v1`` and
-``umbraflow-project-kit-artifact-registration/v1`` have no schema file).
+``umbraflow-project-kit-execution-closure/v1`` have no schema file).
 
 The release id is the sha256 of the manifest's canonical bytes, derived here
 and printed, never stored in the manifest: a digest inside its own document
@@ -43,7 +43,7 @@ RELEASE_MANIFEST_SCHEMA = "umbraflow-release/v1"
 # the project contract it targets; the downloader picks a release whose list
 # carries it. Compatibility selection uses format versions, never digests.
 RELEASE_MANIFEST_CONTRACT_VERSIONS = (
-    "umbraflow-project/v1",
+    "umbraflow-project/v2",
     "umbraflow-project-kit-artifact-manifest/v1",
 )
 

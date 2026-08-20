@@ -61,7 +61,7 @@ namespace uf::operator_runtime
     // The catalog is project-owned, so this is a declaration the project makes
     // about itself, not isolation the Operator imposes. A project that marks a
     // coordinate tool Semantic is not contained by p03; it is attributable,
-    // because the catalog bytes are inside plugin_hash, which is inside
+    // because the catalog bytes are inside the ProjectRegistration root, which is inside
     // project_registration_hash, which pins the session. What p03 enforces is
     // that the Operator never offers or accepts a Privileged tool for an online
     // Agent. It is the same limit the Operator accepts for a plugin that

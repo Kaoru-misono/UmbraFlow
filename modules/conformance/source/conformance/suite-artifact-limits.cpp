@@ -46,9 +46,10 @@ namespace uf::operator_runtime::conformance
 
         auto const project    = loadedProject();
         auto const& underTest = deploymentFor(project, ProjectRole::UnderTest);
-        auto blobs            = underTest.artifactBlobs;
+        auto blobs            = underTest.projectResources;
         blobs.emplace_back(
-            ProjectPluginRegistrar::ArtifactBlob{
+            ProjectPluginRegistrar::ResourceBlob{
+                .kind  = ProjectResourceKind::Bytes,
                 .name  = "oversized",
                 .bytes = oversized,
             }
@@ -57,15 +58,15 @@ namespace uf::operator_runtime::conformance
         auto registrar = ProjectPluginRegistrar{};
         auto const registration = registrar.registerPlugin(
             underTest.registration,
-            underTest.pluginBytes,
+            underTest.pluginEntryModule,
+            underTest.pluginModules,
             std::move(blobs),
             underTest.schemaOwner
         );
         REQUIRE_FALSE(registration.has_value());
         CHECK_MESSAGE(
-            registration.error().message()
-                == std::string_view{"ProjectPlugin artifact exceeds its byte ceiling"},
-            "registration must use PureDataProgram::k_maximumResourceBytes"
+            registration.error().message() == vmAdmission.error().message(),
+            "registration and VM admission must share the same resource boundary"
         );
     }
 }

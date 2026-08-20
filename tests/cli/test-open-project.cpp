@@ -186,7 +186,7 @@ namespace uf::cli
     }
 
     // The case that makes "registered" a claim. The plugin's bytes reach the
-    // registration through plugin_hash and through nothing else, and that digest
+    // registration through plugin_module_manifest_hash, and that digest
     // is the loader's own arithmetic on both sides -- so a plugin the script
     // substrate cannot compile loads with a different registration hash and no
     // complaint at all. Only the registrar refuses it.
@@ -375,7 +375,7 @@ namespace uf::cli
                         .name             = "beta",
                         .pluginId         = "demo.beta",
                         .registrationHash = refused,
-                        .artifactBlobs    = 2U,
+                        .resources        = 2U,
                         .refusal          = "the module is missing an entry point",
                     },
                 },

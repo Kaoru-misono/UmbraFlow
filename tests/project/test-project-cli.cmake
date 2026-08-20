@@ -31,16 +31,22 @@ set(GENERATED_CATALOG_NAME
     "generated/tool-catalogs/chaos.project/tool-catalog-v1.json"
 )
 set(GENERATED_BLOB
-    "${BUILD_DIRECTORY}/generated/artifact-blobs/facts.blob"
+    "${BUILD_DIRECTORY}/generated/resources/dream/facts.blob"
 )
 set(GENERATED_BLOB_NAME
-    "generated/artifact-blobs/facts.blob"
+    "generated/resources/dream/facts.blob"
+)
+set(GENERATED_MODULE
+    "${BUILD_DIRECTORY}/generated/modules/dream/main.luau"
+)
+set(GENERATED_MODULE_NAME
+    "generated/modules/dream/main.luau"
 )
 set(GENERATED_REGISTRATION
-    "${BUILD_DIRECTORY}/generated/registrations/artifact-roots-v1.json"
+    "${BUILD_DIRECTORY}/generated/registrations/dream.json"
 )
 set(GENERATED_REGISTRATION_NAME
-    "generated/registrations/artifact-roots-v1.json"
+    "generated/registrations/dream.json"
 )
 
 file(REMOVE_RECURSE "${UF_PROJECT_TEST_ROOT}")
@@ -51,7 +57,7 @@ file(WRITE "${INPUT_PATH}" "declared input\n")
 # root, so the CLI's own rehearsal writes one. It is deliberately not declared
 # as an input: build and check judge it either way.
 file(WRITE "${SOURCE_DIRECTORY}/umbraflow-project.json" [=[{
-  "schema": "umbraflow-project/v1",
+  "schema": "umbraflow-project/v2",
   "runtime_artifact": "runtime/artifact",
   "primary_deployment": "dream",
   "template_cuts": [],
@@ -60,7 +66,15 @@ file(WRITE "${SOURCE_DIRECTORY}/umbraflow-project.json" [=[{
       "name": "dream",
       "plugin_id": "chaos.dream",
       "baseline_event_type": "project.baseline_created",
-      "plugin": "generated/adapters/chaos.project/dismiss-known-overlay.luau",
+      "plugin": {
+        "entry": "main",
+        "modules": [
+          {
+            "name": "main",
+            "path": "generated/adapters/chaos.project/dismiss-known-overlay.luau"
+          }
+        ]
+      },
       "plugin_authoring": "generated",
       "project_state_schema": "schema/state.json",
       "project_observation_schema": "schema/observation.json",
@@ -72,8 +86,8 @@ file(WRITE "${SOURCE_DIRECTORY}/umbraflow-project.json" [=[{
       "journal_payload_schemas": ["schema/journal-0.json"],
       "effect_payload_schemas": [],
       "observed_instance_identity_schemas": [],
-      "artifact_blobs": [
-        {"name": "facts", "path": "content/facts.txt"}
+      "resources": [
+        {"kind": "utf8", "name": "facts", "path": "content/facts.txt"}
       ]
     }
   ]
@@ -259,7 +273,13 @@ endif()
 if(NOT EXISTS "${GENERATED_BLOB}")
     message(FATAL_ERROR
         "project build must generate ${GENERATED_BLOB_NAME} from the "
-        "deployment's declared artifact blob"
+        "deployment's declared resource"
+    )
+endif()
+if(NOT EXISTS "${GENERATED_MODULE}")
+    message(FATAL_ERROR
+        "project build must generate ${GENERATED_MODULE_NAME} from the "
+        "deployment's generated one-module closure"
     )
 endif()
 if(NOT EXISTS "${GENERATED_REGISTRATION}")
@@ -366,15 +386,12 @@ function(require_contains LABEL HAYSTACK NEEDLE)
 endfunction()
 
 # ----------------------------------------------------------------------------
-# The deployment declaration's tool catalog and artifact closure, end to end.
+# The deployment declaration's tool catalog and execution closure, end to end.
 #
-# Every deployment names its declared tool catalog source and its artifact
-# blobs. build reads the first back into generated/tool-catalogs/ and the
-# second back into generated/artifact-blobs/, with
-# generated/registrations/artifact-roots-v1.json stating exactly the closure
-# those blobs declare. Nothing states a registration separately, so the only
-# way a registration can disagree with the closure is a hand edit -- and
-# check must name it like every other generated artifact.
+# Every deployment names its declared tool catalog, module closure and typed
+# resources. build materializes the exact execution bytes and writes one
+# generated/registrations/DEPLOYMENT.json identity record. A hand edit must be
+# named like every other generated artifact.
 #
 # The last build above happened before declared.txt was removed, so the tree
 # still holds every generated artifact; this section restores the declared
@@ -409,7 +426,7 @@ if(NOT EDITED_CATALOG_RESTORE_RESULT EQUAL 0)
     )
 endif()
 
-# G2. A deleted generated artifact blob is refused by name.
+# G2. A deleted generated resource is refused by name.
 file(REMOVE "${GENERATED_BLOB}")
 run_project(MISSING_BLOB_RESULT MISSING_BLOB_DIAGNOSTIC check
     --source "${SOURCE_DIRECTORY}"
@@ -417,7 +434,7 @@ run_project(MISSING_BLOB_RESULT MISSING_BLOB_DIAGNOSTIC check
 )
 if(MISSING_BLOB_RESULT EQUAL 0)
     message(FATAL_ERROR
-        "project check must reject a deleted generated artifact blob"
+        "project check must reject a deleted generated resource"
     )
 endif()
 require_contains("the missing-blob refusal" "${MISSING_BLOB_DIAGNOSTIC}"
@@ -428,29 +445,20 @@ run_project(MISSING_BLOB_RESTORE_RESULT MISSING_BLOB_RESTORE_DIAGNOSTIC build
 )
 if(NOT MISSING_BLOB_RESTORE_RESULT EQUAL 0)
     message(FATAL_ERROR
-        "project build must restore a deleted generated artifact blob; "
+        "project build must restore a deleted generated resource; "
         "diagnostic=[${MISSING_BLOB_RESTORE_DIAGNOSTIC}]"
     )
 endif()
 
-# G3. The artifact-roots registration names a blob the closure does not
-# declare; check refuses the registration file byte for byte.
-file(WRITE "${GENERATED_REGISTRATION}" [=[{
-  "artifact_roots": [
-    {
-      "name": "other",
-      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
-    }
-  ],
-  "schema": "umbraflow-project-kit-artifact-registration/v1"
-}]=])
+# G3. A hand-edited execution-closure record is refused byte for byte.
+file(WRITE "${GENERATED_REGISTRATION}" "hand edited\n")
 run_project(EDITED_REGISTRATION_RESULT EDITED_REGISTRATION_DIAGNOSTIC check
     --source "${SOURCE_DIRECTORY}"
     --build "${BUILD_DIRECTORY}"
 )
 if(EDITED_REGISTRATION_RESULT EQUAL 0)
     message(FATAL_ERROR
-        "project check must reject an artifact-roots registration that "
+        "project check must reject an execution-closure record that "
         "disagrees with the declared closure"
     )
 endif()
@@ -463,7 +471,7 @@ run_project(EDITED_REGISTRATION_RESTORE_RESULT EDITED_REGISTRATION_RESTORE_DIAGN
 )
 if(NOT EDITED_REGISTRATION_RESTORE_RESULT EQUAL 0)
     message(FATAL_ERROR
-        "project build must replace an edited artifact-roots registration; "
+        "project build must replace an edited execution-closure record; "
         "diagnostic=[${EDITED_REGISTRATION_RESTORE_DIAGNOSTIC}]"
     )
 endif()
@@ -627,8 +635,22 @@ if(NOT EXISTS "${UF_PROJECT_TEST_OTHER_FRAME}")
     )
 endif()
 
-file(MAKE_DIRECTORY "${CUT_SOURCE}" "${CUT_CORPUS}" "${CUT_LYING_CORPUS}")
+file(MAKE_DIRECTORY
+    "${CUT_SOURCE}"
+    "${CUT_SOURCE}/plugin"
+    "${CUT_CORPUS}"
+    "${CUT_LYING_CORPUS}"
+)
 file(WRITE "${CUT_SOURCE}/declared.txt" "declared input\n")
+file(WRITE "${CUT_SOURCE}/plugin/dream.luau" [=[return {
+    plugin_id = "chaos.dream",
+    derive = function(input) return input end,
+    plan = function(input) return input end,
+    next_step = function(input) return input end,
+    reconcile = function(input) return input end,
+    reduce = function(input) return input end,
+}
+]=])
 file(SHA256 "${UF_PROJECT_TEST_FRAME}" CUT_SOURCE_HASH)
 file(SHA256 "${UF_PROJECT_TEST_OTHER_FRAME}" CUT_OTHER_HASH)
 file(COPY_FILE
@@ -644,7 +666,7 @@ file(COPY_FILE
 )
 
 file(WRITE "${CUT_SOURCE}/umbraflow-project.json" "{
-  \"schema\": \"umbraflow-project/v1\",
+  \"schema\": \"umbraflow-project/v2\",
   \"runtime_artifact\": \"runtime/artifact\",
   \"primary_deployment\": \"dream\",
   \"template_cuts\": [
@@ -659,7 +681,12 @@ file(WRITE "${CUT_SOURCE}/umbraflow-project.json" "{
       \"name\": \"dream\",
       \"plugin_id\": \"chaos.dream\",
       \"baseline_event_type\": \"project.baseline_created\",
-      \"plugin\": \"plugin/dream.luau\",
+      \"plugin\": {
+        \"entry\": \"main\",
+        \"modules\": [
+          {\"name\": \"main\", \"path\": \"plugin/dream.luau\"}
+        ]
+      },
       \"plugin_authoring\": \"hand-written\",
       \"plugin_justification\": \"A fixture plugin that answers from constants: umbraflow-declarative-workflow-tool/v1 has no member that decides what a Reduce returns.\",
       \"project_state_schema\": \"schema/state.json\",
@@ -672,7 +699,7 @@ file(WRITE "${CUT_SOURCE}/umbraflow-project.json" "{
       \"journal_payload_schemas\": [\"schema/journal-0.json\"],
       \"effect_payload_schemas\": [],
       \"observed_instance_identity_schemas\": [],
-      \"artifact_blobs\": []
+      \"resources\": []
     }
   ]
 }
@@ -887,5 +914,64 @@ file(GLOB_RECURSE FROZEN_TEMPLATES
 if(FROZEN_TEMPLATES STREQUAL "")
     message(FATAL_ERROR
         "the frozen release must carry the template the declaration cut"
+    )
+endif()
+
+# F5. A clean source checkout whose v2 manifest declares the starter closure
+# bootstraps entirely through the shipped command: init writes main + support,
+# then build/check/freeze consume the same exact closure.
+set(BOOTSTRAP_ROOT "${UF_PROJECT_TEST_ROOT}/clean-bootstrap")
+set(BOOTSTRAP_SOURCE "${BOOTSTRAP_ROOT}/source")
+set(BOOTSTRAP_BUILD "${BOOTSTRAP_ROOT}/build")
+set(BOOTSTRAP_RELEASE "${BOOTSTRAP_ROOT}/release")
+file(MAKE_DIRECTORY "${BOOTSTRAP_SOURCE}")
+file(COPY "${CUT_SOURCE}/" DESTINATION "${BOOTSTRAP_SOURCE}")
+file(REMOVE_RECURSE "${BOOTSTRAP_SOURCE}/plugin")
+file(READ "${BOOTSTRAP_SOURCE}/umbraflow-project.json" BOOTSTRAP_MANIFEST)
+string(REPLACE
+    "{\"name\": \"main\", \"path\": \"plugin/dream.luau\"}"
+    "{\"name\": \"main\", \"path\": \"plugin/main.luau\"}, {\"name\": \"support\", \"path\": \"plugin/support.luau\"}"
+    BOOTSTRAP_MANIFEST
+    "${BOOTSTRAP_MANIFEST}"
+)
+file(WRITE "${BOOTSTRAP_SOURCE}/umbraflow-project.json" "${BOOTSTRAP_MANIFEST}")
+
+run_project(BOOTSTRAP_INIT_RESULT BOOTSTRAP_INIT_DIAGNOSTIC init
+    --source "${BOOTSTRAP_SOURCE}"
+    --build "${BOOTSTRAP_BUILD}"
+    --input declared.txt
+)
+if(NOT BOOTSTRAP_INIT_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "clean Project Kit init must succeed; diagnostic=[${BOOTSTRAP_INIT_DIAGNOSTIC}]"
+    )
+endif()
+if(NOT EXISTS "${BOOTSTRAP_SOURCE}/plugin/main.luau"
+   OR NOT EXISTS "${BOOTSTRAP_SOURCE}/plugin/support.luau")
+    message(FATAL_ERROR "clean Project Kit init must write main and support modules")
+endif()
+
+foreach(BOOTSTRAP_ACTION IN ITEMS build check)
+    run_project(BOOTSTRAP_RESULT BOOTSTRAP_DIAGNOSTIC ${BOOTSTRAP_ACTION}
+        --source "${BOOTSTRAP_SOURCE}"
+        --build "${BOOTSTRAP_BUILD}"
+        --frames-root "${CUT_CORPUS}"
+    )
+    if(NOT BOOTSTRAP_RESULT EQUAL 0)
+        message(FATAL_ERROR
+            "clean Project Kit ${BOOTSTRAP_ACTION} must succeed; "
+            "diagnostic=[${BOOTSTRAP_DIAGNOSTIC}]"
+        )
+    endif()
+endforeach()
+run_project(BOOTSTRAP_FREEZE_RESULT BOOTSTRAP_FREEZE_DIAGNOSTIC freeze
+    --source "${BOOTSTRAP_SOURCE}"
+    --build "${BOOTSTRAP_BUILD}"
+    --release "${BOOTSTRAP_RELEASE}"
+    --frames-root "${CUT_CORPUS}"
+)
+if(NOT BOOTSTRAP_FREEZE_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "clean Project Kit freeze must succeed; diagnostic=[${BOOTSTRAP_FREEZE_DIAGNOSTIC}]"
     )
 endif()

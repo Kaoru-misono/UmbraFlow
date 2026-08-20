@@ -6,6 +6,7 @@
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
 #include <core/numeric/checked-cast.hpp>
+#include <core/text/utf8.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/content-hash.hpp>
@@ -17,6 +18,8 @@
 
 #include <json/schema.hpp>
 #include <json/value.hpp>
+
+#include <operator/project-plugin.hpp>
 
 #include <schema/framework-schema-catalog.hpp>
 
@@ -50,8 +53,8 @@ namespace uf::project
         constexpr auto k_artifactManifestSchema = std::string_view{
             "umbraflow-project-kit-artifact-manifest/v1"
         };
-        constexpr auto k_artifactRegistrationSchema = std::string_view{
-            "umbraflow-project-kit-artifact-registration/v1"
+        constexpr auto k_executionClosureSchema = std::string_view{
+            "umbraflow-project-kit-execution-closure/v1"
         };
         constexpr auto k_declarativeToolDirectory = std::string_view{
             "declarative-tools"
@@ -69,8 +72,11 @@ namespace uf::project
         constexpr auto k_generatedFrameworkSchemaDirectory = std::string_view{
             "framework-schemas"
         };
-        constexpr auto k_generatedArtifactBlobDirectory = std::string_view{
-            "artifact-blobs"
+        constexpr auto k_generatedResourceDirectory = std::string_view{
+            "resources"
+        };
+        constexpr auto k_generatedModuleDirectory = std::string_view{
+            "modules"
         };
         constexpr auto k_generatedRegistrationDirectory = std::string_view{
             "registrations"
@@ -80,9 +86,6 @@ namespace uf::project
         };
         constexpr auto k_frameworkSchemaCatalogName = std::string_view{
             "framework-schema-catalog-v1.json"
-        };
-        constexpr auto k_artifactRegistrationName = std::string_view{
-            "artifact-roots-v1.json"
         };
 
         // One `template_cuts` entry of umbraflow-project.json, after the
@@ -96,6 +99,36 @@ namespace uf::project
             std::filesystem::path    templatePath{};
             std::vector<ContentHash> sourceHashes{};
             PixelRect                rect;
+        };
+
+        struct ProjectResourceSpec final
+        {
+            operator_runtime::ProjectResourceKind kind{
+                operator_runtime::ProjectResourceKind::Json
+            };
+            std::string           name{};
+            std::filesystem::path sourceInput{};
+        };
+
+        struct ProjectModuleSpec final
+        {
+            std::string           name{};
+            std::filesystem::path sourceInput{};
+        };
+
+        struct ProjectRegistrationBuildSpec final
+        {
+            std::string                      deploymentName{};
+            std::string                      pluginId{};
+            std::string                      entryModule{};
+            std::vector<ProjectModuleSpec>   modules{};
+            std::vector<ProjectResourceSpec> resources{};
+        };
+
+        struct ProjectManifest final
+        {
+            std::vector<ProjectTemplateCutSpec>       templateCuts{};
+            std::vector<ProjectRegistrationBuildSpec> registrations{};
         };
 
         struct GeneratedArtifact final
@@ -532,10 +565,146 @@ namespace uf::project
             return ok();
         }
 
+        [[nodiscard]]
+        auto member(json::Value const& object, std::string_view name)
+            -> json::Value const&;
+
+        [[nodiscard]]
+        auto writeStarterModuleIfMissing(
+            std::filesystem::path const& path,
+            std::string_view bytes
+        ) -> Status
+        {
+            auto error = std::error_code{};
+            if (std::filesystem::exists(path, error))
+                return ok();
+            if (error)
+            {
+                return fail(
+                    AutomationErrorKind::IoFailure,
+                    std::format(
+                        "cannot inspect starter Project module \"{}\": {}",
+                        path.string(),
+                        error.message()
+                    )
+                );
+            }
+            std::filesystem::create_directories(path.parent_path(), error);
+            if (error)
+            {
+                return fail(
+                    AutomationErrorKind::IoFailure,
+                    std::format(
+                        "cannot create starter Project module directory \"{}\": {}",
+                        path.parent_path().string(),
+                        error.message()
+                    )
+                );
+            }
+            return writeText(path, bytes, "starter Project module");
+        }
+
+        [[nodiscard]]
+        auto initializedInputs(ProjectInitSpec const& spec)
+            -> Result<std::vector<std::string>>
+        {
+            auto const projectDocument = readProjectRootDocument(spec.sourceDirectory);
+            if (!projectDocument.has_value())
+            {
+                // init remains able to establish its input ledger before a
+                // draft manifest is valid; build/check own the schema verdict.
+                return canonicalInputs(spec);
+            }
+            auto const& document = *projectDocument;
+            auto inputs = std::set<std::string>{};
+            for (auto const& input : spec.inputs)
+            {
+                UF_TRY_VALUE(normalized, normalizeInputPath(input));
+                inputs.emplace(std::move(normalized));
+            }
+            inputs.emplace(std::string{k_projectManifestName});
+
+            auto const primaryName = member(document, "primary_deployment").string();
+            for (auto const& deployment : member(document, "deployments").items())
+            {
+                auto const& plugin = member(deployment, "plugin");
+                auto const isPrimary = member(deployment, "name").string() == primaryName;
+                auto declaresStarterMain    = false;
+                auto declaresStarterSupport = false;
+                for (auto const& module : member(plugin, "modules").items())
+                {
+                    UF_TRY_VALUE(
+                        normalized,
+                        normalizeInputPath(
+                            std::filesystem::path{member(module, "path").string()}
+                        )
+                    );
+                    if (!std::string_view{normalized}.starts_with("generated/"))
+                        inputs.emplace(normalized);
+                    if (isPrimary && member(module, "name").string() == "main"
+                        && normalized == "plugin/main.luau")
+                        declaresStarterMain = true;
+                    if (isPrimary && member(module, "name").string() == "support"
+                        && normalized == "plugin/support.luau")
+                        declaresStarterSupport = true;
+                }
+                for (auto const& resource : member(deployment, "resources").items())
+                {
+                    UF_TRY_VALUE(
+                        normalized,
+                        normalizeInputPath(
+                            std::filesystem::path{member(resource, "path").string()}
+                        )
+                    );
+                    inputs.emplace(std::move(normalized));
+                }
+
+                if (isPrimary && declaresStarterMain && declaresStarterSupport)
+                {
+                    auto const pluginId = member(deployment, "plugin_id").string();
+                    auto const mainBytes = std::string{
+                        "local support = require(\"./support\")\n\n"
+                        "return {\n"
+                        "    plugin_id = \""
+                    } + std::string{pluginId}
+                        + "\",\n"
+                          "    derive = support.identity,\n"
+                          "    plan = support.identity,\n"
+                          "    next_step = support.identity,\n"
+                          "    reconcile = support.identity,\n"
+                          "    reduce = support.identity,\n"
+                          "}\n";
+                    constexpr auto supportBytes = std::string_view{
+                        "return {\n"
+                        "    identity = function(value)\n"
+                        "        return value\n"
+                        "    end,\n"
+                        "}\n"
+                    };
+                    UF_TRY(writeStarterModuleIfMissing(
+                        spec.sourceDirectory / "plugin" / "support.luau",
+                        supportBytes
+                    ));
+                    UF_TRY(writeStarterModuleIfMissing(
+                        spec.sourceDirectory / "plugin" / "main.luau",
+                        mainBytes
+                    ));
+                }
+            }
+
+            auto expanded = ProjectInitSpec{
+                .sourceDirectory = spec.sourceDirectory,
+                .buildDirectory  = spec.buildDirectory,
+            };
+            for (auto const& input : inputs)
+                expanded.inputs.emplace_back(input);
+            return canonicalInputs(expanded);
+        }
+
         // One member of an object the published schema has already judged.
         //
         // Total by construction rather than by luck: every member read through
-        // it is `required` in schema/umbraflow-project-v1.schema.json and of
+        // it is `required` in schema/umbraflow-project-v2.schema.json and of
         // the type stated there, so validate() has already refused every
         // document in which the lookup could fail. The check is here so that a
         // member removed from the schema without being removed here stops the
@@ -611,15 +780,70 @@ namespace uf::project
             return cuts;
         }
 
-        // The one thing the offline kit acts on, read out of the value
-        // readProjectRootDocument just let the schema judge.
+        [[nodiscard]]
+        auto resourceKindOf(std::string_view kind)
+            -> operator_runtime::ProjectResourceKind
+        {
+            if (kind == "json")
+                return operator_runtime::ProjectResourceKind::Json;
+            if (kind == "utf8")
+                return operator_runtime::ProjectResourceKind::Utf8;
+            if (kind == "bytes")
+                return operator_runtime::ProjectResourceKind::Bytes;
+            UF_UNREACHABLE_MSG("project schema admitted an unknown resource kind");
+        }
+
+        [[nodiscard]]
+        auto declaredRegistrations(json::Value const& document)
+            -> std::vector<ProjectRegistrationBuildSpec>
+        {
+            auto registrations = std::vector<ProjectRegistrationBuildSpec>{};
+            for (auto const& deployment : member(document, "deployments").items())
+            {
+                auto const& plugin = member(deployment, "plugin");
+                auto registration = ProjectRegistrationBuildSpec{
+                    .deploymentName = std::string{member(deployment, "name").string()},
+                    .pluginId       = std::string{member(deployment, "plugin_id").string()},
+                    .entryModule    = std::string{member(plugin, "entry").string()},
+                };
+                for (auto const& module : member(plugin, "modules").items())
+                {
+                    registration.modules.emplace_back(ProjectModuleSpec{
+                        .name = std::string{member(module, "name").string()},
+                        .sourceInput = std::filesystem::path{
+                            member(module, "path").string()
+                        },
+                    });
+                }
+                for (auto const& resource : member(deployment, "resources").items())
+                {
+                    registration.resources.emplace_back(ProjectResourceSpec{
+                        .kind = resourceKindOf(member(resource, "kind").string()),
+                        .name = std::string{member(resource, "name").string()},
+                        .sourceInput = std::filesystem::path{
+                            member(resource, "path").string()
+                        },
+                    });
+                }
+                registrations.emplace_back(std::move(registration));
+            }
+            return registrations;
+        }
+
+        // Every executable declaration the offline kit acts on, extracted
+        // from one schema-validated parse. No caller can restate a module or
+        // resource closure beside the project's own root document.
         [[nodiscard]]
         auto readProjectManifest(
             std::filesystem::path const& sourceDirectory
-        ) -> Result<std::vector<ProjectTemplateCutSpec>>
+        ) -> Result<ProjectManifest>
         {
             UF_TRY_VALUE(document, readProjectRootDocument(sourceDirectory));
-            return declaredTemplateCuts(document);
+            UF_TRY_VALUE(templateCuts, declaredTemplateCuts(document));
+            return ProjectManifest{
+                .templateCuts  = std::move(templateCuts),
+                .registrations = declaredRegistrations(document),
+            };
         }
 
         [[nodiscard]]
@@ -936,127 +1160,286 @@ namespace uf::project
         }
 
         [[nodiscard]]
-        auto generatedArtifactClosure(
+        auto generatedExecutionClosures(
             std::filesystem::path const& sourceDirectory,
             std::vector<std::string> const& inputs,
-            std::vector<ProjectArtifactBlobSpec> const& declarations,
-            ProjectRegistrationBuildSpec const& registration
+            std::vector<GeneratedArtifact> const& generatedAdapters,
+            std::vector<ProjectRegistrationBuildSpec> const& registrations
         ) -> Result<std::vector<GeneratedArtifactFamily>>
         {
-            auto normalizedDeclarations = declarations;
-            for (auto& declaration : normalizedDeclarations)
-            {
-                UF_TRY_VALUE(
-                    normalized,
-                    normalizeInputPath(declaration.sourceInput)
-                );
-                if (!std::ranges::binary_search(inputs, normalized))
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        std::format(
-                            "project artifact blob \"{}\" names undeclared "
-                            "source input \"{}\"",
-                            declaration.name,
-                            normalized
-                        )
-                    );
-                }
-                declaration.sourceInput = std::filesystem::path{normalized};
-            }
+            auto orderedRegistrations = registrations;
             std::ranges::sort(
-                normalizedDeclarations,
+                orderedRegistrations,
                 {},
-                &ProjectArtifactBlobSpec::name
+                &ProjectRegistrationBuildSpec::deploymentName
             );
-
-            auto registeredNames = registration.artifactBlobNames;
-            std::ranges::sort(registeredNames);
-            for (auto const& registeredName : registeredNames)
+            for (auto index = std::size_t{1U}; index < orderedRegistrations.size(); ++index)
             {
-                auto const declared = std::ranges::lower_bound(
-                    normalizedDeclarations,
-                    registeredName,
-                    {},
-                    &ProjectArtifactBlobSpec::name
-                );
                 if (
-                    declared == normalizedDeclarations.end()
-                    || declared->name != registeredName
+                    orderedRegistrations[index - 1U].deploymentName
+                    == orderedRegistrations[index].deploymentName
                 )
                 {
                     return fail(
                         AutomationErrorKind::InvalidResource,
                         std::format(
-                            "project registration artifact blob \"{}\" is "
-                            "outside the RuntimeArtifact closure",
-                            registeredName
+                            "project deployment {} appears more than once",
+                            orderedRegistrations[index].deploymentName
                         )
                     );
                 }
             }
 
-            auto blobs = std::vector<GeneratedArtifact>{};
-            auto roots = std::vector<json::Value>{};
-            blobs.reserve(normalizedDeclarations.size());
-            roots.reserve(normalizedDeclarations.size());
-            for (auto const& declaration : normalizedDeclarations)
+            UF_TRY_VALUE(
+                environmentHash,
+                operator_runtime::currentProjectPluginEnvironmentHash()
+            );
+            auto modules        = std::vector<GeneratedArtifact>{};
+            auto resources      = std::vector<GeneratedArtifact>{};
+            auto closureRecords = std::vector<GeneratedArtifact>{};
+
+            for (auto& registration : orderedRegistrations)
             {
-                if (!std::ranges::binary_search(registeredNames, declaration.name))
+                auto normalizedModules = registration.modules;
+                for (auto& module : normalizedModules)
                 {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        std::format(
-                            "RuntimeArtifact closure blob \"{}\" is absent "
-                            "from the project registration",
-                            declaration.name
-                        )
+                    UF_TRY_VALUE(normalized, normalizeInputPath(module.sourceInput));
+                    module.sourceInput = std::filesystem::path{normalized};
+                }
+                std::ranges::sort(normalizedModules, {}, &ProjectModuleSpec::name);
+                auto modulePaths = std::set<std::string>{};
+                auto moduleBlobs = std::vector<operator_runtime::ProjectPluginRegistrar::ModuleBlob>{};
+                auto moduleRows  = std::vector<json::Value>{};
+                moduleBlobs.reserve(normalizedModules.size());
+                moduleRows.reserve(normalizedModules.size());
+                for (auto const& module : normalizedModules)
+                {
+                    auto const sourcePath = module.sourceInput.generic_string();
+                    if (!modulePaths.emplace(sourcePath).second)
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            std::format(
+                                "project deployment {} uses module path \"{}\" more than once",
+                                registration.deploymentName,
+                                sourcePath
+                            )
+                        );
+                    }
+
+                    auto bytes = std::string{};
+                    constexpr auto generatedPrefix = std::string_view{"generated/adapters/"};
+                    if (std::string_view{sourcePath}.starts_with(generatedPrefix))
+                    {
+                        auto const relative = std::string_view{sourcePath}.substr(
+                            generatedPrefix.size()
+                        );
+                        auto const generated = std::ranges::find_if(
+                            generatedAdapters,
+                            [relative](GeneratedArtifact const& artifact)
+                            {
+                                return artifact.relativePath.generic_string() == relative;
+                            }
+                        );
+                        if (generated == generatedAdapters.end())
+                        {
+                            return fail(
+                                AutomationErrorKind::InvalidResource,
+                                std::format(
+                                    "project module {} names missing generated adapter \"{}\"",
+                                    module.name,
+                                    sourcePath
+                                )
+                            );
+                        }
+                        bytes = generated->bytes;
+                    }
+                    else
+                    {
+                        if (!std::ranges::binary_search(inputs, sourcePath))
+                        {
+                            return fail(
+                                AutomationErrorKind::InvalidResource,
+                                std::format(
+                                    "project module {} names undeclared source input \"{}\"",
+                                    module.name,
+                                    sourcePath
+                                )
+                            );
+                        }
+                        UF_TRY_VALUE(
+                            sourceBytes,
+                            readText(sourceDirectory / module.sourceInput, "project module source")
+                        );
+                        bytes = std::move(sourceBytes);
+                    }
+                    UF_TRY_VALUE(digest, sha256(std::as_bytes(std::span{bytes})));
+                    auto const storedPath = (
+                        std::filesystem::path{registration.deploymentName}
+                        / (module.name + ".luau")
                     );
+                    moduleRows.emplace_back(json::Value::ofObject({
+                        {"name", json::Value::ofString(module.name)},
+                        {"path", json::Value::ofString(
+                            (std::filesystem::path{k_generatedDirectory}
+                             / k_generatedModuleDirectory
+                             / storedPath).generic_string()
+                        )},
+                        {"sha256", json::Value::ofString(digest.hex())},
+                        {"size", json::Value::ofNumber(static_cast<double>(bytes.size()))},
+                    }));
+                    moduleBlobs.emplace_back(
+                        operator_runtime::ProjectPluginRegistrar::ModuleBlob{
+                            .name   = module.name,
+                            .source = bytes,
+                        }
+                    );
+                    modules.emplace_back(GeneratedArtifact{
+                        .relativePath = storedPath,
+                        .bytes        = std::move(bytes),
+                    });
                 }
                 UF_TRY_VALUE(
-                    bytes,
-                    readText(
-                        sourceDirectory / declaration.sourceInput,
-                        "artifact blob source"
+                    moduleManifestHash,
+                    operator_runtime::derivePluginModuleManifestHash(
+                        registration.entryModule,
+                        moduleBlobs
                     )
                 );
-                UF_TRY_VALUE(
-                    digest,
-                    sha256(std::as_bytes(std::span{bytes}))
+
+                auto normalizedResources = registration.resources;
+                for (auto& resource : normalizedResources)
+                {
+                    UF_TRY_VALUE(normalized, normalizeInputPath(resource.sourceInput));
+                    if (!std::ranges::binary_search(inputs, normalized))
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            std::format(
+                                "project resource {} names undeclared source input \"{}\"",
+                                resource.name,
+                                normalized
+                            )
+                        );
+                    }
+                    resource.sourceInput = std::filesystem::path{normalized};
+                }
+                std::ranges::sort(normalizedResources, {}, &ProjectResourceSpec::name);
+                auto resourcePaths = std::set<std::string>{};
+                auto resourceNames = std::set<std::string>{};
+                auto resourceBlobs = std::vector<
+                    operator_runtime::ProjectPluginRegistrar::ResourceBlob
+                >{};
+                resourceBlobs.reserve(normalizedResources.size());
+                for (auto const& resource : normalizedResources)
+                {
+                    if (!resourceNames.emplace(resource.name).second)
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            std::format(
+                                "project deployment {} names resource {} more than once",
+                                registration.deploymentName,
+                                resource.name
+                            )
+                        );
+                    }
+                    auto const sourcePath = resource.sourceInput.generic_string();
+                    if (!resourcePaths.emplace(sourcePath).second)
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            std::format(
+                                "project deployment {} uses resource path \"{}\" more than once",
+                                registration.deploymentName,
+                                sourcePath
+                            )
+                        );
+                    }
+                    UF_TRY_VALUE(
+                        bytes,
+                        readText(sourceDirectory / resource.sourceInput, "project resource source")
+                    );
+                    resourceBlobs.emplace_back(
+                        operator_runtime::ProjectPluginRegistrar::ResourceBlob{
+                            .kind  = resource.kind,
+                            .name  = resource.name,
+                            .bytes = std::move(bytes),
+                        }
+                    );
+                }
+                UF_TRY_CONTEXT(
+                    operator_runtime::validateProjectResourceClosure(resourceBlobs),
+                    std::format(
+                        "validating project resource closure for deployment {}",
+                        registration.deploymentName
+                    )
                 );
-                roots.emplace_back(json::Value::ofObject({
-                    {"name", json::Value::ofString(declaration.name)},
-                    {"sha256", json::Value::ofString(digest.hex())},
-                }));
-                blobs.emplace_back(GeneratedArtifact{
-                    .relativePath = declaration.name + ".blob",
-                    .bytes        = std::move(bytes),
+
+                auto resourceRows = std::vector<json::Value>{};
+                resourceRows.reserve(resourceBlobs.size());
+                for (auto& resource : resourceBlobs)
+                {
+                    UF_TRY_VALUE(
+                        digest,
+                        sha256(std::as_bytes(std::span{resource.bytes}))
+                    );
+                    auto kind = std::string{"json"};
+                    if (resource.kind == operator_runtime::ProjectResourceKind::Utf8)
+                        kind = "utf8";
+                    else if (resource.kind == operator_runtime::ProjectResourceKind::Bytes)
+                        kind = "bytes";
+                    auto const storedPath = (
+                        std::filesystem::path{registration.deploymentName}
+                        / (resource.name + ".blob")
+                    );
+                    resourceRows.emplace_back(json::Value::ofObject({
+                        {"kind", json::Value::ofString(std::move(kind))},
+                        {"name", json::Value::ofString(resource.name)},
+                        {"path", json::Value::ofString(
+                            (std::filesystem::path{k_generatedDirectory}
+                             / k_generatedResourceDirectory
+                             / storedPath).generic_string()
+                        )},
+                        {"sha256", json::Value::ofString(digest.hex())},
+                        {"size", json::Value::ofNumber(
+                            static_cast<double>(resource.bytes.size())
+                        )},
+                    }));
+                    resources.emplace_back(GeneratedArtifact{
+                        .relativePath = storedPath,
+                        .bytes        = std::move(resource.bytes),
+                    });
+                }
+
+                closureRecords.emplace_back(GeneratedArtifact{
+                    .relativePath = registration.deploymentName + ".json",
+                    .bytes = json::canonicalBytes(json::Value::ofObject({
+                        {"entry", json::Value::ofString(registration.entryModule)},
+                        {"modules", json::Value::ofArray(std::move(moduleRows))},
+                        {"plugin_environment_hash", json::Value::ofString(environmentHash.hex())},
+                        {"plugin_id", json::Value::ofString(registration.pluginId)},
+                        {"plugin_module_manifest_hash", json::Value::ofString(moduleManifestHash.hex())},
+                        {"project_resources", json::Value::ofArray(std::move(resourceRows))},
+                        {"schema", json::Value::ofString(std::string{k_executionClosureSchema})},
+                    })),
                 });
             }
 
-            auto registrations = std::vector<GeneratedArtifact>{};
-            registrations.emplace_back(GeneratedArtifact{
-                .relativePath = k_artifactRegistrationName,
-                .bytes = json::canonicalBytes(json::Value::ofObject({
-                    {"artifact_roots", json::Value::ofArray(std::move(roots))},
-                    {
-                        "schema",
-                        json::Value::ofString(
-                            std::string{k_artifactRegistrationSchema}
-                        ),
-                    },
-                })),
-            });
-            auto families = std::vector<GeneratedArtifactFamily>{};
-            families.emplace_back(GeneratedArtifactFamily{
-                .directory = std::string{k_generatedArtifactBlobDirectory},
-                .artifacts = std::move(blobs),
-            });
-            families.emplace_back(GeneratedArtifactFamily{
-                .directory = std::string{k_generatedRegistrationDirectory},
-                .artifacts = std::move(registrations),
-            });
-            return families;
+            return std::vector<GeneratedArtifactFamily>{
+                GeneratedArtifactFamily{
+                    .directory = std::string{k_generatedModuleDirectory},
+                    .artifacts = std::move(modules),
+                },
+                GeneratedArtifactFamily{
+                    .directory = std::string{k_generatedResourceDirectory},
+                    .artifacts = std::move(resources),
+                },
+                GeneratedArtifactFamily{
+                    .directory = std::string{k_generatedRegistrationDirectory},
+                    .artifacts = std::move(closureRecords),
+                },
+            };
         }
 
         [[nodiscard]]
@@ -1064,6 +1447,7 @@ namespace uf::project
             ProjectBuildSpec const& spec,
             std::vector<std::string> const& inputs,
             std::vector<ProjectTemplateCutSpec> const& templateCuts,
+            std::vector<ProjectRegistrationBuildSpec> const& registrations,
             TemplateSourceResolver const& resolveTemplateSource
         ) -> Result<GeneratedProjectBuild>
         {
@@ -1078,11 +1462,11 @@ namespace uf::project
             );
             UF_TRY_VALUE(
                 closureFamilies,
-                generatedArtifactClosure(
+                generatedExecutionClosures(
                     spec.sourceDirectory,
                     inputs,
-                    spec.artifactBlobs,
-                    spec.registration
+                    adapters,
+                    registrations
                 )
             );
 
@@ -1214,6 +1598,48 @@ namespace uf::project
         }
 
         [[nodiscard]]
+        auto confinedGeneratedArtifactPath(
+            std::filesystem::path const& artifactRoot,
+            std::filesystem::path const& relativePath
+        ) -> Result<std::filesystem::path>
+        {
+            auto const normalized = relativePath.lexically_normal();
+            if (
+                normalized.empty()
+                || normalized == std::filesystem::path{"."}
+                || normalized != relativePath
+                || normalized.is_absolute()
+                || normalized.has_root_name()
+                || normalized.has_root_directory()
+                || std::ranges::any_of(
+                    normalized,
+                    [](std::filesystem::path const& component)
+                    {
+                        return component == std::filesystem::path{".."};
+                    }
+                )
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "generated artifact path must be canonical and relative: \"{}\"",
+                        relativePath.string()
+                    )
+                );
+            }
+            auto const path = artifactRoot / normalized;
+            if (!isWithinOrEqual(path, artifactRoot))
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "generated artifact path leaves its artifact family"
+                );
+            }
+            return path;
+        }
+
+        [[nodiscard]]
         auto writeGeneratedArtifacts(
             std::filesystem::path const& buildDirectory,
             std::string_view familyDirectory,
@@ -1226,7 +1652,10 @@ namespace uf::project
             );
             for (auto const& artifact : artifacts)
             {
-                auto const path = artifactRoot / artifact.relativePath;
+                UF_TRY_VALUE(
+                    path,
+                    confinedGeneratedArtifactPath(artifactRoot, artifact.relativePath)
+                );
                 auto error      = std::error_code{};
                 std::filesystem::create_directories(
                     path.parent_path(),
@@ -1301,6 +1730,10 @@ namespace uf::project
             auto expectedFiles     = std::set<std::string>{};
             for (auto const& artifact : artifacts)
             {
+                UF_TRY(confinedGeneratedArtifactPath(
+                    artifactRoot,
+                    artifact.relativePath
+                ));
                 expectedFiles.emplace(artifact.relativePath.generic_string());
             }
             auto const expectedDirectories = expectedArtifactDirectories(
@@ -1430,7 +1863,10 @@ namespace uf::project
                         )
                     );
                 }
-                auto const path = artifactRoot / artifact.relativePath;
+                UF_TRY_VALUE(
+                    path,
+                    confinedGeneratedArtifactPath(artifactRoot, artifact.relativePath)
+                );
                 UF_TRY_VALUE(bytes, readText(path, "generated artifact"));
                 if (bytes != artifact.bytes)
                 {
@@ -2034,7 +2470,7 @@ namespace uf::project
     // read every extraction is allowed to follow: template_cuts in
     // readProjectManifest, and the deployment declarations in command.cpp.
     //
-    // schema/umbraflow-project-v1.schema.json
+    // schema/umbraflow-project-v2.schema.json
     // states every rule, including the direct-plugin tier's admission gate:
     // a deployment whose plugin_authoring is "hand-written" must carry a
     // plugin_justification naming the member or semantic of
@@ -2152,7 +2588,7 @@ namespace uf::project
                 .toolCatalogs    = {},
             }
         ));
-        UF_TRY_VALUE(inputs, canonicalInputs(spec));
+        UF_TRY_VALUE(inputs, initializedInputs(spec));
         UF_TRY(ensureBuildDirectory(spec.buildDirectory));
 
         auto const manifestPath = spec.buildDirectory / k_inputManifestName;
@@ -2171,13 +2607,14 @@ namespace uf::project
         UF_TRY(validateDirectories(spec));
         UF_TRY_VALUE(inputs, declaredInputs(spec.buildDirectory));
         UF_TRY(validateDeclaredInputs(spec.sourceDirectory, inputs));
-        UF_TRY_VALUE(templateCuts, readProjectManifest(spec.sourceDirectory));
+        UF_TRY_VALUE(projectManifest, readProjectManifest(spec.sourceDirectory));
         UF_TRY_VALUE(
             generated,
             generatedProjectBuild(
                 spec,
                 inputs,
-                templateCuts,
+                projectManifest.templateCuts,
+                projectManifest.registrations,
                 resolveTemplateSource
             )
         );
@@ -2191,12 +2628,12 @@ namespace uf::project
             "build receipt"
         ));
         UF_TRY_VALUE(
-            manifest,
+            artifactManifest,
             createArtifactManifest(spec.sourceDirectory, inputs, generated)
         );
         return writeText(
             spec.buildDirectory / k_artifactManifestName,
-            renderArtifactManifest(manifest),
+            renderArtifactManifest(artifactManifest),
             "artifact manifest"
         );
     }
@@ -2209,13 +2646,14 @@ namespace uf::project
         UF_TRY(validateDirectories(spec));
         UF_TRY_VALUE(inputs, declaredInputs(spec.buildDirectory));
         UF_TRY(validateDeclaredInputs(spec.sourceDirectory, inputs));
-        UF_TRY_VALUE(templateCuts, readProjectManifest(spec.sourceDirectory));
+        UF_TRY_VALUE(projectManifest, readProjectManifest(spec.sourceDirectory));
         UF_TRY_VALUE(
             generated,
             generatedProjectBuild(
                 spec,
                 inputs,
-                templateCuts,
+                projectManifest.templateCuts,
+                projectManifest.registrations,
                 resolveTemplateSource
             )
         );
@@ -2235,12 +2673,12 @@ namespace uf::project
             );
         }
         UF_TRY_VALUE(
-            manifest,
+            artifactManifest,
             createArtifactManifest(spec.sourceDirectory, inputs, generated)
         );
         auto const manifestPath = spec.buildDirectory / k_artifactManifestName;
         UF_TRY_VALUE(actual, readText(manifestPath, "artifact manifest"));
-        if (actual != renderArtifactManifest(manifest))
+        if (actual != renderArtifactManifest(artifactManifest))
         {
             return fail(
                 AutomationErrorKind::InvalidResource,

@@ -45,8 +45,9 @@ namespace uf::cli
         {
             auto const registered = registrar.registerPlugin(
                 loaded.registration,
-                loaded.pluginBytes,
-                loaded.artifactBlobs,
+                loaded.pluginEntryModule,
+                loaded.pluginModules,
+                loaded.projectResources,
                 loaded.schemaOwner
             );
             if (!registered)
@@ -115,7 +116,7 @@ namespace uf::cli
                 .name             = one.name,
                 .pluginId         = one.registration.pluginId(),
                 .registrationHash = one.registration.hash().hex(),
-                .artifactBlobs    = one.artifactBlobs.size(),
+                .resources        = one.projectResources.size(),
                 .refusal          = std::move(refusal),
             });
         }
@@ -177,8 +178,8 @@ namespace uf::cli
                 one.pluginId,
                 "registration",
                 one.registrationHash,
-                "artifact blobs",
-                one.artifactBlobs,
+                "resources",
+                one.resources,
                 "plugin",
                 one.refusal
                     ? std::format("NOT REGISTERED: {}", *one.refusal)

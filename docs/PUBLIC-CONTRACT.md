@@ -28,12 +28,12 @@ Parity for one of these is byte identity: read the file, do not copy it.
 | `https://umbraflow.local/schema/journal-v1` | v1 | -- | `schema/umbraflow-journal-v1.schema.json` | one of `JournalEvent`, `ProjectState`, `ProjectInstance` |
 | `https://umbraflow.local/schema/operator-v1` | v1 | -- | `schema/umbraflow-operator-v1.schema.json` | one of `OperatorSession`, `ToolInvocation`, `CommandRecord`, `Operation`, `ToolResult`, `ReconcileProposal` |
 | `https://umbraflow.local/schema/policy-v1` | v1 | -- | `schema/umbraflow-policy-v1.schema.json` | `PolicyArtifact` |
-| `https://umbraflow.dev/schema/project-attestation/v1` | v1 | -- | `schema/umbraflow-project-attestation-v1.schema.json` | `set_version`, `predecessor_set_id`, `bundle_root_hash`, `plugin_id`, `attestations` |
+| `https://umbraflow.dev/schema/project-attestation/v2` | v2 | -- | `schema/umbraflow-project-attestation-v2.schema.json` | `set_version`, `predecessor_set_id`, `bundle_root_hash`, `plugin_id`, `attestations` |
 | `https://umbraflow.dev/schema/project-observation-proposal/v1` | v1 | `umbraflow-project-observation-proposal/v1` | `schema/umbraflow-project-observation-proposal-v1.schema.json` | `schema`, `canonical_opaque_payload`, `project_tool_preconditions`, `observed_instance_proposals` |
 | `https://umbraflow.dev/schema/project-observation/v1` | v1 | `umbraflow-project-observation/v1` | `schema/umbraflow-project-observation-v1.schema.json` | `schema`, `canonical_opaque_payload`, `project_tool_preconditions`, `observed_instances` |
-| `https://umbraflow.local/schema/project-registration-v1` | v1 | -- | `schema/umbraflow-project-registration-v1.schema.json` | `project_registration_format`, `plugin_id`, `plugin_hash`, `tool_catalog_hash`, `project_state_schema_hash`, `project_observation_schema_hash`, `project_tool_precondition_schema_hash`, `reconcile_payload_schema_manifest_hash`, `journal_event_schema_manifest_hash`, `observed_instance_identity_schema_hashes`, `baseline_event_type`, `project_artifact_roots` |
+| `https://umbraflow.local/schema/project-registration-v2` | v2 | -- | `schema/umbraflow-project-registration-v2.schema.json` | `project_registration_format`, `plugin_id`, `plugin_module_manifest_hash`, `plugin_environment_hash`, `tool_catalog_hash`, `project_state_schema_hash`, `project_observation_schema_hash`, `project_tool_precondition_schema_hash`, `reconcile_payload_schema_manifest_hash`, `journal_event_schema_manifest_hash`, `observed_instance_identity_schema_hashes`, `baseline_event_type`, `project_resources` |
 | `https://umbraflow.dev/schema/project-tool-precondition/v1` | v1 | -- | `schema/umbraflow-project-tool-precondition-v1.schema.json` | `name`, `status` |
-| `https://umbraflow.dev/schema/project/directory` | v1 | `umbraflow-project/v1` | `schema/umbraflow-project-v1.schema.json` | `deployments`, `primary_deployment`, `runtime_artifact`, `schema`, `template_cuts` |
+| `https://umbraflow.dev/schema/project/directory` | v2 | `umbraflow-project/v2` | `schema/umbraflow-project-v2.schema.json` | `deployments`, `primary_deployment`, `runtime_artifact`, `schema`, `template_cuts` |
 | `https://umbraflow.dev/schema/umbraflow-runtime-artifact-v1.schema.json` | v1 | -- | `schema/umbraflow-runtime-artifact-v1.schema.json` | `runtime_artifact_format`, `runtime_model_format`, `page_model`, `assets` |
 | `https://umbraflow.dev/schema/umbraflow-runtime-v3.schema.json` | v3 | -- | `schema/umbraflow-runtime-v3.schema.json` | `runtime_model` |
 | `https://umbraflow.local/schema/trace-v2` | v2 | `umbraflow-trace/v2` | `schema/umbraflow-trace-v2.schema.json` | `schema`, `event_type`, `session_id`, `session_manifest_hash`, `monotonic_sequence`, `recorded_at_unix_millis`, `audit`, `payload` |
@@ -94,7 +94,7 @@ statement.
 | `umbraflow-observed-instance-authority-input/v1` |
 | `umbraflow-project-declared-files/v1` |
 | `umbraflow-project-kit-artifact-manifest/v1` |
-| `umbraflow-project-kit-artifact-registration/v1` |
+| `umbraflow-project-kit-execution-closure/v1` |
 | `umbraflow-reconcile-manifest/v1` |
 | `umbraflow-release/v1` |
 | `umbraflow-tool-catalog/v1` |
@@ -124,7 +124,7 @@ rather than stored.
 | `asset` | the flat asset name a GitHub release carries it under |
 | `sha256` | lowercase hex content digest, no prefix |
 
-`contract_versions` carries `umbraflow-project/v1`, `umbraflow-project-kit-artifact-manifest/v1`; the shipped binaries are `project`, `umbra-flow`, `umbra-flow-conformance`. The release also carries the runtime payload `onnxruntime*.dll`, `models/**/*`, each matched file one artifact row whose path the downloader restores beside the binaries.
+`contract_versions` carries `umbraflow-project/v2`, `umbraflow-project-kit-artifact-manifest/v1`; the shipped binaries are `project`, `umbra-flow`, `umbra-flow-conformance`. The release also carries the runtime payload `onnxruntime*.dll`, `models/**/*`, each matched file one artifact row whose path the downloader restores beside the binaries.
 
 
 ## 2. What a consumer must declare
@@ -152,7 +152,6 @@ member below is a hash.
 
 | Required member |
 | --- |
-| `artifact_blobs` |
 | `baseline_event_type` |
 | `effect_payload_schemas` |
 | `journal_event_schema_manifest` |
@@ -166,10 +165,25 @@ member below is a hash.
 | `project_state_schema` |
 | `reconcile_manifest` |
 | `reconcile_schema` |
+| `resources` |
 | `tool_catalog` |
 | `tool_precondition_schema` |
 
-### 2.3 The authorities each deployment yields
+### 2.3 Module and resource closures
+
+`plugin` is an explicit closed module graph. `entry` selects one
+logical module name; every module and resource path is confined to
+the project directory, while runtime identity retains names, kinds,
+sizes and exact byte hashes but no host path. Authored array order is
+not identity.
+
+Plugin required members: `entry`, `modules`. Module required members: `name`, `path`. Resource required members: `kind`, `name`, `path`.
+
+Module-name grammar: `^[a-z][a-z0-9_-]{0,63}(/[a-z][a-z0-9_-]{0,63}){0,15}$`; resource
+names use `^[a-z][a-z0-9_-]{0,63}(\.[a-z][a-z0-9_-]{0,63}){0,15}$`. Resource
+kinds are `bytes`, `json`, `utf8`.
+
+### 2.4 The authorities each deployment yields
 
 Loading one deployment block builds these, and a directory is accepted
 only when every one of them compiles. Read from
@@ -183,7 +197,7 @@ only when every one of them compiles. Read from
 | `ProjectReconcileSchemaOwner` | `reconcileSchemaOwner` |
 | `ObservedInstanceIdentitySchemas` | `observedInstanceIdentitySchemas` |
 
-### 2.4 The Tool Catalog floor
+### 2.5 The Tool Catalog floor
 
 `https://umbraflow.dev/schema/operator/tool-catalog` states
 `"tools": {"type": "array", "minItems": 1}`. A tool
@@ -271,7 +285,6 @@ template source corpus "{}" holds no "{}"
 cannot read template source "{}"
 the deployment declaration names tool catalog source "{}", which "{}" does not hold
 cannot read declared tool catalog source "{}"
-the deployment declarations name the artifact root {} more than once
 project init requires --source PATH and --build PATH
 project init requires at least one --input RELATIVE_PATH
 project init accepts only --source, --build and --input
@@ -316,7 +329,13 @@ it has a '.' or '..' component
 {} names {}, which this project directory does not hold: {}
 {} is not JSON: {}
 a ProjectRegistration must be exact RFC 8785 JCS: {}
-a deployment declares the artifact root {} twice
+a deployment's plugin module count exceeds its ceiling
+a deployment's plugin module closure exceeds its byte ceiling
+a deployment's plugin module paths must be unique
+a deployment's resource count exceeds its ceiling
+a deployment's resource closure exceeds its byte ceiling
+a deployment declares the resource {} twice
+a deployment's resource paths must be unique
 the deployment {} is registered with baseline_event_type {}, and its vocabulary provisions {}
 {}'s {} names {}, which the deployment {}'s Tool Catalog does not carry
 {}'s {} names {}, which the deployment {}'s Tool Catalog carries as {} rather than as {}
@@ -391,6 +410,8 @@ cannot open project {} "{}"
 cannot read project {} "{}"
 cannot open project {} "{}" for writing
 cannot write project {} "{}"
+cannot inspect starter Project module "{}": {}
+cannot create starter Project module directory "{}": {}
 declared workflow tool input must be declarative-tools/<plugin-id>/<name>.json: "{}"
 generated Tool Catalog declared plugin {} more than once
 generated template path must be relative: "{}"
@@ -400,14 +421,20 @@ generated template "{}" requires at least one source hash
 generated template "{}" cannot resolve source {}: {}
 resolved template source {} has content hash {}
 generated template path appears more than once: "{}"
-project artifact blob "{}" names undeclared source input "{}"
-project registration artifact blob "{}" is outside the RuntimeArtifact closure
-RuntimeArtifact closure blob "{}" is absent from the project registration
+project deployment {} appears more than once
+project deployment {} uses module path "{}" more than once
+project module {} names missing generated adapter "{}"
+project module {} names undeclared source input "{}"
+project resource {} names undeclared source input "{}"
+project deployment {} names resource {} more than once
+project deployment {} uses resource path "{}" more than once
 generated artifact directory leaves the project build tree
 cannot inspect generated artifact directory "{}": {}
 generated artifact directory must not be a link: "{}"
 cannot replace generated artifact directory "{}": {}
 cannot create generated artifact directory "{}": {}
+generated artifact path must be canonical and relative: "{}"
+generated artifact path leaves its artifact family
 cannot create generated artifact parent "{}": {}
 generated project artifact directory "{}" is missing
 generated project artifact "{}" must not be a link
@@ -446,14 +473,96 @@ cannot create project release artifact parent "{}": {}
 project release id does not match its artifact manifest
 ```
 
-## 4. The ownership boundary
+## 4. Luau execution environment
+
+Project code executes as a closed, pathless module graph in a fresh
+quota-bound VM. `require` resolves only the registration-pinned module
+closure; it has no filesystem, network, package search path or ambient
+asset authority. Resources are the separately pinned read-only data
+closure.
+
+### 4.1 Published APIs and observable contracts
+
+| API | Environment contract |
+| --- | --- |
+| `require` | `closed_ascii_relative_resolver_cached_value_v1` |
+| `resource.readJson` | `exact_name_kind_checked_cached_frozen_json_value_v1` |
+| `resource.readText` | `exact_name_kind_checked_cached_utf8_string_v1` |
+| `resource.readBytes` | `exact_name_kind_checked_cached_byte_string_v1` |
+| `tostring` | `json_scalar_or_type_name_v1` |
+
+`resource.readJson` returns one deeply frozen decoded JSON identity per
+VM; `resource.readText` returns admitted UTF-8; `resource.readBytes`
+returns exact bytes. All require exactly one canonical resource name and
+refuse unknown names or kind mismatches.
+
+Published globals: `assert`, `error`, `getmetatable`, `ipairs`, `next`, `pairs`, `pcall`, `rawequal`, `rawget`, `rawlen`, `rawset`, `require`, `select`, `tonumber`, `tostring`, `type`, `typeof`, `unpack`, `xpcall`, `bit32`, `math`, `string`, `table`, `utf8`.
+
+### 4.2 Identity preimage
+
+`plugin_environment_hash` is SHA-256 over exact canonical bytes emitted
+by `pluginEnvironmentMaterial()` in `modules/script/source/script/ffi/pure-data-program.cpp`. The
+preimage contains the trusted bridge source; compiler options; API
+contracts; frozen tables and global whitelist; grammar, interrupt and
+module-failure contracts; every numeric limit below; and the pinned Luau
+implementation.
+
+Compiler: optimization `1`, debug
+`0`, remaining options
+`default_zero_v1`. Luau: `luau-0.730+5bc7f4b23756f69f4669b419fa9034f117ccd6fe`.
+
+Module grammar contract: `ascii_slash_segments_relative_prefix_v1`;
+resource grammar contract: `ascii_dotted_segments_v1`;
+module failure contract: `canonical_cache_cycle_cached_script_terminal_vm_v1`;
+interrupt contract: `non_gc_loop_backedge_call_return_safepoints_v1`.
+
+### 4.3 Enforced limits
+
+| Environment-material member | Value |
+| --- | --- |
+| `cached_failure_bytes` | `1024` |
+| `entry_point_count` | `32` |
+| `entry_point_name_bytes` | `64` |
+| `host_error_bytes` | `4096` |
+| `instruction_budget_ticks` | `2000000` |
+| `module_bytecode_bytes` | `1048576` |
+| `module_bytecode_total_bytes` | `16777216` |
+| `module_count` | `64` |
+| `module_name_bytes` | `256` |
+| `module_request_bytes` | `256` |
+| `module_resolved_name_bytes` | `256` |
+| `module_segment_bytes` | `64` |
+| `module_segments` | `16` |
+| `module_source_bytes` | `262144` |
+| `module_source_total_bytes` | `4194304` |
+| `plugin_id_bytes` | `256` |
+| `reader_error_bytes` | `256` |
+| `resource_bytes` | `4194304` |
+| `resource_count` | `64` |
+| `resource_json_depth` | `64` |
+| `resource_json_nodes` | `2097152` |
+| `resource_json_text_bytes` | `4194304` |
+| `resource_name_bytes` | `128` |
+| `resource_request_bytes` | `128` |
+| `resource_segment_bytes` | `64` |
+| `resource_segments` | `16` |
+| `resource_total_bytes` | `16777216` |
+| `trusted_bridge_bytecode_bytes` | `1048576` |
+| `value_depth` | `64` |
+| `value_nodes` | `524288` |
+| `value_stack_slots` | `288` |
+| `value_text_bytes` | `1048576` |
+| `vm_memory_bytes` | `16777216` |
+| `wall_time_milliseconds` | `2000` |
+
+## 5. The ownership boundary
 
 An observed instance identity is the sharpest edge of this boundary. The
 project states what a thing *is*; the Operator decides which thing it is
 and names it. The project never mints an id, a hash, or canonical
 identity bytes.
 
-### 4.1 What the project supplies
+### 5.1 What the project supplies
 
 One entry of `observed_instance_proposals` in `https://umbraflow.dev/schema/project-observation-proposal/v1`:
 
@@ -465,7 +574,7 @@ One entry of `observed_instance_proposals` in `https://umbraflow.dev/schema/proj
 | `semantic_identity_basis` |
 | `opaque_project_payload` |
 
-### 4.2 What the Operator does with it
+### 5.2 What the Operator does with it
 
 The Operator validates the proposal, canonicalizes it (RFC 8785 JCS),
 binds it to a scope, and mints the id. The canonical authority input it
@@ -482,7 +591,7 @@ binds is tagged `umbraflow-observed-instance-authority-input/v1` and carries exa
 | `semantic_identity_basis` |
 | `world_scope` |
 
-### 4.3 What comes back
+### 5.3 What comes back
 
 One entry of `observed_instances` in `https://umbraflow.dev/schema/project-observation/v1`:
 
@@ -495,7 +604,7 @@ One entry of `observed_instances` in `https://umbraflow.dev/schema/project-obser
 `observed_instance_id` is opaque and matches `^oi1_[0-9a-f]{64}$`.
 The project reads it and passes it back; it never derives one.
 
-## 5. Worked examples
+## 6. Worked examples
 
 Two fixture project directories in this repository, each written the way
 a consuming repository writes its own, and each run by this repository's

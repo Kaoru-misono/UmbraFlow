@@ -28,6 +28,8 @@
 
 #include <operator/manifest.hpp>
 
+#include <script/pure-data-program.hpp>
+
 #include <task/runtime-model-file.hpp>
 
 #include <doctest/doctest.h>
@@ -36,6 +38,7 @@
 #include <array>
 #include <cstddef>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <random>
@@ -178,7 +181,7 @@ namespace uf::deployment
             {
                 return std::string{R"json({
   "$comment": "Why this fixture has two deployments: the conformance document needs a second registration that can mint documents of its own.",
-  "schema": "umbraflow-project/v1",
+  "schema": "umbraflow-project/v2",
   "runtime_artifact": "runtime/artifact",
   "primary_deployment": "alpha",
   "template_cuts": [],
@@ -195,9 +198,9 @@ namespace uf::deployment
                 block += R"json(","plugin_id":"fixture.)json";
                 block += name;
                 block += R"json(","baseline_event_type":"fixture.baseline",)json";
-                block += R"json("plugin":"plugin/)json";
+                block += R"json("plugin":{"entry":"main","modules":[{"name":"main","path":"plugin/)json";
                 block += name;
-                block += R"json(.luau",)json";
+                block += R"json(.luau"}]},)json";
                 block += R"json("plugin_authoring":"hand-written",)json";
                 block += R"json("plugin_justification":"A fixture plugin that )json"
                     R"json(answers from constants: umbraflow-declarative-)json"
@@ -232,7 +235,7 @@ namespace uf::deployment
                     + document("effect-0.json") + R"json(],)json";
                 block += R"json("observed_instance_identity_schemas":[)json"
                     + document("identity-0.json") + R"json(],)json";
-                block += R"json("artifact_blobs":[{"name":"page-model","path":"blob/)json";
+                block += R"json("resources":[{"kind":"bytes","name":"page-model","path":"blob/)json";
                 block += name;
                 block += R"json(.blob"}]})json";
                 return block;
@@ -395,7 +398,7 @@ namespace uf::deployment
         // than judged by whichever schema came first. Without this the loop
         // above would equally describe a function that accepted anything.
         CHECK_FALSE(
-            validateFrameworkFormat(R"json({"schema":"umbraflow-project/v1"})json")
+            validateFrameworkFormat(R"json({"schema":"umbraflow-project/v2"})json")
                 .has_value()
         );
         CHECK_FALSE(validateFrameworkFormat(R"json({"tools":[]})json").has_value());
@@ -476,9 +479,11 @@ namespace uf::deployment
         REQUIRE(p_alpha != nullptr);
         CHECK(p_alpha->registration.pluginId() == "fixture.alpha");
         CHECK(p_alpha->registration.baselineEventType() == "fixture.baseline");
-        CHECK(p_alpha->pluginBytes.starts_with("return {plugin_id ="));
-        REQUIRE(p_alpha->artifactBlobs.size() == 1U);
-        CHECK(p_alpha->artifactBlobs.front().name == "page-model");
+        CHECK(p_alpha->pluginEntryModule == "main");
+        REQUIRE(p_alpha->pluginModules.size() == 1U);
+        CHECK(p_alpha->pluginModules.front().source.starts_with("return {plugin_id ="));
+        REQUIRE(p_alpha->projectResources.size() == 1U);
+        CHECK(p_alpha->projectResources.front().name == "page-model");
 
         // The two deployments are two registrations. Without this the suite's
         // whole reason for a foreign role would be satisfied by one.
@@ -559,7 +564,7 @@ namespace uf::deployment
         );
         fixture.rewrite(
             "umbraflow-project.json",
-            std::string{R"json({"schema":"umbraflow-project/v1",)json"}
+            std::string{R"json({"schema":"umbraflow-project/v2",)json"}
                 + R"json("runtime_artifact":"runtime/artifact",)json"
                 + R"json("primary_deployment":"alpha","template_cuts":[],)json"
                 + R"json("deployments":[)json" + block + "]}"
@@ -631,7 +636,7 @@ namespace uf::deployment
         );
         fixture.rewrite(
             "umbraflow-project.json",
-            std::string{R"json({"schema":"umbraflow-project/v1",)json"}
+            std::string{R"json({"schema":"umbraflow-project/v2",)json"}
                 + R"json("runtime_artifact":"runtime/artifact",)json"
                 + R"json("primary_deployment":"alpha","template_cuts":[],)json"
                 + R"json("deployments":[)json" + block + "]}"
@@ -722,7 +727,7 @@ namespace uf::deployment
         );
         fixture.rewrite(
             "umbraflow-project.json",
-            std::string{R"json({"schema":"umbraflow-project/v1",)json"}
+            std::string{R"json({"schema":"umbraflow-project/v2",)json"}
                 + R"json("runtime_artifact":"runtime/artifact",)json"
                 + R"json("primary_deployment":"alpha","template_cuts":[],)json"
                 + R"json("deployments":[)json" + block + "]}"
@@ -802,7 +807,7 @@ namespace uf::deployment
         // One deployment, and no second one to play any other role.
         fixture.rewrite(
             "umbraflow-project.json",
-            std::string{R"json({"schema":"umbraflow-project/v1",)json"}
+            std::string{R"json({"schema":"umbraflow-project/v2",)json"}
                 + R"json("runtime_artifact":"runtime/artifact",)json"
                 + R"json("primary_deployment":"alpha","template_cuts":[],)json"
                 + R"json("deployments":[)json"
@@ -943,8 +948,8 @@ namespace uf::deployment
             "umbraflow-project.json",
             substituted(
                 Fixture::projectManifest(),
-                R"json("plugin":"plugin/alpha.luau")json",
-                R"json("plugin":"schema/../plugin/alpha.luau")json"
+                R"json("path":"plugin/alpha.luau")json",
+                R"json("path":"schema/../plugin/alpha.luau")json"
             )
         );
         auto const traversal = fixture.load();
@@ -955,8 +960,8 @@ namespace uf::deployment
             "umbraflow-project.json",
             substituted(
                 Fixture::projectManifest(),
-                R"json("plugin":"plugin/alpha.luau")json",
-                R"json("plugin":"plugin\\alpha.luau")json"
+                R"json("path":"plugin/alpha.luau")json",
+                R"json("path":"plugin\\alpha.luau")json"
             )
         );
         auto const backslash = fixture.load();
@@ -1037,8 +1042,8 @@ namespace uf::deployment
         auto const declarative = substituted(
             substituted(
                 substituted(stated, member, ""),
-                R"json("plugin":"plugin/alpha.luau")json",
-                std::string{R"json("plugin":")json"}
+                R"json("path":"plugin/alpha.luau")json",
+                std::string{R"json("path":")json"}
                     + std::string{k_generated} + R"json(")json"
             ),
             R"json("plugin_authoring":"hand-written")json",
@@ -1516,11 +1521,153 @@ namespace uf::deployment
         CHECK(startsWithoutGamma.has_value());
     }
 
+    TEST_CASE("the loader bounds executable closures before runtime admission")
+    {
+        auto const fixture = Fixture{};
+        REQUIRE(fixture.load().has_value());
+
+        SUBCASE("one module cannot exceed the VM source ceiling")
+        {
+            fixture.rewrite(
+                "plugin/alpha.luau",
+                std::string(
+                    script::PureDataProgram::k_maximumModuleSourceBytes + 1U,
+                    'x'
+                )
+            );
+            auto const refused = fixture.load();
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(why(refused).contains("ceiling"));
+        }
+
+        SUBCASE("one resource cannot exceed the VM resource ceiling")
+        {
+            fixture.rewrite(
+                "blob/alpha.blob",
+                std::string(
+                    script::PureDataProgram::k_maximumResourceBytes + 1U,
+                    'x'
+                )
+            );
+            auto const refused = fixture.load();
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(why(refused).contains("ceiling"));
+        }
+
+        SUBCASE("the module closure has a cumulative read ceiling")
+        {
+            auto modules = std::string{"["};
+            for (auto index = std::size_t{0U}; index < 17U; ++index)
+            {
+                auto const suffix = std::to_string(index);
+                modules += index == 0U ? "" : ",";
+                modules += std::format(
+                    R"json({{"name":"m{}","path":"plugin/limit-{}.luau"}})json",
+                    suffix,
+                    suffix
+                );
+                fixture.rewrite(
+                    "plugin/limit-" + suffix + ".luau",
+                    std::string(
+                        script::PureDataProgram::k_maximumModuleSourceBytes,
+                        'x'
+                    )
+                );
+            }
+            modules += "]";
+            fixture.rewrite(
+                "umbraflow-project.json",
+                substituted(
+                    Fixture::projectManifest(),
+                    R"json("plugin":{"entry":"main","modules":[{"name":"main","path":"plugin/alpha.luau"}]})json",
+                    "\"plugin\":{\"entry\":\"m0\",\"modules\":" + modules + "}"
+                )
+            );
+            auto const refused = fixture.load();
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(
+                why(refused).contains(
+                    "module closure exceeds its byte ceiling"
+                )
+            );
+        }
+
+        SUBCASE("the resource closure has a cumulative read ceiling")
+        {
+            auto resources = std::string{"["};
+            for (auto index = std::size_t{0U}; index < 5U; ++index)
+            {
+                auto const suffix = std::to_string(index);
+                resources += index == 0U ? "" : ",";
+                resources += std::format(
+                    R"json({{"kind":"bytes","name":"r{}","path":"blob/limit-{}.blob"}})json",
+                    suffix,
+                    suffix
+                );
+                fixture.rewrite(
+                    "blob/limit-" + suffix + ".blob",
+                    std::string(
+                        script::PureDataProgram::k_maximumResourceBytes,
+                        'x'
+                    )
+                );
+            }
+            resources += "]";
+            fixture.rewrite(
+                "umbraflow-project.json",
+                substituted(
+                    Fixture::projectManifest(),
+                    R"json("resources":[{"kind":"bytes","name":"page-model","path":"blob/alpha.blob"}])json",
+                    "\"resources\":" + resources
+                )
+            );
+            auto const refused = fixture.load();
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(
+                why(refused).contains(
+                    "resource closure exceeds its byte ceiling"
+                )
+            );
+        }
+
+        SUBCASE("the schema caps resource count before any resource path is read")
+        {
+            auto resources = std::string{"["};
+            for (auto index = std::size_t{0U}; index < 65U; ++index)
+            {
+                auto const suffix = std::to_string(index);
+                resources += index == 0U ? "" : ",";
+                resources += std::format(
+                    R"json({{"kind":"bytes","name":"r{}","path":"missing/{}"}})json",
+                    suffix,
+                    suffix
+                );
+            }
+            resources += "]";
+            fixture.rewrite(
+                "umbraflow-project.json",
+                substituted(
+                    Fixture::projectManifest(),
+                    R"json("resources":[{"kind":"bytes","name":"page-model","path":"blob/alpha.blob"}])json",
+                    "\"resources\":" + resources
+                )
+            );
+            auto const refused = fixture.load();
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(
+                why(refused).contains(
+                    "schema/umbraflow-project-v2.schema.json"
+                )
+            );
+            CHECK_FALSE(why(refused).contains("missing/0"));
+        }
+    }
+
     // The one check on this chain that compares two values produced at two
     // different times, and the whole of what the Q3 ruling rests on.
     //
     // The byte flipped below is in the plugin, and that is deliberate: the
-    // plugin's bytes reach project_registration_hash through plugin_hash and
+    // plugin's bytes reach project_registration_hash through the module manifest and
     // through nothing else, so no other rule in this file can refuse the
     // flipped directory. The third load proves exactly that -- it is the
     // negative control that stops a second mechanism from being mistaken for

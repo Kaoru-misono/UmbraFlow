@@ -55,7 +55,7 @@
 // publishes its own artifact and the suite installs those bytes rather than
 // re-serializing a manifest. What still needs it is tests/operator, which
 // builds a SECOND artifact -- ambiguousRuntimeModel below -- that no project
-// directory contains and that exists to give the ledger two artifact roots to
+// directory contains and that exists to give the ledger two resource identities to
 // tell apart. It stays in the conformance namespace because that is the name
 // its callers spell, and it dies with the rest of this header when Q5 of
 // docs/archive/plans/2026-08-11-project-as-data.md moves those tests onto the loader.
@@ -417,7 +417,8 @@ namespace uf::operator_runtime::test_support
         std::string pluginId,
         std::string_view pluginBytes,
         std::string_view observationSchema = k_projectObservationSchema,
-        std::string_view preconditionSchema = k_toolPreconditionSchema
+        std::string_view preconditionSchema = k_toolPreconditionSchema,
+        std::optional<ContentHash> environmentOverride = std::nullopt
     ) -> ProjectFixture
     {
         auto const bundle = DeploymentBundle{pluginId};
@@ -432,7 +433,20 @@ namespace uf::operator_runtime::test_support
             REQUIRE(deployed.has_value());
         }
 
-        auto const pluginHash             = hashOf(pluginBytes);
+        auto const modules = std::vector<ProjectPluginRegistrar::ModuleBlob>{
+            ProjectPluginRegistrar::ModuleBlob{
+                .name   = "main",
+                .source = std::string{pluginBytes},
+            },
+        };
+        auto const moduleManifestHash = derivePluginModuleManifestHash("main", modules);
+        REQUIRE(moduleManifestHash.has_value());
+        auto environmentHash = currentProjectPluginEnvironmentHash();
+        REQUIRE(environmentHash.has_value());
+        if (environmentOverride)
+        {
+            environmentHash = *environmentOverride;
+        }
         auto const toolCatalogHash        = hashOf(bundle.toolCatalog());
         auto const stateSchemaHash        = hashOf(k_projectStateSchema);
         auto const observationSchemaHash  = hashOf(observationSchema);
@@ -443,18 +457,20 @@ namespace uf::operator_runtime::test_support
             "{{\"baseline_event_type\":\"fixture.baseline\","
             "\"journal_event_schema_manifest_hash\":\"{}\","
             "\"observed_instance_identity_schema_hashes\":[\"{}\"],"
-            "\"plugin_hash\":\"{}\","
-            "\"plugin_id\":\"{}\",\"project_artifact_roots\":[],"
+            "\"plugin_environment_hash\":\"{}\","
+            "\"plugin_id\":\"{}\",\"plugin_module_manifest_hash\":\"{}\","
             "\"project_observation_schema_hash\":\"{}\","
             "\"project_registration_format\":{},"
+            "\"project_resources\":[],"
             "\"project_state_schema_hash\":\"{}\","
             "\"project_tool_precondition_schema_hash\":\"{}\","
             "\"reconcile_payload_schema_manifest_hash\":\"{}\","
             "\"tool_catalog_hash\":\"{}\"}}",
             journalSchemaHash.hex(),
             hashOf(k_observedIdentitySchema).hex(),
-            pluginHash.hex(),
+            environmentHash->hex(),
             pluginId,
+            moduleManifestHash->hex(),
             observationSchemaHash.hex(),
             k_projectRegistrationFormat,
             stateSchemaHash.hex(),
@@ -465,7 +481,8 @@ namespace uf::operator_runtime::test_support
         auto const claims = ProjectRegistrationClaims{
             .projectRegistrationFormat            = k_projectRegistrationFormat,
             .pluginId                             = pluginId,
-            .pluginHash                           = pluginHash,
+            .pluginModuleManifestHash             = *moduleManifestHash,
+            .pluginEnvironmentHash                = *environmentHash,
             .toolCatalogHash                      = toolCatalogHash,
             .projectStateSchemaHash               = stateSchemaHash,
             .projectObservationSchemaHash         = observationSchemaHash,
@@ -642,7 +659,13 @@ namespace uf::operator_runtime::test_support
         auto registrar = ProjectPluginRegistrar{};
         auto result = registrar.registerPlugin(
             project.registration,
-            std::string{pluginBytes},
+            "main",
+            {
+                ProjectPluginRegistrar::ModuleBlob{
+                    .name   = "main",
+                    .source = std::string{pluginBytes},
+                },
+            },
             {},
             project.schemaOwner
         );
@@ -1040,7 +1063,7 @@ identity = ["fixture.panel.anchor"]
     //
     // `plan` reads the tool name out of the envelope the Operator assembled and
     // answers with a different proposal for each one. That is what lets one
-    // registration -- one plugin_hash, one session -- reach the clamp, the
+    // registration -- one module-manifest identity, one session -- reach the clamp, the
     // bound, the approval edge and the tool mismatch: a proposal chosen by the
     // suite instead would be a proposal no plugin produced.
     //

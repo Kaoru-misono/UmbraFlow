@@ -10,6 +10,7 @@
 #include <domain/error.hpp>
 
 #include <array>
+#include <algorithm>
 #include <cstddef>
 #include <map>
 #include <ranges>
@@ -65,28 +66,47 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
-        auto verifyArtifactClosure(
-            VerifiedProjectRegistration const& registration,
-            std::vector<ProjectPluginRegistrar::ArtifactBlob> exactBlobs
-        )
-            -> Result<std::vector<script::PureDataProgram::Resource>>
+        auto resourceKind(ProjectResourceKind kind)
+            -> script::PureDataProgram::ResourceKind
         {
-            auto const& roots = registration.projectArtifactRoots();
+            switch (kind)
+            {
+            case ProjectResourceKind::Json:
+                return script::PureDataProgram::ResourceKind::Json;
+            case ProjectResourceKind::Utf8:
+                return script::PureDataProgram::ResourceKind::Utf8;
+            case ProjectResourceKind::Bytes:
+                return script::PureDataProgram::ResourceKind::Bytes;
+            }
+            UF_UNREACHABLE_MSG("unknown ProjectResourceKind");
+        }
+
+        [[nodiscard]]
+        auto verifyResourceClosure(
+            VerifiedProjectRegistration const& registration,
+            std::vector<ProjectPluginRegistrar::ResourceBlob> exactBlobs
+        ) -> Result<std::vector<script::PureDataProgram::Resource>>
+        {
+            UF_TRY(validateProjectResourceClosure(exactBlobs));
+            auto const& resources = registration.projectResources();
             if (
-                roots.size() > script::PureDataProgram::k_maximumResourceCount
+                resources.size() > script::PureDataProgram::k_maximumResourceCount
                 || exactBlobs.size() > script::PureDataProgram::k_maximumResourceCount
             )
             {
-                return refuse("ProjectPlugin artifact root count exceeds its ceiling");
+                return refuse("ProjectPlugin resource count exceeds its ceiling");
             }
 
-            auto blobsByName = std::map<std::string, std::string>{};
+            auto blobsByName = std::map<
+                std::string,
+                std::pair<ProjectResourceKind, std::string>
+            >{};
             auto totalBytes = std::size_t{0};
             for (auto& blob : exactBlobs)
             {
                 if (blob.bytes.size() > script::PureDataProgram::k_maximumResourceBytes)
                 {
-                    return refuse("ProjectPlugin artifact exceeds its byte ceiling");
+                    return refuse("ProjectPlugin resource exceeds its byte ceiling");
                 }
                 if (
                     totalBytes
@@ -94,48 +114,64 @@ namespace uf::operator_runtime
                         - blob.bytes.size()
                 )
                 {
-                    return refuse("ProjectPlugin artifacts exceed their total ceiling");
+                    return refuse("ProjectPlugin resources exceed their total ceiling");
                 }
                 totalBytes += blob.bytes.size();
 
-                bool const inserted =
-                    blobsByName.try_emplace(std::move(blob.name), std::move(blob.bytes)).second;
+                bool const inserted = blobsByName.try_emplace(
+                    std::move(blob.name),
+                    blob.kind,
+                    std::move(blob.bytes)
+                ).second;
                 if (!inserted)
                 {
-                    return refuse("ProjectPlugin artifact blob names must be unique");
+                    return refuse("ProjectPlugin resource names must be unique");
                 }
             }
 
             for (auto const& blob : blobsByName)
             {
-                if (std::ranges::find(roots, blob.first, &NamedArtifactRoot::name) == roots.end())
+                if (
+                    std::ranges::find(resources, blob.first, &ProjectResource::name)
+                    == resources.end()
+                )
                 {
-                    return refuse("ProjectPlugin received an unregistered artifact blob");
+                    return refuse("ProjectPlugin received an unregistered resource");
                 }
             }
             auto verified = std::vector<script::PureDataProgram::Resource>{};
-            verified.reserve(roots.size());
-            for (auto const& root : roots)
+            verified.reserve(resources.size());
+            for (auto const& resource : resources)
             {
-                auto const found = blobsByName.find(root.name);
+                auto const found = blobsByName.find(resource.name);
                 if (found == blobsByName.end())
                 {
                     return refuse(
-                        "ProjectPlugin artifact blob is missing for registered "
-                        "root '"
-                        + root.name
+                        "ProjectPlugin resource is missing for registered name '"
+                        + resource.name
                         + "'"
                     );
                 }
-                UF_TRY_VALUE(actualHash, sha256(std::as_bytes(std::span{found->second})));
-                if (actualHash != root.rootHash)
+                if (found->second.first != resource.kind)
                 {
-                    return refuse("ProjectPlugin artifact bytes do not match their verified root");
+                    return refuse("ProjectPlugin resource kind does not match its registration");
+                }
+                if (found->second.second.size() != resource.size)
+                {
+                    return refuse("ProjectPlugin resource size does not match its registration");
+                }
+                UF_TRY_VALUE(
+                    actualHash,
+                    sha256(std::as_bytes(std::span{found->second.second}))
+                );
+                if (actualHash != resource.hash)
+                {
+                    return refuse("ProjectPlugin resource bytes do not match their registration");
                 }
                 verified.emplace_back(script::PureDataProgram::Resource{
-                    .kind = script::PureDataProgram::ResourceKind::Json,
-                    .name = root.name,
-                    .bytes = std::move(found->second),
+                    .kind = resourceKind(resource.kind),
+                    .name = resource.name,
+                    .bytes = std::move(found->second.second),
                 });
             }
             return verified;
@@ -361,20 +397,20 @@ namespace uf::operator_runtime
         return m_state->registration.hash();
     }
 
-    auto ProjectPluginHandle::pluginHash() const -> ContentHash
+    auto ProjectPluginHandle::pluginModuleManifestHash() const -> ContentHash
     {
-        return m_state->registration.pluginHash();
+        return m_state->registration.pluginModuleManifestHash();
     }
 
-    auto ProjectPluginHandle::projectArtifactRootHashes() const
+    auto ProjectPluginHandle::projectResourceHashes() const
         -> std::vector<ContentHash>
     {
-        auto const& roots = m_state->registration.projectArtifactRoots();
+        auto const& resources = m_state->registration.projectResources();
         auto hashes       = std::vector<ContentHash>{};
-        hashes.reserve(roots.size());
-        for (auto const& root : roots)
+        hashes.reserve(resources.size());
+        for (auto const& resource : resources)
         {
-            hashes.emplace_back(root.rootHash);
+            hashes.emplace_back(resource.hash);
         }
         return hashes;
     }
@@ -447,8 +483,9 @@ namespace uf::operator_runtime
 
     auto ProjectPluginRegistrar::registerPlugin(
         VerifiedProjectRegistration const& registration,
-        std::string exactPluginBytes,
-        std::vector<ArtifactBlob> exactArtifactBlobs,
+        std::string entryModule,
+        std::vector<ModuleBlob> exactModules,
+        std::vector<ResourceBlob> exactResources,
         ProjectSchemaOwner schemaOwner
     )
         -> Result<ProjectPluginHandle>
@@ -457,10 +494,18 @@ namespace uf::operator_runtime
         {
             return refuse("ProjectSchemaOwner is not bound to the verified registration");
         }
-        UF_TRY_VALUE(actualPluginHash, sha256(std::as_bytes(std::span{exactPluginBytes})));
-        if (actualPluginHash != registration.pluginHash())
+        UF_TRY_VALUE(runningEnvironmentHash, script::pluginEnvironmentHash());
+        if (runningEnvironmentHash != registration.pluginEnvironmentHash())
         {
-            return refuse("ProjectPlugin bytes do not match the verified registration");
+            return refuse("ProjectPlugin environment does not match the verified registration");
+        }
+        UF_TRY_VALUE(
+            actualModuleManifestHash,
+            derivePluginModuleManifestHash(entryModule, exactModules)
+        );
+        if (actualModuleManifestHash != registration.pluginModuleManifestHash())
+        {
+            return refuse("ProjectPlugin module closure does not match the verified registration");
         }
 
         auto const key = std::pair{registration.pluginId(), registration.hash()};
@@ -470,23 +515,28 @@ namespace uf::operator_runtime
         }
 
         UF_TRY_VALUE(
-            verifiedArtifacts,
-            verifyArtifactClosure(registration, std::move(exactArtifactBlobs))
+            verifiedResources,
+            verifyResourceClosure(registration, std::move(exactResources))
         );
+
+        auto modules = std::vector<script::PureDataProgram::Module>{};
+        modules.reserve(exactModules.size());
+        for (auto& module : exactModules)
+        {
+            modules.emplace_back(script::PureDataProgram::Module{
+                .name   = std::move(module.name),
+                .source = std::move(module.source),
+            });
+        }
 
         UF_TRY_VALUE_CONTEXT(
             program,
             script::PureDataProgram::compile(
                 registration.pluginId(),
-                "main",
-                {
-                    script::PureDataProgram::Module{
-                        .name   = "main",
-                        .source = std::move(exactPluginBytes),
-                    },
-                },
+                entryModule,
+                std::move(modules),
                 k_entryPoints,
-                std::move(verifiedArtifacts)
+                std::move(verifiedResources)
             ),
             "precompiling exact ProjectPlugin bytes"
         );
@@ -521,5 +571,84 @@ namespace uf::operator_runtime
             return refuse("no exact ProjectPlugin registration is loaded");
         }
         return found->second;
+    }
+
+    auto derivePluginModuleManifestHash(
+        std::string_view entryModule,
+        std::span<ProjectPluginRegistrar::ModuleBlob const> modules
+    ) -> Result<ContentHash>
+    {
+        auto admittedModules = std::vector<script::PureDataProgram::Module>{};
+        admittedModules.reserve(modules.size());
+        for (auto const& module : modules)
+        {
+            admittedModules.emplace_back(script::PureDataProgram::Module{
+                .name   = module.name,
+                .source = module.source,
+            });
+        }
+        UF_TRY(script::PureDataProgram::validateModuleClosure(
+            entryModule,
+            admittedModules
+        ));
+
+        auto rows = std::vector<std::pair<std::string, ContentHash>>{};
+        rows.reserve(modules.size());
+        auto entryFound = false;
+        for (auto const& module : modules)
+        {
+            UF_TRY_VALUE(sourceHash, sha256(std::as_bytes(std::span{module.source})));
+            entryFound = entryFound || module.name == entryModule;
+            rows.emplace_back(module.name, sourceHash);
+        }
+        std::ranges::sort(rows, {}, &std::pair<std::string, ContentHash>::first);
+        for (auto index = std::size_t{1U}; index < rows.size(); ++index)
+        {
+            if (rows[index - 1U].first == rows[index].first)
+            {
+                return refuse("ProjectPlugin module names must be unique");
+            }
+        }
+        if (!entryFound)
+        {
+            return refuse("ProjectPlugin entry module is not present in the closure");
+        }
+
+        auto manifestRows = std::vector<json::Value>{};
+        manifestRows.reserve(rows.size());
+        for (auto const& [name, sourceHash] : rows)
+        {
+            manifestRows.emplace_back(json::Value::ofObject({
+                {"name", json::Value::ofString(name)},
+                {"sha256", json::Value::ofString(sourceHash.hex())},
+            }));
+        }
+        auto const manifest = json::canonicalBytes(json::Value::ofObject({
+            {"entry", json::Value::ofString(std::string{entryModule})},
+            {"modules", json::Value::ofArray(std::move(manifestRows))},
+        }));
+        return sha256(std::as_bytes(std::span{manifest}));
+    }
+
+    auto validateProjectResourceClosure(
+        std::span<ProjectPluginRegistrar::ResourceBlob const> resources
+    ) -> Status
+    {
+        auto admittedResources = std::vector<script::PureDataProgram::Resource>{};
+        admittedResources.reserve(resources.size());
+        for (auto const& resource : resources)
+        {
+            admittedResources.emplace_back(script::PureDataProgram::Resource{
+                .kind  = resourceKind(resource.kind),
+                .name  = resource.name,
+                .bytes = resource.bytes,
+            });
+        }
+        return script::PureDataProgram::validateResourceClosure(admittedResources);
+    }
+
+    auto currentProjectPluginEnvironmentHash() -> Result<ContentHash>
+    {
+        return script::pluginEnvironmentHash();
     }
 } // namespace uf::operator_runtime

@@ -182,7 +182,10 @@ namespace uf::operator_runtime::conformance
         // registration answers only for that one.
         auto const plugin = loadPlugin(project, ProjectRole::UnderTest);
         CHECK(plugin.projectRegistrationHash() == underTest.registration.hash());
-        CHECK(plugin.pluginHash() == underTest.registration.pluginHash());
+        CHECK(
+            plugin.pluginModuleManifestHash()
+            == underTest.registration.pluginModuleManifestHash()
+        );
     }
 
     TEST_CASE("a ProjectPlugin cannot be registered against foreign bytes")
@@ -193,13 +196,13 @@ namespace uf::operator_runtime::conformance
 
         auto registrar = ProjectPluginRegistrar{};
 
-        // The registrar hashes the bytes it is handed and compares them with
-        // the plugin_hash the registration pinned, so the other project's
-        // plugin cannot be loaded under this registration.
+        // The registrar derives the exact module manifest it is handed and
+        // compares it with the registration, so a foreign closure cannot load.
         CHECK_FALSE(registrar.registerPlugin(
             underTest.registration,
-            foreign.pluginBytes,
-            underTest.artifactBlobs,
+            foreign.pluginEntryModule,
+            foreign.pluginModules,
+            underTest.projectResources,
             underTest.schemaOwner
         ).has_value());
 
@@ -207,23 +210,26 @@ namespace uf::operator_runtime::conformance
         // this one.
         CHECK_FALSE(registrar.registerPlugin(
             underTest.registration,
-            underTest.pluginBytes,
-            underTest.artifactBlobs,
+            underTest.pluginEntryModule,
+            underTest.pluginModules,
+            underTest.projectResources,
             foreign.schemaOwner
         ).has_value());
 
         CHECK(registrar.registerPlugin(
             underTest.registration,
-            underTest.pluginBytes,
-            underTest.artifactBlobs,
+            underTest.pluginEntryModule,
+            underTest.pluginModules,
+            underTest.projectResources,
             underTest.schemaOwner
         ).has_value());
 
         // Startup-only: the same exact registration cannot be replaced.
         CHECK_FALSE(registrar.registerPlugin(
             underTest.registration,
-            underTest.pluginBytes,
-            underTest.artifactBlobs,
+            underTest.pluginEntryModule,
+            underTest.pluginModules,
+            underTest.projectResources,
             underTest.schemaOwner
         ).has_value());
     }
@@ -246,7 +252,7 @@ namespace uf::operator_runtime::conformance
     //
     // The disagreement is made on the run's side because the plan's side is out
     // of reach. A plugin's bytes are the project's and are pinned by the
-    // registration's plugin_hash, so the suite cannot obtain one that answers
+    // registration's module-manifest identity, so the suite cannot obtain one that answers
     // with a UIActionIntent of the suite's choosing, and a step minted under the
     // foreign project's plugin is refused for the registration it names long
     // before any step is read. The check compares two pairs of strings and is

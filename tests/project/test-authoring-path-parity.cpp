@@ -704,9 +704,15 @@ return {
                     "observed_instance_identity_schema_hashes",
                     json::Value::ofArray(std::move(identityHashes)),
                 },
-                {"plugin_hash", json::Value::ofString(claims.pluginHash.hex())},
+                {
+                    "plugin_environment_hash",
+                    json::Value::ofString(claims.pluginEnvironmentHash.hex()),
+                },
                 {"plugin_id", json::Value::ofString(claims.pluginId)},
-                {"project_artifact_roots", json::Value::ofArray({})},
+                {
+                    "plugin_module_manifest_hash",
+                    json::Value::ofString(claims.pluginModuleManifestHash.hex()),
+                },
                 {
                     "project_observation_schema_hash",
                     json::Value::ofString(claims.projectObservationSchemaHash.hex()),
@@ -717,6 +723,7 @@ return {
                         static_cast<double>(claims.projectRegistrationFormat)
                     ),
                 },
+                {"project_resources", json::Value::ofArray({})},
                 {
                     "project_state_schema_hash",
                     json::Value::ofString(claims.projectStateSchemaHash.hex()),
@@ -754,7 +761,20 @@ return {
         auto admissionInputsFor(std::string_view pinnedPluginBytes)
             -> Result<AdmissionInputs>
         {
-            UF_TRY_VALUE(pluginHash, hashOf(pinnedPluginBytes));
+            auto const modules = std::array{
+                operator_runtime::ProjectPluginRegistrar::ModuleBlob{
+                    .name   = "main",
+                    .source = std::string{pinnedPluginBytes},
+                },
+            };
+            UF_TRY_VALUE(
+                pluginModuleManifestHash,
+                operator_runtime::derivePluginModuleManifestHash("main", modules)
+            );
+            UF_TRY_VALUE(
+                pluginEnvironmentHash,
+                operator_runtime::currentProjectPluginEnvironmentHash()
+            );
             UF_TRY_VALUE(stateSchemaHash, hashOf(k_projectStateSchema));
             UF_TRY_VALUE(observationSchemaHash, hashOf(k_projectObservationSchema));
             UF_TRY_VALUE(preconditionSchemaHash, hashOf(k_toolPreconditionSchema));
@@ -792,7 +812,8 @@ return {
                 .projectRegistrationFormat             =
                     operator_runtime::k_projectRegistrationFormat,
                 .pluginId                           = std::string{k_pluginId},
-                .pluginHash                         = pluginHash,
+                .pluginModuleManifestHash           = pluginModuleManifestHash,
+                .pluginEnvironmentHash              = pluginEnvironmentHash,
                 .toolCatalogHash                    = toolCatalogHash,
                 .projectStateSchemaHash             = stateSchemaHash,
                 .projectObservationSchemaHash       = observationSchemaHash,
@@ -800,7 +821,7 @@ return {
                 .reconcilePayloadSchemaManifestHash = reconcileManifestHash,
                 .journalEventSchemaManifestHash     = journalManifestHash,
                 .baselineEventType                  = std::string{k_baselineEventType},
-                .projectArtifactRoots               = {},
+                .projectResources                   = {},
             };
             auto exactJcs = registrationJcs(claims);
             UF_TRY_VALUE(rootHash, hashOf(exactJcs));
@@ -859,7 +880,13 @@ return {
             auto registrar = operator_runtime::ProjectPluginRegistrar{};
             return registrar.registerPlugin(
                 inputs.registration,
-                std::string{exactPluginBytes},
+                "main",
+                {
+                    operator_runtime::ProjectPluginRegistrar::ModuleBlob{
+                        .name   = "main",
+                        .source = std::string{exactPluginBytes},
+                    },
+                },
                 {},
                 inputs.schemaOwner
             );
@@ -1371,7 +1398,13 @@ return {
             auto registrar = operator_runtime::ProjectPluginRegistrar{};
             auto const substituted = registrar.registerPlugin(
                 inputs->registration,
-                std::string{k_handWrittenTwin},
+                "main",
+                {
+                    operator_runtime::ProjectPluginRegistrar::ModuleBlob{
+                        .name   = "main",
+                        .source = std::string{k_handWrittenTwin},
+                    },
+                },
                 {},
                 inputs->schemaOwner
             );

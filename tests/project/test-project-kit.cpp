@@ -5,6 +5,8 @@
 
 #include <json/value.hpp>
 
+#include <operator/project-plugin.hpp>
+
 #include <core/error/error.hpp>
 
 #include <domain/content-hash.hpp>
@@ -187,7 +189,7 @@ namespace uf::project
         ) -> std::string
         {
             return std::string{R"json({
-  "schema": "umbraflow-project/v1",
+  "schema": "umbraflow-project/v2",
   "runtime_artifact": "runtime/artifact",
   "primary_deployment": "dream",
   "template_cuts": )json"}
@@ -198,9 +200,9 @@ namespace uf::project
       "name": "dream",
       "plugin_id": "chaos.dream",
       "baseline_event_type": "project.baseline_created",
-      "plugin": ")json"
+      "plugin": {"entry":"main","modules":[{"name":"main","path":")json"
                 + std::string{plugin}
-                + R"json(",
+                + R"json("}]},
 )json"
                 + std::string{authoringMember}
                 + std::string{justificationMember}
@@ -214,7 +216,7 @@ namespace uf::project
       "journal_payload_schemas": ["schema/journal-0.json"],
       "effect_payload_schemas": [],
       "observed_instance_identity_schemas": [],
-      "artifact_blobs": []
+      "resources": []
     }
   ]
 })json";
@@ -260,21 +262,35 @@ namespace uf::project
         }
 
         [[nodiscard]]
+        auto validWorkflowDeclaration() -> std::string;
+
+        [[nodiscard]]
         auto initializedDeploymentWorkspace(
             TemporaryWorkspace const& workspace,
             std::string_view manifest
         ) -> Status
         {
+            writeFile(workspace.source() / k_handWrittenPlugin, "return {}\n");
             writeRootManifest(workspace, manifest);
-            return initProject(
-                ProjectInitSpec{
-                    .sourceDirectory = workspace.source(),
-                    .buildDirectory  = workspace.build(),
-                    .inputs          = {
-                        std::filesystem::path{k_deploymentManifestInput},
-                    },
-                }
-            );
+            auto spec = ProjectInitSpec{
+                .sourceDirectory = workspace.source(),
+                .buildDirectory  = workspace.build(),
+                .inputs          = {
+                    std::filesystem::path{k_deploymentManifestInput},
+                },
+            };
+            if (manifest.contains(k_generatedPlugin))
+            {
+                auto const declaration = std::filesystem::path{
+                    "declarative-tools/acme.tool/do-work.json"
+                };
+                writeFile(
+                    workspace.source() / declaration,
+                    validWorkflowDeclaration()
+                );
+                spec.inputs.emplace_back(declaration);
+            }
+            return initProject(spec);
         }
 
         [[nodiscard]]
@@ -285,6 +301,7 @@ namespace uf::project
         {
             writeFile(workspace.source() / "content" / "facts.txt", "facts\n");
             writeFile(workspace.source() / "decisions.txt", "decisions\n");
+            writeFile(workspace.source() / k_handWrittenPlugin, "return {}\n");
             writeRootManifest(workspace, manifestDeclaringCuts(templateCuts));
             return initProject(
                 ProjectInitSpec{
@@ -378,6 +395,7 @@ namespace uf::project
                 workspace.source() / k_workflowDeclarationInput,
                 validWorkflowDeclaration()
             );
+            writeFile(workspace.source() / k_handWrittenPlugin, "return {}\n");
             writeRootManifest(workspace, acceptedDeploymentManifest());
             return initProject(
                 ProjectInitSpec{
@@ -616,9 +634,105 @@ namespace uf::project
             snapshot.at(std::string{k_inputManifestName})
             == "umbraflow-project-kit-inputs-v1\n"
                "content/facts.txt\n"
-               "decisions.txt\n",
+               "decisions.txt\n"
+               "plugin/dream.luau\n"
+               "umbraflow-project.json\n",
             "project init must record declared inputs in canonical sorted order"
         );
+    }
+
+    TEST_CASE("project init writes a main module with a real dependency")
+    {
+        auto const workspace = TemporaryWorkspace{"uf-project-init-modules"};
+        auto manifest = replacedOnce(
+            acceptedDeploymentManifest(),
+            R"json({"entry":"main","modules":[{"name":"main","path":"plugin/dream.luau"}]})json",
+            R"json({"entry":"main","modules":[{"name":"support","path":"plugin/support.luau"},{"name":"main","path":"plugin/main.luau"}]})json"
+        );
+        writeRootManifest(workspace, manifest);
+
+        auto const initialized = initProject(ProjectInitSpec{
+            .sourceDirectory = workspace.source(),
+            .buildDirectory  = workspace.build(),
+            .inputs          = {std::filesystem::path{k_deploymentManifestInput}},
+        });
+        REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+
+        auto const source = snapshotTree(workspace.source());
+        REQUIRE(source.contains("plugin/main.luau"));
+        REQUIRE(source.contains("plugin/support.luau"));
+        CHECK(source.at("plugin/main.luau").contains("require(\"./support\")"));
+        CHECK(source.at("plugin/main.luau").contains("plugin_id = \"chaos.dream\""));
+        CHECK(source.at("plugin/support.luau").contains("identity = function"));
+
+        auto const inputManifest = snapshotTree(workspace.build()).at(
+            std::string{k_inputManifestName}
+        );
+        CHECK(inputManifest.contains("plugin/main.luau\n"));
+        CHECK(inputManifest.contains("plugin/support.luau\n"));
+    }
+
+    TEST_CASE("project build records exact module resource and environment identities")
+    {
+        auto const workspace = TemporaryWorkspace{"uf-project-execution-closure"};
+        auto manifest = replacedOnce(
+            acceptedDeploymentManifest(),
+            R"json({"entry":"main","modules":[{"name":"main","path":"plugin/dream.luau"}]})json",
+            R"json({"entry":"main","modules":[{"name":"support","path":"plugin/support.luau"},{"name":"main","path":"plugin/main.luau"}]})json"
+        );
+        manifest = replacedOnce(
+            manifest,
+            R"json("resources": [])json",
+            R"json("resources": [{"kind":"json","name":"runtime.corpus","path":"runtime/corpus.json"}])json"
+        );
+        writeRootManifest(workspace, manifest);
+        writeFile(workspace.source() / "plugin/main.luau", "return require(\"./support\")\n");
+        writeFile(workspace.source() / "plugin/support.luau", "return {}\n");
+        writeFile(workspace.source() / "runtime/corpus.json", "{\"answer\":42}\n");
+        auto const initialized = initProject(ProjectInitSpec{
+            .sourceDirectory = workspace.source(),
+            .buildDirectory  = workspace.build(),
+            .inputs          = {"runtime/corpus.json"},
+        });
+        REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+
+        auto const spec = ProjectBuildSpec{
+            .sourceDirectory = workspace.source(),
+            .buildDirectory  = workspace.build(),
+        };
+        auto const built = buildProject(spec, {});
+        REQUIRE_MESSAGE(built.has_value(), messageOf(built));
+
+        auto const snapshot = snapshotTree(workspace.build());
+        CHECK(snapshot.at("generated/modules/dream/main.luau")
+              == "return require(\"./support\")\n");
+        CHECK(snapshot.at("generated/modules/dream/support.luau") == "return {}\n");
+        CHECK(snapshot.at("generated/resources/dream/runtime.corpus.blob")
+              == "{\"answer\":42}\n");
+
+        auto const record = parsedJson(snapshot.at("generated/registrations/dream.json"));
+        auto const environmentHash = operator_runtime::currentProjectPluginEnvironmentHash();
+        REQUIRE(environmentHash.has_value());
+        CHECK(record.find("plugin_environment_hash")->string() == environmentHash->hex());
+        auto const modules = std::array{
+            operator_runtime::ProjectPluginRegistrar::ModuleBlob{
+                .name = "main", .source = "return require(\"./support\")\n"
+            },
+            operator_runtime::ProjectPluginRegistrar::ModuleBlob{
+                .name = "support", .source = "return {}\n"
+            },
+        };
+        auto const moduleHash = operator_runtime::derivePluginModuleManifestHash(
+            "main",
+            modules
+        );
+        REQUIRE(moduleHash.has_value());
+        CHECK(record.find("plugin_module_manifest_hash")->string() == moduleHash->hex());
+        auto const* resourceRows = record.find("project_resources");
+        REQUIRE(resourceRows != nullptr);
+        REQUIRE(resourceRows->items().size() == 1U);
+        CHECK(resourceRows->items()[0].find("kind")->string() == "json");
+        CHECK(resourceRows->items()[0].find("size")->number() == 14.0);
     }
 
     TEST_CASE("project build changes no source bytes and writes its receipt under build")
@@ -1160,10 +1274,15 @@ namespace uf::project
         auto const* artifacts = manifest.find("artifacts");
         REQUIRE(inputs != nullptr);
         REQUIRE(artifacts != nullptr);
-        REQUIRE(inputs->items().size() == 1U);
+        REQUIRE(inputs->items().size() == 3U);
         CHECK_MESSAGE(
-            inputs->items().front().find("path")->string()
-                == k_workflowDeclarationInput,
+            std::ranges::any_of(
+                inputs->items(),
+                [](json::Value const& row)
+                {
+                    return row.find("path")->string() == k_workflowDeclarationInput;
+                }
+            ),
             "the hand-written plugin must be pinned as an input"
         );
         for (auto const& artifact : artifacts->items())
@@ -1196,38 +1315,177 @@ namespace uf::project
         };
         auto const initialized = initializedWorkspace(workspace);
         REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+        auto manifest = replacedOnce(
+            acceptedDeploymentManifest(),
+            std::string{k_handWrittenPlugin},
+            "outside.luau"
+        );
+        writeRootManifest(workspace, manifest);
+        writeFile(workspace.source() / "outside.luau", "return {}\n");
         auto const built = buildProject(
             ProjectBuildSpec{
                 .sourceDirectory = workspace.source(),
                 .buildDirectory  = workspace.build(),
                 .toolCatalogs    = {},
-                .artifactBlobs = {
-                    ProjectArtifactBlobSpec{
-                        .name        = "facts",
-                        .sourceInput = "content/facts.txt",
-                    },
-                },
-                .registration = ProjectRegistrationBuildSpec{
-                    .artifactBlobNames = {"facts", "outside"},
-                },
             },
             {}
         );
 
         REQUIRE_FALSE_MESSAGE(
             built.has_value(),
-            "project build must reject a registration outside the closure"
+            "project build must reject a module outside the declared inputs"
         );
         CHECK_MESSAGE(
-            messageOf(built).find("outside the RuntimeArtifact closure")
+            messageOf(built).find("undeclared source input")
                 != std::string::npos,
-            "closure refusal must land on the exact RuntimeArtifact property"
+            "closure refusal must name the undeclared module source"
         );
         CHECK_FALSE_MESSAGE(
             std::filesystem::exists(
                 workspace.build() / k_artifactManifestName
             ),
             "closure refusal must happen before build artifacts are written"
+        );
+    }
+
+    TEST_CASE("project generated artifact names cannot escape their family")
+    {
+        auto const workspace = TemporaryWorkspace{"uf-project-generated-path"};
+        auto const initialized = initializedWorkspace(workspace);
+        REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+
+        auto declaration     = toolCatalogDeclaration();
+        declaration.pluginId = "../../escaped";
+        auto const built = buildProject(
+            ProjectBuildSpec{
+                .sourceDirectory = workspace.source(),
+                .buildDirectory  = workspace.build(),
+                .toolCatalogs    = {std::move(declaration)},
+            },
+            {}
+        );
+        REQUIRE_FALSE_MESSAGE(
+            built.has_value(),
+            "a programmatic ProjectBuildSpec must not write outside its generated family"
+        );
+        CHECK_MESSAGE(
+            messageOf(built).find("one path component") != std::string::npos,
+            "the refusal must identify the caller-controlled artifact name"
+        );
+        CHECK_FALSE(std::filesystem::exists(workspace.build() / "escaped"));
+    }
+
+    TEST_CASE("project build check and freeze share runtime module admission")
+    {
+        auto const workspace = TemporaryWorkspace{"uf-project-module-admission"};
+        auto const initialized = initializedWorkspace(workspace);
+        REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+        auto const candidate = ProjectBuildSpec{
+            .sourceDirectory = workspace.source(),
+            .buildDirectory  = workspace.build(),
+        };
+        auto const baseline = buildProject(candidate, {});
+        REQUIRE_MESSAGE(baseline.has_value(), messageOf(baseline));
+
+        auto rejectedSource = std::string{};
+        SUBCASE("empty")
+        {
+            rejectedSource.clear();
+        }
+        SUBCASE("invalid UTF-8")
+        {
+            rejectedSource.assign(1U, static_cast<char>(0xff));
+        }
+        SUBCASE("over the per-module byte ceiling")
+        {
+            rejectedSource.assign(
+                script::PureDataProgram::k_maximumModuleSourceBytes + 1U,
+                'x'
+            );
+        }
+        writeFile(workspace.source() / k_handWrittenPlugin, rejectedSource);
+
+        CHECK_FALSE_MESSAGE(
+            buildProject(candidate, {}).has_value(),
+            "project build must refuse a module the runtime cannot admit"
+        );
+        CHECK_FALSE_MESSAGE(
+            checkProject(candidate, {}).has_value(),
+            "project check must refuse a module the runtime cannot admit"
+        );
+        CHECK_FALSE_MESSAGE(
+            freezeProject(
+                ProjectFreezeSpec{
+                    .candidate   = candidate,
+                    .releaseRoot = workspace.releases(),
+                },
+                {}
+            ).has_value(),
+            "project freeze must refuse a module the runtime cannot admit"
+        );
+    }
+
+    TEST_CASE("project build check and freeze share runtime resource admission")
+    {
+        auto const workspace = TemporaryWorkspace{"uf-project-resource-admission"};
+        auto resourceKind  = std::string_view{};
+        auto acceptedBytes = std::string{};
+        auto rejectedBytes = std::string{};
+        SUBCASE("invalid JSON")
+        {
+            resourceKind  = "json";
+            acceptedBytes = "{\"ok\":true}\n";
+            rejectedBytes = "not-json\n";
+        }
+        SUBCASE("over the per-resource byte ceiling")
+        {
+            resourceKind  = "bytes";
+            acceptedBytes = "ok";
+            rejectedBytes.assign(
+                script::PureDataProgram::k_maximumResourceBytes + 1U,
+                'x'
+            );
+        }
+        auto manifest = replacedOnce(
+            acceptedDeploymentManifest(),
+            R"json("resources": [])json",
+            std::string{R"json("resources": [{"kind":")json"}
+                + std::string{resourceKind}
+                + R"json(","name":"runtime.corpus","path":"runtime/corpus.blob"}])json"
+        );
+        writeRootManifest(workspace, manifest);
+        writeFile(workspace.source() / k_handWrittenPlugin, "return {}\n");
+        writeFile(workspace.source() / "runtime/corpus.blob", acceptedBytes);
+        auto const initialized = initProject(ProjectInitSpec{
+            .sourceDirectory = workspace.source(),
+            .buildDirectory  = workspace.build(),
+        });
+        REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+        auto const candidate = ProjectBuildSpec{
+            .sourceDirectory = workspace.source(),
+            .buildDirectory  = workspace.build(),
+        };
+        auto const baseline = buildProject(candidate, {});
+        REQUIRE_MESSAGE(baseline.has_value(), messageOf(baseline));
+
+        writeFile(workspace.source() / "runtime/corpus.blob", rejectedBytes);
+        CHECK_FALSE_MESSAGE(
+            buildProject(candidate, {}).has_value(),
+            "project build must refuse a resource the runtime cannot admit"
+        );
+        CHECK_FALSE_MESSAGE(
+            checkProject(candidate, {}).has_value(),
+            "project check must refuse a resource the runtime cannot admit"
+        );
+        CHECK_FALSE_MESSAGE(
+            freezeProject(
+                ProjectFreezeSpec{
+                    .candidate   = candidate,
+                    .releaseRoot = workspace.releases(),
+                },
+                {}
+            ).has_value(),
+            "project freeze must refuse a resource the runtime cannot admit"
         );
     }
 

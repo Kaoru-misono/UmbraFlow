@@ -499,7 +499,7 @@ namespace uf::operator_runtime
 
     StoredProjectObservation::StoredProjectObservation(
         ContentHash projectRegistrationHash,
-        ContentHash pluginHash,
+        ContentHash pluginModuleManifestHash,
         std::string projectInstanceKey,
         ContentHash stateResolutionHash,
         uint64 projectStateRevision,
@@ -508,7 +508,7 @@ namespace uf::operator_runtime
         ProjectObservation payload
     )
         : m_projectRegistrationHash{projectRegistrationHash}
-        , m_pluginHash{pluginHash}
+        , m_pluginModuleManifestHash{pluginModuleManifestHash}
         , m_projectInstanceKey{std::move(projectInstanceKey)}
         , m_stateResolutionHash{stateResolutionHash}
         , m_projectStateRevision{projectStateRevision}
@@ -523,9 +523,9 @@ namespace uf::operator_runtime
         return m_projectRegistrationHash;
     }
 
-    auto StoredProjectObservation::pluginHash() const -> ContentHash
+    auto StoredProjectObservation::pluginModuleManifestHash() const -> ContentHash
     {
-        return m_pluginHash;
+        return m_pluginModuleManifestHash;
     }
 
     auto StoredProjectObservation::projectInstanceKey() const noexcept

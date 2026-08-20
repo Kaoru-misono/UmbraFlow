@@ -1795,6 +1795,113 @@ return {
     {
     }
 
+    auto PureDataProgram::validateModuleClosure(
+        std::string_view entryModule,
+        std::span<Module const> modules
+    ) -> Status
+    {
+        if (!validProjectModuleName(entryModule))
+        {
+            return refuse("pure data entry module name is not canonical");
+        }
+        if (modules.empty() || modules.size() > k_maximumModuleCount)
+        {
+            return refuse("pure data module count exceeds its fixed ceiling");
+        }
+
+        auto totalSourceBytes = std::size_t{0};
+        auto names            = std::vector<std::string_view>{};
+        names.reserve(modules.size());
+        for (auto const& module : modules)
+        {
+            if (!validProjectModuleName(module.name))
+            {
+                return refuse("pure data module name is not canonical");
+            }
+            if (
+                module.source.empty()
+                || module.source.size() > k_maximumModuleSourceBytes
+                || !isValidUtf8(module.source)
+            )
+            {
+                return refuse("pure data module source must be non-empty bounded UTF-8");
+            }
+            if (
+                totalSourceBytes
+                > k_maximumModuleClosureSourceBytes - module.source.size()
+            )
+            {
+                return refuse("pure data module sources exceed their total byte ceiling");
+            }
+            totalSourceBytes += module.source.size();
+            names.emplace_back(module.name);
+        }
+        std::ranges::sort(names);
+        if (std::ranges::adjacent_find(names) != names.end())
+        {
+            return refuse("pure data module names must be unique");
+        }
+        if (!std::ranges::binary_search(names, entryModule))
+        {
+            return refuse("pure data entry module is absent from its closure");
+        }
+        return ok();
+    }
+
+    auto PureDataProgram::validateResourceClosure(
+        std::span<Resource const> resources
+    ) -> Status
+    {
+        if (resources.size() > k_maximumResourceCount)
+        {
+            return refuse("pure data resource count exceeds its fixed ceiling");
+        }
+
+        auto totalResourceBytes = std::size_t{0};
+        auto names              = std::vector<std::string_view>{};
+        names.reserve(resources.size());
+        for (auto const& resource : resources)
+        {
+            if (!validResourceName(resource.name))
+            {
+                return refuse("pure data resource name is not canonical");
+            }
+            if (resource.bytes.size() > k_maximumResourceBytes)
+            {
+                return refuse("pure data resource exceeds its fixed byte ceiling");
+            }
+            if (
+                totalResourceBytes
+                > k_maximumResourceClosureBytes - resource.bytes.size()
+            )
+            {
+                return refuse("pure data resources exceed their total byte ceiling");
+            }
+            totalResourceBytes += resource.bytes.size();
+            names.emplace_back(resource.name);
+
+            switch (resource.kind)
+            {
+            case ResourceKind::Json:
+                if (!json::parse(resource.bytes).has_value())
+                    return refuse("pure data JSON resource is invalid: " + resource.name);
+                break;
+            case ResourceKind::Utf8:
+                if (!isValidUtf8(resource.bytes))
+                    return refuse("pure data UTF-8 resource is invalid: " + resource.name);
+                break;
+            case ResourceKind::Bytes: break;
+            default: return refuse("pure data resource kind is invalid");
+            }
+        }
+        std::ranges::sort(names);
+        if (std::ranges::adjacent_find(names) != names.end())
+        {
+            return refuse("pure data resource names must be unique");
+        }
+        return ok();
+    }
+
     auto PureDataProgram::compile(
         std::string_view pluginId,
         std::string_view entryModule,
@@ -1807,14 +1914,7 @@ return {
         {
             return refuse("pure data plugin id is invalid");
         }
-        if (!validProjectModuleName(entryModule))
-        {
-            return refuse("pure data entry module name is not canonical");
-        }
-        if (modules.empty() || modules.size() > PureDataProgram::k_maximumModuleCount)
-        {
-            return refuse("pure data module count exceeds its fixed ceiling");
-        }
+        UF_TRY(validateModuleClosure(entryModule, modules));
         if (
             entryPoints.empty()
             || entryPoints.size() > k_maximumEntryPointCount
@@ -1822,41 +1922,7 @@ return {
         {
             return refuse("pure data module requires a bounded entry-point set");
         }
-        if (resources.size() > PureDataProgram::k_maximumResourceCount)
-        {
-            return refuse("pure data resource count exceeds its fixed ceiling");
-        }
-
-        auto totalSourceBytes = std::size_t{0};
-        for (auto const& module : modules)
-        {
-            if (!validProjectModuleName(module.name))
-            {
-                return refuse("pure data module name is not canonical");
-            }
-            if (
-                module.source.empty()
-                || module.source.size() > PureDataProgram::k_maximumModuleSourceBytes
-                || !isValidUtf8(module.source)
-            )
-            {
-                return refuse("pure data module source must be non-empty bounded UTF-8");
-            }
-            if (
-                totalSourceBytes
-                > PureDataProgram::k_maximumModuleClosureSourceBytes
-                    - module.source.size()
-            )
-            {
-                return refuse("pure data module sources exceed their total byte ceiling");
-            }
-            totalSourceBytes += module.source.size();
-        }
         std::ranges::sort(modules, {}, &Module::name);
-        if (std::ranges::adjacent_find(modules, {}, &Module::name) != modules.end())
-        {
-            return refuse("pure data module names must be unique");
-        }
         auto const entry = std::ranges::lower_bound(
             modules,
             entryModule,
@@ -1869,32 +1935,8 @@ return {
         }
         auto const entryModuleIndex = static_cast<std::size_t>(entry - modules.begin());
 
-        auto totalResourceBytes = std::size_t{0};
-        for (auto const& resource : resources)
-        {
-            if (!validResourceName(resource.name))
-            {
-                return refuse("pure data resource name is not canonical");
-            }
-            if (resource.bytes.size() > PureDataProgram::k_maximumResourceBytes)
-            {
-                return refuse("pure data resource exceeds its fixed byte ceiling");
-            }
-            if (
-                totalResourceBytes
-                > PureDataProgram::k_maximumResourceClosureBytes
-                    - resource.bytes.size()
-            )
-            {
-                return refuse("pure data resources exceed their total byte ceiling");
-            }
-            totalResourceBytes += resource.bytes.size();
-        }
+        UF_TRY(validateResourceClosure(resources));
         std::ranges::sort(resources, {}, &Resource::name);
-        if (std::ranges::adjacent_find(resources, {}, &Resource::name) != resources.end())
-        {
-            return refuse("pure data resource names must be unique");
-        }
 
         auto decodedResources = std::vector<DecodedResource>{};
         decodedResources.reserve(resources.size());

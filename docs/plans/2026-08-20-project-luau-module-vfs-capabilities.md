@@ -4,8 +4,8 @@ Date: 2026-08-20
 Scope: `script`, `deployment`, `operator`, `project`, `service`, `cli`,
 conformance, schemas, examples, generated public contract, release publication,
 and the later project-template/consumer migration
-Status: **independent review passed; R1-A implemented and locally validated;
-R1-B pending**
+Status: **independent review passed; R1-A through R1-D implemented and locally
+validated as one atomic contract cut**
 
 ## Outcome
 
@@ -251,7 +251,7 @@ resource; no Python enters runtime.
 ### Registration, attestation, and persistence generations
 
 - The active registration schema is `project-registration-v2`, but its document
-  field is `project_registration_format: 3`; current code already uses format 2.
+  field is `project_registration_format: 3`; the predecessor used format 2.
 - Required registration identity fields include
   `plugin_module_manifest_hash`, `plugin_environment_hash`, and
   `project_resources`. `plugin_hash` and `project_artifact_roots` disappear.
@@ -315,6 +315,12 @@ move the registration, authored declaration reorder does not, a forged running
 environment refuses, and historical database hashes remain unchanged while
 execution paths refuse them.
 
+R1-B completion evidence: project directory v2, registration format 3/schema
+v2, attestation set v2, the module/resource closure loader, authoritative
+module-manifest and environment identities, registration verification, and the
+generation-neutral ledger schema landed together. Focused deployment, Operator,
+contract, authoring-parity, migration/reopen, and legacy audit-only tests pass.
+
 ### R1-C — Project Kit, examples, publication, and consumer boundary
 
 Owners: `modules/project`, examples, conformance, scripts/publication
@@ -332,12 +338,27 @@ Owners: `modules/project`, examples, conformance, scripts/publication
   current consumer split its plugin. That migration is not part of an upstream
   partially green working tree.
 
+R1-C completion evidence: Project Kit init emits a hand-written entry plus a
+real dependency, build/check/freeze preserve exact per-deployment closure
+records, and a clean CLI bootstrap passes. Arcana runs a three-module closure
+and consumes deterministic JSON produced from an exported database CSV by the
+offline Python corpus builder. Both example conformance suites pass, and the
+generated public contract and repository-surface checks agree with the
+authoritative runtime and schema bytes.
+
 ### R1-D — Gates
 
 Run the repository `build-project` and `post-change-validation` workflows, the
 full local gate, both example conformance runs, a database migration/reopen audit
 test, and a clean-machine Project Kit bootstrap. Treat tests as retained only
 when they protect a public contract or the reproduced identity/persistence risk.
+
+R1-D completion evidence: the 2026-08-20 Windows `x64-debug` local CI gate
+completed its 101-entry test set with 100 passing and interface-lock parity
+skipped by its existing configuration. This includes both example conformance
+runs, the migration/reopen audit, and the clean Project Kit CLI bootstrap.
+Static format, module graph, safety, Luau identity, generated public-contract,
+and repository surface checks all passed in the same aggregate run.
 
 ## Release R2 — Locked Luau packages
 

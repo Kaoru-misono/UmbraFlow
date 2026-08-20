@@ -27,6 +27,7 @@ committed bytes cannot drift from the generator.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import sys
@@ -54,7 +55,9 @@ PROJECT_SCHEMA_ID_HEADER = (
 DEPLOYMENT_DIRECTORY_HEADER = (
     "modules/deployment/source/deployment/project-directory.hpp"
 )
-PROJECT_DIRECTORY_SCHEMA = "schema/umbraflow-project-v1.schema.json"
+PROJECT_DIRECTORY_SCHEMA = "schema/umbraflow-project-v2.schema.json"
+SCRIPT_CONTRACT_HEADER = "modules/script/source/script/pure-data-program.hpp"
+SCRIPT_CONTRACT_SOURCE = "modules/script/source/script/ffi/pure-data-program.cpp"
 
 # The sources that hold framework schema identities as embedded JSON: the
 # operator protocol the project's plugin answers, and the framework-format
@@ -773,6 +776,142 @@ def cell(value: str) -> str:
     return value.replace("\\", "\\\\").replace("|", "\\|")
 
 
+def integer_expression(expression: str, constants: dict[str, int]) -> int:
+    """Evaluate the deliberately tiny integer subset used by limit constants."""
+    if "duration_cast" in expression:
+        seconds = constants["k_maximumRuntime"]
+        return seconds * 1000
+    normalized = expression.replace("PureDataProgram::", "")
+    normalized = re.sub(r"std::(?:size_t|uint64)\{([^{}]+)\}", r"(\1)", normalized)
+    normalized = re.sub(r"uint64\{([^{}]+)\}", r"(\1)", normalized)
+    normalized = re.sub(r"std::chrono::seconds\{([^{}]+)\}", r"(\1)", normalized)
+    normalized = re.sub(r"static_cast<int>\((.*)\)", r"(\1)", normalized, flags=re.DOTALL)
+    normalized = normalized.replace("'", "")
+    normalized = re.sub(r"(?<=\d)[UuLl]+", "", normalized)
+    for name, value in sorted(constants.items(), key=lambda item: -len(item[0])):
+        normalized = re.sub(rf"\b{re.escape(name)}\b", str(value), normalized)
+
+    node = ast.parse(normalized.strip(), mode="eval")
+
+    def visit(current: ast.AST) -> int:
+        if isinstance(current, ast.Expression):
+            return visit(current.body)
+        if isinstance(current, ast.Constant) and isinstance(current.value, int):
+            return current.value
+        if isinstance(current, ast.BinOp) and isinstance(
+            current.op, (ast.Add, ast.Sub, ast.Mult, ast.FloorDiv, ast.Div)
+        ):
+            left = visit(current.left)
+            right = visit(current.right)
+            if isinstance(current.op, ast.Add):
+                return left + right
+            if isinstance(current.op, ast.Sub):
+                return left - right
+            if isinstance(current.op, ast.Mult):
+                return left * right
+            return left // right
+        raise SystemExit(f"unsupported C++ limit expression: {expression.strip()}")
+
+    return visit(node)
+
+
+def script_runtime_contract(root: Path) -> dict[str, object]:
+    """The public Luau environment surface, extracted from its implementation."""
+    header = read(root, SCRIPT_CONTRACT_HEADER)
+    source = read(root, SCRIPT_CONTRACT_SOURCE)
+    constant_expressions: dict[str, str] = {}
+    pattern = re.compile(r"(?:static\s+)?constexpr\s+auto\s+(k_\w+)\s*=\s*(.*?);", re.DOTALL)
+    for text in (header, source):
+        for name, expression in pattern.findall(text):
+            constant_expressions[name] = expression
+
+    constants: dict[str, int] = {}
+    unresolved = dict(constant_expressions)
+    while unresolved:
+        progressed = False
+        for name, expression in list(unresolved.items()):
+            try:
+                constants[name] = integer_expression(expression, constants)
+            except (KeyError, SyntaxError, SystemExit):
+                continue
+            del unresolved[name]
+            progressed = True
+        if not progressed:
+            break
+
+    material = function_span(source, "pluginEnvironmentMaterial")
+    limit_rows: list[tuple[str, int]] = []
+    for name, expression in re.findall(
+        r'appendLimit\(\s*"([^"]+)"\s*,\s*(.*?)\s*\);',
+        material,
+        re.DOTALL,
+    ):
+        limit_rows.append((name, integer_expression(expression, constants)))
+    if not limit_rows:
+        raise SystemExit(f"{SCRIPT_CONTRACT_SOURCE}: environment material emits no limits")
+
+    def string_constant(name: str) -> str:
+        match = re.search(
+            rf"\b{name}\s*=\s*std::string_view\{{\s*\"([^\"]+)\"\s*\}}",
+            source,
+        )
+        if match is None:
+            raise SystemExit(f"{SCRIPT_CONTRACT_SOURCE}: cannot read {name}")
+        return match.group(1)
+
+    globals_span = function_span(source, "k_pureGlobals")
+    globals_ = re.findall(r'std::string_view\{"([^"]+)"\}', globals_span)
+    api_constants = [
+        ("require", "k_requireContract"),
+        (
+            f"resource.{string_constant('k_resourceReadJson')}",
+            "k_resourceReadJsonContract",
+        ),
+        (
+            f"resource.{string_constant('k_resourceReadText')}",
+            "k_resourceReadTextContract",
+        ),
+        (
+            f"resource.{string_constant('k_resourceReadBytes')}",
+            "k_resourceReadBytesContract",
+        ),
+        ("tostring", "k_tostringContract"),
+    ]
+    contracts_start = material.index('output += ",\\"contracts\\":{";')
+    contracts_end = material.index('output += "},\\"frozen_tables\\":{";', contracts_start)
+    material_contracts = set(
+        re.findall(
+            r"appendJsonString\(output,\s*(k_\w+Contract)\)",
+            material[contracts_start:contracts_end],
+        )
+    )
+    published_contracts = {constant for _name, constant in api_constants}
+    if material_contracts != published_contracts:
+        raise SystemExit(
+            f"{SCRIPT_CONTRACT_SOURCE}: public API contracts do not match environment material: "
+            f"material={sorted(material_contracts)}, published={sorted(published_contracts)}"
+        )
+    apis = [(name, string_constant(constant)) for name, constant in api_constants]
+    remaining = re.search(r'remaining_options\\":\\"([^"\\]+)\\"', material)
+    if remaining is None:
+        raise SystemExit(f"{SCRIPT_CONTRACT_SOURCE}: cannot read remaining compiler options")
+    return {
+        "apis": apis,
+        "globals": globals_,
+        "limits": limit_rows,
+        "module_grammar_contract": string_constant("k_moduleGrammarContract"),
+        "resource_grammar_contract": string_constant("k_resourceGrammarContract"),
+        "failure_contract": string_constant("k_moduleFailureContract"),
+        "interrupt_contract": string_constant("k_interruptContract"),
+        "luau": string_constant("k_luauImplementation"),
+        "compiler": {
+            "optimization_level": constants["k_compileOptimizationLevel"],
+            "debug_level": constants["k_compileDebugLevel"],
+            "remaining_options": remaining.group(1),
+        },
+    }
+
+
 def render(root: Path) -> str:
     published = published_schemas(root)
     supplied = project_supplied_identities(root)
@@ -784,6 +923,12 @@ def render(root: Path) -> str:
     release_facts = release_manifest_facts(root)
     directory_schema = json.loads(read(root, PROJECT_DIRECTORY_SCHEMA))
     deployment_definition = definition(directory_schema, "Deployment")
+    plugin_definition = definition(directory_schema, "Plugin")
+    module_definition = definition(directory_schema, "Module")
+    resource_definition = definition(directory_schema, "Resource")
+    module_name_definition = definition(directory_schema, "ModuleName")
+    resource_kind_definition = definition(directory_schema, "ResourceKind")
+    script_contract = script_runtime_contract(root)
     authorities = deployment_authorities(root)
     catalog_id, catalog_minimum = tool_catalog_bound(root)
     proposal = json.loads(read(root, OBSERVATION_PROPOSAL_SCHEMA))
@@ -1046,7 +1191,30 @@ def render(root: Path) -> str:
     lines.extend(
         [
             "",
-            "### 2.3 The authorities each deployment yields",
+            "### 2.3 Module and resource closures",
+            "",
+            "`plugin` is an explicit closed module graph. `entry` selects one",
+            "logical module name; every module and resource path is confined to",
+            "the project directory, while runtime identity retains names, kinds,",
+            "sizes and exact byte hashes but no host path. Authored array order is",
+            "not identity.",
+            "",
+            "Plugin required members: "
+            + ", ".join(f"`{value}`" for value in plugin_definition["required"])
+            + ". Module required members: "
+            + ", ".join(f"`{value}`" for value in module_definition["required"])
+            + ". Resource required members: "
+            + ", ".join(f"`{value}`" for value in resource_definition["required"])
+            + ".",
+            "",
+            f"Module-name grammar: `{module_name_definition['pattern']}`; resource",
+            "names use "
+            f"`{resource_definition['properties']['name']['pattern']}`. Resource",
+            "kinds are "
+            + ", ".join(f"`{value}`" for value in resource_kind_definition["enum"])
+            + ".",
+            "",
+            "### 2.4 The authorities each deployment yields",
             "",
             "Loading one deployment block builds these, and a directory is accepted",
             "only when every one of them compiles. Read from",
@@ -1063,7 +1231,7 @@ def render(root: Path) -> str:
     lines.extend(
         [
             "",
-            "### 2.4 The Tool Catalog floor",
+            "### 2.5 The Tool Catalog floor",
             "",
             f"`{catalog_id}` states",
             f'`"tools": {{"type": "array", "minItems": {catalog_minimum}}}`. A tool',
@@ -1120,6 +1288,69 @@ def render(root: Path) -> str:
         lines.append("```")
         lines.append("")
 
+    compiler = script_contract["compiler"]
+    lines.extend(
+        [
+            "## 4. Luau execution environment",
+            "",
+            "Project code executes as a closed, pathless module graph in a fresh",
+            "quota-bound VM. `require` resolves only the registration-pinned module",
+            "closure; it has no filesystem, network, package search path or ambient",
+            "asset authority. Resources are the separately pinned read-only data",
+            "closure.",
+            "",
+            "### 4.1 Published APIs and observable contracts",
+            "",
+        ]
+    )
+    lines.extend(
+        table(
+            ["API", "Environment contract"],
+            [[f"`{name}`", f"`{contract}`"] for name, contract in script_contract["apis"]],
+        )
+    )
+    lines.extend(
+        [
+            "",
+            "`resource.readJson` returns one deeply frozen decoded JSON identity per",
+            "VM; `resource.readText` returns admitted UTF-8; `resource.readBytes`",
+            "returns exact bytes. All require exactly one canonical resource name and",
+            "refuse unknown names or kind mismatches.",
+            "",
+            "Published globals: "
+            + ", ".join(f"`{name}`" for name in script_contract["globals"])
+            + ".",
+            "",
+            "### 4.2 Identity preimage",
+            "",
+            f"`plugin_environment_hash` is SHA-256 over exact canonical bytes emitted",
+            f"by `pluginEnvironmentMaterial()` in `{SCRIPT_CONTRACT_SOURCE}`. The",
+            "preimage contains the trusted bridge source; compiler options; API",
+            "contracts; frozen tables and global whitelist; grammar, interrupt and",
+            "module-failure contracts; every numeric limit below; and the pinned Luau",
+            "implementation.",
+            "",
+            f"Compiler: optimization `{compiler['optimization_level']}`, debug",
+            f"`{compiler['debug_level']}`, remaining options",
+            f"`{compiler['remaining_options']}`. Luau: `{script_contract['luau']}`.",
+            "",
+            f"Module grammar contract: `{script_contract['module_grammar_contract']}`;",
+            f"resource grammar contract: `{script_contract['resource_grammar_contract']}`;",
+            f"module failure contract: `{script_contract['failure_contract']}`;",
+            f"interrupt contract: `{script_contract['interrupt_contract']}`.",
+            "",
+            "### 4.3 Enforced limits",
+            "",
+        ]
+    )
+    lines.extend(
+        table(
+            ["Environment-material member", "Value"],
+            [[f"`{name}`", f"`{value}`"] for name, value in script_contract["limits"]],
+        )
+    )
+    lines.append("")
+
     proposal_required = item_requirements(proposal, "observed_instance_proposals")
     observation_required = item_requirements(observation, "observed_instances")
     minted_pattern = item_pattern(
@@ -1127,14 +1358,14 @@ def render(root: Path) -> str:
     )
     lines.extend(
         [
-            "## 4. The ownership boundary",
+            "## 5. The ownership boundary",
             "",
             "An observed instance identity is the sharpest edge of this boundary. The",
             "project states what a thing *is*; the Operator decides which thing it is",
             "and names it. The project never mints an id, a hash, or canonical",
             "identity bytes.",
             "",
-            "### 4.1 What the project supplies",
+            "### 5.1 What the project supplies",
             "",
             f"One entry of `observed_instance_proposals` in `{proposal.get('$id')}`:",
             "",
@@ -1149,7 +1380,7 @@ def render(root: Path) -> str:
     lines.extend(
         [
             "",
-            "### 4.2 What the Operator does with it",
+            "### 5.2 What the Operator does with it",
             "",
             "The Operator validates the proposal, canonicalizes it (RFC 8785 JCS),",
             "binds it to a scope, and mints the id. The canonical authority input it",
@@ -1166,7 +1397,7 @@ def render(root: Path) -> str:
     lines.extend(
         [
             "",
-            "### 4.3 What comes back",
+            "### 5.3 What comes back",
             "",
             f"One entry of `observed_instances` in `{observation.get('$id')}`:",
             "",
@@ -1184,7 +1415,7 @@ def render(root: Path) -> str:
             f"`observed_instance_id` is opaque and matches `{cell(minted_pattern)}`.",
             "The project reads it and passes it back; it never derives one.",
             "",
-            "## 5. Worked examples",
+            "## 6. Worked examples",
             "",
             "Two fixture project directories in this repository, each written the way",
             "a consuming repository writes its own, and each run by this repository's",
@@ -1218,7 +1449,7 @@ def render(root: Path) -> str:
     if unclassified:
         lines.extend(
             [
-                "## 6. Identities this generator cannot classify",
+                "## 7. Identities this generator cannot classify",
                 "",
                 "Each identity below is compiled from module bytes, pins no wire tag,",
                 "and is no schema's `$ref` target, so none of the ownership",

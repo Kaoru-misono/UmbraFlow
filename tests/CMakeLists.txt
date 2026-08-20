@@ -754,13 +754,21 @@ target_link_libraries(generate-arcana-example PRIVATE
 target_compile_features(generate-arcana-example PRIVATE cxx_std_23)
 
 add_custom_target(generate-example-projects ALL
+    COMMAND ${Python3_EXECUTABLE}
+        "${PROJECT_SOURCE_DIR}/scripts/build_runtime_corpus.py"
+        --input "${PROJECT_SOURCE_DIR}/examples/arcana-expedition/database/map-regions.csv"
+        --output "${UF_STAGED_ARCANA_PROJECT}/blob/map.blob"
     COMMAND $<TARGET_FILE:generate-umbraflow-example>
         "${PROJECT_SOURCE_DIR}/examples/umbraflow"
         "${UF_STAGED_UMBRAFLOW_PROJECT}"
     COMMAND $<TARGET_FILE:generate-arcana-example>
         "${PROJECT_SOURCE_DIR}/examples/arcana-expedition"
         "${UF_STAGED_ARCANA_PROJECT}"
-    DEPENDS generate-umbraflow-example generate-arcana-example
+    DEPENDS
+        generate-umbraflow-example
+        generate-arcana-example
+        "${PROJECT_SOURCE_DIR}/scripts/build_runtime_corpus.py"
+        "${PROJECT_SOURCE_DIR}/examples/arcana-expedition/database/map-regions.csv"
     COMMENT "[Project] Generating example Tool Catalogs"
     VERBATIM
 )

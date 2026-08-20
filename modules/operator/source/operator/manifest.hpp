@@ -19,18 +19,27 @@ namespace uf::operator_runtime
     // understands what that number describes.
     //
     // It is a generation rather than the digest of
-    // schema/umbraflow-project-registration-v1.schema.json, because the digest
+    // schema/umbraflow-project-registration-v2.schema.json, because the digest
     // made every cosmetic edit to that file move every registration root -- and
     // a registration root is a project's identity, pinned by consumers. The
     // digest also compared a value with itself: the loader derived it once and
     // handed the same local to both the document and the schema owner that
     // judged the document.
-    inline constexpr auto k_projectRegistrationFormat = uint64{2U};
+    inline constexpr auto k_projectRegistrationFormat = uint64{3U};
 
-    struct NamedArtifactRoot final
+    enum class ProjectResourceKind : uint8
     {
-        std::string name{};
-        ContentHash rootHash;
+        Json,
+        Utf8,
+        Bytes,
+    };
+
+    struct ProjectResource final
+    {
+        ProjectResourceKind kind{ProjectResourceKind::Json};
+        std::string         name{};
+        ContentHash         hash;
+        uint64              size{};
     };
 
     // Values extracted only after the schema owner has accepted the exact
@@ -38,17 +47,18 @@ namespace uf::operator_runtime
     // cannot pass it to the registrar or mint a registration from it.
     struct ProjectRegistrationClaims final
     {
-        uint64                         projectRegistrationFormat{};
-        std::string                    pluginId{};
-        ContentHash                    pluginHash;
-        ContentHash                    toolCatalogHash;
-        ContentHash                    projectStateSchemaHash;
-        ContentHash                    projectObservationSchemaHash;
-        ContentHash                    projectToolPreconditionSchemaHash;
-        ContentHash                    reconcilePayloadSchemaManifestHash;
-        ContentHash                    journalEventSchemaManifestHash;
-        std::string                    baselineEventType{};
-        std::vector<NamedArtifactRoot> projectArtifactRoots{};
+        uint64                       projectRegistrationFormat{};
+        std::string                  pluginId{};
+        ContentHash                  pluginModuleManifestHash;
+        ContentHash                  pluginEnvironmentHash;
+        ContentHash                  toolCatalogHash;
+        ContentHash                  projectStateSchemaHash;
+        ContentHash                  projectObservationSchemaHash;
+        ContentHash                  projectToolPreconditionSchemaHash;
+        ContentHash                  reconcilePayloadSchemaManifestHash;
+        ContentHash                  journalEventSchemaManifestHash;
+        std::string                  baselineEventType{};
+        std::vector<ProjectResource> projectResources{};
 
         // The closed set of observed-instance identity schema documents this
         // registration owns, as the sha256 of each exact document, sorted and
@@ -110,7 +120,8 @@ namespace uf::operator_runtime
 
         [[nodiscard]] auto hash() const -> ContentHash;
         [[nodiscard]] auto pluginId() const -> std::string;
-        [[nodiscard]] auto pluginHash() const -> ContentHash;
+        [[nodiscard]] auto pluginModuleManifestHash() const -> ContentHash;
+        [[nodiscard]] auto pluginEnvironmentHash() const -> ContentHash;
         [[nodiscard]] auto projectStateSchemaHash() const -> ContentHash;
         [[nodiscard]] auto toolCatalogHash() const -> ContentHash;
 
@@ -125,8 +136,8 @@ namespace uf::operator_runtime
         [[nodiscard]] auto baselineEventType() const -> std::string;
 
         [[nodiscard]]
-        auto projectArtifactRoots() const noexcept UF_LIFETIME_BOUND
-            -> std::vector<NamedArtifactRoot> const&;
+        auto projectResources() const noexcept UF_LIFETIME_BOUND
+            -> std::vector<ProjectResource> const&;
 
         [[nodiscard]]
         auto observedInstanceIdentitySchemaHashes() const noexcept

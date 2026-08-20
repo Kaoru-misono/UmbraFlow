@@ -65,7 +65,7 @@ REQUIRED_SAFE_PATHS = (
     "schema/umbraflow-journal-v1.schema.json",
     "schema/umbraflow-operator-v1.schema.json",
     "schema/umbraflow-policy-v1.schema.json",
-    "schema/umbraflow-project-registration-v1.schema.json",
+    "schema/umbraflow-project-registration-v2.schema.json",
     "schema/umbraflow-runtime-artifact-v1.schema.json",
     "schema/umbraflow-runtime-v3.schema.json",
     "schema/umbraflow-trace-v2.schema.json",

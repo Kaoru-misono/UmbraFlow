@@ -17,6 +17,8 @@
 
 #include <schema/framework-schema-catalog.hpp>
 
+#include <script/pure-data-program.hpp>
+
 #include <task/runtime-model-file.hpp>
 #include <task/platform/confined-file.hpp>
 
@@ -38,7 +40,7 @@ namespace uf::deployment
     namespace
     {
         constexpr auto k_registrationSchemaPath = std::string_view{
-            "schema/umbraflow-project-registration-v1.schema.json"
+            "schema/umbraflow-project-registration-v2.schema.json"
         };
 
         // umbraflow-project.json: the document production reads. Its shape is
@@ -50,7 +52,7 @@ namespace uf::deployment
         // uf::deployment, and a second reading of this document inside the kit
         // was a weaker copy that accepted documents this one refused.
         constexpr auto k_projectSchemaPath = std::string_view{
-            "schema/umbraflow-project-v1.schema.json"
+            "schema/umbraflow-project-v2.schema.json"
         };
 
         // umbraflow-conformance.json: the document only a conformance run
@@ -169,9 +171,11 @@ namespace uf::deployment
         // a truncation: truncated schema bytes are not the bytes the derived
         // registration would pin.
         constexpr auto k_maximumDocumentBytes = std::size_t{1U << 20U};
-        constexpr auto k_maximumPluginBytes   = std::size_t{1U << 22U};
-        constexpr auto k_maximumBlobBytes     = std::size_t{1U << 24U};
-        constexpr auto k_maximumFrameBytes    = std::size_t{1U << 26U};
+        constexpr auto k_maximumPluginBytes =
+            script::PureDataProgram::k_maximumModuleSourceBytes;
+        constexpr auto k_maximumBlobBytes =
+            script::PureDataProgram::k_maximumResourceBytes;
+        constexpr auto k_maximumFrameBytes = std::size_t{1U << 26U};
 
         [[nodiscard]]
         auto refuse(std::string message) -> std::unexpected<Error>
@@ -415,7 +419,8 @@ namespace uf::deployment
         {
             std::string              pluginId{};
             std::string              baselineEventType{};
-            ContentHash              pluginHash;
+            ContentHash              pluginModuleManifestHash;
+            ContentHash              pluginEnvironmentHash;
             ContentHash              toolCatalogHash;
             ContentHash              projectStateSchemaHash;
             ContentHash              projectObservationSchemaHash;
@@ -432,7 +437,7 @@ namespace uf::deployment
         [[nodiscard]]
         auto registrationJcs(
             DerivedRegistration const& derived,
-            std::span<operator_runtime::NamedArtifactRoot const> artifactRoots
+            std::span<operator_runtime::ProjectResource const> projectResources
         ) -> std::string
         {
             auto const hash = [](ContentHash const& value)
@@ -440,12 +445,27 @@ namespace uf::deployment
                 return json::Value::ofString(value.hex());
             };
 
-            auto roots = std::vector<json::Value>{};
-            for (auto const& root : artifactRoots)
+            auto resources = std::vector<json::Value>{};
+            for (auto const& resource : projectResources)
             {
-                roots.emplace_back(json::Value::ofObject({
-                    {"name", json::Value::ofString(root.name)},
-                    {"root_hash", hash(root.rootHash)},
+                auto kind = std::string_view{};
+                switch (resource.kind)
+                {
+                case operator_runtime::ProjectResourceKind::Json:
+                    kind = "json";
+                    break;
+                case operator_runtime::ProjectResourceKind::Utf8:
+                    kind = "utf8";
+                    break;
+                case operator_runtime::ProjectResourceKind::Bytes:
+                    kind = "bytes";
+                    break;
+                }
+                resources.emplace_back(json::Value::ofObject({
+                    {"kind", json::Value::ofString(std::string{kind})},
+                    {"name", json::Value::ofString(resource.name)},
+                    {"sha256", hash(resource.hash)},
+                    {"size", json::Value::ofNumber(static_cast<double>(resource.size))},
                 }));
             }
 
@@ -462,9 +482,9 @@ namespace uf::deployment
                  hash(derived.journalEventSchemaManifestHash)},
                 {"observed_instance_identity_schema_hashes",
                  json::Value::ofArray(std::move(identityHashes))},
-                {"plugin_hash", hash(derived.pluginHash)},
+                {"plugin_environment_hash", hash(derived.pluginEnvironmentHash)},
                 {"plugin_id", json::Value::ofString(derived.pluginId)},
-                {"project_artifact_roots", json::Value::ofArray(std::move(roots))},
+                {"plugin_module_manifest_hash", hash(derived.pluginModuleManifestHash)},
                 {"project_observation_schema_hash",
                  hash(derived.projectObservationSchemaHash)},
                 {"project_registration_format",
@@ -476,6 +496,7 @@ namespace uf::deployment
                 {"project_state_schema_hash", hash(derived.projectStateSchemaHash)},
                 {"project_tool_precondition_schema_hash",
                  hash(derived.projectToolPreconditionSchemaHash)},
+                {"project_resources", json::Value::ofArray(std::move(resources))},
                 {"reconcile_payload_schema_manifest_hash",
                  hash(derived.reconcilePayloadSchemaManifestHash)},
                 {"tool_catalog_hash", hash(derived.toolCatalogHash)},
@@ -498,6 +519,25 @@ namespace uf::deployment
             auto const& value = member(object, name);
             UF_CHECK(value.isInteger());
             return static_cast<uint64>(value.number());
+        }
+
+        [[nodiscard]]
+        auto resourceKindOf(std::string_view value)
+            -> operator_runtime::ProjectResourceKind
+        {
+            if (value == "json")
+            {
+                return operator_runtime::ProjectResourceKind::Json;
+            }
+            if (value == "utf8")
+            {
+                return operator_runtime::ProjectResourceKind::Utf8;
+            }
+            if (value == "bytes")
+            {
+                return operator_runtime::ProjectResourceKind::Bytes;
+            }
+            UF_UNREACHABLE_MSG("registration schema admitted an unknown resource kind");
         }
 
         // The framework's own reading of the document it just derived. It is a
@@ -523,7 +563,14 @@ namespace uf::deployment
                     document,
                     readValidated(judge, "the derived ProjectRegistration", exactJcs)
                 );
-                UF_TRY_VALUE(pluginHash, parseHash(document, "plugin_hash"));
+                UF_TRY_VALUE(
+                    moduleManifestHash,
+                    parseHash(document, "plugin_module_manifest_hash")
+                );
+                UF_TRY_VALUE(
+                    environmentHash,
+                    parseHash(document, "plugin_environment_hash")
+                );
                 UF_TRY_VALUE(catalogHash, parseHash(document, "tool_catalog_hash"));
                 UF_TRY_VALUE(
                     stateHash,
@@ -546,14 +593,15 @@ namespace uf::deployment
                     parseHash(document, "journal_event_schema_manifest_hash")
                 );
 
-                auto roots = std::vector<operator_runtime::NamedArtifactRoot>{};
-                for (auto const& root :
-                     member(document, "project_artifact_roots").items())
+                auto resources = std::vector<operator_runtime::ProjectResource>{};
+                for (auto const& resource : member(document, "project_resources").items())
                 {
-                    UF_TRY_VALUE(rootHash, parseHash(root, "root_hash"));
-                    roots.emplace_back(operator_runtime::NamedArtifactRoot{
-                        .name     = text(root, "name"),
-                        .rootHash = rootHash,
+                    UF_TRY_VALUE(resourceHash, parseHash(resource, "sha256"));
+                    resources.emplace_back(operator_runtime::ProjectResource{
+                        .kind = resourceKindOf(text(resource, "kind")),
+                        .name = text(resource, "name"),
+                        .hash = resourceHash,
+                        .size = formatOf(resource, "size"),
                     });
                 }
 
@@ -576,7 +624,8 @@ namespace uf::deployment
                         "project_registration_format"
                     ),
                     .pluginId                             = text(document, "plugin_id"),
-                    .pluginHash                           = pluginHash,
+                    .pluginModuleManifestHash             = moduleManifestHash,
+                    .pluginEnvironmentHash                = environmentHash,
                     .toolCatalogHash                      = catalogHash,
                     .projectStateSchemaHash               = stateHash,
                     .projectObservationSchemaHash         = observationHash,
@@ -584,7 +633,7 @@ namespace uf::deployment
                     .reconcilePayloadSchemaManifestHash   = reconcileHash,
                     .journalEventSchemaManifestHash       = journalHash,
                     .baselineEventType                    = text(document, "baseline_event_type"),
-                    .projectArtifactRoots                 = std::move(roots),
+                    .projectResources                     = std::move(resources),
                     .observedInstanceIdentitySchemaHashes = std::move(identityHashes),
                 };
             };
@@ -625,7 +674,9 @@ namespace uf::deployment
         // outlive the create call.
         struct DeploymentFiles final
         {
-            std::string pluginBytes{};
+            std::string pluginEntryModule{};
+            std::vector<operator_runtime::ProjectPluginRegistrar::ModuleBlob>
+                pluginModules{};
             std::string projectState{};
             std::string projectObservation{};
             std::string toolPrecondition{};
@@ -638,6 +689,61 @@ namespace uf::deployment
             std::vector<std::string> effectPayloadSchemas{};
             std::vector<std::string> observedInstanceIdentitySchemas{};
         };
+
+        [[nodiscard]]
+        auto readPluginClosure(
+            task_platform::ConfinedRoot const& root,
+            json::Value const& block
+        ) -> Result<std::pair<
+            std::string,
+            std::vector<operator_runtime::ProjectPluginRegistrar::ModuleBlob>
+        >>
+        {
+            auto const& plugin = member(block, "plugin");
+            auto modules = std::vector<operator_runtime::ProjectPluginRegistrar::ModuleBlob>{};
+            auto paths   = std::vector<std::string>{};
+            auto const& declaredModules = member(plugin, "modules").items();
+            if (declaredModules.size() > script::PureDataProgram::k_maximumModuleCount)
+            {
+                return refuse("a deployment's plugin module count exceeds its ceiling");
+            }
+            auto totalBytes = std::size_t{0};
+            for (auto const& declared : declaredModules)
+            {
+                auto const path = text(declared, "path");
+                UF_TRY_VALUE(
+                    source,
+                    readFile(
+                        root,
+                        "a deployment's plugin module",
+                        path,
+                        k_maximumPluginBytes
+                    )
+                );
+                if (
+                    totalBytes
+                    > script::PureDataProgram::k_maximumModuleClosureSourceBytes
+                        - source.size()
+                )
+                {
+                    return refuse("a deployment's plugin module closure exceeds its byte ceiling");
+                }
+                totalBytes += source.size();
+                modules.emplace_back(operator_runtime::ProjectPluginRegistrar::ModuleBlob{
+                    .name   = text(declared, "name"),
+                    .source = std::move(source),
+                });
+                paths.emplace_back(path);
+            }
+            std::ranges::sort(paths);
+            if (std::ranges::adjacent_find(paths) != paths.end())
+            {
+                return refuse("a deployment's plugin module paths must be unique");
+            }
+            auto entry = text(plugin, "entry");
+            UF_TRY(operator_runtime::derivePluginModuleManifestHash(entry, modules));
+            return std::pair{std::move(entry), std::move(modules)};
+        }
 
         [[nodiscard]]
         auto readList(
@@ -676,7 +782,7 @@ namespace uf::deployment
                 );
             };
 
-            UF_TRY_VALUE(plugin, read("plugin", k_maximumPluginBytes));
+            UF_TRY_VALUE(plugin, readPluginClosure(root, block));
             UF_TRY_VALUE(state, read("project_state_schema", k_maximumDocumentBytes));
             UF_TRY_VALUE(
                 observation,
@@ -725,7 +831,8 @@ namespace uf::deployment
             );
 
             return DeploymentFiles{
-                .pluginBytes                     = std::move(plugin),
+                .pluginEntryModule               = std::move(plugin.first),
+                .pluginModules                   = std::move(plugin.second),
                 .projectState                    = std::move(state),
                 .projectObservation              = std::move(observation),
                 .toolPrecondition                = std::move(precondition),
@@ -740,30 +847,49 @@ namespace uf::deployment
         }
 
         [[nodiscard]]
-        auto readArtifactBlobs(
+        auto readProjectResources(
             task_platform::ConfinedRoot const& root,
             json::Value const& block
-        ) -> Result<std::vector<operator_runtime::ProjectPluginRegistrar::ArtifactBlob>>
+        ) -> Result<std::vector<operator_runtime::ProjectPluginRegistrar::ResourceBlob>>
         {
             auto blobs =
-                std::vector<operator_runtime::ProjectPluginRegistrar::ArtifactBlob>{};
-            for (auto const& declared : member(block, "artifact_blobs").items())
+                std::vector<operator_runtime::ProjectPluginRegistrar::ResourceBlob>{};
+            auto paths = std::vector<std::string>{};
+            auto const& declaredResources = member(block, "resources").items();
+            if (declaredResources.size() > script::PureDataProgram::k_maximumResourceCount)
             {
+                return refuse("a deployment's resource count exceeds its ceiling");
+            }
+            auto totalBytes = std::size_t{0};
+            for (auto const& declared : declaredResources)
+            {
+                auto const path = text(declared, "path");
                 UF_TRY_VALUE(
                     bytes,
                     readFile(
                         root,
-                        "a deployment's artifact_blobs entry",
-                        member(declared, "path").string(),
+                        "a deployment's resources entry",
+                        path,
                         k_maximumBlobBytes
                     )
                 );
+                if (
+                    totalBytes
+                    > script::PureDataProgram::k_maximumResourceClosureBytes
+                        - bytes.size()
+                )
+                {
+                    return refuse("a deployment's resource closure exceeds its byte ceiling");
+                }
+                totalBytes += bytes.size();
                 blobs.emplace_back(
-                    operator_runtime::ProjectPluginRegistrar::ArtifactBlob{
+                    operator_runtime::ProjectPluginRegistrar::ResourceBlob{
+                        .kind  = resourceKindOf(text(declared, "kind")),
                         .name  = text(declared, "name"),
                         .bytes = std::move(bytes),
                     }
                 );
+                paths.emplace_back(path);
             }
             // The registration states them in JCS order and validateClaims
             // refuses any other. Sorting here rather than asking the author to
@@ -775,37 +901,45 @@ namespace uf::deployment
                 {
                     return jsonMemberNameLess(left, right);
                 },
-                &operator_runtime::ProjectPluginRegistrar::ArtifactBlob::name
+                &operator_runtime::ProjectPluginRegistrar::ResourceBlob::name
             );
             for (auto index = std::size_t{1}; index < blobs.size(); ++index)
             {
                 if (blobs[index - 1U].name == blobs[index].name)
                 {
                     return refuse(std::format(
-                        "a deployment declares the artifact root {} twice",
+                        "a deployment declares the resource {} twice",
                         blobs[index].name
                     ));
                 }
             }
+            std::ranges::sort(paths);
+            if (std::ranges::adjacent_find(paths) != paths.end())
+            {
+                return refuse("a deployment's resource paths must be unique");
+            }
+            UF_TRY(operator_runtime::validateProjectResourceClosure(blobs));
             return blobs;
         }
 
         [[nodiscard]]
-        auto artifactRootsOf(
-            std::span<operator_runtime::ProjectPluginRegistrar::ArtifactBlob const>
+        auto projectResourceClaimsOf(
+            std::span<operator_runtime::ProjectPluginRegistrar::ResourceBlob const>
                 blobs
-        ) -> Result<std::vector<operator_runtime::NamedArtifactRoot>>
+        ) -> Result<std::vector<operator_runtime::ProjectResource>>
         {
-            auto roots = std::vector<operator_runtime::NamedArtifactRoot>{};
+            auto resources = std::vector<operator_runtime::ProjectResource>{};
             for (auto const& blob : blobs)
             {
-                UF_TRY_VALUE(rootHash, hashOf(blob.bytes));
-                roots.emplace_back(operator_runtime::NamedArtifactRoot{
-                    .name     = blob.name,
-                    .rootHash = rootHash,
+                UF_TRY_VALUE(resourceHash, hashOf(blob.bytes));
+                resources.emplace_back(operator_runtime::ProjectResource{
+                    .kind = blob.kind,
+                    .name = blob.name,
+                    .hash = resourceHash,
+                    .size = static_cast<uint64>(blob.bytes.size()),
                 });
             }
-            return roots;
+            return resources;
         }
 
         [[nodiscard]]
@@ -1235,8 +1369,8 @@ namespace uf::deployment
             }
 
             UF_TRY_VALUE(files, readDeploymentFiles(root, block));
-            UF_TRY_VALUE(blobs, readArtifactBlobs(root, block));
-            UF_TRY_VALUE(artifactRoots, artifactRootsOf(blobs));
+            UF_TRY_VALUE(resources, readProjectResources(root, block));
+            UF_TRY_VALUE(resourceClaims, projectResourceClaimsOf(resources));
 
             auto const journalViews    = views(files.journalPayloadSchemas);
             auto const effectViews     = views(files.effectPayloadSchemas);
@@ -1269,7 +1403,17 @@ namespace uf::deployment
                 ));
             }
 
-            UF_TRY_VALUE(pluginHash, hashOf(files.pluginBytes));
+            UF_TRY_VALUE(
+                pluginModuleManifestHash,
+                operator_runtime::derivePluginModuleManifestHash(
+                    files.pluginEntryModule,
+                    files.pluginModules
+                )
+            );
+            UF_TRY_VALUE(
+                pluginEnvironmentHash,
+                operator_runtime::currentProjectPluginEnvironmentHash()
+            );
             UF_TRY_VALUE(catalogHash, hashOf(files.toolCatalog));
             UF_TRY_VALUE(stateHash, hashOf(files.projectState));
             UF_TRY_VALUE(observationHash, hashOf(files.projectObservation));
@@ -1298,7 +1442,8 @@ namespace uf::deployment
             auto const derived = DerivedRegistration{
                 .pluginId                             = pluginId,
                 .baselineEventType                    = text(block, "baseline_event_type"),
-                .pluginHash                           = pluginHash,
+                .pluginModuleManifestHash             = pluginModuleManifestHash,
+                .pluginEnvironmentHash                = pluginEnvironmentHash,
                 .toolCatalogHash                      = catalogHash,
                 .projectStateSchemaHash               = stateHash,
                 .projectObservationSchemaHash         = observationHash,
@@ -1308,7 +1453,7 @@ namespace uf::deployment
                 .observedInstanceIdentitySchemaHashes = std::move(identityHashes),
             };
 
-            auto const canonicalJcs = registrationJcs(derived, artifactRoots);
+            auto const canonicalJcs = registrationJcs(derived, resourceClaims);
             UF_TRY_VALUE(computed, hashOf(canonicalJcs));
 
             // The one comparison on this chain between two values produced at
@@ -1435,8 +1580,9 @@ namespace uf::deployment
                 .reconcileSchemaOwner            = *std::move(reconcileOwner),
                 .observedInstanceIdentitySchemas = *std::move(identitySet),
                 .catalog                         = *std::move(deployed),
-                .pluginBytes                     = std::move(files.pluginBytes),
-                .artifactBlobs                   = std::move(blobs),
+                .pluginEntryModule               = std::move(files.pluginEntryModule),
+                .pluginModules                   = std::move(files.pluginModules),
+                .projectResources                = std::move(resources),
             });
         }
 

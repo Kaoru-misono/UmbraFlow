@@ -25,7 +25,6 @@
 #include <iostream>
 #include <iterator>
 #include <optional>
-#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -242,7 +241,7 @@ namespace uf::project
         // One member of an object the published project schema has already
         // judged. Total by construction, the same way the kit's helper is
         // (project-kit.cpp): every member read through it is required in
-        // schema/umbraflow-project-v1.schema.json and of the type stated
+        // schema/umbraflow-project-v2.schema.json and of the type stated
         // there, so the extraction below happens only on the value
         // readProjectRootDocument let the schema judge.
         [[nodiscard]]
@@ -317,19 +316,15 @@ namespace uf::project
             return declaration;
         }
 
-        // What the deployment declaration contributes to the spec the kit is
-        // given: every deployment names its declared tool catalog source and
-        // its artifact blobs, and the artifact-roots registration is exactly
-        // the closure those blobs state. The registration is derived, never
-        // declared: a project that stated its own artifact roots could state
-        // roots that disagree with its own closure.
+        // The caller supplies only the semantic Tool Catalog declarations it
+        // has parsed. Module and resource closures stay inside the kit and are
+        // derived from the already-validated root manifest; exposing them here
+        // would create a second, caller-controlled spelling of one project.
         [[nodiscard]]
         auto attachDeploymentDeclarations(ProjectBuildSpec& spec) -> Status
         {
             UF_TRY_VALUE(document, readProjectRootDocument(spec.sourceDirectory));
-            auto toolCatalogs  = std::vector<ToolCatalogDeclaration>{};
-            auto artifactBlobs = std::vector<ProjectArtifactBlobSpec>{};
-            auto blobNames     = std::set<std::string>{};
+            auto toolCatalogs = std::vector<ToolCatalogDeclaration>{};
             for (auto const& deployment : member(document, "deployments").items())
             {
                 UF_TRY_VALUE(
@@ -337,34 +332,9 @@ namespace uf::project
                     declaredToolCatalog(spec.sourceDirectory, deployment)
                 );
                 toolCatalogs.emplace_back(std::move(catalog));
-                for (auto const& blob : member(deployment, "artifact_blobs").items())
-                {
-                    auto const name = std::string{member(blob, "name").string()};
-                    if (!blobNames.emplace(name).second)
-                    {
-                        return fail(
-                            AutomationErrorKind::InvalidResource,
-                            std::format(
-                                "the deployment declarations name the artifact "
-                                "root {} more than once",
-                                name
-                            )
-                        );
-                    }
-                    artifactBlobs.emplace_back(ProjectArtifactBlobSpec{
-                        .name        = std::move(name),
-                        .sourceInput = std::filesystem::path{
-                            member(blob, "path").string()
-                        },
-                    });
-                }
+
             }
-            spec.toolCatalogs  = std::move(toolCatalogs);
-            spec.artifactBlobs = std::move(artifactBlobs);
-            spec.registration.artifactBlobNames.assign(
-                blobNames.begin(),
-                blobNames.end()
-            );
+            spec.toolCatalogs = std::move(toolCatalogs);
             return ok();
         }
 
@@ -759,15 +729,13 @@ namespace uf::project
             "plugin_authoring is hand-written and refuses one from every\n"
             "deployment whose plugin_authoring is generated.\n"
             "\n"
-            "Every deployment also names its declared tool catalog source and\n"
-            "its artifact blobs. build and check read the first as the Tool\n"
-            "Catalog document it declares -- a source the tree does not hold is\n"
-            "refused by name, like a declared cut's missing corpus -- and read\n"
-            "the second back into generated/artifact-blobs/, with\n"
-            "generated/registrations/artifact-roots-v1.json stating exactly the\n"
-            "closure those blobs declare. Nothing states a registration\n"
-            "separately: a project that named its own artifact roots could name\n"
-            "roots that disagree with its own closure.\n"
+            "Every deployment also names its declared tool catalog, closed\n"
+            "module set and typed resources. build and check materialize the\n"
+            "exact execution bytes under generated/modules/ and\n"
+            "generated/resources/. generated/registrations/DEPLOYMENT.json\n"
+            "records the module-manifest and running environment identities\n"
+            "plus every resource kind, digest and size; project authors type no\n"
+            "digest in umbraflow-project.json.\n"
             "\n"
             "build also records every other file a deployment declaration\n"
             "names -- the four project schemas, the two manifests and the\n"

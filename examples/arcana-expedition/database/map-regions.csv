@@ -1,0 +1,5 @@
+sequence,region,enabled
+20,pass,true
+10,harbour,true
+40,ruins,false
+30,summit,true

@@ -25,7 +25,7 @@ namespace uf::cli
         std::string pluginId{};
         std::string registrationHash{};
 
-        std::size_t artifactBlobs{};
+        std::size_t resources{};
 
         // Why the Operator's registrar refused this deployment's plugin, or
         // nothing at all when the registry holds it afterwards. It is per

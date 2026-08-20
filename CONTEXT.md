@@ -248,7 +248,7 @@ it demanded a justification from every deployment with a `plugin` member,
 generated adapters included).
 
 **umbraflow-project.json's shape** — stated once, in
-`schema/umbraflow-project-v1.schema.json`, and reaching both of its readers as
+`schema/umbraflow-project-v2.schema.json`, and reaching both of its readers as
 published bytes through the framework schema catalog. The two readers are
 `deployment::loadProductionProject` and the offline kit's `project build` /
 `project check`, and they live in modules that cannot link one another —
@@ -257,9 +257,9 @@ published bytes through the framework schema catalog. The two readers are
 root whether or not the author declared it as an input, and a source tree
 holding none is not a project.
 
-This is the implemented generation. The accepted module/resource cut replaces
-it with `umbraflow-project/v2` and registration format 3 in one release; no
-reader accepts a half-migrated single-file/module-closure hybrid.
+This implemented generation is the atomic module/resource cut:
+`umbraflow-project/v2` and registration format 3. No reader accepts a
+half-migrated single-file/module-closure hybrid.
 
 _Avoid_: `k_projectSchema` inside
 `modules/deployment/source/deployment/project-directory.cpp`, and
@@ -346,7 +346,7 @@ actually travels in `runtime-model.toml` and is validated is the integer
 
 Every other file in `schema/` is identified by its `$id` alone and carries no
 in-band id. The `$id`s are not uniform, so read the file rather than guessing:
-`journal-v1`, `operator-v1`, `policy-v1`, `project-registration-v1` and
+`journal-v1`, `operator-v1`, `policy-v1`, `project-registration-v2` and
 `trace-v2` are short ids under `https://umbraflow.local/schema/`, while
 `umbraflow-annotation-workspace-v2.schema.json`,
 `umbraflow-runtime-artifact-v1.schema.json` and

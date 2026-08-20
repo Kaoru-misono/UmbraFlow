@@ -145,7 +145,7 @@ part of this file that cannot be recovered from anywhere else.
   coordinate, Receipt, tool mutability, reducer input or reconciliation
   disposition: each arrives from an authority bound to the exact bytes the
   ProjectRegistration pinned;
-- no path that is checked and then opened by name — artifact reads and
+- no path that is checked and then opened by name — resource reads and
   deployment staging both resolve once, through held handles that refuse a
   reparse point by attribute;
 - no direct run/check/replay production action path;

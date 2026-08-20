@@ -284,7 +284,7 @@ namespace uf::operator_runtime
         friend class OperatorCoordinator;
 
         ContentHash        m_projectRegistrationHash;
-        ContentHash        m_pluginHash;
+        ContentHash        m_pluginModuleManifestHash;
         std::string        m_projectInstanceKey;
         ContentHash        m_stateResolutionHash;
         uint64             m_projectStateRevision;
@@ -294,7 +294,7 @@ namespace uf::operator_runtime
 
         StoredProjectObservation(
             ContentHash projectRegistrationHash,
-            ContentHash pluginHash,
+            ContentHash pluginModuleManifestHash,
             std::string projectInstanceKey,
             ContentHash stateResolutionHash,
             uint64 projectStateRevision,
@@ -313,7 +313,7 @@ namespace uf::operator_runtime
         ~StoredProjectObservation() = default;
 
         [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;
-        [[nodiscard]] auto pluginHash() const -> ContentHash;
+        [[nodiscard]] auto pluginModuleManifestHash() const -> ContentHash;
 
         [[nodiscard]]
         auto projectInstanceKey() const noexcept UF_LIFETIME_BOUND

@@ -74,6 +74,18 @@ namespace uf::operator_runtime::test_support
         }
 
         [[nodiscard]]
+        auto refuses(std::string_view sql) -> bool
+        {
+            return sqlite3_exec(
+                m_database.get(),
+                sql.data(),
+                nullptr,
+                nullptr,
+                nullptr
+            ) != SQLITE_OK;
+        }
+
+        [[nodiscard]]
         auto readRows(
             std::string_view sql
         ) const -> std::vector<std::vector<std::string>>

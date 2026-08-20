@@ -99,7 +99,7 @@ namespace uf::deployment
     //
     // There is no authored registration document anywhere in a project
     // directory. The block states intent -- which plugin, which schemas, which
-    // artifact roots, each by path -- and every digest in the registration is
+    // typed resources, each by path -- and every digest in the registration is
     // this loader's own arithmetic.
     struct LoadedDeployment final
     {
@@ -120,11 +120,13 @@ namespace uf::deployment
         // deployment's catalog be held to each other.
         ProjectDeployment catalog;
 
-        // registerPlugin's other two arguments, as bytes.
-        std::string pluginBytes{};
-
-        std::vector<operator_runtime::ProjectPluginRegistrar::ArtifactBlob>
-            artifactBlobs{};
+        // registerPlugin's exact module/resource closure, as bytes. Paths have
+        // already been confined and do not survive into runtime identity.
+        std::string pluginEntryModule{};
+        std::vector<operator_runtime::ProjectPluginRegistrar::ModuleBlob>
+            pluginModules{};
+        std::vector<operator_runtime::ProjectPluginRegistrar::ResourceBlob>
+            projectResources{};
     };
 
     // The exact ProjectPlugin input bytes observed by the loader's document
@@ -265,7 +267,7 @@ namespace uf::deployment
     //
     // The members a deployment can also name but this read does not open --
     // the plugin, the effect payload schemas, the identity schemas and the
-    // artifact blobs -- are outside the file set the check's completion
+    // resources -- are outside the file set the check's completion
     // condition enumerates, and a read that opened them would be more than the
     // check's caller asked for.
     [[nodiscard]]

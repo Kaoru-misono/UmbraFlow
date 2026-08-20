@@ -1,6 +1,6 @@
 {
-  "$comment": "A second game, as data. Both deployments pin one artifact root over the same blob, so the two registrations differ only where the plugin id reaches them.",
-  "schema": "umbraflow-project/v1",
+  "$comment": "A second game, as data. Both deployments execute a three-module closure over the same Python-built map resource; their registrations remain distinct because each plugin id and entry module bytes are distinct.",
+  "schema": "umbraflow-project/v2",
   "runtime_artifact": "runtime/artifact",
   "primary_deployment": "expedition",
   "template_cuts": [],
@@ -9,7 +9,14 @@
       "name": "expedition",
       "plugin_id": "arcana.expedition",
       "baseline_event_type": "expedition.founded",
-      "plugin": "plugin/expedition.luau",
+      "plugin": {
+        "entry": "main",
+        "modules": [
+          {"name": "main", "path": "plugin/expedition.luau"},
+          {"name": "plans", "path": "plugin/plans.luau"},
+          {"name": "state/reducer", "path": "plugin/state/reducer.luau"}
+        ]
+      },
       "plugin_authoring": "hand-written",
       "plugin_justification": "umbraflow-declarative-workflow-tool/v1 declares one const tool_name over a fixed states/steps schedule of wait and ui_action states. It has no effects member, so the per-tool OP:PlanProposal effect sets this deployment proposes (distinct scope_key and risk per camp) cannot be declared, and it has no reduce semantics at all, so folding expedition.advanced/arrived/blocked Journal entries into ProjectState has no declarative spelling.",
       "project_state_schema": "schema/project-state-v1.schema.json",
@@ -32,15 +39,22 @@
       "observed_instance_identity_schemas": [
         "schema/observed-identity-v1.schema.json"
       ],
-      "artifact_blobs": [
-        {"name": "map", "path": "blob/map.blob"}
+      "resources": [
+        {"kind": "json", "name": "map", "path": "blob/map.blob"}
       ]
     },
     {
       "name": "rival",
       "plugin_id": "arcana.rival",
       "baseline_event_type": "expedition.founded",
-      "plugin": "plugin/rival.luau",
+      "plugin": {
+        "entry": "main",
+        "modules": [
+          {"name": "main", "path": "plugin/rival.luau"},
+          {"name": "plans", "path": "plugin/plans.luau"},
+          {"name": "state/reducer", "path": "plugin/state/reducer.luau"}
+        ]
+      },
       "plugin_authoring": "hand-written",
       "plugin_justification": "The same reason as the expedition deployment, and it is not shared: umbraflow-declarative-workflow-tool/v1 has no effects member and no reduce semantics, so this second registration's plan proposals and its Journal fold cannot be declared either. What makes it a separate plugin rather than a second declaration is the plugin_id every proposal is judged under.",
       "project_state_schema": "schema/project-state-v1.schema.json",
@@ -63,8 +77,8 @@
       "observed_instance_identity_schemas": [
         "schema/observed-identity-v1.schema.json"
       ],
-      "artifact_blobs": [
-        {"name": "map", "path": "blob/map.blob"}
+      "resources": [
+        {"kind": "json", "name": "map", "path": "blob/map.blob"}
       ]
     }
   ]

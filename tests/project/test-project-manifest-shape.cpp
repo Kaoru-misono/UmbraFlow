@@ -10,7 +10,7 @@
 // which the loader refused, and it named the wrong defect for a deployment
 // that is not an object at all.
 //
-// The shape now lives in schema/umbraflow-project-v1.schema.json and reaches
+// The shape now lives in schema/umbraflow-project-v2.schema.json and reaches
 // both through the framework schema catalog. Every case below hands one
 // document to both commands and requires not only the same verdict but the
 // same sentence: the refusal each produces is compared for equality from the
@@ -32,6 +32,8 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
+#include <vector>
 
 namespace uf::project
 {
@@ -43,7 +45,7 @@ namespace uf::project
         // the two readers' own prefixes, which differ because one is naming a
         // source tree and the other a project directory.
         constexpr auto k_schemaLabel = std::string_view{
-            "schema/umbraflow-project-v1.schema.json"
+            "schema/umbraflow-project-v2.schema.json"
         };
 
         class TemporaryDirectory final
@@ -133,9 +135,9 @@ namespace uf::project
             auto block = std::string{R"json({"name":"dream",)json"};
             block += R"json("plugin_id":"chaos.dream",)json";
             block += R"json("baseline_event_type":"project.baseline_created",)json";
-            block += R"json("plugin":")json";
+            block += R"json("plugin":{"entry":"main","modules":[{"name":"main","path":")json";
             block += plugin;
-            block += R"json(",)json";
+            block += R"json("}]},)json";
             block += R"json("plugin_authoring":")json";
             block += authoring;
             block += R"json(",)json";
@@ -150,14 +152,14 @@ namespace uf::project
             block += R"json("journal_payload_schemas":["schema/journal-0.json"],)json";
             block += R"json("effect_payload_schemas":[],)json";
             block += R"json("observed_instance_identity_schemas":[],)json";
-            block += R"json("artifact_blobs":[]})json";
+            block += R"json("resources":[]})json";
             return block;
         }
 
         [[nodiscard]]
         auto manifestOf(std::string_view deployments) -> std::string
         {
-            auto document = std::string{R"json({"schema":"umbraflow-project/v1",)json"};
+            auto document = std::string{R"json({"schema":"umbraflow-project/v2",)json"};
             document += R"json("runtime_artifact":"runtime/artifact",)json";
             document += R"json("primary_deployment":"dream",)json";
             document += R"json("template_cuts":[],)json";
@@ -197,6 +199,39 @@ namespace uf::project
             );
         }
 
+        [[nodiscard]]
+        auto generatedWorkflowDeclaration() -> std::string_view
+        {
+            return R"json({
+  "schema": "umbraflow-declarative-workflow-tool/v1",
+  "tool_name": "acme.do_work",
+  "target_argument": "observed_instance_id",
+  "allowed_instance_kinds": ["acme.target"],
+  "fresh_observation": {
+    "required_surface": "acme.surface",
+    "require_unambiguous": true
+  },
+  "ui_finding": {"kind": "observed_instance_absent"},
+  "states": [
+    {
+      "state_key": "await-target",
+      "kind": "wait",
+      "observation_budget": 1,
+      "timeout_ms": 1000
+    }
+  ],
+  "steps": ["await-target"],
+  "bounds": {
+    "maximum_states": 1,
+    "maximum_steps": 1,
+    "maximum_dispatches": 0,
+    "maximum_observations": 1,
+    "maximum_waits": 1,
+    "maximum_elapsed_ms": 1000
+  }
+})json";
+        }
+
         // The kit's verdict on one document: `project build` then
         // `project check` over a source tree whose only declared input is a
         // file the manifest has nothing to do with, so what this measures is
@@ -208,12 +243,23 @@ namespace uf::project
             auto const source    = workspace.path() / "source";
             auto const build     = workspace.path() / "build";
             writeFile(source / "dummy.txt", "dummy\n");
+            writeFile(source / "plugin/dream.luau", "return {}\n");
             writeFile(source / "umbraflow-project.json", manifest);
+
+            auto inputs = std::vector<std::filesystem::path>{"dummy.txt"};
+            if (manifest.contains("generated/adapters/acme.tool/do-work.luau"))
+            {
+                auto const declaration = std::filesystem::path{
+                    "declarative-tools/acme.tool/do-work.json"
+                };
+                writeFile(source / declaration, generatedWorkflowDeclaration());
+                inputs.emplace_back(declaration);
+            }
 
             auto const initialized = initProject(ProjectInitSpec{
                 .sourceDirectory = source,
                 .buildDirectory  = build,
-                .inputs          = {std::filesystem::path{"dummy.txt"}},
+                .inputs          = std::move(inputs),
             });
             REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
 
@@ -259,7 +305,7 @@ namespace uf::project
             auto const numericName = std::string{
                 R"json([{"name":7,"plugin_id":"chaos.dream",)json"
                 R"json("baseline_event_type":"project.baseline_created",)json"
-                R"json("plugin":"plugin/dream.luau",)json"
+                R"json("plugin":{"entry":"main","modules":[{"name":"main","path":"plugin/dream.luau"}]},)json"
                 R"json("plugin_authoring":"hand-written",)json"
             }
                 + statedJustification()
@@ -273,7 +319,7 @@ namespace uf::project
                 R"json("journal_payload_schemas":["schema/journal-0.json"],)json"
                 R"json("effect_payload_schemas":[],)json"
                 R"json("observed_instance_identity_schemas":[],)json"
-                R"json("artifact_blobs":[]}])json";
+                R"json("resources":[]}])json";
 
             auto unknownMember = acceptedManifest();
             unknownMember.insert(1U, R"json("invented_member":1,)json");
@@ -402,7 +448,7 @@ namespace uf::project
     }
 
     // What the pattern refuses is ASCII whitespace and nothing else, which is
-    // what schema/umbraflow-project-v1.schema.json says it refuses. A
+    // what schema/umbraflow-project-v2.schema.json says it refuses. A
     // justification of one NO-BREAK SPACE is accepted by both readers -- it is
     // a review finding at plugin acceptance rather than a gate finding, on the
     // same terms as a justification that is present and false.

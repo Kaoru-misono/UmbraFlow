@@ -220,7 +220,7 @@ def validate_registration_vector(
     # the authority that decides them. The frozen schema is checked to
     # accept what the vector says a registration may be.
     vector = load(vectors / "registration.json")["valid"]
-    registration_schema = schema_root / "umbraflow-project-registration-v1.schema.json"
+    registration_schema = schema_root / "umbraflow-project-registration-v2.schema.json"
     registration_validator = validator(registration_schema, registry)
     if registration_validator.is_valid(vector):
         return

@@ -223,16 +223,16 @@ namespace uf::operator_runtime
 
         [[nodiscard]] auto pluginId() const -> std::string;
         [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;
-        [[nodiscard]] auto pluginHash() const -> ContentHash;
+        [[nodiscard]] auto pluginModuleManifestHash() const -> ContentHash;
 
-        // The artifact-root identities this registration pinned, in the
-        // manifest's own order -- artifact-root names sorted by UTF-8 bytes, so
+        // The resource identities this registration pinned, in the
+        // manifest's own order -- resource names sorted by UTF-8 bytes, so
         // the sequence is determined and a JCS array of it is too. Trusted
         // Operator code needs them because it assembles the derive envelope
         // itself rather than accepting one; they are already public in the
         // registration this handle was built from.
         [[nodiscard]]
-        auto projectArtifactRootHashes() const -> std::vector<ContentHash>;
+        auto projectResourceHashes() const -> std::vector<ContentHash>;
 
         // The observation schema this registration pinned. The Operator records
         // it beside every derived reading so a stored observation names the
@@ -264,15 +264,22 @@ namespace uf::operator_runtime
     };
 
     // Startup-only exact registry. Registration accepts only an already verified
-    // registration, the exact plugin bytes and artifact blobs pinned by it, and a
+    // registration, the exact module and resource closures pinned by it, and a
     // schema owner bound to the same root.
     class ProjectPluginRegistrar final
     {
     public:
-        struct ArtifactBlob final
+        struct ModuleBlob final
         {
             std::string name{};
-            std::string bytes{};
+            std::string source{};
+        };
+
+        struct ResourceBlob final
+        {
+            ProjectResourceKind kind{ProjectResourceKind::Json};
+            std::string         name{};
+            std::string         bytes{};
         };
 
     private:
@@ -282,8 +289,9 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto registerPlugin(
             VerifiedProjectRegistration const& registration,
-            std::string exactPluginBytes,
-            std::vector<ArtifactBlob> exactArtifactBlobs,
+            std::string entryModule,
+            std::vector<ModuleBlob> exactModules,
+            std::vector<ResourceBlob> exactResources,
             ProjectSchemaOwner schemaOwner
         ) -> Result<ProjectPluginHandle>;
 
@@ -294,4 +302,17 @@ namespace uf::operator_runtime
         ) const
             -> Result<ProjectPluginHandle>;
     };
+
+    [[nodiscard]]
+    auto derivePluginModuleManifestHash(
+        std::string_view entryModule,
+        std::span<ProjectPluginRegistrar::ModuleBlob const> modules
+    ) -> Result<ContentHash>;
+
+    [[nodiscard]]
+    auto validateProjectResourceClosure(
+        std::span<ProjectPluginRegistrar::ResourceBlob const> resources
+    ) -> Status;
+
+    [[nodiscard]] auto currentProjectPluginEnvironmentHash() -> Result<ContentHash>;
 } // namespace uf::operator_runtime

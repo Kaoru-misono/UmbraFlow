@@ -1,6 +1,6 @@
 {
   "$comment": "The framework's own exemplar, as data. Its two deployments hold identical schema documents and differ only in the plugin id every manifest declares, which is what makes their registrations two rather than one.",
-  "schema": "umbraflow-project/v1",
+  "schema": "umbraflow-project/v2",
   "runtime_artifact": "runtime/artifact",
   "primary_deployment": "alpha",
   "template_cuts": [],
@@ -9,7 +9,10 @@
       "name": "alpha",
       "plugin_id": "fixture.alpha",
       "baseline_event_type": "fixture.baseline",
-      "plugin": "plugin/alpha.luau",
+      "plugin": {
+        "entry": "main",
+        "modules": [{"name": "main", "path": "plugin/alpha.luau"}]
+      },
       "plugin_authoring": "hand-written",
       "plugin_justification": "This deployment must mint proposals the Operator is supposed to refuse -- one naming a tool_name other than its Operation's, one whose workflow_limits exceed the Tool Catalog's, one whose effects are reordered. umbraflow-declarative-workflow-tool/v1 cannot express any of them: tool_name is a single const, the six members of bounds are compared against counts computed from the static schedule at admission, and there is no effects member to reorder.",
       "project_state_schema": "schema/project-state-v1.schema.json",
@@ -28,17 +31,20 @@
       "effect_payload_schemas": [
         "schema/effect/fixture.write-v1.schema.json"
       ],
-      "$comment": "This deployment registers no artifact root: the member is written empty rather than left out, because an absent member would be read as a declaration gone missing. It observes the one instance its plugin's derive proposes, under the identity schema this array names.",
+      "$comment": "This deployment registers no resource: the member is written empty rather than left out, because an absent member would be read as a declaration gone missing. It observes the one instance its plugin's derive proposes, under the identity schema this array names.",
       "observed_instance_identity_schemas": [
         "schema/observed-identity-v1.schema.json"
       ],
-      "artifact_blobs": []
+      "resources": []
     },
     {
       "name": "foreign",
       "plugin_id": "fixture.foreign",
       "baseline_event_type": "fixture.baseline",
-      "plugin": "plugin/foreign.luau",
+      "plugin": {
+        "entry": "main",
+        "modules": [{"name": "main", "path": "plugin/foreign.luau"}]
+      },
       "plugin_authoring": "hand-written",
       "plugin_justification": "The foreign role exists to mint a document under a second plugin_id so that a cross-registration refusal has two registrations to refuse between. umbraflow-declarative-workflow-tool/v1 produces an adapter for one declared tool and carries no member that decides what a Reduce returns, so a deployment whose purpose is answering as the wrong registration cannot be declared at that tier.",
       "project_state_schema": "schema/project-state-v1.schema.json",
@@ -57,11 +63,11 @@
       "effect_payload_schemas": [
         "schema/effect/fixture.write-v1.schema.json"
       ],
-      "$comment": "This deployment registers no artifact root: the member is written empty rather than left out, because an absent member would be read as a declaration gone missing. It observes the one instance its plugin's derive proposes, under the identity schema this array names.",
+      "$comment": "This deployment registers no resource: the member is written empty rather than left out, because an absent member would be read as a declaration gone missing. It observes the one instance its plugin's derive proposes, under the identity schema this array names.",
       "observed_instance_identity_schemas": [
         "schema/observed-identity-v1.schema.json"
       ],
-      "artifact_blobs": []
+      "resources": []
     }
   ]
 }

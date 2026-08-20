@@ -117,7 +117,7 @@ Half of this rule is executable. Every deployment block of
 non-empty `plugin_justification` naming the member or semantic of
 `umbraflow-declarative-workflow-tool/v1` that cannot express it, and every block
 whose `plugin_authoring` is `generated` must carry none.
-`schema/umbraflow-project-v1.schema.json` states both directions once, and both
+`schema/umbraflow-project-v2.schema.json` states both directions once, and both
 readers of the document compile those published bytes: `project build` and
 `project check` through `readProjectManifest` in
 `modules/project/source/project/project-kit.cpp`, and the runtime load through

@@ -477,7 +477,7 @@ namespace uf::operator_runtime
         // "Delete-on-open has a deadline" section owns
         // the exact-pair migration policy.
         constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
-            "sha256:b26344e031574f95020ed445e16e9de396f76442d98c5a3b758a91d84660237e"
+            "sha256:d26b0e12be915009587a72312d4b46f4afc88509df5432f967eb15b016c24257"
         };
 
         // A transition row records the applied exact pair; neither the row nor
@@ -547,12 +547,24 @@ namespace uf::operator_runtime
             ") STRICT"
         };
 
-        // A registration row is its canonical bytes plus the two values a join
-        // selects on. It deliberately carries no second copy of a member those
-        // bytes already hold: a copy beside a full canonical-bytes comparison
-        // refuses nothing the comparison does not, and one more column to keep
-        // in step is one more way for the row and the document to disagree.
+        // Generation-neutral storage retains exact historical manifests while
+        // making the identity kind explicit. Format-2 single-source rows remain
+        // audit/export data; only format-3 module-manifest rows may execute.
         constexpr auto k_projectRegistrationsDdl = std::string_view{
+            "CREATE TABLE project_registrations("
+            "registration_hash TEXT PRIMARY KEY,"
+            "registration_format INTEGER NOT NULL,"
+            "plugin_id TEXT NOT NULL,"
+            "plugin_identity_kind TEXT NOT NULL CHECK(plugin_identity_kind IN "
+            "('single_source', 'module_manifest')),"
+            "plugin_identity_hash TEXT NOT NULL,"
+            "canonical_manifest TEXT NOT NULL,"
+            "CHECK((registration_format=2 AND plugin_identity_kind='single_source') "
+            "OR (registration_format=3 AND plugin_identity_kind='module_manifest'))"
+            ") STRICT"
+        };
+
+        constexpr auto k_format2ProjectRegistrationsDdl = std::string_view{
             "CREATE TABLE project_registrations("
             "registration_hash TEXT PRIMARY KEY,"
             "plugin_id TEXT NOT NULL,"
@@ -866,12 +878,45 @@ namespace uf::operator_runtime
                 "plugin_id, plugin_hash, canonical_manifest FROM project_registrations"
             ));
             UF_TRY(execute(database, "DROP TABLE project_registrations"));
-            UF_TRY(execute(database, k_projectRegistrationsDdl));
+            UF_TRY(execute(database, k_format2ProjectRegistrationsDdl));
             UF_TRY(execute(
                 database,
                 "INSERT INTO project_registrations SELECT registration_hash, "
                 "plugin_id, plugin_hash, canonical_manifest "
                 "FROM prior_project_registrations"
+            ));
+            return execute(database, "DROP TABLE prior_project_registrations");
+        }
+
+        // The exact format-2 -> generation-neutral transition. Registration
+        // hashes and canonical bytes are copied byte-for-byte; the former
+        // plugin_hash becomes the explicitly historical single_source identity.
+        [[nodiscard]]
+        auto makeRegistrationIdentityGenerationNeutral(sqlite3* database) -> Status
+        {
+            UF_TRY(execute(database, "PRAGMA defer_foreign_keys=ON"));
+            UF_TRY(execute(
+                database,
+                "CREATE TABLE prior_project_registrations("
+                "registration_hash TEXT PRIMARY KEY,"
+                "plugin_id TEXT NOT NULL,"
+                "plugin_hash TEXT NOT NULL,"
+                "canonical_manifest TEXT NOT NULL) STRICT"
+            ));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO prior_project_registrations SELECT registration_hash, "
+                "plugin_id, plugin_hash, canonical_manifest FROM project_registrations"
+            ));
+            UF_TRY(execute(database, "DROP TABLE project_registrations"));
+            UF_TRY(execute(database, k_projectRegistrationsDdl));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO project_registrations("
+                "registration_hash, registration_format, plugin_id, "
+                "plugin_identity_kind, plugin_identity_hash, canonical_manifest) "
+                "SELECT registration_hash, 2, plugin_id, 'single_source', "
+                "plugin_hash, canonical_manifest FROM prior_project_registrations"
             ));
             return execute(database, "DROP TABLE prior_project_registrations");
         }
@@ -1073,6 +1118,7 @@ namespace uf::operator_runtime
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(addSessionWorldScopeColumns(database));
             UF_TRY(addObservedInstanceBindingLocalRef(database));
+            UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -1110,6 +1156,7 @@ namespace uf::operator_runtime
             UF_TRY(dropRegistrationStateSchemaHash(database));
             UF_TRY(addSessionWorldScopeColumns(database));
             UF_TRY(addObservedInstanceBindingLocalRef(database));
+            UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
 
             // No migration commits under an identity other than the exact
@@ -1131,6 +1178,7 @@ namespace uf::operator_runtime
             UF_TRY(dropRegistrationStateSchemaHash(database));
             UF_TRY(addSessionWorldScopeColumns(database));
             UF_TRY(addObservedInstanceBindingLocalRef(database));
+            UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -1147,6 +1195,7 @@ namespace uf::operator_runtime
             UF_TRY(dropRegistrationStateSchemaHash(database));
             UF_TRY(addSessionWorldScopeColumns(database));
             UF_TRY(addObservedInstanceBindingLocalRef(database));
+            UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -1162,6 +1211,7 @@ namespace uf::operator_runtime
             UF_TRY(dropRegistrationStateSchemaHash(database));
             UF_TRY(addSessionWorldScopeColumns(database));
             UF_TRY(addObservedInstanceBindingLocalRef(database));
+            UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -1175,6 +1225,20 @@ namespace uf::operator_runtime
         {
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(addObservedInstanceBindingLocalRef(database));
+            UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
+            UF_TRY(recordSchemaIdentityTransition(database, migration));
+            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
+            return transaction.commit();
+        }
+
+        [[nodiscard]]
+        auto migrateRegistrationIdentityGeneration(
+            sqlite3* database,
+            SchemaMigration const& migration
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -1186,6 +1250,12 @@ namespace uf::operator_runtime
         // a guard nothing can reach is the mirror of a guard production does
         // not reach.
         constexpr auto k_schemaMigrations = std::array{
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:b26344e031574f95020ed445e16e9de396f76442d98c5a3b758a91d84660237e",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = migrateRegistrationIdentityGeneration,
+            },
             SchemaMigration{
                 .sourceIdentity =
                     "sha256:869fb0a128df4a0026bb429449fae03d6b43244c9cef4e794dfdd648421bcc19",
@@ -2040,6 +2110,48 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
+        auto requireExecutableRegistrationFormat(
+            sqlite3_stmt* statement,
+            int column
+        ) -> Status
+        {
+            if (
+                sqlite3_column_int64(statement, column) != 3
+                || columnText(statement, column + 1) != "module_manifest"
+            )
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "legacy registration is audit-only"
+                );
+            }
+            return ok();
+        }
+
+        [[nodiscard]]
+        auto requireExecutableRegistration(
+            sqlite3* database,
+            ContentHash registrationHash
+        ) -> Status
+        {
+            UF_TRY_VALUE(
+                query,
+                prepare(
+                    database,
+                    "SELECT registration_format, plugin_identity_kind "
+                    "FROM project_registrations "
+                    "WHERE registration_hash=?1"
+                )
+            );
+            UF_TRY(bindText(database, query.get(), 1, registrationHash.hex()));
+            if (sqlite3_step(query.get()) == SQLITE_ROW)
+            {
+                return requireExecutableRegistrationFormat(query.get(), 0);
+            }
+            return ok();
+        }
+
+        [[nodiscard]]
         auto validateProjectObservationProposalShape(
             ProjectObservationProposal const& proposal
         ) -> Status
@@ -2300,7 +2412,9 @@ namespace uf::operator_runtime
                     "active_lease.fencing_token, active_lease.revision, "
                     "active_lease.capability_profile_hash, session.project_instance_key, "
                     "session.project_registration_hash, registration.plugin_id, "
-                    "registration.plugin_hash FROM control_leases active_lease "
+                    "registration.plugin_identity_hash, registration.registration_format, "
+                    "registration.plugin_identity_kind "
+                    "FROM control_leases active_lease "
                     "JOIN sessions session ON session.session_id=active_lease.session_id "
                     "JOIN project_registrations registration ON "
                     "registration.registration_hash=session.project_registration_hash "
@@ -2317,6 +2431,7 @@ namespace uf::operator_runtime
                     "Observed instance operation requires an active control lease"
                 );
             }
+            UF_TRY(requireExecutableRegistrationFormat(query.get(), 11));
             auto const matches = columnText(query.get(), 0) == lease.leaseId
                 && columnText(query.get(), 1) == lease.sessionId
                 && columnText(query.get(), 2) == lease.controllerId
@@ -2337,10 +2452,10 @@ namespace uf::operator_runtime
             }
             UF_TRY_VALUE(registrationHash, parseHashColumn(columnText(query.get(), 8)));
             return ObservedInstanceContext{
-                .pluginId                = columnText(query.get(), 9),
-                .pluginHash              = columnText(query.get(), 10),
-                .projectRegistrationHash = registrationHash,
-                .projectInstanceKey      = columnText(query.get(), 7),
+                .pluginId                 = columnText(query.get(), 9),
+                .pluginModuleManifestHash = columnText(query.get(), 10),
+                .projectRegistrationHash  = registrationHash,
+                .projectInstanceKey       = columnText(query.get(), 7),
             };
         }
 
@@ -3141,7 +3256,11 @@ namespace uf::operator_runtime
                 "session.session_epoch, o.controlled_target_id "
                 "FROM operations o JOIN dispatches d ON d.operation_id=o.operation_id "
                 "JOIN sessions session ON session.session_id=o.session_id "
-                "WHERE o.state='running' AND d.delivery_outcome IS NULL"
+                "JOIN project_registrations registration ON "
+                "registration.registration_hash=session.project_registration_hash "
+                "WHERE registration.registration_format=3 "
+                "AND registration.plugin_identity_kind='module_manifest' "
+                "AND o.state='running' AND d.delivery_outcome IS NULL"
             };
             if (!controlledTargetId.empty())
             {
@@ -4956,13 +5075,19 @@ namespace uf::operator_runtime
             prepare(
                 m_impl->database.get(),
                 "INSERT OR IGNORE INTO project_registrations"
-                "(registration_hash, plugin_id, plugin_hash, canonical_manifest) "
-                "VALUES(?1, ?2, ?3, ?4)"
+                "(registration_hash, registration_format, plugin_id, "
+                "plugin_identity_kind, plugin_identity_hash, canonical_manifest) "
+                "VALUES(?1, 3, ?2, 'module_manifest', ?3, ?4)"
             )
         );
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 1, registrationHash.hex()));
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 2, pluginId));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 3, registration.pluginHash().hex()));
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            insert.get(),
+            3,
+            registration.pluginModuleManifestHash().hex()
+        ));
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 4, canonicalManifest));
         UF_TRY(expectDone(m_impl->database.get(), insert.get()));
 
@@ -4970,7 +5095,8 @@ namespace uf::operator_runtime
             query,
             prepare(
                 m_impl->database.get(),
-                "SELECT plugin_id, plugin_hash, canonical_manifest "
+                "SELECT registration_format, plugin_id, plugin_identity_kind, "
+                "plugin_identity_hash, canonical_manifest "
                 "FROM project_registrations "
                 "WHERE registration_hash=?1"
             )
@@ -4981,9 +5107,12 @@ namespace uf::operator_runtime
             return databaseFailure(m_impl->database.get(), "could not verify registration");
         }
         if (
-            columnText(query.get(), 0) != pluginId
-            || columnText(query.get(), 1) != registration.pluginHash().hex()
-            || columnText(query.get(), 2) != canonicalManifest
+            sqlite3_column_int64(query.get(), 0) != 3
+            || columnText(query.get(), 1) != pluginId
+            || columnText(query.get(), 2) != "module_manifest"
+            || columnText(query.get(), 3)
+                != registration.pluginModuleManifestHash().hex()
+            || columnText(query.get(), 4) != canonicalManifest
         )
         {
             return fail(
@@ -5035,7 +5164,8 @@ namespace uf::operator_runtime
         }
         if (
             plugin.pluginId() != registration.pluginId()
-            || plugin.pluginHash() != registration.pluginHash()
+            || plugin.pluginModuleManifestHash()
+                != registration.pluginModuleManifestHash()
             || plugin.projectRegistrationHash() != registration.hash()
         )
         {
@@ -5077,7 +5207,8 @@ namespace uf::operator_runtime
             registrationQuery,
             prepare(
                 m_impl->database.get(),
-                "SELECT plugin_id, plugin_hash, canonical_manifest "
+                "SELECT registration_format, plugin_id, plugin_identity_kind, "
+                "plugin_identity_hash, canonical_manifest "
                 "FROM project_registrations WHERE registration_hash=?1"
             )
         );
@@ -5087,11 +5218,26 @@ namespace uf::operator_runtime
             1,
             registration.hash().hex()
         ));
+        if (sqlite3_step(registrationQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "ProjectInstance requires a registered ProjectRegistration"
+            );
+        }
+        if (sqlite3_column_int64(registrationQuery.get(), 0) != 3)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "legacy registration is audit-only"
+            );
+        }
         if (
-            sqlite3_step(registrationQuery.get()) != SQLITE_ROW
-            || columnText(registrationQuery.get(), 0) != registration.pluginId()
-            || columnText(registrationQuery.get(), 1) != registration.pluginHash().hex()
-            || columnText(registrationQuery.get(), 2) != registration.canonicalJcs()
+            columnText(registrationQuery.get(), 1) != registration.pluginId()
+            || columnText(registrationQuery.get(), 2) != "module_manifest"
+            || columnText(registrationQuery.get(), 3)
+                != registration.pluginModuleManifestHash().hex()
+            || columnText(registrationQuery.get(), 4) != registration.canonicalJcs()
         )
         {
             return fail(
@@ -5350,6 +5496,10 @@ namespace uf::operator_runtime
         );
 
         UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
+        UF_TRY(requireExecutableRegistration(
+            m_impl->database.get(),
+            pin.projectRegistrationHash
+        ));
 
         auto const runtimeArtifactRootHash = manifest.runtimeModelArtifactRootHash();
         UF_TRY_VALUE(
@@ -5689,6 +5839,10 @@ namespace uf::operator_runtime
         }
 
         UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
+        UF_TRY(requireExecutableRegistration(
+            m_impl->database.get(),
+            manifest.projectRegistrationHash()
+        ));
         UF_TRY_VALUE(
             installedGeneration,
             activeInstalledGeneration(
@@ -6386,11 +6540,12 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 "SELECT session.project_instance_key, session.manifest_hash, "
                 "session.controlled_target_id, session.runtime_artifact_root_hash, "
-                "registration.plugin_id, registration.plugin_hash, "
+                "registration.plugin_id, registration.plugin_identity_hash, "
                 "session.project_registration_hash, session.controller_kind, "
                 "session.controller_capabilities, policy.policy_hash, "
                 "session.world_scope_kind, session.world_scope_id, "
-                "session.world_scope_generation "
+                "session.world_scope_generation, registration.registration_format, "
+                "registration.plugin_identity_kind "
                 "FROM sessions session JOIN project_registrations registration "
                 "ON registration.registration_hash=session.project_registration_hash "
                 "JOIN session_policies policy ON policy.session_id=session.session_id "
@@ -6412,6 +6567,7 @@ namespace uf::operator_runtime
                 "Snapshot session is not active in this epoch"
             );
         }
+        UF_TRY(requireExecutableRegistrationFormat(sessionQuery.get(), 13));
         auto const projectInstanceKey  = columnText(sessionQuery.get(), 0);
         auto const sessionManifestHex  = columnText(sessionQuery.get(), 1);
         auto const controlledTargetId = columnText(sessionQuery.get(), 2);
@@ -6422,7 +6578,8 @@ namespace uf::operator_runtime
         // another registration is a different project reading this world.
         if (
             plugin.pluginId() != pluginId
-            || plugin.pluginHash().hex() != columnText(sessionQuery.get(), 5)
+            || plugin.pluginModuleManifestHash().hex()
+                != columnText(sessionQuery.get(), 5)
             || plugin.projectRegistrationHash().hex() != columnText(sessionQuery.get(), 6)
             || catalog.projectRegistrationHash().hex() != columnText(sessionQuery.get(), 6)
         )
@@ -6588,7 +6745,7 @@ namespace uf::operator_runtime
             pendingOperationJcs.push_back('}');
         }
 
-        auto const pinnedRoots = plugin.projectArtifactRootHashes();
+        auto const pinnedResources = plugin.projectResourceHashes();
 
         // The plugin runs inside the transaction, as reduce already does: the
         // read of its inputs and the derivation from them must be one BEGIN
@@ -6599,7 +6756,7 @@ namespace uf::operator_runtime
             deriveInput,
             plugin.canonicalize(deriveEnvelopeJcs(DeriveEnvelopeInputs{
                 .pendingOperationJcs = pendingOperationJcs,
-                .pinnedArtifactRoots = pinnedRoots,
+                .pinnedArtifactRoots = pinnedResources,
                 .priorObservationJcs = priorObservation,
                 .projectStateJcs     = projectStateJcs,
                 .uiSnapshotJcs       = observation.canonicalJcs(),
@@ -6630,10 +6787,10 @@ namespace uf::operator_runtime
             finalObservation,
             mintProjectObservation(
                 ObservedInstanceContext{
-                    .pluginId                = pluginId,
-                    .pluginHash              = columnText(sessionQuery.get(), 5),
-                    .projectRegistrationHash = registrationHash,
-                    .projectInstanceKey      = projectInstanceKey,
+                    .pluginId                 = pluginId,
+                    .pluginModuleManifestHash = columnText(sessionQuery.get(), 5),
+                    .projectRegistrationHash  = registrationHash,
+                    .projectInstanceKey       = projectInstanceKey,
                 },
                 worldScope,
                 identitySchemas,
@@ -6740,7 +6897,7 @@ namespace uf::operator_runtime
         // payload is the final closed envelope, the bytes the row stores.
         auto projectObservation = StoredProjectObservation{
             plugin.projectRegistrationHash(),
-            plugin.pluginHash(),
+            plugin.pluginModuleManifestHash(),
             projectInstanceKey,
             observation.stateResolutionHash(),
             projectStateRevision,
@@ -7072,7 +7229,8 @@ namespace uf::operator_runtime
 
         if (
             plugin.pluginId() != context.pluginId
-            || plugin.pluginHash().hex() != context.pluginHash
+            || plugin.pluginModuleManifestHash().hex()
+                != context.pluginModuleManifestHash
             || plugin.projectRegistrationHash() != context.projectRegistrationHash
             || identitySchemas.projectRegistrationHash()
                 != context.projectRegistrationHash
@@ -7302,7 +7460,8 @@ namespace uf::operator_runtime
                 "registration.plugin_id, session.idempotency_namespace, "
                 "session.project_registration_hash, session.controller_capabilities, "
                 "session.world_scope_kind, session.world_scope_id, "
-                "session.world_scope_generation "
+                "session.world_scope_generation, registration.registration_format, "
+                "registration.plugin_identity_kind "
                 "FROM sessions session JOIN project_registrations "
                 "registration ON registration.registration_hash="
                 "session.project_registration_hash "
@@ -7319,6 +7478,7 @@ namespace uf::operator_runtime
         {
             return fail(AutomationErrorKind::ActionRejected, "Unknown authenticated session");
         }
+        UF_TRY(requireExecutableRegistrationFormat(sessionQuery.get(), 9));
         auto const controlledTargetId = columnText(sessionQuery.get(), 0);
         auto const projectInstanceKey = columnText(sessionQuery.get(), 1);
         auto const pluginId = columnText(sessionQuery.get(), 2);
@@ -8227,10 +8387,12 @@ namespace uf::operator_runtime
                 "SELECT o.state, o.revision, o.mutating, o.command_fingerprint, "
                 "o.tool_name, o.tool_version, o.canonical_args, o.session_id, "
                 "o.controlled_target_id, o.plugin_id, "
-                "session.project_registration_hash, registration.plugin_hash, "
+                "session.project_registration_hash, registration.plugin_identity_hash, "
                 "snapshot.decision_basis_hash, observation.canonical_observation, "
                 "state.canonical_opaque_payload, session.controller_kind, "
-                "session.controller_capabilities FROM operations o "
+                "session.controller_capabilities, registration.registration_format, "
+                "registration.plugin_identity_kind "
+                "FROM operations o "
                 + std::string{k_liveControllerJoin}
                 + "JOIN project_registrations registration "
                 "ON registration.registration_hash=session.project_registration_hash "
@@ -8254,6 +8416,7 @@ namespace uf::operator_runtime
                 "Unknown operation_id, or its session no longer controls the target"
             );
         }
+        UF_TRY(requireExecutableRegistrationFormat(query.get(), 17));
         auto const revision = static_cast<uint64>(sqlite3_column_int64(query.get(), 1));
         if (revision != expectedRevision)
         {
@@ -8302,7 +8465,7 @@ namespace uf::operator_runtime
         auto const registrationHex = columnText(query.get(), 10);
         if (
             plugin.pluginId() != columnText(query.get(), 9)
-            || plugin.pluginHash().hex() != columnText(query.get(), 11)
+            || plugin.pluginModuleManifestHash().hex() != columnText(query.get(), 11)
             || plugin.projectRegistrationHash().hex() != registrationHex
         )
         {
@@ -8646,7 +8809,7 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 "SELECT o.state, o.revision, o.session_id, o.controlled_target_id, "
                 "o.plugin_id, session.project_registration_hash, "
-                "registration.plugin_hash, plan.plan_hash, plan.canonical_plan, "
+                "registration.plugin_identity_hash, plan.plan_hash, plan.canonical_plan, "
                 "plan.maximum_steps, plan.required_approvals, "
                 "COALESCE((SELECT MAX(step_index) FROM operation_steps step "
                 "WHERE step.operation_id=o.operation_id), 0), "
@@ -8658,7 +8821,8 @@ namespace uf::operator_runtime
                 "WHERE d.operation_id=o.operation_id), "
                 "session.runtime_artifact_root_hash, o.tool_name, o.tool_version, "
                 "session.world_scope_kind, session.world_scope_id, "
-                "session.world_scope_generation "
+                "session.world_scope_generation, registration.registration_format, "
+                "registration.plugin_identity_kind "
                 "FROM operations o "
                 + std::string{k_liveControllerJoin}
                 + "JOIN project_registrations registration "
@@ -8684,6 +8848,7 @@ namespace uf::operator_runtime
                 "Unknown operation_id, no frozen plan, or its session lost the target"
             );
         }
+        UF_TRY(requireExecutableRegistrationFormat(query.get(), 22));
         auto const revision = static_cast<uint64>(sqlite3_column_int64(query.get(), 1));
         if (revision != expectedRevision)
         {
@@ -8714,7 +8879,7 @@ namespace uf::operator_runtime
         UF_TRY(requireLiveLease(m_impl->database.get(), lease, "Step lease is stale"));
         if (
             plugin.pluginId() != columnText(query.get(), 4)
-            || plugin.pluginHash().hex() != columnText(query.get(), 6)
+            || plugin.pluginModuleManifestHash().hex() != columnText(query.get(), 6)
             || plugin.projectRegistrationHash().hex() != columnText(query.get(), 5)
         )
         {
@@ -9756,8 +9921,9 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 "SELECT o.state, o.revision, registration.plugin_id, "
                 "session.project_instance_key, session.manifest_hash, "
-                "registration.plugin_hash, session.project_registration_hash, "
-                "o.controlled_target_id "
+                "registration.plugin_identity_hash, session.project_registration_hash, "
+                "o.controlled_target_id, registration.registration_format, "
+                "registration.plugin_identity_kind "
                 "FROM operations o "
                 + std::string{k_liveControllerJoin}
                 + "JOIN project_registrations registration ON "
@@ -9783,6 +9949,7 @@ namespace uf::operator_runtime
                 "Unknown operation_id, or its session is not active in this epoch"
             );
         }
+        UF_TRY(requireExecutableRegistrationFormat(operationQuery.get(), 8));
         UF_TRY_VALUE(state, parseOperationState(columnText(operationQuery.get(), 0)));
         if (state != OperationState::Reconciling)
         {
@@ -9803,7 +9970,8 @@ namespace uf::operator_runtime
         auto const sessionManifestHash = columnText(operationQuery.get(), 4);
         if (
             plugin.pluginId() != pluginId
-            || plugin.pluginHash().hex() != columnText(operationQuery.get(), 5)
+            || plugin.pluginModuleManifestHash().hex()
+                != columnText(operationQuery.get(), 5)
             || plugin.projectRegistrationHash().hex() != columnText(operationQuery.get(), 6)
         )
         {

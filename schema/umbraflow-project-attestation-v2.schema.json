@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://umbraflow.dev/schema/project-attestation/v1",
+  "$id": "https://umbraflow.dev/schema/project-attestation/v2",
   "$comment": "The generic attestation set shape, published by the framework per the V1a ruling so the consumer does not invent a shape the framework may not recognize. It is a producer contract, NOT an Operator admission gate: the Operator verifies the blob's name, closure and hash mechanically, and the consumer's own semantic layer verifies self-hashes, cross-member equality and the registration join. This document deliberately knows nothing about any project's requirements -- the number of attestations, their identifiers and their per-slot pinning are the consumer's own specialization, on the same terms as the project/observation schema. No framework reader compiles against this document.",
   "type": "object",
   "additionalProperties": false,
@@ -13,8 +13,7 @@
   ],
   "properties": {
     "set_version": {
-      "type": "integer",
-      "minimum": 1
+      "const": 2
     },
     "predecessor_set_id": {
       "$comment": "The direct predecessor set's SHA-256 as 64 lowercase hex, or null for the first set. The chain rule itself (null only on first provision, non-null sets name the previous set's exact root hash) is enforced by the consumer generator and by the independent review, not by this schema.",
@@ -61,7 +60,7 @@
         "requirement_id",
         "bundle_root_hash",
         "plugin_id",
-        "plugin_hash",
+        "project_registration_hash",
         "content_pack_hash",
         "recognition_pack_hash",
         "source_snapshot_hash",
@@ -87,7 +86,7 @@
         "plugin_id": {
           "$ref": "#/$defs/namespaced_name"
         },
-        "plugin_hash": {
+        "project_registration_hash": {
           "$ref": "#/$defs/hash64"
         },
         "content_pack_hash": {

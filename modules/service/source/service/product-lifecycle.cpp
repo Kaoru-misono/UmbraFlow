@@ -324,8 +324,9 @@ namespace uf::service
             plugin,
             registrar.registerPlugin(
                 selected.registration,
-                selected.pluginBytes,
-                selected.artifactBlobs,
+                selected.pluginEntryModule,
+                selected.pluginModules,
+                selected.projectResources,
                 selected.schemaOwner
             )
         );
@@ -675,8 +676,9 @@ namespace uf::service
             plugin,
             registrar.registerPlugin(
                 selected.registration,
-                selected.pluginBytes,
-                selected.artifactBlobs,
+                selected.pluginEntryModule,
+                selected.pluginModules,
+                selected.projectResources,
                 selected.schemaOwner
             )
         );

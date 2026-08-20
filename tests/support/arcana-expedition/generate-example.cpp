@@ -9,6 +9,7 @@
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 
+#include <array>
 #include <cstddef>
 #include <exception>
 #include <filesystem>
@@ -19,6 +20,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 
 namespace uf::operator_runtime::conformance::expedition
 {
@@ -49,6 +51,28 @@ namespace uf::operator_runtime::conformance::expedition
                 );
             }
             return sha256(std::as_bytes(std::span{bytes}));
+        }
+
+        [[nodiscard]]
+        auto requireGeneratedClosure(
+            std::filesystem::path const& buildDirectory,
+            std::span<std::string_view const> expected
+        ) -> Status
+        {
+            for (auto const relative : expected)
+            {
+                auto error = std::error_code{};
+                auto const path = buildDirectory / relative;
+                if (!std::filesystem::is_regular_file(path, error))
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "example generation omitted manifest-declared closure file "
+                            + path.string()
+                    );
+                }
+            }
+            return ok();
         }
 
         [[nodiscard]]
@@ -92,7 +116,20 @@ namespace uf::operator_runtime::conformance::expedition
                 },
             };
             UF_TRY(project::buildProject(spec, {}));
-            return project::checkProject(spec, {});
+            UF_TRY(project::checkProject(spec, {}));
+            constexpr auto expected = std::array{
+                std::string_view{"generated/modules/expedition/main.luau"},
+                std::string_view{"generated/modules/expedition/plans.luau"},
+                std::string_view{"generated/modules/expedition/state/reducer.luau"},
+                std::string_view{"generated/modules/rival/main.luau"},
+                std::string_view{"generated/modules/rival/plans.luau"},
+                std::string_view{"generated/modules/rival/state/reducer.luau"},
+                std::string_view{"generated/resources/expedition/map.blob"},
+                std::string_view{"generated/resources/rival/map.blob"},
+                std::string_view{"generated/registrations/expedition.json"},
+                std::string_view{"generated/registrations/rival.json"},
+            };
+            return requireGeneratedClosure(buildDirectory, expected);
         }
     }
 }

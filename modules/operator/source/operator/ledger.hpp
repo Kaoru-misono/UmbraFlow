@@ -515,7 +515,7 @@ namespace uf::operator_runtime
     struct ObservedInstanceContext final
     {
         std::string pluginId{};
-        std::string pluginHash{};
+        std::string pluginModuleManifestHash{};
         ContentHash projectRegistrationHash;
         std::string projectInstanceKey{};
     };

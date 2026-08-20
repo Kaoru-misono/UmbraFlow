@@ -25,12 +25,13 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
-        auto claimsFor(ContentHash pluginHash) -> ProjectRegistrationClaims
+        auto claimsFor(ContentHash moduleManifestHash) -> ProjectRegistrationClaims
         {
             return ProjectRegistrationClaims{
                 .projectRegistrationFormat          = k_projectRegistrationFormat,
                 .pluginId                           = "fixture.alpha",
-                .pluginHash                         = pluginHash,
+                .pluginModuleManifestHash           = moduleManifestHash,
+                .pluginEnvironmentHash              = hashOf("environment"),
                 .toolCatalogHash                    = hashOf("catalogue"),
                 .projectStateSchemaHash             = hashOf("state"),
                 .projectObservationSchemaHash       = hashOf("observation"),
@@ -61,21 +62,28 @@ namespace uf::operator_runtime
                 if (index != 0U) result.push_back(',');
                 result += "\"" + claims.observedInstanceIdentitySchemaHashes[index].hex() + "\"";
             }
-            result += "],\"plugin_hash\":\"" + claims.pluginHash.hex()
+            result += "],\"plugin_environment_hash\":\""
+                + claims.pluginEnvironmentHash.hex()
                 + "\",\"plugin_id\":\"" + claims.pluginId
-                + "\",\"project_artifact_roots\":[";
-            for (auto index = std::size_t{0}; index < claims.projectArtifactRoots.size(); ++index)
-            {
-                if (index != 0U) result.push_back(',');
-                auto const& root = claims.projectArtifactRoots[index];
-                result += "{\"name\":\"" + root.name + "\",\"root_hash\":\""
-                    + root.rootHash.hex() + "\"}";
-            }
-            result += "],\"project_observation_schema_hash\":\""
+                + "\",\"plugin_module_manifest_hash\":\""
+                + claims.pluginModuleManifestHash.hex()
+                + "\",\"project_observation_schema_hash\":\""
                 + claims.projectObservationSchemaHash.hex()
                 + "\",\"project_registration_format\":"
                 + std::to_string(claims.projectRegistrationFormat)
-                + ",\"project_state_schema_hash\":\""
+                + ",\"project_resources\":[";
+            for (auto index = std::size_t{0}; index < claims.projectResources.size(); ++index)
+            {
+                if (index != 0U) result.push_back(',');
+                auto const& resource = claims.projectResources[index];
+                auto kind = std::string_view{"json"};
+                if (resource.kind == ProjectResourceKind::Utf8) kind = "utf8";
+                if (resource.kind == ProjectResourceKind::Bytes) kind = "bytes";
+                result += "{\"kind\":\"" + std::string{kind} + "\",\"name\":\""
+                    + resource.name + "\",\"sha256\":\"" + resource.hash.hex()
+                    + "\",\"size\":" + std::to_string(resource.size) + "}";
+            }
+            result += "],\"project_state_schema_hash\":\""
                 + claims.projectStateSchemaHash.hex()
                 + "\",\"project_tool_precondition_schema_hash\":\""
                 + claims.projectToolPreconditionSchemaHash.hex()
@@ -124,8 +132,8 @@ namespace uf::operator_runtime
 
     TEST_CASE("VerifiedProjectRegistration requires exact JCS schema and root")
     {
-        auto const pluginHash = hashOf("plugin-bytes");
-        auto const claims = claimsFor(pluginHash);
+        auto const moduleManifestHash = hashOf("module-manifest");
+        auto const claims = claimsFor(moduleManifestHash);
         auto const exactJcs = registrationJcs(claims);
         auto owner = exactOwner(exactJcs, claims);
         auto const rootHash = hashOf(exactJcs);
@@ -139,7 +147,7 @@ namespace uf::operator_runtime
         CHECK(verified->canonicalJcs() == exactJcs);
         CHECK(verified->hash() == rootHash);
         CHECK(verified->pluginId() == "fixture.alpha");
-        CHECK(verified->pluginHash() == pluginHash);
+        CHECK(verified->pluginModuleManifestHash() == moduleManifestHash);
 
         CHECK_FALSE(
             ProjectRegistration::verifyExact(
@@ -184,13 +192,13 @@ namespace uf::operator_runtime
     }
 
     // The forward case above proves nothing about the migration itself: a
-    // consumer that accepted any format <= 2 would keep it green. This case
-    // names the generation this framework stopped reading, so the 1 -> 2
-    // break is red before any future format-3 document is.
+    // consumer that accepted any format <= 3 would keep it green. This case
+    // names the generation this framework just stopped reading, so the 2 -> 3
+    // break is red before any future format-4 document is.
     TEST_CASE("VerifiedProjectRegistration refuses the previous generation's format")
     {
         auto claims                      = claimsFor(hashOf("plugin"));
-        claims.projectRegistrationFormat = 1U;
+        claims.projectRegistrationFormat = 2U;
         auto const exactJcs = registrationJcs(claims);
         auto owner = exactOwner(exactJcs, claims);
         auto const refused =
@@ -198,18 +206,28 @@ namespace uf::operator_runtime
         REQUIRE_FALSE(refused.has_value());
         // The message names the stated format and the format this framework
         // reads, so a refusal of the wrong generation cannot be green.
-        CHECK(refused.error().message().contains("1"));
+        CHECK(refused.error().message().contains("2"));
         CHECK(refused.error().message().contains(
             std::to_string(k_projectRegistrationFormat)
         ));
     }
 
-    TEST_CASE("VerifiedProjectRegistration rejects unordered artifact roots")
+    TEST_CASE("VerifiedProjectRegistration rejects unordered resources")
     {
         auto claims = claimsFor(hashOf("plugin"));
-        claims.projectArtifactRoots = {
-            NamedArtifactRoot{.name = "zeta", .rootHash = hashOf("z")},
-            NamedArtifactRoot{.name = "alpha", .rootHash = hashOf("a")},
+        claims.projectResources = {
+            ProjectResource{
+                .kind = ProjectResourceKind::Json,
+                .name = "zeta",
+                .hash = hashOf("z"),
+                .size = 1U,
+            },
+            ProjectResource{
+                .kind = ProjectResourceKind::Json,
+                .name = "alpha",
+                .hash = hashOf("a"),
+                .size = 1U,
+            },
         };
         auto const exactJcs = registrationJcs(claims);
         auto owner = exactOwner(exactJcs, std::move(claims));
@@ -292,11 +310,16 @@ namespace uf::operator_runtime
             );
         }
 
-        SUBCASE("artifact roots are names, not paths")
+        SUBCASE("resources are names, not paths")
         {
             auto claims = claimsFor(hashOf("plugin"));
-            claims.projectArtifactRoots = {
-                NamedArtifactRoot{.name = "../content", .rootHash = hashOf("content")},
+            claims.projectResources = {
+                ProjectResource{
+                    .kind = ProjectResourceKind::Json,
+                    .name = "../content",
+                    .hash = hashOf("content"),
+                    .size = 1U,
+                },
             };
             auto const exactJcs = registrationJcs(claims);
             auto owner = exactOwner(exactJcs, std::move(claims));
@@ -305,5 +328,74 @@ namespace uf::operator_runtime
                     .has_value()
             );
         }
+
+        SUBCASE("resource name segments are runtime-bounded")
+        {
+            auto claims = claimsFor(hashOf("plugin"));
+            claims.projectResources = {
+                ProjectResource{
+                    .kind = ProjectResourceKind::Json,
+                    .name = std::string(65U, 'a'),
+                    .hash = hashOf("content"),
+                    .size = 1U,
+                },
+            };
+            auto const exactJcs = registrationJcs(claims);
+            auto owner = exactOwner(exactJcs, std::move(claims));
+            CHECK_FALSE(
+                ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner)
+                    .has_value()
+            );
+        }
+
+        SUBCASE("resource name segment count is runtime-bounded")
+        {
+            auto name = std::string{"a"};
+            for (auto index = std::size_t{1U}; index < 17U; ++index)
+            {
+                name += ".a";
+            }
+            auto claims = claimsFor(hashOf("plugin"));
+            claims.projectResources = {
+                ProjectResource{
+                    .kind = ProjectResourceKind::Json,
+                    .name = std::move(name),
+                    .hash = hashOf("content"),
+                    .size = 1U,
+                },
+            };
+            auto const exactJcs = registrationJcs(claims);
+            auto owner = exactOwner(exactJcs, std::move(claims));
+            CHECK_FALSE(
+                ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner)
+                    .has_value()
+            );
+        }
+    }
+
+    TEST_CASE("registration identity covers resource name kind hash and size")
+    {
+        auto base = claimsFor(hashOf("plugin"));
+        base.projectResources = {
+            ProjectResource{
+                .kind = ProjectResourceKind::Json,
+                .name = "runtime.corpus",
+                .hash = hashOf("resource-bytes"),
+                .size = 14U,
+            },
+        };
+        auto renamed = base;
+        renamed.projectResources[0].name = "runtime.other";
+        auto retyped = base;
+        retyped.projectResources[0].kind = ProjectResourceKind::Bytes;
+        auto resized = base;
+        resized.projectResources[0].size = 15U;
+        auto rehashed = base;
+        rehashed.projectResources[0].hash = hashOf("other-resource-bytes");
+
+        CHECK(hashOf(registrationJcs(base)) != hashOf(registrationJcs(renamed)));
+        CHECK(hashOf(registrationJcs(base)) != hashOf(registrationJcs(retyped)));
+        CHECK(hashOf(registrationJcs(base)) != hashOf(registrationJcs(resized)));
+        CHECK(hashOf(registrationJcs(base)) != hashOf(registrationJcs(rehashed)));
     }
 }

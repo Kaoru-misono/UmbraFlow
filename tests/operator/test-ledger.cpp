@@ -43,7 +43,7 @@ namespace uf::operator_runtime
         // The one plugin every case here registers. It comes from the shared
         // fixture because plan and next_step now answer with real operator
         // protocol documents, and a second spelling of them would be a second
-        // plugin_hash for one project.
+        // plugin module-manifest hash for one project.
         inline auto const k_pluginSource = test_support::pluginSource("fixture.alpha");
 
         // The same plugin except that reduce answers with a document the
@@ -262,6 +262,35 @@ namespace uf::operator_runtime
                     '                        token TEXT PRIMARY KEY,'
                 ) WHERE type='table' AND name='snapshots';
                 PRAGMA writable_schema=OFF;
+            )sql");
+        }
+
+        // Rebuilds only the registration table to the exact format-2 shape
+        // that preceded the generation-neutral columns. Row keys and canonical
+        // bytes are copied unchanged; module_manifest becomes the historical
+        // single-source hash column solely to reproduce the old schema pair.
+        auto restoreFormat2RegistrationIdentity(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void
+        {
+            database.execute(R"sql(
+                PRAGMA foreign_keys=OFF;
+                CREATE TABLE prior_project_registrations(
+                    registration_hash TEXT,
+                    plugin_id TEXT,
+                    plugin_identity_hash TEXT,
+                    canonical_manifest TEXT
+                ) STRICT;
+                INSERT INTO prior_project_registrations
+                    SELECT registration_hash, plugin_id, plugin_identity_hash,
+                        canonical_manifest FROM project_registrations;
+                DROP TABLE project_registrations;
+                CREATE TABLE project_registrations(registration_hash TEXT PRIMARY KEY,plugin_id TEXT NOT NULL,plugin_hash TEXT NOT NULL,canonical_manifest TEXT NOT NULL) STRICT;
+                INSERT INTO project_registrations SELECT registration_hash,
+                    plugin_id, plugin_identity_hash, canonical_manifest
+                    FROM prior_project_registrations;
+                DROP TABLE prior_project_registrations;
+                PRAGMA foreign_keys=ON;
             )sql");
         }
 
@@ -3323,6 +3352,138 @@ namespace uf::operator_runtime
         );
     }
 
+    TEST_CASE("format-2 registrations migrate byte-identical and become audit-only")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        auto prepared = prepareStore(temporary.path());
+        auto const operation = createReadyOperation(
+            prepared,
+            "request-format-2-recovery",
+            "command-1"
+        );
+        auto host = deliveringHost(prepared);
+        auto const reserved = prepared.store.reserveDispatch(
+            operation.operationId,
+            operation.revision,
+            prepared.lease,
+            host->generation(),
+            AuthorityDecisionId{"authority-format-2-recovery"},
+            std::nullopt
+        );
+        REQUIRE(reserved.has_value());
+        { auto releasedStore = std::move(prepared.store); }
+
+        auto sourceIdentity = std::string{};
+        auto historicalRows = std::vector<std::vector<std::string>>{};
+        {
+            auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreFormat2RegistrationIdentity(prior);
+            sourceIdentity = exactSchemaIdentity(prior);
+            historicalRows = prior.readRows(
+                "SELECT registration_hash, plugin_id, plugin_hash, canonical_manifest "
+                "FROM project_registrations ORDER BY registration_hash"
+            );
+        }
+        CHECK(sourceIdentity
+              == "sha256:b26344e031574f95020ed445e16e9de396f76442d98c5a3b758a91d84660237e");
+
+        auto const legacyExecutionRows = test_support::OperatorDatabaseProbe{
+            databasePath
+        }.readRows(
+            "SELECT o.state, o.revision, coalesce(d.delivery_outcome, ''), "
+            "coalesce(d.delivery_reason, ''), "
+            "(SELECT count(*) FROM ledger_events e WHERE e.subject_id=o.operation_id) "
+            "FROM operations o JOIN dispatches d ON d.operation_id=o.operation_id "
+            "WHERE o.operation_id='" + operation.operationId + "'"
+        );
+        REQUIRE(legacyExecutionRows.size() == 1U);
+
+        {
+            auto migrated = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(migrated.has_value(), migrated.error().message());
+        }
+        CHECK(test_support::OperatorDatabaseProbe{databasePath}.readRows(
+            "SELECT o.state, o.revision, coalesce(d.delivery_outcome, ''), "
+            "coalesce(d.delivery_reason, ''), "
+            "(SELECT count(*) FROM ledger_events e WHERE e.subject_id=o.operation_id) "
+            "FROM operations o JOIN dispatches d ON d.operation_id=o.operation_id "
+            "WHERE o.operation_id='" + operation.operationId + "'"
+        ) == legacyExecutionRows);
+        auto auditRows = test_support::OperatorDatabaseProbe{databasePath}.readRows(
+            "SELECT registration_hash, plugin_id, plugin_identity_hash, "
+            "canonical_manifest, registration_format, plugin_identity_kind "
+            "FROM project_registrations ORDER BY registration_hash"
+        );
+        REQUIRE(auditRows.size() == historicalRows.size());
+        for (auto index = std::size_t{0}; index < historicalRows.size(); ++index)
+        {
+            CHECK(std::vector<std::string>{
+                auditRows[index][0],
+                auditRows[index][1],
+                auditRows[index][2],
+                auditRows[index][3],
+            } == historicalRows[index]);
+            CHECK(auditRows[index][4] == "2");
+            CHECK(auditRows[index][5] == "single_source");
+        }
+
+        auto migrated = OperatorCoordinator::open(production);
+        REQUIRE_MESSAGE(migrated.has_value(), migrated.error().message());
+        auto const refused = migrated->resumeSession(
+            SessionResume{
+                .authenticatedControllerId = "controller-1",
+                .controlledTargetId        = "target-1",
+                .mode                      = SessionMode::Write,
+                .kind                      = ControllerKind::Script,
+            },
+            prepared.manifest
+        );
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(refused.error().message().contains("legacy registration is audit-only"));
+    }
+
+    TEST_CASE("registration format and plugin identity kind remain an exact pair")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const databasePath = temporary.path()
+            / "production"
+            / "operator-runtime.sqlite";
+        auto prepared = prepareStore(temporary.path());
+        { auto releasedStore = std::move(prepared.store); }
+
+        {
+            auto database = test_support::OperatorDatabaseProbe{databasePath};
+            CHECK(database.refuses(
+                "UPDATE project_registrations SET plugin_identity_kind='single_source' "
+                "WHERE registration_format=3"
+            ));
+
+            // Simulate storage corruption after proving the exact DDL rejects
+            // it normally. Runtime admission must still check both columns.
+            database.execute("PRAGMA ignore_check_constraints=ON");
+            database.execute(
+                "UPDATE project_registrations SET plugin_identity_kind='single_source' "
+                "WHERE registration_format=3"
+            );
+        }
+
+        auto reopened = OperatorCoordinator::open(temporary.path() / "production");
+        REQUIRE(reopened.has_value());
+        auto const refused = reopened->resumeSession(
+            SessionResume{
+                .authenticatedControllerId = "controller-1",
+                .controlledTargetId        = "target-1",
+                .mode                      = SessionMode::Write,
+                .kind                      = ControllerKind::Script,
+            },
+            prepared.manifest
+        );
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(refused.error().message().contains("legacy registration is audit-only"));
+    }
+
     TEST_CASE("release upgrade evidence migrates by exact identity with empty replay difference")
     {
         auto temporary          = TemporaryDirectory{};
@@ -3338,6 +3499,7 @@ namespace uf::operator_runtime
         auto replayBefore   = std::vector<std::vector<std::string>>{};
         {
             auto source = test_support::OperatorDatabaseProbe{databasePath};
+            restoreFormat2RegistrationIdentity(source);
             removeReleaseUpgradeEvidenceTables(source);
             restorePriorRegistrationStateSchemaHash(source);
             removeSessionWorldScopeColumns(source);
@@ -3412,6 +3574,7 @@ namespace uf::operator_runtime
         auto sessionRows    = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreFormat2RegistrationIdentity(prior);
             removeSessionWorldScopeColumns(prior);
             removeObservedInstanceBindingLocalRefColumn(prior);
             sourceIdentity = exactSchemaIdentity(prior);
@@ -3435,12 +3598,8 @@ namespace uf::operator_runtime
                 migrated.error().message()
             );
 
-            // The sentinel must be what production observe actually meets,
-            // not a row only a probe can see. resumeSession re-activates the
-            // deactivated session in the current epoch and changes none of the
-            // pinned world-scope columns, so the next createSnapshot restores
-            // the sentinel and the scope factory refuses the empty scope id:
-            // the specific fail-closed refusal, before any observation work.
+            // The registration row survives but format 2 is audit-only. Resume
+            // must refuse before any legacy VM or world-scope interpretation.
             auto resumed = migrated->resumeSession(
                 SessionResume{
                     .authenticatedControllerId = "controller-1",
@@ -3450,26 +3609,10 @@ namespace uf::operator_runtime
                 },
                 prepared.manifest
             );
-            REQUIRE(resumed.has_value());
-            auto lease = migrated->acquireLease(*resumed);
-            REQUIRE(lease.has_value());
-            auto const refused = migrated->createSnapshot(
-                *lease,
-                prepared.plugin,
-                prepared.project.toolCatalogSchemaOwner,
-                prepared.project.observedInstanceIdentitySchemas,
-                conformance::observeOnce(prepared.observation)
-            );
-            expectProjectObservationError(
-                refused,
-                ProjectObservationErrorCode::MalformedAuthorityInput
-            );
+            REQUIRE_FALSE(resumed.has_value());
             CHECK_MESSAGE(
-                refused.error().message().contains(
-                    "Observed instance world scope_id is outside its wire domain"
-                ),
-                "the refusal must be the empty sentinel scope, not a generic "
-                "open, resume or lease failure"
+                resumed.error().message().contains("legacy registration is audit-only"),
+                "resume must refuse the historical registration explicitly"
             );
         }
 
@@ -3485,12 +3628,8 @@ namespace uf::operator_runtime
                 {sourceIdentity, targetIdentity},
             }
         );
-        // The walk above resumed the session into the current epoch, so
-        // active reads 1; the world-scope columns still read the sentinel the
-        // migration backfilled. resumeSession only matches active=0 rows, so
-        // the successful resume is itself the proof that the migration
-        // delivered the row deactivated, and the refusal above was the
-        // sentinel restore and not the epoch gate.
+        // The row remains deactivated and its sentinel survives byte-for-byte;
+        // the audit-only refusal above prevents interpreting it.
         CHECK(
             target.readRows(
                 "SELECT session_id, controlled_target_id, active, "
@@ -3498,7 +3637,7 @@ namespace uf::operator_runtime
                 "FROM sessions ORDER BY session_id"
             )
             == std::vector<std::vector<std::string>>{
-                {"session-1", "target-1", "1", "account", "", "0"},
+                {"session-1", "target-1", "0", "account", "", "0"},
             }
         );
     }
@@ -3526,6 +3665,7 @@ namespace uf::operator_runtime
         auto bindingRows    = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreFormat2RegistrationIdentity(prior);
             removeObservedInstanceBindingLocalRefColumn(prior);
             sourceIdentity = exactSchemaIdentity(prior);
             bindingRows = prior.readRows(
@@ -3548,15 +3688,8 @@ namespace uf::operator_runtime
                 migrated.error().message()
             );
 
-            // The sentinel must be what production dispatch actually meets,
-            // not a row only a probe can see. resumeSession re-activates the
-            // deactivated session in the current epoch, and the pre-migration
-            // snapshot is fenced to the superseded lease, so the walk
-            // re-observes: the mint finds the migrated binding by its
-            // canonical authority and returns its id -- the local_ref is the
-            // empty sentinel -- and the step minted against that observation
-            // names the very binding reserveDispatch refuses, before any
-            // delivery is reserved.
+            // No legacy execution reaches the binding. The old row remains
+            // available for audit, but resume refuses before constructing a VM.
             auto resumed = migrated->resumeSession(
                 SessionResume{
                     .authenticatedControllerId = "controller-1",
@@ -3566,70 +3699,10 @@ namespace uf::operator_runtime
                 },
                 prepared.manifest
             );
-            REQUIRE(resumed.has_value());
-            auto lease = migrated->acquireLease(*resumed);
-            REQUIRE(lease.has_value());
-            auto installed = migrated->openInstalledRuntimeArtifact(
-                prepared.installedGeneration,
-                prepared.runtimeArtifactRootHash
-            );
-            REQUIRE(installed.has_value());
-            auto observationHost = conformance::activateObservationHost(
-                *std::move(installed),
-                test_support::umbraflowProbeFrame(),
-                FrameId{709}
-            );
-            auto snapshot = migrated->createSnapshot(
-                *lease,
-                prepared.plugin,
-                prepared.project.toolCatalogSchemaOwner,
-                prepared.project.observedInstanceIdentitySchemas,
-                conformance::observeOnce(observationHost)
-            );
-            REQUIRE(snapshot.has_value());
-            auto operation = migrated->submitCommand(
-                *resumed,
-                command(*snapshot, "request-migrated-binding", "controller-1"),
-                toolInvocation(prepared.project, "command-1")
-            );
-            REQUIRE(operation.has_value());
-            auto frozen = migrated->freezePlan(
-                operation->operation.operationId,
-                operation->operation.revision,
-                *lease,
-                prepared.plugin,
-                prepared.project.toolCatalogSchemaOwner,
-                prepared.planAuthority
-            );
-            REQUIRE(frozen.has_value());
-            auto step = migrated->mintNextStep(
-                frozen->operation.operationId,
-                frozen->operation.revision,
-                *lease,
-                prepared.plugin,
-                prepared.project.toolCatalogSchemaOwner,
-                prepared.planAuthority
-            );
-            REQUIRE(step.has_value());
-            auto const refused = migrated->reserveDispatch(
-                step->operation.operationId,
-                step->operation.revision,
-                *lease,
-                prepared.observation.generation,
-                AuthorityDecisionId{"authority-migrated-binding"},
-                std::nullopt
-            );
-            REQUIRE_FALSE(refused.has_value());
+            REQUIRE_FALSE(resumed.has_value());
             CHECK_MESSAGE(
-                automationErrorKind(refused.error()) == AutomationErrorKind::ActionRejected,
-                "the refusal must be a normal authority rejection"
-            );
-            CHECK_MESSAGE(
-                refused.error().message().contains(
-                    "The step names a binding whose local_ref predates target resolution"
-                ),
-                "the refusal must be the empty-sentinel local_ref, not a "
-                "generic open, resume or dispatch failure"
+                resumed.error().message().contains("legacy registration is audit-only"),
+                "resume must refuse the historical registration explicitly"
             );
         }
 
@@ -3680,6 +3753,7 @@ namespace uf::operator_runtime
         auto registrationRows = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreFormat2RegistrationIdentity(prior);
             restorePriorRegistrationStateSchemaHash(prior);
             removeSessionWorldScopeColumns(prior);
             removeObservedInstanceBindingLocalRefColumn(prior);
@@ -3711,7 +3785,7 @@ namespace uf::operator_runtime
         CHECK(sourceIdentity != targetIdentity);
         CHECK(
             target.readRows(
-                "SELECT registration_hash, plugin_id, plugin_hash, "
+                "SELECT registration_hash, plugin_id, plugin_identity_hash, "
                 "canonical_manifest FROM project_registrations "
                 "ORDER BY registration_hash"
             ) == registrationRows
@@ -3740,6 +3814,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreFormat2RegistrationIdentity(prior);
             removeReleaseUpgradeEvidenceTables(prior);
             restorePriorSnapshotIdentityComment(prior);
             restorePriorRegistrationStateSchemaHash(prior);
@@ -3747,6 +3822,11 @@ namespace uf::operator_runtime
             removeObservedInstanceBindingLocalRefColumn(prior);
             sourceIdentity = exactSchemaIdentity(prior);
         }
+        CHECK_MESSAGE(
+            sourceIdentity
+                == "sha256:1b70212548858e70daf7f120a0245d0af93fd3ff1e9cbab48d7dfa271b57f302",
+            "the fixture must reproduce the exact comment-only identity this pair migrates from"
+        );
 
         {
             auto migrated = OperatorCoordinator::open(production);
@@ -3833,6 +3913,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto priorSchema = test_support::OperatorDatabaseProbe{databasePath};
+            restoreFormat2RegistrationIdentity(priorSchema);
             priorSchema.execute("DROP TABLE availability_heads");
             priorSchema.execute("DROP TABLE session_policies");
             priorSchema.execute(
