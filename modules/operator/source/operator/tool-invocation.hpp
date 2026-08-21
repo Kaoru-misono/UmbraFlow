@@ -7,9 +7,11 @@
 
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/content-hash.hpp>
 
+#include <compare>
 #include <functional>
 #include <optional>
 #include <span>
@@ -40,6 +42,116 @@ namespace uf::operator_runtime
     using ToolProviderIdentity = std::variant<
         FrameworkToolProvider,
         ProjectToolProvider>;
+
+    class CallerIdempotencyNamespace final
+    {
+        std::string m_value;
+
+        explicit CallerIdempotencyNamespace(std::string value);
+
+    public:
+        [[nodiscard]]
+        static auto create(std::string value)
+            -> Result<CallerIdempotencyNamespace>;
+
+        [[nodiscard]]
+        auto value() const noexcept UF_LIFETIME_BOUND -> std::string const&;
+
+        auto operator<=>(CallerIdempotencyNamespace const&) const = default;
+    };
+
+    class RootRequestKey final
+    {
+        std::string m_value;
+
+        explicit RootRequestKey(std::string value);
+
+    public:
+        [[nodiscard]]
+        static auto create(std::string value) -> Result<RootRequestKey>;
+
+        [[nodiscard]]
+        auto value() const noexcept UF_LIFETIME_BOUND -> std::string const&;
+
+        auto operator<=>(RootRequestKey const&) const = default;
+    };
+
+    enum class RootRequestRelation : uint8
+    {
+        SameRequest,
+        Conflict,
+        Distinct,
+    };
+
+    class ToolRootRequestIdentity final
+    {
+        CallerIdempotencyNamespace m_callerNamespace;
+        RootRequestKey             m_requestKey;
+        CanonicalJson              m_requestPreimage;
+        ContentHash                m_identity;
+
+        ToolRootRequestIdentity(
+            CallerIdempotencyNamespace callerNamespace,
+            RootRequestKey requestKey,
+            CanonicalJson requestPreimage,
+            ContentHash identity
+        );
+
+    public:
+        [[nodiscard]]
+        static auto create(
+            std::string callerNamespace,
+            std::string requestKey,
+            CanonicalJson requestPreimage
+        ) -> Result<ToolRootRequestIdentity>;
+
+        [[nodiscard]] auto identity() const -> ContentHash;
+
+        [[nodiscard]]
+        auto callerNamespace() const noexcept UF_LIFETIME_BOUND
+            -> CallerIdempotencyNamespace const&;
+
+        [[nodiscard]]
+        auto requestKey() const noexcept UF_LIFETIME_BOUND
+            -> RootRequestKey const&;
+
+        [[nodiscard]]
+        auto requestPreimage() const noexcept UF_LIFETIME_BOUND
+            -> CanonicalJson const&;
+
+        [[nodiscard]]
+        auto relationTo(ToolRootRequestIdentity const& other) const noexcept
+            -> RootRequestRelation;
+    };
+
+    // These identities are fixed by the caller/runtime before dispatch. The
+    // origin and executing principals, policy, approval, lease, fence and
+    // admitted budget belong to admission attempts and deliberately cannot be
+    // supplied here.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+    struct ToolExecutionIdentity final
+    {
+        ContentHash runIdentity;
+        ContentHash frameworkReleaseIdentity;
+        ContentHash toolRuntimeProtocolIdentity;
+        ContentHash environmentIdentity;
+    };
+
+    class ToolCallPositionIdentity;
+
+    class ToolCallParent final
+    {
+        friend class ToolCallPositionIdentity;
+
+        ContentHash m_rootIdentity;
+        ContentHash m_callIdentity;
+
+        ToolCallParent(ContentHash rootIdentity, ContentHash callIdentity);
+
+    public:
+        [[nodiscard]] auto rootIdentity() const -> ContentHash;
+        [[nodiscard]] auto callIdentity() const -> ContentHash;
+    };
 
     // One tool call the catalog owner recognised, carrying the descriptor the
     // catalog declared for it. Only the owner bound to the exact
@@ -85,6 +197,71 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto descriptor() const noexcept UF_LIFETIME_BOUND
             -> ToolDescriptor const&;
+    };
+
+    // One immutable call-position fingerprint. Provider result, delivery
+    // classification and Operator-selected admission material have no input in
+    // this factory, so none can change or be smuggled into the call identity.
+    class ToolCallPositionIdentity final
+    {
+        ContentHash                m_identity;
+        ContentHash                m_rootIdentity;
+        std::optional<ContentHash> m_parentIdentity;
+        uint32                     m_sequence;
+        ToolExecutionIdentity      m_executionIdentity;
+        ToolProviderIdentity       m_provider;
+        std::string                m_toolName;
+        std::string                m_toolVersion;
+        ContentHash                m_canonicalArgsHash;
+
+        ToolCallPositionIdentity(
+            ContentHash identity,
+            ContentHash rootIdentity,
+            std::optional<ContentHash> parentIdentity,
+            uint32 sequence,
+            ToolExecutionIdentity executionIdentity,
+            ToolProviderIdentity provider,
+            std::string toolName,
+            std::string toolVersion,
+            ContentHash canonicalArgsHash
+        );
+
+    public:
+        [[nodiscard]]
+        static auto create(
+            ToolRootRequestIdentity const& root,
+            std::optional<ToolCallParent> const& parent,
+            uint64 sequence,
+            ToolExecutionIdentity executionIdentity,
+            ValidatedToolInvocation const& invocation
+        ) -> Result<ToolCallPositionIdentity>;
+
+        [[nodiscard]] auto identity() const -> ContentHash;
+        [[nodiscard]] auto rootIdentity() const -> ContentHash;
+
+        [[nodiscard]]
+        auto parentIdentity() const noexcept UF_LIFETIME_BOUND
+            -> std::optional<ContentHash> const&;
+
+        [[nodiscard]] auto sequence() const noexcept -> uint32;
+
+        [[nodiscard]]
+        auto executionIdentity() const noexcept UF_LIFETIME_BOUND
+            -> ToolExecutionIdentity const&;
+
+        [[nodiscard]]
+        auto provider() const noexcept UF_LIFETIME_BOUND
+            -> ToolProviderIdentity const&;
+
+        [[nodiscard]]
+        auto toolName() const noexcept UF_LIFETIME_BOUND -> std::string const&;
+
+        [[nodiscard]]
+        auto toolVersion() const noexcept UF_LIFETIME_BOUND
+            -> std::string const&;
+
+        [[nodiscard]] auto canonicalArgsHash() const -> ContentHash;
+        [[nodiscard]] auto asParent() const -> ToolCallParent;
     };
 
     // Both p03 predicates are shared by the offer and accept sides. Neither side

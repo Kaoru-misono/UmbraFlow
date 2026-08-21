@@ -25,6 +25,7 @@
 
 #include <array>
 #include <filesystem>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -41,6 +42,30 @@ namespace uf::operator_runtime
         using test_support::prepareStore;
         using test_support::proposedOperation;
         using test_support::TemporaryDirectory;
+
+        template <typename Extra>
+        concept AdditionalToolCallIdentityInputAccepted = requires(
+            ToolRootRequestIdentity const& root,
+            std::optional<ToolCallParent> const& parent,
+            ToolExecutionIdentity executionIdentity,
+            ValidatedToolInvocation const& invocation,
+            Extra const& extra
+        ) {
+            ToolCallPositionIdentity::create(
+                root,
+                parent,
+                uint64{1},
+                executionIdentity,
+                invocation,
+                extra
+            );
+        };
+
+        static_assert(
+            !AdditionalToolCallIdentityInputAccepted<CanonicalJson>,
+            "Tool results and other canonical outcome material must not enter "
+            "call identity"
+        );
 
         // The fixture's PolicyArtifact with one clause rewritten wherever it
         // appears. Every occurrence, because both of its rules carry the same
@@ -610,6 +635,494 @@ namespace uf::operator_runtime
         );
         CHECK(provider.projectRegistrationHash == prepared.project.registration.hash());
         CHECK(provider.toolCatalogHash == prepared.project.registration.toolCatalogHash());
+    }
+
+    TEST_CASE("Tool root request identity is stable and detects key conflicts")
+    {
+        auto firstPreimage = CanonicalJson::parseExact(
+            R"({"objective":"inspect"})"
+        );
+        auto repeatedPreimage = CanonicalJson::parseExact(
+            R"({"objective":"inspect"})"
+        );
+        auto changedPreimage = CanonicalJson::parseExact(
+            R"({"objective":"act"})"
+        );
+        REQUIRE(firstPreimage.has_value());
+        REQUIRE(repeatedPreimage.has_value());
+        REQUIRE(changedPreimage.has_value());
+
+        auto first = ToolRootRequestIdentity::create(
+            "principal-7",
+            "request-9",
+            std::move(*firstPreimage)
+        );
+        auto repeated = ToolRootRequestIdentity::create(
+            "principal-7",
+            "request-9",
+            std::move(*repeatedPreimage)
+        );
+        auto conflict = ToolRootRequestIdentity::create(
+            "principal-7",
+            "request-9",
+            std::move(*changedPreimage)
+        );
+        REQUIRE(first.has_value());
+        REQUIRE(repeated.has_value());
+        REQUIRE(conflict.has_value());
+        CHECK(first->identity() == repeated->identity());
+        CHECK(
+            first->relationTo(*repeated)
+            == RootRequestRelation::SameRequest
+        );
+        CHECK(first->identity() != conflict->identity());
+        CHECK(
+            first->relationTo(*conflict)
+            == RootRequestRelation::Conflict
+        );
+
+        auto distinctPreimage = CanonicalJson::parseExact(
+            R"({"objective":"inspect"})"
+        );
+        REQUIRE(distinctPreimage.has_value());
+        auto distinct = ToolRootRequestIdentity::create(
+            "principal-7",
+            "request-10",
+            std::move(*distinctPreimage)
+        );
+        REQUIRE(distinct.has_value());
+        CHECK(first->identity() != distinct->identity());
+        CHECK(
+            first->relationTo(*distinct)
+            == RootRequestRelation::Distinct
+        );
+
+        auto distinctNamespacePreimage = CanonicalJson::parseExact(
+            R"({"objective":"inspect"})"
+        );
+        REQUIRE(distinctNamespacePreimage.has_value());
+        auto distinctNamespace = ToolRootRequestIdentity::create(
+            "principal-8",
+            "request-9",
+            std::move(*distinctNamespacePreimage)
+        );
+        REQUIRE(distinctNamespace.has_value());
+        CHECK(first->identity() != distinctNamespace->identity());
+        CHECK(
+            first->relationTo(*distinctNamespace)
+            == RootRequestRelation::Distinct
+        );
+
+        auto emptyNamespacePreimage = CanonicalJson::parseExact("{}");
+        auto emptyKeyPreimage       = CanonicalJson::parseExact("{}");
+        REQUIRE(emptyNamespacePreimage.has_value());
+        REQUIRE(emptyKeyPreimage.has_value());
+        CHECK_FALSE(
+            ToolRootRequestIdentity::create(
+                "",
+                "request-9",
+                std::move(*emptyNamespacePreimage)
+            ).has_value()
+        );
+        CHECK_FALSE(
+            ToolRootRequestIdentity::create(
+                "principal-7",
+                "",
+                std::move(*emptyKeyPreimage)
+            ).has_value()
+        );
+
+        CHECK(
+            CallerIdempotencyNamespace::create(
+                std::string(256U, 'n')
+            ).has_value()
+        );
+        CHECK_FALSE(
+            CallerIdempotencyNamespace::create(
+                std::string(257U, 'n')
+            ).has_value()
+        );
+        CHECK(
+            RootRequestKey::create(std::string(256U, 'k')).has_value()
+        );
+        CHECK_FALSE(
+            RootRequestKey::create(std::string(257U, 'k')).has_value()
+        );
+    }
+
+    TEST_CASE("Tool call identity covers every caller-fixed call position input")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path(), "fixture.identity-a");
+        auto rootPreimage = CanonicalJson::parseExact(
+            R"({"objective":"drive"})"
+        );
+        REQUIRE(rootPreimage.has_value());
+        auto root = ToolRootRequestIdentity::create(
+            "principal-1",
+            "request-1",
+            std::move(*rootPreimage)
+        );
+        REQUIRE(root.has_value());
+
+        auto arguments = test_support::canonical(
+            prepared.project.schemaOwner,
+            R"({"value":1})"
+        );
+        auto invocation = prepared.project.toolCatalogSchemaOwner.validate(
+            "command-1",
+            std::move(arguments)
+        );
+        REQUIRE(invocation.has_value());
+        auto const execution = ToolExecutionIdentity{
+            .runIdentity                 = test_support::hashOf("run-1"),
+            .frameworkReleaseIdentity    = test_support::hashOf("framework-1"),
+            .toolRuntimeProtocolIdentity = test_support::hashOf("tool-runtime-1"),
+            .environmentIdentity         = test_support::hashOf("environment-1"),
+        };
+        auto first = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            1U,
+            execution,
+            *invocation
+        );
+        auto repeated = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            1U,
+            execution,
+            *invocation
+        );
+        REQUIRE(first.has_value());
+        REQUIRE(repeated.has_value());
+        CHECK(first->identity() == repeated->identity());
+
+        auto movedRootPreimage = CanonicalJson::parseExact(
+            R"({"objective":"drive-other"})"
+        );
+        REQUIRE(movedRootPreimage.has_value());
+        auto movedRoot = ToolRootRequestIdentity::create(
+            "principal-1",
+            "request-1",
+            std::move(*movedRootPreimage)
+        );
+        REQUIRE(movedRoot.has_value());
+
+        struct CallerFixedCase final
+        {
+            std::string_view               name;
+            ToolRootRequestIdentity const& root;
+            ToolExecutionIdentity          executionIdentity;
+        };
+        auto const callerFixedCases = std::array{
+            CallerFixedCase{"root", *movedRoot, execution},
+            CallerFixedCase{
+                "run",
+                *root,
+                ToolExecutionIdentity{
+                    .runIdentity              = test_support::hashOf("run-2"),
+                    .frameworkReleaseIdentity = execution.frameworkReleaseIdentity,
+                    .toolRuntimeProtocolIdentity =
+                        execution.toolRuntimeProtocolIdentity,
+                    .environmentIdentity = execution.environmentIdentity,
+                },
+            },
+            CallerFixedCase{
+                "framework release",
+                *root,
+                ToolExecutionIdentity{
+                    .runIdentity              = execution.runIdentity,
+                    .frameworkReleaseIdentity = test_support::hashOf("framework-2"),
+                    .toolRuntimeProtocolIdentity =
+                        execution.toolRuntimeProtocolIdentity,
+                    .environmentIdentity = execution.environmentIdentity,
+                },
+            },
+            CallerFixedCase{
+                "Tool Runtime protocol",
+                *root,
+                ToolExecutionIdentity{
+                    .runIdentity              = execution.runIdentity,
+                    .frameworkReleaseIdentity = execution.frameworkReleaseIdentity,
+                    .toolRuntimeProtocolIdentity =
+                        test_support::hashOf("tool-runtime-2"),
+                    .environmentIdentity = execution.environmentIdentity,
+                },
+            },
+            CallerFixedCase{
+                "environment",
+                *root,
+                ToolExecutionIdentity{
+                    .runIdentity              = execution.runIdentity,
+                    .frameworkReleaseIdentity = execution.frameworkReleaseIdentity,
+                    .toolRuntimeProtocolIdentity =
+                        execution.toolRuntimeProtocolIdentity,
+                    .environmentIdentity = test_support::hashOf("environment-2"),
+                },
+            },
+        };
+        for (auto const& callerFixedCase : callerFixedCases)
+        {
+            CAPTURE(callerFixedCase.name);
+            auto moved = ToolCallPositionIdentity::create(
+                callerFixedCase.root,
+                std::nullopt,
+                1U,
+                callerFixedCase.executionIdentity,
+                *invocation
+            );
+            REQUIRE(moved.has_value());
+            CHECK(first->identity() != moved->identity());
+        }
+
+        auto changedArguments = test_support::canonical(
+            prepared.project.schemaOwner,
+            R"({"value":2})"
+        );
+        auto changedArgumentInvocation =
+            prepared.project.toolCatalogSchemaOwner.validate(
+                "command-1",
+                std::move(changedArguments)
+            );
+        REQUIRE(changedArgumentInvocation.has_value());
+        auto changedArgument = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            1U,
+            execution,
+            *changedArgumentInvocation
+        );
+        REQUIRE(changedArgument.has_value());
+        CHECK(first->identity() != changedArgument->identity());
+
+        auto changedNameArguments = test_support::canonical(
+            prepared.project.schemaOwner,
+            R"({"value":1})"
+        );
+        auto changedNameInvocation =
+            prepared.project.toolCatalogSchemaOwner.validate(
+                "command-2",
+                std::move(changedNameArguments)
+            );
+        REQUIRE(changedNameInvocation.has_value());
+        auto changedName = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            1U,
+            execution,
+            *changedNameInvocation
+        );
+        REQUIRE(changedName.has_value());
+        CHECK(first->identity() != changedName->identity());
+
+        auto descriptor = prepared.project.toolCatalogSchemaOwner.describe(
+            "command-1"
+        );
+        REQUIRE(descriptor.has_value());
+        descriptor->toolVersion = "changed-version";
+        auto changedVersionOwner = ProjectToolCatalogSchemaOwner::create(
+            prepared.project.registration,
+            prepared.project.toolCatalogBytes,
+            [descriptor = std::move(*descriptor)]()
+                -> Result<std::vector<ToolCatalogEntry>>
+            {
+                return std::vector<ToolCatalogEntry>{
+                    ToolCatalogEntry{
+                        .name       = "command-1",
+                        .descriptor = descriptor,
+                    },
+                };
+            },
+            [](std::string_view, std::string_view) -> Status { return ok(); }
+        );
+        REQUIRE(changedVersionOwner.has_value());
+        auto changedVersionArguments = test_support::canonical(
+            prepared.project.schemaOwner,
+            R"({"value":1})"
+        );
+        auto changedVersionInvocation = changedVersionOwner->validate(
+            "command-1",
+            std::move(changedVersionArguments)
+        );
+        REQUIRE(changedVersionInvocation.has_value());
+        auto changedVersion = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            1U,
+            execution,
+            *changedVersionInvocation
+        );
+        REQUIRE(changedVersion.has_value());
+        CHECK(first->identity() != changedVersion->identity());
+
+        auto secondTemporary = TemporaryDirectory{};
+        auto secondPrepared = prepareStore(
+            secondTemporary.path(),
+            "fixture.identity-b"
+        );
+        auto changedProviderArguments = test_support::canonical(
+            secondPrepared.project.schemaOwner,
+            R"({"value":1})"
+        );
+        auto changedProviderInvocation =
+            secondPrepared.project.toolCatalogSchemaOwner.validate(
+                "command-1",
+                std::move(changedProviderArguments)
+            );
+        REQUIRE(changedProviderInvocation.has_value());
+        auto changedProvider = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            1U,
+            execution,
+            *changedProviderInvocation
+        );
+        REQUIRE(changedProvider.has_value());
+        CHECK(first->identity() != changedProvider->identity());
+
+        auto secondParent = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            2U,
+            execution,
+            *invocation
+        );
+        REQUIRE(secondParent.has_value());
+        auto child = ToolCallPositionIdentity::create(
+            *root,
+            first->asParent(),
+            1U,
+            execution,
+            *invocation
+        );
+        auto movedParent = ToolCallPositionIdentity::create(
+            *root,
+            secondParent->asParent(),
+            1U,
+            execution,
+            *invocation
+        );
+        auto movedSequence = ToolCallPositionIdentity::create(
+            *root,
+            first->asParent(),
+            2U,
+            execution,
+            *invocation
+        );
+        REQUIRE(child.has_value());
+        REQUIRE(movedParent.has_value());
+        REQUIRE(movedSequence.has_value());
+        CHECK(child->identity() != first->identity());
+        CHECK(child->identity() != movedParent->identity());
+        CHECK(child->identity() != movedSequence->identity());
+    }
+
+    TEST_CASE("Framework and Project calls use one validated identity builder")
+    {
+        auto temporary    = TemporaryDirectory{};
+        auto prepared     = prepareStore(temporary.path());
+        auto rootPreimage = CanonicalJson::parseExact("{}");
+        REQUIRE(rootPreimage.has_value());
+        auto root = ToolRootRequestIdentity::create(
+            "principal-1",
+            "request-1",
+            std::move(*rootPreimage)
+        );
+        REQUIRE(root.has_value());
+        auto const execution = ToolExecutionIdentity{
+            .runIdentity                 = test_support::hashOf("run-1"),
+            .frameworkReleaseIdentity    = test_support::hashOf("framework-1"),
+            .toolRuntimeProtocolIdentity = test_support::hashOf("tool-runtime-1"),
+            .environmentIdentity         = test_support::hashOf("environment-1"),
+        };
+
+        auto frameworkCatalog   = FrameworkToolCatalogOwner::create();
+        auto frameworkArguments = CanonicalJson::parseExact("{}");
+        REQUIRE(frameworkCatalog.has_value());
+        REQUIRE(frameworkArguments.has_value());
+        auto frameworkInvocation = frameworkCatalog->validate(
+            "framework.screen.observe",
+            std::move(*frameworkArguments)
+        );
+        REQUIRE(frameworkInvocation.has_value());
+        auto frameworkCall = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            1U,
+            execution,
+            *frameworkInvocation
+        );
+        REQUIRE(frameworkCall.has_value());
+        CHECK(std::holds_alternative<FrameworkToolProvider>(
+            frameworkCall->provider()
+        ));
+
+        auto projectArguments = test_support::canonical(
+            prepared.project.schemaOwner,
+            R"({"value":1})"
+        );
+        auto projectInvocation = prepared.project.toolCatalogSchemaOwner.validate(
+            "command-1",
+            std::move(projectArguments)
+        );
+        REQUIRE(projectInvocation.has_value());
+        auto projectCall = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            1U,
+            execution,
+            *projectInvocation
+        );
+        REQUIRE(projectCall.has_value());
+        CHECK(std::holds_alternative<ProjectToolProvider>(
+            projectCall->provider()
+        ));
+
+        CHECK_FALSE(
+            ToolCallPositionIdentity::create(
+                *root,
+                std::nullopt,
+                0U,
+                execution,
+                *projectInvocation
+            ).has_value()
+        );
+        CHECK_FALSE(
+            ToolCallPositionIdentity::create(
+                *root,
+                std::nullopt,
+                uint64{std::numeric_limits<uint32>::max()} + 1U,
+                execution,
+                *projectInvocation
+            ).has_value()
+        );
+
+        auto foreignPreimage = CanonicalJson::parseExact("{}");
+        REQUIRE(foreignPreimage.has_value());
+        auto foreignRoot = ToolRootRequestIdentity::create(
+            "principal-1",
+            "request-2",
+            std::move(*foreignPreimage)
+        );
+        REQUIRE(foreignRoot.has_value());
+        auto foreignParent = ToolCallPositionIdentity::create(
+            *foreignRoot,
+            std::nullopt,
+            1U,
+            execution,
+            *projectInvocation
+        );
+        REQUIRE(foreignParent.has_value());
+        CHECK_FALSE(
+            ToolCallPositionIdentity::create(
+                *root,
+                foreignParent->asParent(),
+                1U,
+                execution,
+                *projectInvocation
+            ).has_value()
+        );
     }
 
     TEST_CASE("a plan is bounded by its own tool's descriptor")

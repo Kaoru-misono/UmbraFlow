@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
+#include <limits>
 #include <span>
 #include <string>
 #include <string_view>
@@ -28,6 +30,94 @@ namespace uf::operator_runtime
         constexpr auto k_frameworkToolVersion = std::string_view{"1"};
         constexpr auto k_maximumObserveMillis = uint64{10'000U};
         constexpr auto k_maximumWaitMillis = uint64{60'000U};
+        constexpr auto k_maximumCallerIdentityBytes = std::size_t{256U};
+
+        auto appendIdentityPart(
+            std::string& material,
+            std::string_view value
+        ) -> void
+        {
+            material += std::to_string(value.size());
+            material.push_back(':');
+            material += value;
+        }
+
+        auto appendIdentityHash(
+            std::string& material,
+            ContentHash const& hash
+        ) -> void
+        {
+            appendIdentityPart(material, hash.toString());
+        }
+
+        struct AppendProviderIdentity final
+        {
+            std::string& material;
+
+            auto operator()(FrameworkToolProvider const& provider) const -> void
+            {
+                appendIdentityPart(material, "framework");
+                appendIdentityHash(material, provider.toolCatalogHash);
+            }
+
+            auto operator()(ProjectToolProvider const& provider) const -> void
+            {
+                appendIdentityPart(material, "project");
+                appendIdentityHash(material, provider.projectRegistrationHash);
+                appendIdentityHash(material, provider.toolCatalogHash);
+            }
+        };
+
+        [[nodiscard]]
+        auto rootIdentityMaterial(
+            CallerIdempotencyNamespace const& callerNamespace,
+            RootRequestKey const& requestKey,
+            CanonicalJson const& requestPreimage
+        ) -> std::string
+        {
+            auto material = std::string{"umbraflow-internal-tool-root-v0"};
+            appendIdentityPart(material, callerNamespace.value());
+            appendIdentityPart(material, requestKey.value());
+            appendIdentityHash(material, requestPreimage.contentHash());
+            return material;
+        }
+
+        [[nodiscard]]
+        auto callIdentityMaterial(
+            ContentHash const& rootIdentity,
+            std::optional<ContentHash> const& parentIdentity,
+            uint32 sequence,
+            ToolExecutionIdentity const& executionIdentity,
+            ValidatedToolInvocation const& invocation
+        ) -> std::string
+        {
+            auto material = std::string{"umbraflow-internal-tool-call-v0"};
+            appendIdentityHash(material, rootIdentity);
+            appendIdentityPart(
+                material,
+                parentIdentity.has_value() ? "child" : "top-level"
+            );
+            if (parentIdentity)
+            {
+                appendIdentityHash(material, *parentIdentity);
+            }
+            appendIdentityPart(material, std::to_string(sequence));
+            appendIdentityHash(material, executionIdentity.runIdentity);
+            appendIdentityHash(
+                material,
+                executionIdentity.frameworkReleaseIdentity
+            );
+            appendIdentityHash(
+                material,
+                executionIdentity.toolRuntimeProtocolIdentity
+            );
+            appendIdentityHash(material, executionIdentity.environmentIdentity);
+            std::visit(AppendProviderIdentity{material}, invocation.provider());
+            appendIdentityPart(material, invocation.toolName());
+            appendIdentityPart(material, invocation.descriptor().toolVersion);
+            appendIdentityHash(material, invocation.canonicalArgs().contentHash());
+            return material;
+        }
 
         using FrameworkArgumentValidator = Status (*)(CanonicalJson const&);
         using FrameworkArgumentMaterial = json::Value (*)();
@@ -386,6 +476,157 @@ namespace uf::operator_runtime
         return *missing;
     }
 
+    CallerIdempotencyNamespace::CallerIdempotencyNamespace(std::string value)
+        : m_value{std::move(value)}
+    {
+    }
+
+    auto CallerIdempotencyNamespace::create(std::string value)
+        -> Result<CallerIdempotencyNamespace>
+    {
+        if (
+            value.empty()
+            || value.size() > k_maximumCallerIdentityBytes
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "caller idempotency namespace must contain 1 to 256 bytes"
+            );
+        }
+        return CallerIdempotencyNamespace{std::move(value)};
+    }
+
+    auto CallerIdempotencyNamespace::value() const noexcept
+        -> std::string const&
+    {
+        return m_value;
+    }
+
+    RootRequestKey::RootRequestKey(std::string value)
+        : m_value{std::move(value)}
+    {
+    }
+
+    auto RootRequestKey::create(std::string value) -> Result<RootRequestKey>
+    {
+        if (
+            value.empty()
+            || value.size() > k_maximumCallerIdentityBytes
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "root request key must contain 1 to 256 bytes"
+            );
+        }
+        return RootRequestKey{std::move(value)};
+    }
+
+    auto RootRequestKey::value() const noexcept -> std::string const&
+    {
+        return m_value;
+    }
+
+    ToolRootRequestIdentity::ToolRootRequestIdentity(
+        CallerIdempotencyNamespace callerNamespace,
+        RootRequestKey requestKey,
+        CanonicalJson requestPreimage,
+        ContentHash identity
+    )
+        : m_callerNamespace{std::move(callerNamespace)}
+        , m_requestKey{std::move(requestKey)}
+        , m_requestPreimage{std::move(requestPreimage)}
+        , m_identity{identity}
+    {
+    }
+
+    auto ToolRootRequestIdentity::create(
+        std::string callerNamespace,
+        std::string requestKey,
+        CanonicalJson requestPreimage
+    ) -> Result<ToolRootRequestIdentity>
+    {
+        UF_TRY_VALUE(
+            validatedNamespace,
+            CallerIdempotencyNamespace::create(std::move(callerNamespace))
+        );
+        UF_TRY_VALUE(
+            validatedKey,
+            RootRequestKey::create(std::move(requestKey))
+        );
+        auto const material = rootIdentityMaterial(
+            validatedNamespace,
+            validatedKey,
+            requestPreimage
+        );
+        UF_TRY_VALUE(identity, sha256(std::as_bytes(std::span{material})));
+        return ToolRootRequestIdentity{
+            std::move(validatedNamespace),
+            std::move(validatedKey),
+            std::move(requestPreimage),
+            identity,
+        };
+    }
+
+    auto ToolRootRequestIdentity::identity() const -> ContentHash
+    {
+        return m_identity;
+    }
+
+    auto ToolRootRequestIdentity::callerNamespace() const noexcept
+        -> CallerIdempotencyNamespace const&
+    {
+        return m_callerNamespace;
+    }
+
+    auto ToolRootRequestIdentity::requestKey() const noexcept
+        -> RootRequestKey const&
+    {
+        return m_requestKey;
+    }
+
+    auto ToolRootRequestIdentity::requestPreimage() const noexcept
+        -> CanonicalJson const&
+    {
+        return m_requestPreimage;
+    }
+
+    auto ToolRootRequestIdentity::relationTo(
+        ToolRootRequestIdentity const& other
+    ) const noexcept -> RootRequestRelation
+    {
+        if (
+            m_callerNamespace != other.m_callerNamespace
+            || m_requestKey != other.m_requestKey
+        )
+        {
+            return RootRequestRelation::Distinct;
+        }
+        return m_requestPreimage.bytes() == other.m_requestPreimage.bytes()
+            ? RootRequestRelation::SameRequest
+            : RootRequestRelation::Conflict;
+    }
+
+    ToolCallParent::ToolCallParent(
+        ContentHash rootIdentity,
+        ContentHash callIdentity
+    )
+        : m_rootIdentity{rootIdentity}
+        , m_callIdentity{callIdentity}
+    {
+    }
+
+    auto ToolCallParent::rootIdentity() const -> ContentHash
+    {
+        return m_rootIdentity;
+    }
+
+    auto ToolCallParent::callIdentity() const -> ContentHash
+    {
+        return m_callIdentity;
+    }
+
     ValidatedToolInvocation::ValidatedToolInvocation(
         ToolProviderIdentity provider,
         std::string toolName,
@@ -420,6 +661,135 @@ namespace uf::operator_runtime
         -> ToolDescriptor const&
     {
         return m_descriptor;
+    }
+
+    ToolCallPositionIdentity::ToolCallPositionIdentity(
+        ContentHash identity,
+        ContentHash rootIdentity,
+        std::optional<ContentHash> parentIdentity,
+        uint32 sequence,
+        ToolExecutionIdentity executionIdentity,
+        ToolProviderIdentity provider,
+        std::string toolName,
+        std::string toolVersion,
+        ContentHash canonicalArgsHash
+    )
+        : m_identity{identity}
+        , m_rootIdentity{rootIdentity}
+        , m_parentIdentity{std::move(parentIdentity)}
+        , m_sequence{sequence}
+        , m_executionIdentity{std::move(executionIdentity)}
+        , m_provider{std::move(provider)}
+        , m_toolName{std::move(toolName)}
+        , m_toolVersion{std::move(toolVersion)}
+        , m_canonicalArgsHash{canonicalArgsHash}
+    {
+    }
+
+    auto ToolCallPositionIdentity::create(
+        ToolRootRequestIdentity const& root,
+        std::optional<ToolCallParent> const& parent,
+        uint64 sequence,
+        ToolExecutionIdentity executionIdentity,
+        ValidatedToolInvocation const& invocation
+    ) -> Result<ToolCallPositionIdentity>
+    {
+        if (
+            sequence == 0U
+            || sequence > std::numeric_limits<uint32>::max()
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "tool call sequence must be in [1, 4294967295]"
+            );
+        }
+        auto const rootIdentity = root.identity();
+        if (parent && parent->rootIdentity() != rootIdentity)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "tool call parent belongs to a different root request"
+            );
+        }
+        auto parentIdentity = parent.transform(
+            [](ToolCallParent const& value) { return value.callIdentity(); }
+        );
+        auto const narrowedSequence = static_cast<uint32>(sequence);
+        auto const material = callIdentityMaterial(
+            rootIdentity,
+            parentIdentity,
+            narrowedSequence,
+            executionIdentity,
+            invocation
+        );
+        UF_TRY_VALUE(identity, sha256(std::as_bytes(std::span{material})));
+        return ToolCallPositionIdentity{
+            identity,
+            rootIdentity,
+            std::move(parentIdentity),
+            narrowedSequence,
+            std::move(executionIdentity),
+            invocation.provider(),
+            invocation.toolName(),
+            invocation.descriptor().toolVersion,
+            invocation.canonicalArgs().contentHash(),
+        };
+    }
+
+    auto ToolCallPositionIdentity::identity() const -> ContentHash
+    {
+        return m_identity;
+    }
+
+    auto ToolCallPositionIdentity::rootIdentity() const -> ContentHash
+    {
+        return m_rootIdentity;
+    }
+
+    auto ToolCallPositionIdentity::parentIdentity() const noexcept
+        -> std::optional<ContentHash> const&
+    {
+        return m_parentIdentity;
+    }
+
+    auto ToolCallPositionIdentity::sequence() const noexcept -> uint32
+    {
+        return m_sequence;
+    }
+
+    auto ToolCallPositionIdentity::executionIdentity() const noexcept
+        -> ToolExecutionIdentity const&
+    {
+        return m_executionIdentity;
+    }
+
+    auto ToolCallPositionIdentity::provider() const noexcept
+        -> ToolProviderIdentity const&
+    {
+        return m_provider;
+    }
+
+    auto ToolCallPositionIdentity::toolName() const noexcept
+        -> std::string const&
+    {
+        return m_toolName;
+    }
+
+    auto ToolCallPositionIdentity::toolVersion() const noexcept
+        -> std::string const&
+    {
+        return m_toolVersion;
+    }
+
+    auto ToolCallPositionIdentity::canonicalArgsHash() const -> ContentHash
+    {
+        return m_canonicalArgsHash;
+    }
+
+    auto ToolCallPositionIdentity::asParent() const -> ToolCallParent
+    {
+        return ToolCallParent{m_rootIdentity, m_identity};
     }
 
     auto toolSurfaceAllowed(

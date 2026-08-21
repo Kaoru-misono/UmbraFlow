@@ -18,7 +18,21 @@ content-addressed Framework Tool Catalog for `framework.screen.observe` and
 `framework.workflow.wait`. Their arguments are exact and bounded, and Project
 catalogs cannot claim the reserved `framework.` namespace. The existing command
 path still explicitly rejects Framework providers: execution adapters, durable
-call identity/replay, and public contract publication have not landed yet.
+call persistence/replay, and public contract publication have not landed yet.
+
+The next internal checkpoint adds the outcome-independent identity model only.
+A root now derives from a validated authenticated-caller namespace, stable root
+request key, and immutable canonical request preimage; reuse of one namespace
+and key with a different preimage is an explicit conflict. A call position now
+derives from that root, its typed optional parent and sequence, caller-fixed run
+identity, Framework release identity, Tool Runtime protocol identity,
+environment identity, provider/catalog identity, Tool name/version, and
+canonical argument hash. Framework and Project invocations use the same
+builder. Caller namespaces and root keys are opaque non-empty strings bounded
+to 256 bytes. Provider results, delivery classification, and
+admission-selected principal/policy/approval/lease/budget material have no
+identity input. These values are not persisted or executed yet, and no ledger,
+recovery, adapter, or wire-contract generation has changed.
 
 ## 1. Product boundary
 
