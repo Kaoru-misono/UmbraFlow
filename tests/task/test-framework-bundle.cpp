@@ -81,26 +81,27 @@ namespace uf::task
     {
         auto sdk = pureFrameworkScriptModules();
         REQUIRE(sdk.has_value());
-        REQUIRE(sdk->size() == 7U);
+        REQUIRE(sdk->size() == 8U);
         CHECK(sdk->at(0).name == "@umbraflow/collections");
         CHECK(sdk->at(1).name == "@umbraflow/jcs");
-        CHECK(sdk->at(2).name == "@umbraflow/result");
-        CHECK(sdk->at(3).name == "@umbraflow/text");
-        CHECK(sdk->at(4).name == "@umbraflow/utf8");
+        CHECK(sdk->at(2).name == "@umbraflow/json");
+        CHECK(sdk->at(3).name == "@umbraflow/result");
+        CHECK(sdk->at(4).name == "@umbraflow/text");
+        CHECK(sdk->at(5).name == "@umbraflow/utf8");
         CHECK(
-            sdk->at(5).name
+            sdk->at(6).name
             == "@umbraflow/internal/unicode-text-data"
         );
         CHECK(
-            sdk->at(6).name
+            sdk->at(7).name
             == "@umbraflow/internal/unicode-utf8-data"
         );
-        for (auto index = std::size_t{0U}; index < 5U; ++index)
+        for (auto index = std::size_t{0U}; index < 6U; ++index)
         {
             CHECK(sdk->at(index).projectVisible);
         }
-        CHECK_FALSE(sdk->at(5).projectVisible);
         CHECK_FALSE(sdk->at(6).projectVisible);
+        CHECK_FALSE(sdk->at(7).projectVisible);
 
         constexpr auto entries = std::array{std::string_view{"derive"}};
         auto program = script::PureDataProgram::compile(
@@ -111,6 +112,7 @@ namespace uf::task
                     .name = "main",
                     .source = R"LUAU(
 local jcs = require("@umbraflow/jcs")
+local json = require("@umbraflow/json")
 local collections = require("@umbraflow/collections")
 local result = require("@umbraflow/result")
 local text = require("@umbraflow/text")
@@ -189,6 +191,60 @@ return {
         local internalDataHidden = not pcall(function()
             return require("@umbraflow/internal/unicode-text-data")
         end)
+        local emptyObject = json.parse("{}")
+        local emptyArray = json.parse("[]")
+        local immutableObject = json.object({
+            nested = { 1, json.null, 3 },
+        })
+        local changedObject = json.set(immutableObject, "added", true)
+        local appendedArray = json.append(json.get(immutableObject, "nested"), "tail")
+        local parsedFrozen = not pcall(function() emptyObject.forged = true end)
+        local nestedFrozen = not pcall(function()
+            json.get(immutableObject, "nested")[1] = 99
+        end)
+        local duplicateRejected = not pcall(function()
+            return json.parse('{"same":1,"same":2}')
+        end)
+        local badSurrogateRejected = not pcall(function()
+            return json.parse('"\\uD800"')
+        end)
+        local badNumberRejected = not pcall(function()
+            return json.parse("01")
+        end)
+        local invalidJsonUtf8Rejected = not pcall(function()
+            return json.parse('"' .. invalidUtf8 .. '"')
+        end)
+        local mixedRejected = not pcall(function()
+            return json.encode({ [1] = true, named = true })
+        end)
+        local sparseRejected = not pcall(function()
+            return json.encode({ [1] = true, [3] = true })
+        end)
+        local cycle = {}
+        cycle.self = cycle
+        local cycleRejected = not pcall(function() return json.encode(cycle) end)
+        local nonFiniteRejected = not pcall(function()
+            return json.encode(math.huge)
+        end)
+        local ambiguousEmptyRejected = not pcall(function()
+            return json.immutable({})
+        end)
+        local deep = json.array()
+        for _ = 1, 130 do deep = json.array({ deep }) end
+        local deepRejected = not pcall(function() return json.encode(deep) end)
+        local tooLargeRejected = not pcall(function()
+            return json.parse(string.rep(" ", 1024 * 1024 + 1))
+        end)
+        local expandedScalarRejected = not pcall(function()
+            return json.encode(string.rep("\1", 200000))
+        end)
+        local valueCountRejected = not pcall(function()
+            local wide = json.array({ true })
+            for _ = 1, 16 do wide = json.array({ wide, wide }) end
+            return wide
+        end)
+        local removedObject = json.remove(changedObject, "added")
+        local removedArray = json.remove(appendedArray, 2)
         return {
             canonical = jcs.encode(input),
             error = result.match(mappedFailure, function() return "wrong" end,
@@ -207,6 +263,30 @@ return {
             invalid_text_utf8 = invalidTextUtf8,
             invalid_utf8 = not unicode.is_valid(invalidUtf8) and invalidUtf8Rejected,
             internal_data_hidden = internalDataHidden,
+            json_appended = json.encode(appendedArray),
+            json_ambiguous_empty = ambiguousEmptyRejected,
+            json_bad_number = badNumberRejected,
+            json_bad_surrogate = badSurrogateRejected,
+            json_changed = json.encode(changedObject),
+            json_cycle = cycleRejected,
+            json_deep = deepRejected,
+            json_duplicate = duplicateRejected,
+            json_empty_array = json.encode(emptyArray),
+            json_empty_object = json.encode(emptyObject),
+            json_expanded_scalar = expandedScalarRejected,
+            json_invalid_utf8 = invalidJsonUtf8Rejected,
+            json_mixed = mixedRejected,
+            json_nested_frozen = nestedFrozen,
+            json_non_finite = nonFiniteRejected,
+            json_null_shared = rawequal(json.null, jcs.null),
+            json_parsed_frozen = parsedFrozen,
+            json_removed_array = json.encode(removedArray),
+            json_removed_object = json.encode(removedObject),
+            json_sparse = sparseRejected,
+            json_too_large = tooLargeRejected,
+            json_value_count = valueCountRejected,
+            json_constructed_array = json.encode(json.array()),
+            json_constructed_object = json.encode(json.object()),
             letter = unicode.classify("A"),
             mark = unicode.classify(0x0301),
             number = unicode.classify("9"),
@@ -266,7 +346,7 @@ return {
         REQUIRE(result.has_value());
         CHECK(
             json::canonicalBytes(*result)
-            == R"({"canonical":"{\"a\":2,\"b\":1}","error":"fixture.mapped","error_frozen":true,"frozen":true,"has":true,"internal_data_hidden":true,"invalid_comparator":true,"invalid_filter":true,"invalid_list":true,"invalid_map":true,"invalid_match_option_type":true,"invalid_match_options":true,"invalid_normalization":true,"invalid_result":true,"invalid_text_utf8":true,"invalid_utf8":true,"letter":"letter","mark":"mark","number":"number","other":"other","points":[65,128578,20013],"points_frozen":true,"result":13,"separator":"separator","skipped":0,"sorted":[2,4,6],"split":["a","","b"],"split_compact":["a","b"],"split_frozen":true,"stable":"cab","symbol":"symbol","text_case_fold":"strasse","text_collapse":"Menu Start","text_contains":true,"text_ends":true,"text_hangul":"가","text_nfd":true,"text_nfkc":"ffi","text_nfkd":"1","text_normalized":"é","text_reordered":true,"text_special_fold":"i̇σσ","text_starts":true,"text_trim":"Menu","tokens":["Go",",","中","🙂","42"],"tokens_frozen":true,"unicode_length":3,"unicode_slice":"🙂中","unicode_version":"15.0.0","whitespace":true})"
+            == R"({"canonical":"{\"a\":2,\"b\":1}","error":"fixture.mapped","error_frozen":true,"frozen":true,"has":true,"internal_data_hidden":true,"invalid_comparator":true,"invalid_filter":true,"invalid_list":true,"invalid_map":true,"invalid_match_option_type":true,"invalid_match_options":true,"invalid_normalization":true,"invalid_result":true,"invalid_text_utf8":true,"invalid_utf8":true,"json_ambiguous_empty":true,"json_appended":"[1,null,3,\"tail\"]","json_bad_number":true,"json_bad_surrogate":true,"json_changed":"{\"added\":true,\"nested\":[1,null,3]}","json_constructed_array":"[]","json_constructed_object":"{}","json_cycle":true,"json_deep":true,"json_duplicate":true,"json_empty_array":"[]","json_empty_object":"{}","json_expanded_scalar":true,"json_invalid_utf8":true,"json_mixed":true,"json_nested_frozen":true,"json_non_finite":true,"json_null_shared":true,"json_parsed_frozen":true,"json_removed_array":"[1,3,\"tail\"]","json_removed_object":"{\"nested\":[1,null,3]}","json_sparse":true,"json_too_large":true,"json_value_count":true,"letter":"letter","mark":"mark","number":"number","other":"other","points":[65,128578,20013],"points_frozen":true,"result":13,"separator":"separator","skipped":0,"sorted":[2,4,6],"split":["a","","b"],"split_compact":["a","b"],"split_frozen":true,"stable":"cab","symbol":"symbol","text_case_fold":"strasse","text_collapse":"Menu Start","text_contains":true,"text_ends":true,"text_hangul":"가","text_nfd":true,"text_nfkc":"ffi","text_nfkd":"1","text_normalized":"é","text_reordered":true,"text_special_fold":"i̇σσ","text_starts":true,"text_trim":"Menu","tokens":["Go",",","中","🙂","42"],"tokens_frozen":true,"unicode_length":3,"unicode_slice":"🙂中","unicode_version":"15.0.0","whitespace":true})"
         );
     }
 }

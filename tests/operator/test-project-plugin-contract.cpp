@@ -416,21 +416,22 @@ return {
         );
 
         auto const moduleRows = parsed->find("framework_pure_modules")->items();
-        REQUIRE(moduleRows.size() == 7U);
+        REQUIRE(moduleRows.size() == 8U);
         CHECK(
             moduleRows[0].find("name")->string()
             == "@umbraflow/collections"
         );
         CHECK(moduleRows[1].find("name")->string() == "@umbraflow/jcs");
-        CHECK(moduleRows[2].find("name")->string() == "@umbraflow/result");
-        CHECK(moduleRows[3].find("name")->string() == "@umbraflow/text");
-        CHECK(moduleRows[4].find("name")->string() == "@umbraflow/utf8");
+        CHECK(moduleRows[2].find("name")->string() == "@umbraflow/json");
+        CHECK(moduleRows[3].find("name")->string() == "@umbraflow/result");
+        CHECK(moduleRows[4].find("name")->string() == "@umbraflow/text");
+        CHECK(moduleRows[5].find("name")->string() == "@umbraflow/utf8");
         CHECK(
-            moduleRows[5].find("name")->string()
+            moduleRows[6].find("name")->string()
             == "@umbraflow/internal/unicode-text-data"
         );
         CHECK(
-            moduleRows[6].find("name")->string()
+            moduleRows[7].find("name")->string()
             == "@umbraflow/internal/unicode-utf8-data"
         );
         auto const sdk = task::pureFrameworkScriptModules();
@@ -460,7 +461,7 @@ return {
         CHECK(*hash == *expected);
         CHECK(
             hash->hex()
-            == "d13b2c6fe917a7ed2d0850a9204cd3014f17bcd447f32f1af9061b4955f2c02e"
+            == "ed11c6d951a2288e5a0cbe4b415b8cd90666d725febb81491527eb80b1d2c4be"
         );
     }
 

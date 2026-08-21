@@ -81,16 +81,18 @@ production mutating provider may be exposed.
 The pure SDK checkpoint now reserves `@umbraflow/` inside the closed Project
 module resolver and exposes the existing embedded RFC 8785 module as
 `@umbraflow/jcs`, plus the frozen `@umbraflow/collections` and
-`@umbraflow/result` vocabularies. Reserved requests never fall through to
-Project modules; Framework modules cannot import the Project graph; exports are
-deep-frozen and cached per fresh VM. Exact SDK module names/source hashes,
+`@umbraflow/result` vocabularies and strict `@umbraflow/json` value API.
+Reserved requests never fall through to Project modules; Framework modules
+cannot import the Project graph; exports are deep-frozen and cached per fresh
+VM. Exact SDK module names/source hashes,
 resolver semantics, freeze behavior, and limits now move
 `plugin_environment_hash`. UTF-8 traversal and Unicode 15.0 major-category
 classification are pinned in `@umbraflow/utf8`, and normalization and case
-folding are pinned in `@umbraflow/text`; JSON and all scoped modules remain
-pending. Their Luau algorithms are maintained as runtime source, while generated
-Unicode data lives in embedded Framework-internal modules that Project source
-cannot require directly.
+folding are pinned in `@umbraflow/text`. Strict JSON parsing, deterministic
+encoding, empty object/array identity, and immutable value updates are pinned in
+`@umbraflow/json`; all scoped modules remain pending. Their Luau algorithms are
+maintained as runtime source, while generated Unicode data lives in embedded
+Framework-internal modules that Project source cannot require directly.
 
 ## 1. Product boundary
 
@@ -262,11 +264,10 @@ The first SDK generation provides at least:
 - `@umbraflow/result`: one composable success/error vocabulary.
 
 Internal checkpoint: `@umbraflow/jcs`, `@umbraflow/collections`,
-`@umbraflow/result`, and the Unicode-15.0 `@umbraflow/utf8` and
-`@umbraflow/text` modules are live through the reserved resolver. Their
+`@umbraflow/result`, `@umbraflow/json`, and the Unicode-15.0 `@umbraflow/utf8`
+and `@umbraflow/text` modules are live through the reserved resolver. Their
 hand-maintained algorithms require generated, embedded data through
-Framework-only internal module names. `@umbraflow/json` remains part of the
-same generation cut.
+Framework-only internal module names.
 
 Pure module calls create no ToolInvocation, consume no Tool-call budget, and
 have no access to the current execution scope. Exported tables and reachable
