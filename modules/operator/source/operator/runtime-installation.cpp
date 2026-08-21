@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <format>
@@ -20,6 +21,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -31,6 +33,15 @@ namespace uf::operator_runtime::detail
         constexpr auto k_runtimeDirectoryName = std::string_view{"runtime-artifact"};
         constexpr auto k_maximumReleaseManifestBytes = std::size_t{64U} * 1024U;
         constexpr auto k_maximumExactJsonInteger = uint64{9'007'199'254'740'991U};
+        constexpr auto k_publishRetryDelays = std::array{
+            std::chrono::milliseconds{5},
+            std::chrono::milliseconds{10},
+            std::chrono::milliseconds{20},
+            std::chrono::milliseconds{40},
+            std::chrono::milliseconds{80},
+            std::chrono::milliseconds{160},
+            std::chrono::milliseconds{320},
+        };
 
         [[nodiscard]]
         auto refuse(std::string message) -> std::unexpected<Error>
@@ -525,24 +536,55 @@ namespace uf::operator_runtime::detail
             }
             UF_TRY(task::loadRuntimeArtifact(staging, source.rootHash()));
 
-            std::filesystem::rename(staging, destination, error);
-            if (error)
+            for (auto attempt = std::size_t{}; ; ++attempt)
             {
-                auto destinationStatus = std::filesystem::symlink_status(destination, error);
+                error.clear();
+                std::filesystem::rename(staging, destination, error);
+                if (!error)
+                {
+                    cleanup.release();
+                    return destination;
+                }
+
+                // A second publisher of identical content may have won the
+                // destination between the first inspection and this rename.
+                // Keep the rename error separate: symlink_status writes its
+                // own error_code and must not erase the failure we report.
+                auto const publishError = error;
+                auto statusError        = std::error_code{};
+                auto const destinationStatus =
+                    std::filesystem::symlink_status(destination, statusError);
+                if (!statusError && std::filesystem::exists(destinationStatus))
+                {
+                    if (
+                        !std::filesystem::is_directory(destinationStatus)
+                        || std::filesystem::is_symlink(destinationStatus)
+                    )
+                    {
+                        return refuse(
+                            "production RuntimeArtifact object path is not a directory"
+                        );
+                    }
+                    return destination;
+                }
                 if (
-                    error
-                    || !std::filesystem::is_directory(destinationStatus)
-                    || std::filesystem::is_symlink(destinationStatus)
+                    statusError
+                    && statusError != std::errc::no_such_file_or_directory
                 )
                 {
-                    return ioFailure("publish", destination, error);
+                    return ioFailure("inspect", destination, statusError);
                 }
+                if (attempt == k_publishRetryDelays.size())
+                {
+                    return ioFailure("publish", destination, publishError);
+                }
+
+                // Windows virus scanners and indexing filters can retain a
+                // just-closed directory handle briefly. Publication remains
+                // one atomic rename; only that boundary is retried, for a
+                // fixed total well below one second.
+                std::this_thread::sleep_for(k_publishRetryDelays[attempt]);
             }
-            else
-            {
-                cleanup.release();
-            }
-            return destination;
         }
     }
 
