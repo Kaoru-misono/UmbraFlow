@@ -4101,8 +4101,126 @@ namespace uf::operator_runtime
         );
         REQUIRE_FALSE(refusedReadmission.has_value());
         CHECK(refusedReadmission.error().message().contains(
-            "cannot enter read-only admission"
+            "cannot enter admission"
         ));
+    }
+
+    TEST_CASE(
+        "restart makes an unanswered mutating Tool a target-wide barrier until reconciliation"
+    )
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto preimage  = CanonicalJson::parseExact(
+            R"({"objective":"crash-during-mutation"})"
+        );
+        REQUIRE(preimage.has_value());
+        auto root = ToolRootRequestIdentity::create(
+            "controller-1",
+            "mutating-crash-request",
+            std::move(*preimage)
+        );
+        REQUIRE(root.has_value());
+        auto invocation = toolInvocation(prepared.project, "command-1");
+        auto const execution = ToolExecutionIdentity{
+            .runIdentity                 = hashOf("mutating-crash-run"),
+            .frameworkReleaseIdentity    = hashOf("mutating-crash-framework"),
+            .toolRuntimeProtocolIdentity = hashOf("mutating-crash-protocol"),
+            .environmentIdentity         = hashOf("mutating-crash-environment"),
+        };
+        auto call = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            1U,
+            execution,
+            invocation
+        );
+        REQUIRE(call.has_value());
+        auto admission = prepared.store.admitMutatingToolCall(
+            prepared.controller,
+            prepared.lease,
+            *root,
+            *call
+        );
+        REQUIRE(admission.has_value());
+        auto dispatch = prepared.store.beginToolCallDispatch(*admission);
+        REQUIRE(dispatch.has_value());
+        auto const manifest = prepared.manifest;
+        {
+            auto released = std::move(prepared.store);
+        }
+
+        auto restarted = OperatorCoordinator::open(
+            temporary.path() / "production"
+        );
+        REQUIRE(restarted.has_value());
+        auto replay = restarted->replayToolCall(*root, *call);
+        REQUIRE(replay.has_value());
+        CHECK(replay->state == ToolCallState::Possible);
+
+        auto resumed = restarted->resumeSession(
+            SessionResume{
+                .authenticatedControllerId = "controller-1",
+                .controlledTargetId        = "target-1",
+                .mode                      = SessionMode::Write,
+                .kind                      = ControllerKind::Script,
+            },
+            manifest
+        );
+        REQUIRE(resumed.has_value());
+        auto lease = restarted->acquireLease(*resumed);
+        REQUIRE(lease.has_value());
+
+        auto secondPreimage = CanonicalJson::parseExact(
+            R"({"objective":"mutation-after-restart"})"
+        );
+        REQUIRE(secondPreimage.has_value());
+        auto secondRoot = ToolRootRequestIdentity::create(
+            "controller-1",
+            "mutation-after-restart",
+            std::move(*secondPreimage)
+        );
+        REQUIRE(secondRoot.has_value());
+        auto secondCall = ToolCallPositionIdentity::create(
+            *secondRoot,
+            std::nullopt,
+            1U,
+            execution,
+            invocation
+        );
+        REQUIRE(secondCall.has_value());
+        auto blocked = restarted->admitMutatingToolCall(
+            *resumed,
+            *lease,
+            *secondRoot,
+            *secondCall
+        );
+        REQUIRE_FALSE(blocked.has_value());
+        CHECK(blocked.error().message().contains("state possible"));
+
+        auto result = CanonicalJson::parseExact(R"({"delivered":true})");
+        auto evidence = CanonicalJson::parseExact(
+            R"({"snapshot_ref":"post-restart-evidence"})"
+        );
+        REQUIRE(result.has_value());
+        REQUIRE(evidence.has_value());
+        auto reconciled = restarted->reconcileMutatingToolCall(
+            *resumed,
+            *lease,
+            *root,
+            *call,
+            ToolCallReconciliation::confirmed(*result, *evidence)
+        );
+        REQUIRE(reconciled.has_value());
+        CHECK(reconciled->state == ToolCallState::Confirmed);
+
+        auto unblocked = restarted->admitMutatingToolCall(
+            *resumed,
+            *lease,
+            *secondRoot,
+            *secondCall
+        );
+        REQUIRE(unblocked.has_value());
     }
 
     TEST_CASE("Tool admission charges an Agent once and rechecks lease at dispatch")
@@ -4191,6 +4309,8 @@ namespace uf::operator_runtime
         auto after = prepared.store.remainingBudget(agent);
         REQUIRE(after.has_value());
         CHECK(after->toolCalls == 0U);
+        CHECK(after->observations == 0U);
+        CHECK(after->mutations == 1U);
 
         auto repeated = prepared.store.admitReadOnlyToolCall(
             agent,
@@ -4203,6 +4323,7 @@ namespace uf::operator_runtime
         auto afterRepeated = prepared.store.remainingBudget(agent);
         REQUIRE(afterRepeated.has_value());
         CHECK(afterRepeated->toolCalls == 0U);
+        CHECK(afterRepeated->observations == 0U);
 
         REQUIRE(prepared.store.releaseLease(*lease).has_value());
         auto staleDispatch = prepared.store.beginToolCallDispatch(*admission);
@@ -4261,6 +4382,133 @@ namespace uf::operator_runtime
         );
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().message().contains("mutating descriptor"));
+    }
+
+    TEST_CASE("mutating Tool admission charges Agent tool and mutation budgets once")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+        auto agent = test_support::addController(
+            prepared,
+            ControllerKind::Agent,
+            SessionMode::Write,
+            "agent-mutating-runtime",
+            "agent-mutating-instance",
+            "agent-mutating-target",
+            AgentBudget{
+                .maximumToolCalls    = 2U,
+                .maximumMutations    = 1U,
+                .maximumObservations = 2U,
+                .maximumElapsedMillis = 60'000U,
+                .maximumRiskUnits     = 2U,
+            }
+        );
+        auto lease = prepared.store.acquireLease(agent);
+        REQUIRE(lease.has_value());
+        auto invocation = toolInvocation(prepared.project, "command-1");
+        auto const execution = ToolExecutionIdentity{
+            .runIdentity                 = hashOf("agent-mutating-run"),
+            .frameworkReleaseIdentity    = hashOf("agent-mutating-framework"),
+            .toolRuntimeProtocolIdentity = hashOf("agent-mutating-protocol"),
+            .environmentIdentity         = hashOf("agent-mutating-environment"),
+        };
+        auto firstPreimage = CanonicalJson::parseExact(
+            R"({"objective":"agent mutation one"})"
+        );
+        REQUIRE(firstPreimage.has_value());
+        auto firstRoot = ToolRootRequestIdentity::create(
+            "controller-1",
+            "agent-mutation-one",
+            std::move(*firstPreimage)
+        );
+        REQUIRE(firstRoot.has_value());
+        auto firstCall = ToolCallPositionIdentity::create(
+            *firstRoot,
+            std::nullopt,
+            1U,
+            execution,
+            invocation
+        );
+        REQUIRE(firstCall.has_value());
+        auto admitted = prepared.store.admitMutatingToolCall(
+            agent,
+            *lease,
+            *firstRoot,
+            *firstCall
+        );
+        REQUIRE(admitted.has_value());
+        auto afterFirst = prepared.store.remainingBudget(agent);
+        REQUIRE(afterFirst.has_value());
+        CHECK(afterFirst->toolCalls == 1U);
+        CHECK(afterFirst->mutations == 0U);
+        CHECK(afterFirst->observations == 2U);
+
+        auto repeated = prepared.store.admitMutatingToolCall(
+            agent,
+            *lease,
+            *firstRoot,
+            *firstCall
+        );
+        REQUIRE(repeated.has_value());
+        CHECK(repeated->attemptNumber() == admitted->attemptNumber());
+        auto afterRepeat = prepared.store.remainingBudget(agent);
+        REQUIRE(afterRepeat.has_value());
+        CHECK(afterRepeat->toolCalls == 1U);
+        CHECK(afterRepeat->mutations == 0U);
+
+        auto dispatch = prepared.store.beginToolCallDispatch(*admitted);
+        REQUIRE(dispatch.has_value());
+        auto terminalError = CanonicalJson::parseExact(
+            R"({"error":"provider returned after dispatch"})"
+        );
+        REQUIRE(terminalError.has_value());
+        auto unsafeTerminal = prepared.store.completeToolCallDispatch(
+            *dispatch,
+            ToolCallCompletion::terminalFailure(*terminalError)
+        );
+        REQUIRE_FALSE(unsafeTerminal.has_value());
+        CHECK(unsafeTerminal.error().message().contains(
+            "must report possible"
+        ));
+        auto result = CanonicalJson::parseExact(R"({"delivered":true})");
+        REQUIRE(result.has_value());
+        REQUIRE(prepared.store.completeToolCallDispatch(
+            *dispatch,
+            ToolCallCompletion::confirmed(*result)
+        ).has_value());
+
+        auto secondPreimage = CanonicalJson::parseExact(
+            R"({"objective":"agent mutation two"})"
+        );
+        REQUIRE(secondPreimage.has_value());
+        auto secondRoot = ToolRootRequestIdentity::create(
+            "controller-1",
+            "agent-mutation-two",
+            std::move(*secondPreimage)
+        );
+        REQUIRE(secondRoot.has_value());
+        auto secondCall = ToolCallPositionIdentity::create(
+            *secondRoot,
+            std::nullopt,
+            1U,
+            execution,
+            invocation
+        );
+        REQUIRE(secondCall.has_value());
+        auto exhausted = prepared.store.admitMutatingToolCall(
+            agent,
+            *lease,
+            *secondRoot,
+            *secondCall
+        );
+        REQUIRE_FALSE(exhausted.has_value());
+        CHECK(exhausted.error().message().contains(
+            "mutation budget is exhausted"
+        ));
+        auto afterExhaustion = prepared.store.remainingBudget(agent);
+        REQUIRE(afterExhaustion.has_value());
+        CHECK(afterExhaustion->toolCalls == 1U);
+        CHECK(afterExhaustion->mutations == 0U);
     }
 
     TEST_CASE("the immediate-prior Tool runtime schema migrates identity rows exactly")

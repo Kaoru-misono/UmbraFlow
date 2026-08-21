@@ -39,9 +39,9 @@ unanswered dispatch to durable `possible` and refuses redispatch. An
 current-epoch attempt. Sibling positions remain ordered, child calls are
 refused until delegation grants land, and Agent admission charges the Tool-call
 budget exactly once. That persistence checkpoint deliberately exposed no
-provider adapter and explicitly refuses mutating admission. Mutating authority/freeze,
-reconciliation, nested delegation, execution adapters, and public contract
-publication remain to be implemented.
+provider adapter and explicitly refused mutating admission at that point.
+Nested delegation, public actor adapters, Project handlers/automation, and the
+public contract generation remain to be implemented.
 
 The first caller-neutral executor now owns terminal fast-path replay, live
 read-only admission, durable dispatch, exactly one provider call, conversion of
@@ -52,6 +52,19 @@ binding supplies the root namespace; observe returns an opaque durable snapshot
 reference plus pinned resolution metadata, wait uses the caller's validated
 bounded duration, and exact terminal replay performs neither operation again.
 Public actor adapters and Project providers remain to be implemented.
+
+The first mutating checkpoint now uses the same executor, live authority rows,
+dispatch-before-provider boundary, durable replay, and admission-attempt model.
+Only one mutating Tool or legacy Operation may be active on a controlled target.
+After dispatch, a provider error or attempted terminal-failure answer is stored
+conservatively as `possible`; restart applies the same classification to an
+unanswered mutating dispatch. `possible` freezes mutation across roots and
+actors while read-only observation remains available. A live same-origin
+reconciliation with mandatory canonical evidence may classify the call
+`confirmed` or `proven_absent` and release the barrier, or
+`terminally_unresolved` and retain it. Agent Tool-call, mutation, and Framework
+observation budgets are charged together in the first admitted transaction and
+not charged again on exact rejoin.
 
 ## 1. Product boundary
 

@@ -559,6 +559,15 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto recoverUncertainToolCalls() -> Result<uint64>;
 
+        [[nodiscard]]
+        auto admitToolCall(
+            ControllerBinding const& controller,
+            ControlLease const& lease,
+            ToolRootRequestIdentity const& root,
+            ToolCallPositionIdentity const& call,
+            ToolMutability requiredMutability
+        ) -> Result<ToolCallAdmission>;
+
         // The transaction-neutral canonical mint: the ten ordered checks
         // (shape, duplicate and parent-cycle relations, identity closure,
         // basis, stable mint, collision, consistency, parent projection,
@@ -888,6 +897,18 @@ namespace uf::operator_runtime
             ToolCallPositionIdentity const& call
         ) -> Result<ToolCallAdmission>;
 
+        // Mutating admission shares the read-only identity, authority and
+        // budget path, then additionally enforces one active mutation per
+        // controlled target. A possible or terminally-unresolved mutation is a
+        // durable target-wide barrier across roots and actors.
+        [[nodiscard]]
+        auto admitMutatingToolCall(
+            ControllerBinding const& controller,
+            ControlLease const& lease,
+            ToolRootRequestIdentity const& root,
+            ToolCallPositionIdentity const& call
+        ) -> Result<ToolCallAdmission>;
+
         // Commits the dispatch boundary before provider code runs.
         [[nodiscard]]
         auto beginToolCallDispatch(
@@ -908,6 +929,18 @@ namespace uf::operator_runtime
         auto replayToolCall(
             ToolRootRequestIdentity const& root,
             ToolCallPositionIdentity const& call
+        ) -> Result<ToolCallReplay>;
+
+        // Reclassifies one possible mutating call from fresh Framework
+        // evidence. Confirmed and proven-absent release its target barrier;
+        // terminally-unresolved remains a barrier by design.
+        [[nodiscard]]
+        auto reconcileMutatingToolCall(
+            ControllerBinding const& controller,
+            ControlLease const& lease,
+            ToolRootRequestIdentity const& root,
+            ToolCallPositionIdentity const& call,
+            ToolCallReconciliation const& reconciliation
         ) -> Result<ToolCallReplay>;
 
         // Records that the world moved under us, which is what out-of-band

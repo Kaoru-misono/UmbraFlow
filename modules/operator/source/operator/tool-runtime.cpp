@@ -133,6 +133,71 @@ namespace uf::operator_runtime
         return m_evidence;
     }
 
+    ToolCallReconciliation::ToolCallReconciliation(
+        ToolCallReconciliationKind kind,
+        CanonicalJson payload,
+        CanonicalJson evidence
+    )
+        : m_kind{kind}
+        , m_payload{std::move(payload)}
+        , m_evidence{std::move(evidence)}
+    {
+    }
+
+    auto ToolCallReconciliation::confirmed(
+        CanonicalJson result,
+        CanonicalJson evidence
+    ) -> ToolCallReconciliation
+    {
+        return ToolCallReconciliation{
+            ToolCallReconciliationKind::Confirmed,
+            std::move(result),
+            std::move(evidence),
+        };
+    }
+
+    auto ToolCallReconciliation::provenAbsent(
+        CanonicalJson explanation,
+        CanonicalJson evidence
+    ) -> ToolCallReconciliation
+    {
+        return ToolCallReconciliation{
+            ToolCallReconciliationKind::ProvenAbsent,
+            std::move(explanation),
+            std::move(evidence),
+        };
+    }
+
+    auto ToolCallReconciliation::terminallyUnresolved(
+        CanonicalJson explanation,
+        CanonicalJson evidence
+    ) -> ToolCallReconciliation
+    {
+        return ToolCallReconciliation{
+            ToolCallReconciliationKind::TerminallyUnresolved,
+            std::move(explanation),
+            std::move(evidence),
+        };
+    }
+
+    auto ToolCallReconciliation::kind() const noexcept
+        -> ToolCallReconciliationKind
+    {
+        return m_kind;
+    }
+
+    auto ToolCallReconciliation::payload() const noexcept
+        -> CanonicalJson const&
+    {
+        return m_payload;
+    }
+
+    auto ToolCallReconciliation::evidence() const noexcept
+        -> CanonicalJson const&
+    {
+        return m_evidence;
+    }
+
     ToolCallAdmission::ToolCallAdmission(
         ContentHash callIdentity,
         uint64 attemptNumber,

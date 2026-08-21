@@ -13,6 +13,13 @@ namespace uf::operator_runtime
     using ReadOnlyToolProvider =
         std::function<Result<ToolCallCompletion>(ToolCallPositionIdentity const&)>;
 
+    // A mutating provider may prove delivery, prove absence, or report
+    // uncertainty. Any returned error or terminal-failure completion is
+    // conservatively persisted as possible because provider code ran only
+    // after the durable dispatch boundary.
+    using MutatingToolProvider =
+        std::function<Result<ToolCallCompletion>(ToolCallPositionIdentity const&)>;
+
     // The one execution seam shared by all caller adapters. It first replays a
     // recorded outcome without authority or provider execution; only the first
     // new call proceeds through admission, durable dispatch and one provider
@@ -31,6 +38,15 @@ namespace uf::operator_runtime
             ToolRootRequestIdentity const& root,
             ToolCallPositionIdentity const& call,
             ReadOnlyToolProvider const& provider
+        ) -> Result<ToolCallReplay>;
+
+        [[nodiscard]]
+        auto invokeMutating(
+            ControllerBinding const& controller,
+            ControlLease const& lease,
+            ToolRootRequestIdentity const& root,
+            ToolCallPositionIdentity const& call,
+            MutatingToolProvider const& provider
         ) -> Result<ToolCallReplay>;
     };
 }

@@ -532,13 +532,21 @@ if(TARGET ${PROJECT_NAME}_operator)
     # The Operator suite deliberately drives real SQLite stores and runtime
     # artifacts. Keep its individual CI gates below the repository-wide
     # 60-second limit while preserving one executable for focused local runs.
-    add_test(NAME test-operator COMMAND test-operator "--last=72")
-    add_test(NAME test-operator-remainder COMMAND test-operator "--first=73")
-    set_tests_properties(test-operator test-operator-remainder PROPERTIES
+    add_test(NAME test-operator COMMAND test-operator "--last=50")
+    add_test(
+        NAME test-operator-middle
+        COMMAND test-operator "--first=51" "--last=100"
+    )
+    add_test(NAME test-operator-remainder COMMAND test-operator "--first=101")
+    set_tests_properties(
+        test-operator test-operator-middle test-operator-remainder
+        PROPERTIES
         TIMEOUT 60
         LABELS "CI"
     )
-    uf_require_executed_assertions(test-operator test-operator-remainder)
+    uf_require_executed_assertions(
+        test-operator test-operator-middle test-operator-remainder
+    )
 
     cpp_add_contract_suite(
         TARGET test-contract-operator

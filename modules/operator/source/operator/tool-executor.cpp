@@ -12,8 +12,7 @@ namespace uf::operator_runtime
     namespace
     {
         [[nodiscard]]
-        auto providerFailureCompletion(Error const& error)
-            -> Result<ToolCallCompletion>
+        auto providerErrorPayload(Error const& error) -> Result<CanonicalJson>
         {
             auto const kind = automationErrorKind(error);
             auto payload = json::Value::ofObject({
@@ -36,7 +35,108 @@ namespace uf::operator_runtime
                 canonical,
                 CanonicalJson::parseExact(json::canonicalBytes(payload))
             );
-            return ToolCallCompletion::terminalFailure(std::move(canonical));
+            return canonical;
+        }
+
+        [[nodiscard]]
+        auto providerFailureCompletion(Error const& error)
+            -> Result<ToolCallCompletion>
+        {
+            UF_TRY_VALUE(payload, providerErrorPayload(error));
+            return ToolCallCompletion::terminalFailure(std::move(payload));
+        }
+
+        [[nodiscard]]
+        auto providerPossibleCompletion(Error const& error)
+            -> Result<ToolCallCompletion>
+        {
+            UF_TRY_VALUE(payload, providerErrorPayload(error));
+            return ToolCallCompletion::possible(std::move(payload));
+        }
+
+        [[nodiscard]]
+        auto invokeTool(
+            OperatorCoordinator& coordinator,
+            ControllerBinding const& controller,
+            ControlLease const& lease,
+            ToolRootRequestIdentity const& root,
+            ToolCallPositionIdentity const& call,
+            ReadOnlyToolProvider const& provider,
+            ToolMutability requiredMutability
+        ) -> Result<ToolCallReplay>
+        {
+            if (!provider)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "Tool invocation requires a provider"
+                );
+            }
+
+            UF_TRY(coordinator.persistToolRootRequest(root));
+            UF_TRY(coordinator.persistToolCallPosition(root, call));
+            UF_TRY_VALUE(replay, coordinator.replayToolCall(root, call));
+            switch (replay.state)
+            {
+            case ToolCallState::Confirmed:
+            case ToolCallState::ProvenAbsent:
+            case ToolCallState::Possible:
+            case ToolCallState::Rejected:
+            case ToolCallState::TerminalFailure:
+            case ToolCallState::TerminallyUnresolved:
+                return replay;
+            case ToolCallState::Dispatching:
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Tool call is already dispatching"
+                );
+            case ToolCallState::Proposed:
+            case ToolCallState::Admitted:
+                break;
+            }
+
+            auto admission = requiredMutability == ToolMutability::ReadOnly
+                ? coordinator.admitReadOnlyToolCall(
+                      controller,
+                      lease,
+                      root,
+                      call
+                  )
+                : coordinator.admitMutatingToolCall(
+                      controller,
+                      lease,
+                      root,
+                      call
+                  );
+            UF_TRY_VALUE(admitted, std::move(admission));
+            UF_TRY_VALUE(dispatch, coordinator.beginToolCallDispatch(admitted));
+            auto provided = provider(call);
+            auto classified = [&provided, requiredMutability]()
+                -> Result<ToolCallCompletion>
+            {
+                if (provided)
+                {
+                    auto completion = std::move(*provided);
+                    if (
+                        requiredMutability == ToolMutability::Mutating
+                        && completion.kind()
+                            == ToolCallCompletionKind::TerminalFailure
+                    )
+                    {
+                        return ToolCallCompletion::possible(
+                            completion.payload(),
+                            completion.evidence()
+                        );
+                    }
+                    return completion;
+                }
+                return requiredMutability == ToolMutability::Mutating
+                    ? providerPossibleCompletion(provided.error())
+                    : providerFailureCompletion(provided.error());
+            }();
+            UF_TRY_VALUE(completion, std::move(classified));
+            UF_TRY(coordinator.completeToolCallDispatch(dispatch, completion));
+            return coordinator.replayToolCall(root, call);
         }
     }
 
@@ -55,55 +155,33 @@ namespace uf::operator_runtime
         ReadOnlyToolProvider const& provider
     ) -> Result<ToolCallReplay>
     {
-        if (!provider)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "Read-only Tool invocation requires a provider"
-            );
-        }
-
-        UF_TRY(m_coordinator.persistToolRootRequest(root));
-        UF_TRY(m_coordinator.persistToolCallPosition(root, call));
-        UF_TRY_VALUE(replay, m_coordinator.replayToolCall(root, call));
-        switch (replay.state)
-        {
-        case ToolCallState::Confirmed:
-        case ToolCallState::ProvenAbsent:
-        case ToolCallState::Possible:
-        case ToolCallState::Rejected:
-        case ToolCallState::TerminalFailure:
-        case ToolCallState::TerminallyUnresolved:
-            return replay;
-        case ToolCallState::Dispatching:
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Tool call is already dispatching"
-            );
-        case ToolCallState::Proposed:
-        case ToolCallState::Admitted:
-            break;
-        }
-
-        UF_TRY_VALUE(
-            admission,
-            m_coordinator.admitReadOnlyToolCall(controller, lease, root, call)
+        return invokeTool(
+            m_coordinator,
+            controller,
+            lease,
+            root,
+            call,
+            provider,
+            ToolMutability::ReadOnly
         );
-        UF_TRY_VALUE(
-            dispatch,
-            m_coordinator.beginToolCallDispatch(admission)
+    }
+
+    auto ToolRuntimeExecutor::invokeMutating(
+        ControllerBinding const& controller,
+        ControlLease const& lease,
+        ToolRootRequestIdentity const& root,
+        ToolCallPositionIdentity const& call,
+        MutatingToolProvider const& provider
+    ) -> Result<ToolCallReplay>
+    {
+        return invokeTool(
+            m_coordinator,
+            controller,
+            lease,
+            root,
+            call,
+            provider,
+            ToolMutability::Mutating
         );
-        auto provided = provider(call);
-        auto classified = [&provided]() -> Result<ToolCallCompletion>
-        {
-            if (provided)
-            {
-                return std::move(*provided);
-            }
-            return providerFailureCompletion(provided.error());
-        }();
-        UF_TRY_VALUE(completion, std::move(classified));
-        UF_TRY(m_coordinator.completeToolCallDispatch(dispatch, completion));
-        return m_coordinator.replayToolCall(root, call);
     }
 }

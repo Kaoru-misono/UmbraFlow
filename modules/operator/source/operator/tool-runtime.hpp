@@ -91,6 +91,57 @@ namespace uf::operator_runtime
             -> std::optional<CanonicalJson> const&;
     };
 
+    enum class ToolCallReconciliationKind : uint8
+    {
+        Confirmed,
+        ProvenAbsent,
+        TerminallyUnresolved,
+    };
+
+    // A Framework-owned conclusion over a previously possible mutating call.
+    // Evidence is mandatory for every classification: reconciliation is the
+    // act of replacing uncertainty with a claim about the target, and without
+    // fresh evidence no such claim has been earned. TerminallyUnresolved ends
+    // this run but intentionally leaves the target-wide mutation barrier set.
+    class ToolCallReconciliation final
+    {
+        ToolCallReconciliationKind m_kind;
+        CanonicalJson              m_payload;
+        CanonicalJson              m_evidence;
+
+        ToolCallReconciliation(
+            ToolCallReconciliationKind kind,
+            CanonicalJson payload,
+            CanonicalJson evidence
+        );
+
+    public:
+        [[nodiscard]]
+        static auto confirmed(CanonicalJson result, CanonicalJson evidence)
+            -> ToolCallReconciliation;
+
+        [[nodiscard]]
+        static auto provenAbsent(
+            CanonicalJson explanation,
+            CanonicalJson evidence
+        ) -> ToolCallReconciliation;
+
+        [[nodiscard]]
+        static auto terminallyUnresolved(
+            CanonicalJson explanation,
+            CanonicalJson evidence
+        ) -> ToolCallReconciliation;
+
+        [[nodiscard]]
+        auto kind() const noexcept -> ToolCallReconciliationKind;
+
+        [[nodiscard]]
+        auto payload() const noexcept UF_LIFETIME_BOUND -> CanonicalJson const&;
+
+        [[nodiscard]]
+        auto evidence() const noexcept UF_LIFETIME_BOUND -> CanonicalJson const&;
+    };
+
     // An unforgeable handle to one durable admission row. Only the
     // Coordinator can mint it after re-reading live authority.
     class ToolCallAdmission final
