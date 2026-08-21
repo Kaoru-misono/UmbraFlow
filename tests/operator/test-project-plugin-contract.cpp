@@ -416,14 +416,15 @@ return {
         );
 
         auto const moduleRows = parsed->find("framework_pure_modules")->items();
-        REQUIRE(moduleRows.size() == 4U);
+        REQUIRE(moduleRows.size() == 5U);
         CHECK(
             moduleRows[0].find("name")->string()
             == "@umbraflow/collections"
         );
         CHECK(moduleRows[1].find("name")->string() == "@umbraflow/jcs");
         CHECK(moduleRows[2].find("name")->string() == "@umbraflow/result");
-        CHECK(moduleRows[3].find("name")->string() == "@umbraflow/utf8");
+        CHECK(moduleRows[3].find("name")->string() == "@umbraflow/text");
+        CHECK(moduleRows[4].find("name")->string() == "@umbraflow/utf8");
         for (auto const& row : moduleRows)
         {
             auto const publicName = row.find("name")->string();
@@ -441,7 +442,7 @@ return {
         CHECK(*hash == *expected);
         CHECK(
             hash->hex()
-            == "bd258bc872fc401c95a2891bf949c5e1b13f230a41c7430b753b0e7f16106ea0"
+            == "ec93f6d6bb818c3361766ce55b83ca1b6b210b6a4ddcb5c116de964bf4432089"
         );
     }
 

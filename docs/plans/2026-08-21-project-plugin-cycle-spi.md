@@ -259,9 +259,9 @@ The first SDK generation provides at least:
 - `@umbraflow/result`: one composable success/error vocabulary.
 
 Internal checkpoint: `@umbraflow/jcs`, `@umbraflow/collections`,
-`@umbraflow/result`, and the generated Unicode-15.0 `@umbraflow/utf8` are live
-through the reserved resolver; the other modules in this list remain part of
-the same generation cut.
+`@umbraflow/result`, and the generated Unicode-15.0 `@umbraflow/utf8` and
+`@umbraflow/text` modules are live through the reserved resolver;
+`@umbraflow/json` remains part of the same generation cut.
 
 Pure module calls create no ToolInvocation, consume no Tool-call budget, and
 have no access to the current execution scope. Exported tables and reachable

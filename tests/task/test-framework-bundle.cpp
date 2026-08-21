@@ -81,11 +81,12 @@ namespace uf::task
     {
         auto sdk = pureFrameworkScriptModules();
         REQUIRE(sdk.has_value());
-        REQUIRE(sdk->size() == 4U);
+        REQUIRE(sdk->size() == 5U);
         CHECK(sdk->at(0).name == "@umbraflow/collections");
         CHECK(sdk->at(1).name == "@umbraflow/jcs");
         CHECK(sdk->at(2).name == "@umbraflow/result");
-        CHECK(sdk->at(3).name == "@umbraflow/utf8");
+        CHECK(sdk->at(3).name == "@umbraflow/text");
+        CHECK(sdk->at(4).name == "@umbraflow/utf8");
 
         constexpr auto entries = std::array{std::string_view{"derive"}};
         auto program = script::PureDataProgram::compile(
@@ -98,6 +99,7 @@ namespace uf::task
 local jcs = require("@umbraflow/jcs")
 local collections = require("@umbraflow/collections")
 local result = require("@umbraflow/result")
+local text = require("@umbraflow/text")
 local unicode = require("@umbraflow/utf8")
 return {
     plugin_id = "fixture.sdk",
@@ -154,6 +156,22 @@ return {
         local invalidUtf8Rejected = not pcall(function()
             return unicode.validate(invalidUtf8)
         end)
+        local split = text.split("a,,b", ",")
+        local tokens = text.tokens("Go, 中🙂 42")
+        local splitFrozen = not pcall(function() split[1] = "forged" end)
+        local tokensFrozen = not pcall(function() tokens[1] = "forged" end)
+        local invalidNormalization = not pcall(function()
+            return text.normalize("value", "HOST")
+        end)
+        local invalidMatchOptions = not pcall(function()
+            return text.equals("a", "a", { locale = "tr-TR" })
+        end)
+        local invalidMatchOptionType = not pcall(function()
+            return text.equals("a", "a", { normalization = false })
+        end)
+        local invalidTextUtf8 = not pcall(function()
+            return text.case_fold(invalidUtf8)
+        end)
         return {
             canonical = jcs.encode(input),
             error = result.match(mappedFailure, function() return "wrong" end,
@@ -165,7 +183,11 @@ return {
             invalid_filter = invalidFilter,
             invalid_list = invalidList,
             invalid_map = invalidMap,
+            invalid_match_option_type = invalidMatchOptionType,
+            invalid_match_options = invalidMatchOptions,
+            invalid_normalization = invalidNormalization,
             invalid_result = invalidResult,
+            invalid_text_utf8 = invalidTextUtf8,
             invalid_utf8 = not unicode.is_valid(invalidUtf8) and invalidUtf8Rejected,
             letter = unicode.classify("A"),
             mark = unicode.classify(0x0301),
@@ -176,10 +198,34 @@ return {
             result = result.match(outcome, function(value) return value end,
                 function(failure) return failure.code end),
             skipped = skipped,
+            split = split,
+            split_compact = text.split("a,,b", ",", false),
+            split_frozen = splitFrozen,
             stable = stable[1].id .. stable[2].id .. stable[3].id,
             sorted = ordered,
             separator = unicode.classify("　"),
             symbol = unicode.classify("🙂"),
+            text_case_fold = text.case_fold("Straße"),
+            text_collapse = text.collapse_whitespace("\u{00A0}  Menu\t Start　"),
+            text_contains = text.contains("  MENU\t Start ", "menu start", {
+                case_fold = true,
+                collapse_whitespace = true,
+            }),
+            text_ends = text.ends_with("Straße", "SSE", { case_fold = true }),
+            text_hangul = text.normalize("\u{1100}\u{1161}", "NFC"),
+            text_nfd = text.normalize("Ǻ", "NFD") == "A\u{030A}\u{0301}",
+            text_nfkc = text.normalize("ﬃ", "NFKC"),
+            text_nfkd = text.normalize("①", "NFKD"),
+            text_normalized = text.normalize("e\u{0301}", "NFC"),
+            text_reordered = text.normalize("a\u{0315}\u{0300}", "NFD")
+                == "a\u{0300}\u{0315}",
+            text_special_fold = text.case_fold("İΣς"),
+            text_starts = text.starts_with("Éclair", "e\u{0301}", {
+                case_fold = true,
+            }),
+            text_trim = text.trim("\u{00A0} Menu 　"),
+            tokens = tokens,
+            tokens_frozen = tokensFrozen,
             unicode_length = unicode.length("A🙂中"),
             unicode_slice = unicode.slice("A🙂中", 2, 3),
             unicode_version = unicode.unicode_version,
@@ -202,7 +248,7 @@ return {
         REQUIRE(result.has_value());
         CHECK(
             json::canonicalBytes(*result)
-            == R"({"canonical":"{\"a\":2,\"b\":1}","error":"fixture.mapped","error_frozen":true,"frozen":true,"has":true,"invalid_comparator":true,"invalid_filter":true,"invalid_list":true,"invalid_map":true,"invalid_result":true,"invalid_utf8":true,"letter":"letter","mark":"mark","number":"number","other":"other","points":[65,128578,20013],"points_frozen":true,"result":13,"separator":"separator","skipped":0,"sorted":[2,4,6],"stable":"cab","symbol":"symbol","unicode_length":3,"unicode_slice":"🙂中","unicode_version":"15.0.0","whitespace":true})"
+            == R"({"canonical":"{\"a\":2,\"b\":1}","error":"fixture.mapped","error_frozen":true,"frozen":true,"has":true,"invalid_comparator":true,"invalid_filter":true,"invalid_list":true,"invalid_map":true,"invalid_match_option_type":true,"invalid_match_options":true,"invalid_normalization":true,"invalid_result":true,"invalid_text_utf8":true,"invalid_utf8":true,"letter":"letter","mark":"mark","number":"number","other":"other","points":[65,128578,20013],"points_frozen":true,"result":13,"separator":"separator","skipped":0,"sorted":[2,4,6],"split":["a","","b"],"split_compact":["a","b"],"split_frozen":true,"stable":"cab","symbol":"symbol","text_case_fold":"strasse","text_collapse":"Menu Start","text_contains":true,"text_ends":true,"text_hangul":"가","text_nfd":true,"text_nfkc":"ffi","text_nfkd":"1","text_normalized":"é","text_reordered":true,"text_special_fold":"i̇σσ","text_starts":true,"text_trim":"Menu","tokens":["Go",",","中","🙂","42"],"tokens_frozen":true,"unicode_length":3,"unicode_slice":"🙂中","unicode_version":"15.0.0","whitespace":true})"
         );
     }
 }

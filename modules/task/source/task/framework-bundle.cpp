@@ -29,6 +29,7 @@ namespace uf::task
             PureModuleBinding{"collections", "@umbraflow/collections"},
             PureModuleBinding{"jcs", "@umbraflow/jcs"},
             PureModuleBinding{"result", "@umbraflow/result"},
+            PureModuleBinding{"text", "@umbraflow/text"},
             PureModuleBinding{"utf8", "@umbraflow/utf8"},
         };
     }
