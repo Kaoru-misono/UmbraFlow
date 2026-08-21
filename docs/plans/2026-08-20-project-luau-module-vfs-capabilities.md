@@ -16,15 +16,20 @@ read-only Project resource closure for Python-built runtime corpora and other
 declared bytes. The registration pins both code bytes and the complete execution
 environment contract.
 
-Locked packages then reuse the resolver under verified `@alias/...` names.
-Filesystem and network authority arrive later through separately registered,
-policy-scoped Luau capability programs whose durable results become explicit
-evidence for pure calls.
+Locked packages later reuse the resolver under verified `@alias/...` names.
+The subsequently accepted shared Tool Runtime and Framework SDK direction now
+owns external capabilities and reserves `@umbraflow/`; see
+[`2026-08-21-project-plugin-cycle-spi.md`](2026-08-21-project-plugin-cycle-spi.md).
 
 The governing ruling is
 [`2026-08-20-project-execution-identity-is-closure-plus-environment.md`](../decisions/2026-08-20-project-execution-identity-is-closure-plus-environment.md).
 
-## Non-negotiable invariants
+## Implemented R1 invariants
+
+These invariants describe the current R1 generation. They remain executable
+until the accepted shared Tool Runtime replacement lands atomically; they do
+not constrain that future generation where the later decision explicitly
+supersedes them.
 
 1. `derive`, `plan`, `nextStep`, `reconcile`, and `reduce` remain pure decoded
    JSON-in/JSON-out calls in a fresh quota-bound VM.
@@ -376,7 +381,8 @@ PackageRequest = "@" Segment ("/" Segment){0,15}
 
 The same 256-byte request/resolution bound applies. Package aliases and exports
 resolve directly to canonical closure keys; no runtime registry/cache path is
-visible. Adding this grammar changes the resolver contract in
+visible. The `umbraflow` alias is reserved for the Framework SDK and is rejected
+in a Project lock. Adding this grammar changes the resolver contract in
 `plugin_environment_hash`, so affected registrations move even if their source
 bytes do not.
 
@@ -400,52 +406,31 @@ identity separately proves provenance, license, and export-map facts. Consumer
 migration/release notes explicitly name this second authoring generation rather
 than pretending R1 had package support.
 
-## Release R3 — Explicit filesystem and network capability programs
+## Superseded future direction — external capabilities
 
-Entry gates: a capability-manifest decision, an effect-result/evidence decision,
-and a security review must all pass before implementation.
+The former R3 design placed filesystem/network capability programs outside pure
+ProjectPlugin calls and returned their receipts as evidence to a later callback.
+The accepted shared Tool Runtime decision supersedes that future choreography.
+External filesystem, network, process, or similar authority, if later offered,
+is exposed only as a Framework or registered Project Tool and follows the same
+root idempotency, Operator admission, nested authority, durable outcome,
+uncertain-delivery freeze, replay, and audit rules as every other Tool.
 
-Owners: `operator`, `project`, `script`, deployment/schema/public contract,
-durable evidence storage, a separately isolated effect host, conformance, and
-release publication.
-
-A capability program is a separately pinned Luau module closure. An effect/tool
-request names its program registration and exact declared scope. Before dispatch
-the Operator durably records request identity plus policy/user grant. The
-isolated host receives only those handles, initially confined filesystem
-read/write roots and bounded HTTP origin/method/redirect/size/timeout access.
-
-Effect body data flow is exact:
-
-1. The host writes response bytes atomically to an Operator-owned immutable CAS.
-2. A canonical receipt binds request id, capability-program hash, grant hash,
-   terminal outcome, body kind, exact sha256, and size.
-3. The receipt commits only after the blob is durable; a partial blob has no
-   visible receipt.
-4. The next pure call receives the schema-validated receipt in its exact JSON
-   input and a per-call evidence closure containing exactly the receipt-named
-   blobs. `evidence.read*` verifies digest/kind/size and cannot select any other
-   object.
-5. Replay bundles contain and re-verify those exact blobs, so a digest never
-   becomes a hidden lookup whose bytes may disappear or change.
-
-Recovery follows the existing delivery-outcome model: proven-undispatched work
-may run; a committed receipt is reused; unknown delivery becomes explicit
-reconciliation input and is never blindly replayed. Revocation prevents work
-not yet dispatched and remains recorded beside already dispatched evidence.
-
-Threat-model tests cover path/symlink escape, UNC/device paths, DNS rebinding,
-redirects, local-address access, environment/secret leakage, response bombs,
-timeouts, cancellation, partial writes, crash recovery, transport-unknown,
-revocation, replay completeness, and audit completeness.
+The original security entry gate still applies before any such provider is
+implemented. Its conformance must cover path/symlink escape, UNC/device paths,
+DNS rebinding, redirects, local-address access, environment/secret leakage,
+response bombs, timeouts, cancellation, partial writes, crash recovery,
+possible/unknown delivery, revocation, replay completeness, and audit
+completeness. Durable bodies remain exact immutable evidence rather than hidden
+lookups, but a later pure callback is no longer the only consumer.
 
 ## Documentation closure
 
-The accepted ruling is reflected immediately in current terminology and
-architecture notes as an accepted-but-not-yet-implemented replacement. Generated
-public contract, schemas, examples, and runtime API prose change only in the R1
-atomic cut so documentation never claims that unreleased code exists. Historical
-decisions and archived plans remain unchanged.
+The accepted ruling is reflected immediately in the live future-direction
+documents. Current architecture notes and generated public contract continue to
+describe the implemented R1 generation until the shared Tool Runtime atomic
+replacement lands, so documentation never claims that unreleased code exists.
+Historical decisions and archived plans remain unchanged.
 
 ## Review findings and disposition
 
