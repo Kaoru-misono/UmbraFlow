@@ -1,5 +1,7 @@
 #pragma once
 
+#include <script/engine.hpp>
+
 #include <json/value.hpp>
 
 #include <core/error/result.hpp>
@@ -19,9 +21,11 @@ namespace uf::script
     // Immutable Luau bytecode for one closed pure module graph. Compilation and
     // exact entry-export validation happen once in compile(); invoke() loads
     // the graph into a fresh quota-bound VM and passes one decoded JSON value
-    // in and one decoded JSON value out. A host-owned require resolves only
-    // canonical logical names inside the supplied graph, caches one module
-    // value per VM, and never observes a filesystem or package search path.
+    // in and one decoded JSON value out. A host-owned require resolves canonical
+    // Project logical names plus exact reserved @umbraflow/ Framework names,
+    // caches one module value per VM, and never observes a filesystem or package
+    // search path. Framework modules may import only other reserved Framework
+    // modules, and every reachable table in their exports is deep-frozen.
     //
     // Typed resource readers expose only the immutable resource closure passed
     // to compile(). JSON is decoded and frozen, UTF-8 is admitted before the
@@ -101,7 +105,8 @@ namespace uf::script
             std::string_view entryModule,
             std::vector<Module> modules,
             std::span<std::string_view const> entryPoints,
-            std::vector<Resource> resources
+            std::vector<Resource> resources,
+            std::span<FrameworkModule const> frameworkModules = {}
         ) -> Result<PureDataProgram>;
 
         [[nodiscard]]
@@ -121,23 +126,19 @@ namespace uf::script
     [[nodiscard]]
     auto pureEnvironmentGlobals() -> std::span<std::string_view const>;
 
-    // The exact bytes pluginEnvironmentHash is taken over. Published for the
-    // same reason the whitelist is: the preimage is otherwise readable only in
-    // pure-data-program.cpp, and a test that cannot name a member of it can
-    // say only that the digest moved, never that it moved for the right
-    // reason.
+    // The exact lower-level pure-data environment bytes
+    // pluginEnvironmentHash is taken over. ProjectPlugin registration wraps
+    // these bytes with its exact reserved Framework SDK before taking the
+    // outward plugin_environment_hash. Published for the same reason the
+    // whitelist is: a test must be able to prove which member moved the digest.
     [[nodiscard]]
     auto pluginEnvironmentMaterial() -> std::string;
 
-    // The identity of the plugin environment this build runs: the trusted Luau
-    // bridge that wraps every plugin call, the pinned Luau implementation, the
-    // global whitelist above, the frozen tables published beside it, and the
-    // versioned contract each published function answers to. It belongs in a
-    // SessionManifest for the same reason the protocol schema hashes do -- a
-    // framework upgrade that
-    // changed any of them would change what a plugin does under a session
-    // manifest that had not moved, and what a function RETURNS is such a
-    // change even when every published name is unmoved.
+    // The lower-level pure-data environment identity: the trusted Luau bridge,
+    // pinned Luau implementation, global whitelist, frozen tables and
+    // versioned contracts. ProjectPlugin registration uses the wrapper identity
+    // exposed by currentProjectPluginEnvironmentHash(), which also binds the
+    // reserved Framework SDK.
     [[nodiscard]]
     auto pluginEnvironmentHash() -> Result<ContentHash>;
 } // namespace uf::script

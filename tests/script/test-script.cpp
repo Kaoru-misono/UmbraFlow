@@ -269,6 +269,18 @@ namespace uf::script
                 REQUIRE_FALSE(result.has_value());
                 CHECK(automationErrorKind(result.error()) == AutomationErrorKind::InvalidResource);
             }
+            SUBCASE("writing a table reachable only as a key is rejected")
+            {
+                auto const result = runWithFrozenHostTable(
+                    "local key = next(host.keyed)\nkey.value = 2\nreturn 0",
+                    "probe-table-key"
+                );
+                REQUIRE_FALSE(result.has_value());
+                CHECK(
+                    automationErrorKind(result.error())
+                    == AutomationErrorKind::InvalidResource
+                );
+            }
             SUBCASE("writing a top-level host field is rejected")
             {
                 auto const result = runWithFrozenHostTable("host.flat = 9\nreturn 0", "probe-top");

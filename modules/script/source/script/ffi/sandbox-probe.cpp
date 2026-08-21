@@ -35,7 +35,8 @@ namespace uf::script::testing
 {
     namespace
     {
-        // Build `host = { flat = 7, nested = { value = 1 } }` behind a metatable
+        // Build `host = { flat = 7, nested = { value = 1 }, keyed = {
+        // [{ value = 1 }] = true } }` behind a metatable
         // `{ __index = { inherited = 5 }, __metatable = "probe.host" }`,
         // deep-freeze the whole shape, then bind it as a global. Registered
         // before luaL_sandbox, so the binding is frozen with the rest.
@@ -55,6 +56,14 @@ namespace uf::script::testing
             lua_pushnumber(state, 1.0);
             lua_setfield(state, -2, "value");
             lua_setfield(state, -2, "nested");
+
+            lua_newtable(state); // keyed
+            lua_newtable(state); // its table key
+            lua_pushnumber(state, 1.0);
+            lua_setfield(state, -2, "value");
+            lua_pushboolean(state, 1);
+            lua_rawset(state, -3);
+            lua_setfield(state, -2, "keyed");
 
             lua_newtable(state); // metatable
             lua_newtable(state); // __index target

@@ -3,10 +3,14 @@
 #include <domain/content-hash.hpp>
 
 #include <script/engine.hpp>
+#include <script/pure-data-program.hpp>
+
+#include <json/value.hpp>
 
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <span>
 #include <string>
 #include <string_view>
@@ -71,5 +75,45 @@ namespace uf::task
         CHECK(std::ranges::is_sorted(names));
         CHECK(std::ranges::adjacent_find(names) == names.end());
         CHECK(frameworkBundleHash() == digest(preimage));
+    }
+
+    TEST_CASE("the Project pure SDK exposes the embedded JCS module by reserved name")
+    {
+        auto sdk = pureFrameworkScriptModules();
+        REQUIRE(sdk.has_value());
+        REQUIRE(sdk->size() == 1U);
+        CHECK(sdk->front().name == "@umbraflow/jcs");
+
+        constexpr auto entries = std::array{std::string_view{"derive"}};
+        auto program = script::PureDataProgram::compile(
+            "fixture.sdk",
+            "main",
+            {
+                script::PureDataProgram::Module{
+                    .name = "main",
+                    .source = R"LUAU(
+local jcs = require("@umbraflow/jcs")
+return {
+    plugin_id = "fixture.sdk",
+    derive = function(input)
+        return { canonical = jcs.encode(input) }
+    end,
+}
+)LUAU",
+                },
+            },
+            entries,
+            {},
+            *sdk
+        );
+        REQUIRE(program.has_value());
+        auto input = json::parse(R"({"b":1,"a":2})");
+        REQUIRE(input.has_value());
+        auto result = program->invoke("derive", *input);
+        REQUIRE(result.has_value());
+        CHECK(
+            json::canonicalBytes(*result)
+            == R"({"canonical":"{\"a\":2,\"b\":1}"})"
+        );
     }
 }

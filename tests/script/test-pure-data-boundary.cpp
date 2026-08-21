@@ -58,7 +58,8 @@ namespace uf::script
             std::string_view pluginId,
             std::string_view entryModule,
             std::vector<PureDataProgram::Module> modules,
-            std::vector<PureDataProgram::Resource> resources = {}
+            std::vector<PureDataProgram::Resource> resources = {},
+            std::vector<FrameworkModule> frameworkModules = {}
         ) -> Result<PureDataProgram>
         {
             return PureDataProgram::compile(
@@ -66,7 +67,8 @@ namespace uf::script
                 entryModule,
                 std::move(modules),
                 k_entryPoints,
-                std::move(resources)
+                std::move(resources),
+                frameworkModules
             );
         }
 
@@ -397,6 +399,120 @@ return {
         REQUIRE(second.has_value());
         CHECK(json::canonicalBytes(*first) == expected);
         CHECK(json::canonicalBytes(*second) == expected);
+    }
+
+    TEST_CASE("reserved Framework modules resolve exactly and export deep-frozen values")
+    {
+        auto const program = compileProgram(
+            "fixture.framework-module",
+            "main",
+            {
+                PureDataProgram::Module{
+                    .name = "main",
+                    .source = R"LUAU(
+local sdk = require("@umbraflow/jcs")
+local dependency = require("dependency")
+return {
+    plugin_id = "fixture.framework-module",
+    derive = function()
+        local replaced = pcall(function()
+            sdk.nested.value = "forged"
+        end)
+        local key = next(sdk.keyed)
+        local key_replaced = pcall(function()
+            key.value = "forged"
+        end)
+        return {
+            dependency = dependency.value,
+            frozen = not replaced,
+            key_frozen = not key_replaced,
+            sdk_value = sdk.nested.value,
+        }
+    end,
+}
+)LUAU",
+                },
+                PureDataProgram::Module{
+                    .name   = "dependency",
+                    .source = "return { value = 'project' }",
+                },
+            },
+            {},
+            {
+                FrameworkModule{
+                    .name = "@umbraflow/jcs",
+                    .source = R"LUAU(
+local key = { value = "framework-key" }
+return {
+    nested = { value = "framework" },
+    keyed = { [key] = true },
+}
+)LUAU",
+                },
+            }
+        );
+        REQUIRE(program.has_value());
+        auto const result = program->invoke("derive", parsed("{}"));
+        REQUIRE(result.has_value());
+        CHECK(
+            json::canonicalBytes(*result)
+            == R"({"dependency":"project","frozen":true,"key_frozen":true,"sdk_value":"framework"})"
+        );
+
+        for (auto const request : {"@umbraflow/missing", "@other/jcs"})
+        {
+            auto const source = std::string{"local sdk = require('"} + request
+                + "')\nreturn { plugin_id = 'fixture.framework-missing', "
+                  "derive = function() return sdk end }";
+            auto const refused = compileProgram(
+                "fixture.framework-missing",
+                "main",
+                {PureDataProgram::Module{.name = "main", .source = source}},
+                {},
+                {
+                    FrameworkModule{
+                        .name   = "@umbraflow/jcs",
+                        .source = "return table.freeze({})",
+                    },
+                }
+            );
+            REQUIRE_FALSE(refused.has_value());
+        }
+    }
+
+    TEST_CASE("reserved Framework modules cannot import the Project graph")
+    {
+        auto const program = compileProgram(
+            "fixture.framework-isolation",
+            "main",
+            {
+                PureDataProgram::Module{
+                    .name = "main",
+                    .source = R"LUAU(
+local sdk = require("@umbraflow/jcs")
+return {
+    plugin_id = "fixture.framework-isolation",
+    derive = function() return sdk end,
+}
+)LUAU",
+                },
+                PureDataProgram::Module{
+                    .name   = "dependency",
+                    .source = "return { value = 'project' }",
+                },
+            },
+            {},
+            {
+                FrameworkModule{
+                    .name   = "@umbraflow/jcs",
+                    .source = "return require('dependency')",
+                },
+            }
+        );
+        REQUIRE_FALSE(program.has_value());
+        CHECK(std::string{program.error().message()}.contains(
+            "Framework modules may require only reserved Framework modules"
+        ));
     }
 
     TEST_CASE("module environments keep require caller-bound and frozen")
@@ -1518,7 +1634,7 @@ return {
               )
               != std::string::npos);
         CHECK(material.find(
-                  R"("require":"closed_ascii_relative_resolver_cached_value_v1")"
+                  R"("require":"closed_project_relative_plus_reserved_framework_cached_value_v2")"
               )
               != std::string::npos);
         CHECK(material.find(
@@ -1526,6 +1642,10 @@ return {
               != std::string::npos);
         CHECK(material.find(
                   R"("luau_implementation":"luau-0.730+5bc7f4b23756f69f4669b419fa9034f117ccd6fe")")
+              != std::string::npos);
+        CHECK(material.find(
+                  R"("framework_module_count":16)"
+              )
               != std::string::npos);
         CHECK(material.find(
                   R"("module_bytecode_bytes":1048576,"module_bytecode_total_bytes":16777216)"
@@ -1537,7 +1657,7 @@ return {
               != std::string::npos);
         CHECK(
             first->hex()
-            == "db836678c3c0de5a36a5b2db86174b943db716c3c8b05203be8ec6a19bfc2a06"
+            == "c2447cdb6daf8f3a528451cffccc03a4667bd22b54018ebcdb1ea64eeb3feac3"
         );
     }
 } // namespace uf::script

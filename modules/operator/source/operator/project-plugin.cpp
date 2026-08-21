@@ -2,6 +2,8 @@
 
 #include <script/pure-data-program.hpp>
 
+#include <task/framework-bundle.hpp>
+
 #include <json/value.hpp>
 
 #include <core/error/contracts.hpp>
@@ -517,7 +519,10 @@ namespace uf::operator_runtime
         {
             return refuse("ProjectSchemaOwner is not bound to the verified registration");
         }
-        UF_TRY_VALUE(runningEnvironmentHash, script::pluginEnvironmentHash());
+        UF_TRY_VALUE(
+            runningEnvironmentHash,
+            currentProjectPluginEnvironmentHash()
+        );
         if (runningEnvironmentHash != registration.pluginEnvironmentHash())
         {
             return refuse("ProjectPlugin environment does not match the verified registration");
@@ -551,6 +556,7 @@ namespace uf::operator_runtime
                 .source = std::move(module.source),
             });
         }
+        UF_TRY_VALUE(frameworkModules, task::pureFrameworkScriptModules());
 
         UF_TRY_VALUE_CONTEXT(
             program,
@@ -559,7 +565,8 @@ namespace uf::operator_runtime
                 entryModule,
                 std::move(modules),
                 k_entryPoints,
-                std::move(verifiedResources)
+                std::move(verifiedResources),
+                frameworkModules
             ),
             "precompiling exact ProjectPlugin bytes"
         );
@@ -670,8 +677,44 @@ namespace uf::operator_runtime
         return script::PureDataProgram::validateResourceClosure(admittedResources);
     }
 
+    auto currentProjectPluginEnvironmentMaterial() -> Result<std::string>
+    {
+        UF_TRY_VALUE(
+            pureDataEnvironment,
+            json::parse(script::pluginEnvironmentMaterial())
+        );
+        UF_TRY_VALUE(frameworkModules, task::pureFrameworkScriptModules());
+        auto moduleRows = std::vector<json::Value>{};
+        moduleRows.reserve(frameworkModules.size());
+        for (auto const& module : frameworkModules)
+        {
+            UF_TRY_VALUE(
+                sourceHash,
+                sha256(std::as_bytes(std::span{module.source}))
+            );
+            moduleRows.emplace_back(json::Value::ofObject({
+                {"name", json::Value::ofString(std::string{module.name})},
+                {"source_hash", json::Value::ofString(sourceHash.hex())},
+            }));
+        }
+        return json::canonicalBytes(json::Value::ofObject({
+            {"framework_module_budget",
+             json::Value::ofString("separate-release-owned-quota-v1")},
+            {"framework_module_freeze",
+             json::Value::ofString("deep-keys-and-values-v1")},
+            {"framework_pure_modules",
+             json::Value::ofArray(std::move(moduleRows))},
+            {"module_resolver",
+             json::Value::ofString(
+                 "project-relative-plus-reserved-umbraflow-v1"
+             )},
+            {"pure_data_environment", std::move(pureDataEnvironment)},
+        }));
+    }
+
     auto currentProjectPluginEnvironmentHash() -> Result<ContentHash>
     {
-        return script::pluginEnvironmentHash();
+        UF_TRY_VALUE(material, currentProjectPluginEnvironmentMaterial());
+        return sha256(std::as_bytes(std::span{material}));
     }
 } // namespace uf::operator_runtime

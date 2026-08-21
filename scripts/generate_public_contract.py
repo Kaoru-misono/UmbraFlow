@@ -58,6 +58,8 @@ DEPLOYMENT_DIRECTORY_HEADER = (
 PROJECT_DIRECTORY_SCHEMA = "schema/umbraflow-project-v2.schema.json"
 SCRIPT_CONTRACT_HEADER = "modules/script/source/script/pure-data-program.hpp"
 SCRIPT_CONTRACT_SOURCE = "modules/script/source/script/ffi/pure-data-program.cpp"
+PROJECT_PLUGIN_SOURCE = "modules/operator/source/operator/project-plugin.cpp"
+FRAMEWORK_BUNDLE_SOURCE = "modules/task/source/task/framework-bundle.cpp"
 
 # The sources that hold framework schema identities as embedded JSON: the
 # operator protocol the project's plugin answers, and the framework-format
@@ -834,6 +836,7 @@ def script_runtime_contract(root: Path) -> dict[str, object]:
     """The public Luau environment surface, extracted from its implementation."""
     header = read(root, SCRIPT_CONTRACT_HEADER)
     source = read(root, SCRIPT_CONTRACT_SOURCE)
+    framework_bundle = read(root, FRAMEWORK_BUNDLE_SOURCE)
     constant_expressions: dict[str, str] = {}
     pattern = re.compile(r"(?:static\s+)?constexpr\s+auto\s+(k_\w+)\s*=\s*(.*?);", re.DOTALL)
     for text in (header, source):
@@ -910,9 +913,17 @@ def script_runtime_contract(root: Path) -> dict[str, object]:
     remaining = re.search(r'remaining_options\\":\\"([^"\\]+)\\"', material)
     if remaining is None:
         raise SystemExit(f"{SCRIPT_CONTRACT_SOURCE}: cannot read remaining compiler options")
+    reserved_modules = sorted(
+        set(re.findall(r'"(@umbraflow/[a-z0-9_/-]+)"', framework_bundle))
+    )
+    if not reserved_modules:
+        raise SystemExit(
+            f"{FRAMEWORK_BUNDLE_SOURCE}: exposes no reserved Framework modules"
+        )
     return {
         "apis": apis,
         "globals": globals_,
+        "reserved_modules": reserved_modules,
         "limits": limit_rows,
         "module_grammar_contract": string_constant("k_moduleGrammarContract"),
         "resource_grammar_contract": string_constant("k_resourceGrammarContract"),
@@ -1336,14 +1347,24 @@ def render(root: Path) -> str:
             + ", ".join(f"`{name}`" for name in script_contract["globals"])
             + ".",
             "",
+            "Reserved pure Framework modules: "
+            + ", ".join(
+                f"`{name}`" for name in script_contract["reserved_modules"]
+            )
+            + ".",
+            "Their exact source bytes are release-owned, identity-bound,",
+            "deeply frozen after loading and cannot import the Project graph.",
+            "",
             "### 4.2 Identity preimage",
             "",
             f"`plugin_environment_hash` is SHA-256 over exact canonical bytes emitted",
-            f"by `pluginEnvironmentMaterial()` in `{SCRIPT_CONTRACT_SOURCE}`. The",
-            "preimage contains the trusted bridge source; compiler options; API",
-            "contracts; frozen tables and global whitelist; grammar, interrupt and",
-            "module-failure contracts; every numeric limit below; and the pinned Luau",
-            "implementation.",
+            f"by `currentProjectPluginEnvironmentMaterial()` in `{PROJECT_PLUGIN_SOURCE}`.",
+            "The preimage contains the pure-data environment material, the reserved",
+            "Framework module names and source hashes, and the resolver, freeze and",
+            "separate release-owned budget contracts. The nested pure-data material",
+            "contains the trusted bridge source; compiler options; API contracts;",
+            "frozen tables and global whitelist; grammar, interrupt and module-failure",
+            "contracts; every numeric limit below; and the pinned Luau implementation.",
             "",
             f"Compiler: optimization `{compiler['optimization_level']}`, debug",
             f"`{compiler['debug_level']}`, remaining options",

@@ -121,6 +121,10 @@ namespace uf::script
             {
                 // lua_next leaves the key at -2 and the value at -1; the pop
                 // below keeps the key for the next iteration.
+                if (lua_istable(state, -2))
+                {
+                    UF_TRY(deepFreezeInto(state, -2, visited));
+                }
                 if (lua_istable(state, -1))
                 {
                     UF_TRY(deepFreezeInto(state, -1, visited));

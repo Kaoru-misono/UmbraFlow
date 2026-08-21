@@ -64,11 +64,12 @@ namespace uf::script
     using RaisedErrorClassifier =
         std::function<std::optional<RaisedError>(lua_State* state, int index)>;
 
-    // Recursively marks the table at stack `index`, every table reachable from
-    // it, and every metatable on the way, read-only, enforcing the two rules a
-    // project-visible host object must satisfy. Metatable-first, because a
-    // still-writable metatable would let a script rewrite __index/__newindex and
-    // monkey-patch around the frozen table it guards. Cycle-safe.
+    // Recursively marks the table at stack `index`, every table reachable as a
+    // key or value, and every metatable on the way, read-only, enforcing the
+    // two rules a project-visible host object must satisfy. Metatable-first,
+    // because a still-writable metatable would let a script rewrite
+    // __index/__newindex and monkey-patch around the frozen table it guards.
+    // Cycle-safe.
     //
     //   - Every metatable carries a __metatable field. table.clone refuses a
     //     table whose metatable is protected (ltablib.cpp tclone); without it
@@ -95,14 +96,14 @@ namespace uf::script
     // One module of the trusted Luau framework, loaded under the framework
     // environment while the VM boots.
     //
-    // Lifetime contract: both views must outlive the Engine::create call that
+    // Lifetime contract: both views must outlive the create/compile call that
     // consumes them. modules/task satisfies this with string literals in the
     // generated bundle translation unit, which live for the whole process.
     struct FrameworkModule final
     {
-        // A bare identifier, never a path. It is the key the module's frozen
-        // exports are bound under in the framework environment, so a later
-        // module can reach an earlier one.
+        // A consumer-owned canonical logical name. Engine's private framework
+        // environment admits bare identifiers; PureDataProgram admits only the
+        // reserved @umbraflow/ grammar. It is never a filesystem path.
         std::string_view name{};
 
         // The module's UTF-8 source text.

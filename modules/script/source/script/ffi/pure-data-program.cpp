@@ -68,6 +68,8 @@ namespace uf::script
         constexpr auto k_maximumPluginIdBytes        = std::size_t{256U};
         constexpr auto k_maximumEntryPointBytes      = std::size_t{64U};
         constexpr auto k_maximumEntryPointCount      = std::size_t{32U};
+        constexpr auto k_frameworkModulePrefix       = std::string_view{"@umbraflow/"};
+        constexpr auto k_maximumFrameworkModuleCount = std::size_t{16U};
         constexpr auto k_interruptBudgetTicks        = uint64{2'000'000U};
         constexpr auto k_maximumRuntime               = std::chrono::seconds{2};
         constexpr auto k_compileOptimizationLevel     = 1;
@@ -148,7 +150,7 @@ namespace uf::script
         // the numeric material below move the environment identity whenever a
         // project can distinguish the old runtime from the new one.
         constexpr auto k_requireContract = std::string_view{
-            "closed_ascii_relative_resolver_cached_value_v1"
+            "closed_project_relative_plus_reserved_framework_cached_value_v2"
         };
         constexpr auto k_resourceReadJsonContract =
             std::string_view{"exact_name_kind_checked_cached_frozen_json_value_v1"};
@@ -159,7 +161,9 @@ namespace uf::script
         constexpr auto k_tostringContract =
             std::string_view{"json_scalar_or_type_name_v1"};
         constexpr auto k_moduleGrammarContract =
-            std::string_view{"ascii_slash_segments_relative_prefix_v1"};
+            std::string_view{
+                "ascii_slash_segments_relative_prefix_reserved_umbraflow_v2"
+            };
         constexpr auto k_resourceGrammarContract =
             std::string_view{"ascii_dotted_segments_v1"};
         constexpr auto k_moduleFailureContract = std::string_view{
@@ -254,6 +258,7 @@ return {
         {
             std::string name{};
             std::string bytecode{};
+            bool        frameworkOwned{false};
         };
 
         struct DecodedResource final
@@ -390,6 +395,18 @@ return {
         }
 
         [[nodiscard]]
+        auto validFrameworkModuleName(std::string_view value) -> bool
+        {
+            if (!value.starts_with(k_frameworkModulePrefix))
+            {
+                return false;
+            }
+            auto const suffix = value.substr(k_frameworkModulePrefix.size());
+            return value.size() <= k_maximumModuleNameBytes
+                && validProjectModuleName(suffix);
+        }
+
+        [[nodiscard]]
         auto validResourceName(std::string_view value) -> bool
         {
             return validSegmentedAsciiName(
@@ -410,6 +427,22 @@ return {
             if (request.empty() || request.size() > k_maximumModuleNameBytes)
             {
                 return refuse("pure data require request is not a bounded module name");
+            }
+            if (request.starts_with('@'))
+            {
+                if (!validFrameworkModuleName(request))
+                {
+                    return refuse(
+                        "pure data require request is not a canonical Framework module"
+                    );
+                }
+                return std::string{request};
+            }
+            if (validFrameworkModuleName(caller))
+            {
+                return refuse(
+                    "Framework modules may require only reserved Framework modules"
+                );
             }
             if (validProjectModuleName(request))
             {
@@ -1352,6 +1385,20 @@ return {
                 return std::unexpected{std::move(executed).error()};
             }
 
+            if (module.frameworkOwned && lua_istable(mainState, -1))
+            {
+                auto frozen = deepFreeze(mainState, -1);
+                if (!frozen.has_value())
+                {
+                    runtime.state = ModuleLoadState::Unloaded;
+                    auto error    = std::move(frozen).error();
+                    error.addContext(
+                        "freezing trusted Framework module " + module.name
+                    );
+                    return std::unexpected{std::move(error)};
+                }
+            }
+
             runtime.reference = lua_ref(mainState, -1);
             if (runtime.reference == LUA_NOREF)
             {
@@ -1907,7 +1954,8 @@ return {
         std::string_view entryModule,
         std::vector<Module> modules,
         std::span<std::string_view const> entryPoints,
-        std::vector<Resource> resources
+        std::vector<Resource> resources,
+        std::span<FrameworkModule const> frameworkModules
     ) -> Result<PureDataProgram>
     {
         if (!validIdentifier(pluginId))
@@ -1933,7 +1981,9 @@ return {
         {
             return refuse("pure data entry module is absent from its closure");
         }
-        auto const entryModuleIndex = static_cast<std::size_t>(entry - modules.begin());
+        auto const projectEntryModuleIndex = static_cast<std::size_t>(
+            entry - modules.begin()
+        );
 
         UF_TRY(validateResourceClosure(resources));
         std::ranges::sort(resources, {}, &Resource::name);
@@ -2017,8 +2067,81 @@ return {
                 "trusted pure data bridge bytecode exceeds its fixed ceiling"
             );
         }
+        if (frameworkModules.size() > k_maximumFrameworkModuleCount)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "Framework pure module count exceeds its fixed ceiling"
+            );
+        }
+        auto orderedFrameworkModules = std::vector<FrameworkModule>{
+            frameworkModules.begin(),
+            frameworkModules.end(),
+        };
+        std::ranges::sort(orderedFrameworkModules, {}, &FrameworkModule::name);
+        if (
+            std::ranges::adjacent_find(
+                orderedFrameworkModules,
+                {},
+                &FrameworkModule::name
+            ) != orderedFrameworkModules.end()
+        )
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "Framework pure module names must be unique"
+            );
+        }
+
         auto compiledModules = std::vector<CompiledModule>{};
-        compiledModules.reserve(modules.size());
+        compiledModules.reserve(modules.size() + orderedFrameworkModules.size());
+        auto frameworkSourceBytes   = std::size_t{};
+        auto frameworkBytecodeBytes = std::size_t{};
+        for (auto const& module : orderedFrameworkModules)
+        {
+            if (
+                !validFrameworkModuleName(module.name)
+                || module.source.empty()
+                || module.source.size() > k_maximumModuleSourceBytes
+                || !isValidUtf8(module.source)
+                || frameworkSourceBytes
+                    > k_maximumModuleClosureSourceBytes - module.source.size()
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "Framework pure module is not canonical bounded UTF-8: "
+                        + std::string{module.name}
+                );
+            }
+            frameworkSourceBytes += module.source.size();
+            UF_TRY_VALUE(bytecode, compileBytecode(module.source, module.name));
+            switch (detail::classifyModuleBytecode(
+                bytecode.size(),
+                frameworkBytecodeBytes,
+                PureDataProgram::k_maximumModuleBytecodeBytes,
+                PureDataProgram::k_maximumModuleClosureBytecodeBytes
+            ))
+            {
+            case detail::ModuleBytecodeAdmission::Accepted: break;
+            case detail::ModuleBytecodeAdmission::Empty:
+            case detail::ModuleBytecodeAdmission::ModuleCeiling:
+            case detail::ModuleBytecodeAdmission::ClosureCeiling:
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "Framework pure module bytecode exceeds its fixed ceiling: "
+                        + std::string{module.name}
+                );
+            }
+            frameworkBytecodeBytes += bytecode.size();
+            compiledModules.emplace_back(CompiledModule{
+                .name           = std::string{module.name},
+                .bytecode       = std::move(bytecode),
+                .frameworkOwned = true,
+            });
+        }
+        auto const entryModuleIndex = orderedFrameworkModules.size()
+            + projectEntryModuleIndex;
         auto totalBytecodeBytes = std::size_t{0};
         for (auto& module : modules)
         {
@@ -2040,8 +2163,9 @@ return {
             }
             totalBytecodeBytes += bytecode.size();
             compiledModules.emplace_back(CompiledModule{
-                .name     = std::move(module.name),
-                .bytecode = std::move(bytecode),
+                .name           = std::move(module.name),
+                .bytecode       = std::move(bytecode),
+                .frameworkOwned = false,
             });
         }
         UF_TRY(
@@ -2180,6 +2304,8 @@ return {
         appendLimit("entry_point_count", k_maximumEntryPointCount);
         output += ',';
         appendLimit("entry_point_name_bytes", k_maximumEntryPointBytes);
+        output += ',';
+        appendLimit("framework_module_count", k_maximumFrameworkModuleCount);
         output += ',';
         appendLimit("host_error_bytes", k_maximumErrorBytes);
         output += ',';

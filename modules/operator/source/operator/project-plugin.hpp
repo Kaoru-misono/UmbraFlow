@@ -317,5 +317,8 @@ namespace uf::operator_runtime
         std::span<ProjectPluginRegistrar::ResourceBlob const> resources
     ) -> Status;
 
+    [[nodiscard]]
+    auto currentProjectPluginEnvironmentMaterial() -> Result<std::string>;
+
     [[nodiscard]] auto currentProjectPluginEnvironmentHash() -> Result<ContentHash>;
 } // namespace uf::operator_runtime

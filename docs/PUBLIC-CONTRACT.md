@@ -558,7 +558,7 @@ closure.
 
 | API | Environment contract |
 | --- | --- |
-| `require` | `closed_ascii_relative_resolver_cached_value_v1` |
+| `require` | `closed_project_relative_plus_reserved_framework_cached_value_v2` |
 | `resource.readJson` | `exact_name_kind_checked_cached_frozen_json_value_v1` |
 | `resource.readText` | `exact_name_kind_checked_cached_utf8_string_v1` |
 | `resource.readBytes` | `exact_name_kind_checked_cached_byte_string_v1` |
@@ -571,20 +571,26 @@ refuse unknown names or kind mismatches.
 
 Published globals: `assert`, `error`, `getmetatable`, `ipairs`, `next`, `pairs`, `pcall`, `rawequal`, `rawget`, `rawlen`, `rawset`, `require`, `select`, `tonumber`, `tostring`, `type`, `typeof`, `unpack`, `xpcall`, `bit32`, `math`, `string`, `table`, `utf8`.
 
+Reserved pure Framework modules: `@umbraflow/jcs`.
+Their exact source bytes are release-owned, identity-bound,
+deeply frozen after loading and cannot import the Project graph.
+
 ### 4.2 Identity preimage
 
 `plugin_environment_hash` is SHA-256 over exact canonical bytes emitted
-by `pluginEnvironmentMaterial()` in `modules/script/source/script/ffi/pure-data-program.cpp`. The
-preimage contains the trusted bridge source; compiler options; API
-contracts; frozen tables and global whitelist; grammar, interrupt and
-module-failure contracts; every numeric limit below; and the pinned Luau
-implementation.
+by `currentProjectPluginEnvironmentMaterial()` in `modules/operator/source/operator/project-plugin.cpp`.
+The preimage contains the pure-data environment material, the reserved
+Framework module names and source hashes, and the resolver, freeze and
+separate release-owned budget contracts. The nested pure-data material
+contains the trusted bridge source; compiler options; API contracts;
+frozen tables and global whitelist; grammar, interrupt and module-failure
+contracts; every numeric limit below; and the pinned Luau implementation.
 
 Compiler: optimization `1`, debug
 `0`, remaining options
 `default_zero_v1`. Luau: `luau-0.730+5bc7f4b23756f69f4669b419fa9034f117ccd6fe`.
 
-Module grammar contract: `ascii_slash_segments_relative_prefix_v1`;
+Module grammar contract: `ascii_slash_segments_relative_prefix_reserved_umbraflow_v2`;
 resource grammar contract: `ascii_dotted_segments_v1`;
 module failure contract: `canonical_cache_cycle_cached_script_terminal_vm_v1`;
 interrupt contract: `non_gc_loop_backedge_call_return_safepoints_v1`.
@@ -596,6 +602,7 @@ interrupt contract: `non_gc_loop_backedge_call_return_safepoints_v1`.
 | `cached_failure_bytes` | `1024` |
 | `entry_point_count` | `32` |
 | `entry_point_name_bytes` | `64` |
+| `framework_module_count` | `16` |
 | `host_error_bytes` | `4096` |
 | `instruction_budget_ticks` | `2000000` |
 | `module_bytecode_bytes` | `1048576` |

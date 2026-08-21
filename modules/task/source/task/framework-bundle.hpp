@@ -64,6 +64,13 @@ namespace uf::task
     [[nodiscard]]
     auto frameworkScriptModules() -> std::vector<script::FrameworkModule>;
 
+    // The pure, reserved SDK subset admitted to ProjectPlugin/reducer VMs.
+    // Names are the public resolver spelling rather than the private bundle
+    // stem, and the source views still borrow the generated static literals.
+    [[nodiscard]]
+    auto pureFrameworkScriptModules()
+        -> Result<std::vector<script::FrameworkModule>>;
+
     // Business execution is closed until OperatorSession exists, so this list is
     // deliberately empty. Loading trusted modules into a VM does not make their
     // exports project-visible; publication remains an explicit whitelist.

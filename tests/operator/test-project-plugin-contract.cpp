@@ -1,5 +1,7 @@
 #include <operator/project-plugin.hpp>
 
+#include <task/framework-bundle.hpp>
+
 #include <json/value.hpp>
 
 #include <domain/content-hash.hpp>
@@ -391,6 +393,50 @@ return {
                         .has_value());
     }
 
+    TEST_CASE("ProjectPlugin environment identity pins the reserved pure SDK")
+    {
+        auto material = currentProjectPluginEnvironmentMaterial();
+        auto hash     = currentProjectPluginEnvironmentHash();
+        REQUIRE(material.has_value());
+        REQUIRE(hash.has_value());
+        auto parsed = json::parse(*material);
+        REQUIRE(parsed.has_value());
+        CHECK(json::canonicalBytes(*parsed) == *material);
+        CHECK(
+            parsed->find("module_resolver")->string()
+            == "project-relative-plus-reserved-umbraflow-v1"
+        );
+        CHECK(
+            parsed->find("framework_module_freeze")->string()
+            == "deep-keys-and-values-v1"
+        );
+        CHECK(
+            parsed->find("framework_module_budget")->string()
+            == "separate-release-owned-quota-v1"
+        );
+
+        auto const moduleRows = parsed->find("framework_pure_modules")->items();
+        REQUIRE(moduleRows.size() == 1U);
+        CHECK(moduleRows.front().find("name")->string() == "@umbraflow/jcs");
+        auto const bundleJcs = std::ranges::find(
+            task::frameworkBundleEntries(),
+            std::string_view{"jcs"},
+            &task::FrameworkBundleEntry::name
+        );
+        REQUIRE(bundleJcs != task::frameworkBundleEntries().end());
+        CHECK(
+            moduleRows.front().find("source_hash")->string()
+            == bundleJcs->sourceHash
+        );
+        auto expected = sha256(std::as_bytes(std::span{*material}));
+        REQUIRE(expected.has_value());
+        CHECK(*hash == *expected);
+        CHECK(
+            hash->hex()
+            == "0f5411800353323b3797da97733a06c23257533feac5da81374ca6c93dfff0eb"
+        );
+    }
+
     TEST_CASE("ProjectPlugin registrar binds verified identity and exact bytes")
     {
         SUBCASE("plugin bytes must match the verified registration")
@@ -433,6 +479,35 @@ return {
             CHECK_FALSE(
                 registrar.registerPlugin(fixture.registration, source, {}, fixture.schemaOwner)
                     .has_value());
+        }
+
+        SUBCASE("module may require the pinned Framework JCS SDK")
+        {
+            auto const source = std::string{R"LUAU(
+local jcs = require("@umbraflow/jcs")
+if jcs.encode({ b = 1, a = 2 }) ~= '{"a":2,"b":1}' then
+    error("Framework JCS module returned different canonical bytes", 0)
+end
+return {
+    plugin_id = "fixture.sdk-plugin",
+    derive = function(input) return input end,
+    plan = function(input) return input end,
+    next_step = function(input) return input end,
+    reconcile = function(input) return input end,
+    reduce = function(input) return input end,
+}
+)LUAU"};
+            auto registrar = FixtureRegistrar{};
+            auto fixture   = registrationFixture("fixture.sdk-plugin", source);
+            auto plugin = registrar.registerPlugin(
+                fixture.registration,
+                source,
+                {},
+                fixture.schemaOwner
+            );
+            REQUIRE(plugin.has_value());
+            auto result = plugin->derive(inputFor(fixture.schemaOwner));
+            REQUIRE(result.has_value());
         }
     }
 
