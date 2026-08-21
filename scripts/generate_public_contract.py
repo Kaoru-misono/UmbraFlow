@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import json
 import re
 import sys
@@ -60,6 +61,7 @@ SCRIPT_CONTRACT_HEADER = "modules/script/source/script/pure-data-program.hpp"
 SCRIPT_CONTRACT_SOURCE = "modules/script/source/script/ffi/pure-data-program.cpp"
 PROJECT_PLUGIN_SOURCE = "modules/operator/source/operator/project-plugin.cpp"
 FRAMEWORK_BUNDLE_SOURCE = "modules/task/source/task/framework-bundle.cpp"
+FRAMEWORK_RUNTIME_DIRECTORY = "modules/task/runtime"
 
 # The sources that hold framework schema identities as embedded JSON: the
 # operator protocol the project's plugin answers, and the framework-format
@@ -913,13 +915,46 @@ def script_runtime_contract(root: Path) -> dict[str, object]:
     remaining = re.search(r'remaining_options\\":\\"([^"\\]+)\\"', material)
     if remaining is None:
         raise SystemExit(f"{SCRIPT_CONTRACT_SOURCE}: cannot read remaining compiler options")
-    reserved_modules = sorted(
-        set(re.findall(r'"(@umbraflow/[a-z0-9_/-]+)"', framework_bundle))
+    pure_bindings = re.findall(
+        r'PureModuleBinding\{\s*"([a-z0-9_-]+)"\s*,\s*'
+        r'"(@umbraflow/[a-z0-9_/-]+)"\s*\}',
+        framework_bundle,
     )
-    if not reserved_modules:
+    if not pure_bindings:
         raise SystemExit(
             f"{FRAMEWORK_BUNDLE_SOURCE}: exposes no reserved Framework modules"
         )
+    reserved_modules: list[dict[str, object]] = []
+    for private_name, public_name in pure_bindings:
+        relative_path = f"{FRAMEWORK_RUNTIME_DIRECTORY}/{private_name}.luau"
+        module_source = read(root, relative_path)
+        target = re.escape(private_name)
+        exports = sorted(
+            set(
+                re.findall(
+                    rf"^function\s+{target}\.([a-z][a-z0-9_]*)\s*\(",
+                    module_source,
+                    re.MULTILINE,
+                )
+                + re.findall(
+                    rf"^{target}\.([a-z][a-z0-9_]*)\s*=",
+                    module_source,
+                    re.MULTILINE,
+                )
+            )
+        )
+        if not exports:
+            raise SystemExit(f"{relative_path}: publishes no readable exports")
+        reserved_modules.append(
+            {
+                "name": public_name,
+                "exports": exports,
+                "source_hash": hashlib.sha256(
+                    (root / relative_path).read_bytes()
+                ).hexdigest(),
+            }
+        )
+    reserved_modules.sort(key=lambda module: str(module["name"]))
     return {
         "apis": apis,
         "globals": globals_,
@@ -1349,11 +1384,30 @@ def render(root: Path) -> str:
             "",
             "Reserved pure Framework modules: "
             + ", ".join(
-                f"`{name}`" for name in script_contract["reserved_modules"]
+                f"`{module['name']}`"
+                for module in script_contract["reserved_modules"]
             )
             + ".",
             "Their exact source bytes are release-owned, identity-bound,",
             "deeply frozen after loading and cannot import the Project graph.",
+            "",
+        ]
+    )
+    lines.extend(
+        table(
+            ["Reserved module", "Exports", "Source SHA-256"],
+            [
+                [
+                    f"`{module['name']}`",
+                    ", ".join(f"`{name}`" for name in module["exports"]),
+                    f"`{module['source_hash']}`",
+                ]
+                for module in script_contract["reserved_modules"]
+            ],
+        )
+    )
+    lines.extend(
+        [
             "",
             "### 4.2 Identity preimage",
             "",

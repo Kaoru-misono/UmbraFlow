@@ -416,24 +416,31 @@ return {
         );
 
         auto const moduleRows = parsed->find("framework_pure_modules")->items();
-        REQUIRE(moduleRows.size() == 1U);
-        CHECK(moduleRows.front().find("name")->string() == "@umbraflow/jcs");
-        auto const bundleJcs = std::ranges::find(
-            task::frameworkBundleEntries(),
-            std::string_view{"jcs"},
-            &task::FrameworkBundleEntry::name
-        );
-        REQUIRE(bundleJcs != task::frameworkBundleEntries().end());
+        REQUIRE(moduleRows.size() == 3U);
         CHECK(
-            moduleRows.front().find("source_hash")->string()
-            == bundleJcs->sourceHash
+            moduleRows[0].find("name")->string()
+            == "@umbraflow/collections"
         );
+        CHECK(moduleRows[1].find("name")->string() == "@umbraflow/jcs");
+        CHECK(moduleRows[2].find("name")->string() == "@umbraflow/result");
+        for (auto const& row : moduleRows)
+        {
+            auto const publicName = row.find("name")->string();
+            REQUIRE(publicName.starts_with("@umbraflow/"));
+            auto const bundleEntry = std::ranges::find(
+                task::frameworkBundleEntries(),
+                publicName.substr(std::string_view{"@umbraflow/"}.size()),
+                &task::FrameworkBundleEntry::name
+            );
+            REQUIRE(bundleEntry != task::frameworkBundleEntries().end());
+            CHECK(row.find("source_hash")->string() == bundleEntry->sourceHash);
+        }
         auto expected = sha256(std::as_bytes(std::span{*material}));
         REQUIRE(expected.has_value());
         CHECK(*hash == *expected);
         CHECK(
             hash->hex()
-            == "0f5411800353323b3797da97733a06c23257533feac5da81374ca6c93dfff0eb"
+            == "923d63908a6e9d79476f781b895f20d05c497b3139411e8abf93f33649672757"
         );
     }
 
