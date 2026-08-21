@@ -108,6 +108,12 @@ namespace uf::script
 
         // The module's UTF-8 source text.
         std::string_view source{};
+
+        // Whether Project-authored modules may resolve this exact reserved
+        // name. Framework-owned modules may always resolve it, so release-owned
+        // data can remain an implementation detail while still passing through
+        // the same source, bytecode, memory, and identity boundaries.
+        bool projectVisible{true};
     };
 
     // The value one chunk returned, restricted to what a text protocol can carry

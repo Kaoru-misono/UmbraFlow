@@ -574,6 +574,8 @@ Published globals: `assert`, `error`, `getmetatable`, `ipairs`, `next`, `pairs`,
 Reserved pure Framework modules: `@umbraflow/collections`, `@umbraflow/jcs`, `@umbraflow/result`, `@umbraflow/text`, `@umbraflow/utf8`.
 Their exact source bytes are release-owned, identity-bound,
 deeply frozen after loading and cannot import the Project graph.
+Unicode algorithms load release-owned data through reserved internal
+Framework modules that Project-authored modules cannot resolve.
 Unicode-derived data is distributed under `modules/task/runtime/UNICODE-LICENSE.txt`.
 
 | Reserved module | Exports | Source SHA-256 |
@@ -581,16 +583,17 @@ Unicode-derived data is distributed under `modules/task/runtime/UNICODE-LICENSE.
 | `@umbraflow/collections` | `append`, `contains`, `filter`, `fold`, `has`, `list`, `map`, `map_remove`, `map_set`, `set`, `set_at`, `stable_sort` | `958691559a7a1592c8474981976cec0ad86ec0d95c6dc437ed50cfab071363d5` |
 | `@umbraflow/jcs` | `encode`, `null` | `a9f2d71117e297a03f17af0d143c600c9e8c10f16995626ccbdfeaf0fae9e23b` |
 | `@umbraflow/result` | `and_then`, `err`, `is_error`, `is_ok`, `map`, `map_error`, `match`, `ok`, `unwrap_or` | `94c95226ab9c4c99fa1e9fa50bae377ff4d6dde65d671426f37bb87c189a5f75` |
-| `@umbraflow/text` | `case_fold`, `collapse_whitespace`, `contains`, `ends_with`, `equals`, `normalize`, `split`, `starts_with`, `tokens`, `trim`, `unicode_version` | `422543c5a35afbb1cfbfb6c565beef217d38f2c177c3414e10d9e10b79711be2` |
-| `@umbraflow/utf8` | `classify`, `codepoints`, `is_valid`, `is_whitespace`, `length`, `slice`, `unicode_version`, `validate` | `82d4e58e0c15e8e07ca5c4828f64c59ee7c8b15dbe30c33e17fdefbe5cd98c90` |
+| `@umbraflow/text` | `case_fold`, `collapse_whitespace`, `contains`, `ends_with`, `equals`, `normalize`, `split`, `starts_with`, `tokens`, `trim`, `unicode_version` | `06e8a2749b9cb8e4c07b93d11aa635dd30bb87e5e1bff8da6cb04e6ab84d9590` |
+| `@umbraflow/utf8` | `classify`, `codepoints`, `is_valid`, `is_whitespace`, `length`, `slice`, `unicode_version`, `validate` | `d79e97a6dc10860e60bbfa713f49170b6279d0f05069db5da77f2f3ed598a410` |
 
 ### 4.2 Identity preimage
 
 `plugin_environment_hash` is SHA-256 over exact canonical bytes emitted
 by `currentProjectPluginEnvironmentMaterial()` in `modules/operator/source/operator/project-plugin.cpp`.
-The preimage contains the pure-data environment material, the reserved
-Framework module names and source hashes, and the resolver, freeze and
-separate release-owned budget contracts. The nested pure-data material
+The preimage contains the pure-data environment material; every public
+and internal Framework module name, source hash, and Project visibility;
+and the resolver, freeze and separate release-owned budget contracts.
+The nested pure-data material
 contains the trusted bridge source; compiler options; API contracts;
 frozen tables and global whitelist; grammar, interrupt and module-failure
 contracts; every numeric limit below; and the pinned Luau implementation.

@@ -259,6 +259,7 @@ return {
             std::string name{};
             std::string bytecode{};
             bool        frameworkOwned{false};
+            bool        projectVisible{true};
         };
 
         struct DecodedResource final
@@ -1466,9 +1467,21 @@ return {
                     }
                     else
                     {
-                        moduleIndex = static_cast<std::size_t>(
-                            found - p_environment->modules.begin()
-                        );
+                        auto const& callerModule = p_environment->modules[
+                            static_cast<std::size_t>(caller)
+                        ];
+                        if (!callerModule.frameworkOwned && !found->projectVisible)
+                        {
+                            refusalText = boundedText(
+                                "pure data require rejected an unknown module"
+                            );
+                        }
+                        else
+                        {
+                            moduleIndex = static_cast<std::size_t>(
+                                found - p_environment->modules.begin()
+                            );
+                        }
                     }
                 }
             }
@@ -2138,6 +2151,7 @@ return {
                 .name           = std::string{module.name},
                 .bytecode       = std::move(bytecode),
                 .frameworkOwned = true,
+                .projectVisible = module.projectVisible,
             });
         }
         auto const entryModuleIndex = orderedFrameworkModules.size()
@@ -2166,6 +2180,7 @@ return {
                 .name           = std::move(module.name),
                 .bytecode       = std::move(bytecode),
                 .frameworkOwned = false,
+                .projectVisible = true,
             });
         }
         UF_TRY(

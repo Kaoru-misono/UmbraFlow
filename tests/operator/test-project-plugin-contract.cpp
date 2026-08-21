@@ -404,7 +404,7 @@ return {
         CHECK(json::canonicalBytes(*parsed) == *material);
         CHECK(
             parsed->find("module_resolver")->string()
-            == "project-relative-plus-reserved-umbraflow-v1"
+            == "project-relative-plus-visible-reserved-framework-v2"
         );
         CHECK(
             parsed->find("framework_module_freeze")->string()
@@ -416,7 +416,7 @@ return {
         );
 
         auto const moduleRows = parsed->find("framework_pure_modules")->items();
-        REQUIRE(moduleRows.size() == 5U);
+        REQUIRE(moduleRows.size() == 7U);
         CHECK(
             moduleRows[0].find("name")->string()
             == "@umbraflow/collections"
@@ -425,24 +425,42 @@ return {
         CHECK(moduleRows[2].find("name")->string() == "@umbraflow/result");
         CHECK(moduleRows[3].find("name")->string() == "@umbraflow/text");
         CHECK(moduleRows[4].find("name")->string() == "@umbraflow/utf8");
+        CHECK(
+            moduleRows[5].find("name")->string()
+            == "@umbraflow/internal/unicode-text-data"
+        );
+        CHECK(
+            moduleRows[6].find("name")->string()
+            == "@umbraflow/internal/unicode-utf8-data"
+        );
+        auto const sdk = task::pureFrameworkScriptModules();
+        REQUIRE(sdk.has_value());
         for (auto const& row : moduleRows)
         {
-            auto const publicName = row.find("name")->string();
-            REQUIRE(publicName.starts_with("@umbraflow/"));
-            auto const bundleEntry = std::ranges::find(
-                task::frameworkBundleEntries(),
-                publicName.substr(std::string_view{"@umbraflow/"}.size()),
-                &task::FrameworkBundleEntry::name
+            auto const reservedName = row.find("name")->string();
+            REQUIRE(reservedName.starts_with("@umbraflow/"));
+            auto const module = std::ranges::find(
+                *sdk,
+                reservedName,
+                &script::FrameworkModule::name
             );
-            REQUIRE(bundleEntry != task::frameworkBundleEntries().end());
-            CHECK(row.find("source_hash")->string() == bundleEntry->sourceHash);
+            REQUIRE(module != sdk->end());
+            CHECK(
+                row.find("project_visible")->boolean()
+                == module->projectVisible
+            );
+            auto const sourceHash = sha256(
+                std::as_bytes(std::span{module->source})
+            );
+            REQUIRE(sourceHash.has_value());
+            CHECK(row.find("source_hash")->string() == sourceHash->hex());
         }
         auto expected = sha256(std::as_bytes(std::span{*material}));
         REQUIRE(expected.has_value());
         CHECK(*hash == *expected);
         CHECK(
             hash->hex()
-            == "ec93f6d6bb818c3361766ce55b83ca1b6b210b6a4ddcb5c116de964bf4432089"
+            == "d13b2c6fe917a7ed2d0850a9204cd3014f17bcd447f32f1af9061b4955f2c02e"
         );
     }
 

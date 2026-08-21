@@ -694,6 +694,7 @@ namespace uf::operator_runtime
             );
             moduleRows.emplace_back(json::Value::ofObject({
                 {"name", json::Value::ofString(std::string{module.name})},
+                {"project_visible", json::Value::ofBoolean(module.projectVisible)},
                 {"source_hash", json::Value::ofString(sourceHash.hex())},
             }));
         }
@@ -706,7 +707,7 @@ namespace uf::operator_runtime
              json::Value::ofArray(std::move(moduleRows))},
             {"module_resolver",
              json::Value::ofString(
-                 "project-relative-plus-reserved-umbraflow-v1"
+                 "project-relative-plus-visible-reserved-framework-v2"
              )},
             {"pure_data_environment", std::move(pureDataEnvironment)},
         }));

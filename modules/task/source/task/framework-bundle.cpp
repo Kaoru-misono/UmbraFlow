@@ -25,12 +25,29 @@ namespace uf::task
             std::string_view publicName;
         };
 
+        struct InternalPureModuleBinding final
+        {
+            std::string_view privateName;
+            std::string_view reservedName;
+        };
+
         constexpr auto k_pureModuleBindings = std::array{
             PureModuleBinding{"collections", "@umbraflow/collections"},
             PureModuleBinding{"jcs", "@umbraflow/jcs"},
             PureModuleBinding{"result", "@umbraflow/result"},
             PureModuleBinding{"text", "@umbraflow/text"},
             PureModuleBinding{"utf8", "@umbraflow/utf8"},
+        };
+
+        constexpr auto k_internalPureModuleBindings = std::array{
+            InternalPureModuleBinding{
+                "unicode-text-data",
+                "@umbraflow/internal/unicode-text-data",
+            },
+            InternalPureModuleBinding{
+                "unicode-utf8-data",
+                "@umbraflow/internal/unicode-utf8-data",
+            },
         };
     }
 
@@ -57,7 +74,9 @@ namespace uf::task
     {
         auto const entries = frameworkBundleEntries();
         auto modules = std::vector<script::FrameworkModule>{};
-        modules.reserve(k_pureModuleBindings.size());
+        modules.reserve(
+            k_pureModuleBindings.size() + k_internalPureModuleBindings.size()
+        );
         for (auto const& binding : k_pureModuleBindings)
         {
             auto const found = std::ranges::find(
@@ -74,8 +93,30 @@ namespace uf::task
                 );
             }
             modules.emplace_back(script::FrameworkModule{
-                .name   = binding.publicName,
-                .source = found->source,
+                .name           = binding.publicName,
+                .source         = found->source,
+                .projectVisible = true,
+            });
+        }
+        for (auto const& binding : k_internalPureModuleBindings)
+        {
+            auto const found = std::ranges::find(
+                entries,
+                binding.privateName,
+                &FrameworkBundleEntry::name
+            );
+            if (found == entries.end())
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "the embedded Framework bundle is missing internal pure module "
+                        + std::string{binding.privateName}
+                );
+            }
+            modules.emplace_back(script::FrameworkModule{
+                .name           = binding.reservedName,
+                .source         = found->source,
+                .projectVisible = false,
             });
         }
         return modules;
