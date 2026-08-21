@@ -29,3 +29,6 @@ Each entry should contain the symptom, root cause, fix, and a regression check. 
 - [Embedded VM memory ceilings](embedded-vm-memory-ceiling.md) — what a hard
   ceiling measures, why protection is per Luau state, and how to falsify a
   memory regression.
+- [Trusted Framework module resolution](trusted-framework-module-resolution.md)
+  — why exact reserved imports can work in PureDataProgram yet fail during a
+  full Engine boot, and the ordering/isolation rules the two loaders must keep.

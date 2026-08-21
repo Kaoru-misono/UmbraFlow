@@ -653,3 +653,29 @@ Implementation starts only after an independent review confirms:
   replay protocol; and
 - the plan contains no game-specific branch or mixed-generation compatibility
   path.
+
+## 13. Implementation handoff checkpoint
+
+Implementation has reached the pure Framework SDK and the exact full-Framework
+dependency resolver. Continue in this order:
+
+1. scoped `tools`, `screen`, `workflow`, and `audit` modules plus Project Tool
+   handlers;
+2. production mutating providers, nested calls, and Agent/human/Luau adapters;
+3. durable automation with fresh observations, caller-selected post-action
+   delay, `possible`/`unknown` reconciliation, and Project Kit/template
+   migration; then
+4. cross-repository review, synchronization, publication, one final full CI,
+   commits, and pushes.
+
+Until all implementation is complete, run only affected incremental tests; run
+the full CI exactly once at the end. Do not use `git pull`. Concrete
+implementation continues through medium-effort agents and is reviewed and
+accepted by the main agent. Python remains an offline data-processing tool for
+Unicode, unpacked database, and artifact inputs; the final runtime and Project
+artifact are Luau.
+
+Resolver follow-up risks remain explicit: `frameworkBundleHash()` does not yet
+cover resolver aliases or dependency-depth topology; the full and pure resolver
+grammars are separately implemented and can drift; every new release-owned
+dependency must declare its resolver alias and dependency depth.

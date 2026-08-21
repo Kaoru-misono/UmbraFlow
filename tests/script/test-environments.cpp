@@ -192,6 +192,183 @@ namespace uf::script
             }
         }
 
+        TEST_CASE("Trusted Framework require resolves only exact earlier modules")
+        {
+            auto engine = Engine::create(
+                EngineConfig{
+                    .frameworkModules = {
+                        FrameworkModule{
+                            .name         = "unicodeData",
+                            .source       = "return { nested = { value = 41 } }",
+                            .resolverName = "@umbraflow/internal/unicode-data",
+                        },
+                        FrameworkModule{
+                            .name = "consumer",
+                            .source = R"luau(
+local exactRequire = require
+local dependency = exactRequire("@umbraflow/internal/unicode-data")
+return {
+    verify = function()
+        local replaced = pcall(function()
+            dependency.nested.value = 0
+        end)
+        return not replaced
+            and dependency.nested.value == 41
+            and type(exactRequire) == "function"
+    end,
+}
+)luau",
+                            .resolverName = "@umbraflow/consumer",
+                        },
+                    },
+                    .frameworkProjectGlobals = {"consumer"},
+                }
+            );
+            REQUIRE(engine.has_value());
+
+            auto const result = engine->runNumber(
+                R"luau(
+return require == nil
+    and unicodeData == nil
+    and consumer.verify()
+    and 1
+    or 0
+)luau",
+                "trusted-framework-require"
+            );
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
+        TEST_CASE("Trusted Framework require rejects an open dependency graph")
+        {
+            SUBCASE("an unknown exact alias is refused")
+            {
+                auto const engine = Engine::create(
+                    EngineConfig{
+                        .frameworkModules = {
+                            FrameworkModule{
+                                .name = "consumer",
+                                .source = R"luau(
+return require("@umbraflow/missing")
+)luau",
+                            },
+                        },
+                    }
+                );
+                REQUIRE_FALSE(engine.has_value());
+                CHECK(engine.error().message().contains("unknown or forward"));
+            }
+
+            SUBCASE("a numeric request is refused as the wrong argument type")
+            {
+                auto const engine = Engine::create(
+                    EngineConfig{
+                        .frameworkModules = {
+                            FrameworkModule{
+                                .name   = "consumer",
+                                .source = "return require(1)",
+                            },
+                        },
+                    }
+                );
+                REQUIRE_FALSE(engine.has_value());
+                CHECK(engine.error().message().contains("module-name string"));
+                CHECK_FALSE(
+                    engine.error().message().contains("unknown or forward")
+                );
+            }
+
+            SUBCASE("a forward dependency is refused")
+            {
+                auto const engine = Engine::create(
+                    EngineConfig{
+                        .frameworkModules = {
+                            FrameworkModule{
+                                .name = "consumer",
+                                .source = R"luau(
+return require("@umbraflow/dependency")
+)luau",
+                            },
+                            FrameworkModule{
+                                .name         = "dependency",
+                                .source       = "return {}",
+                                .resolverName = "@umbraflow/dependency",
+                            },
+                        },
+                    }
+                );
+                REQUIRE_FALSE(engine.has_value());
+                CHECK(engine.error().message().contains("unknown or forward"));
+            }
+
+            SUBCASE("a cycle is refused at its first forward edge")
+            {
+                auto const engine = Engine::create(
+                    EngineConfig{
+                        .frameworkModules = {
+                            FrameworkModule{
+                                .name = "first",
+                                .source = R"luau(
+return require("@umbraflow/second")
+)luau",
+                                .resolverName = "@umbraflow/first",
+                            },
+                            FrameworkModule{
+                                .name = "second",
+                                .source = R"luau(
+return require("@umbraflow/first")
+)luau",
+                                .resolverName = "@umbraflow/second",
+                            },
+                        },
+                    }
+                );
+                REQUIRE_FALSE(engine.has_value());
+                CHECK(engine.error().message().contains("unknown or forward"));
+            }
+
+            SUBCASE("duplicate aliases are rejected before source runs")
+            {
+                auto const engine = Engine::create(
+                    EngineConfig{
+                        .frameworkModules = {
+                            FrameworkModule{
+                                .name         = "first",
+                                .source       = "error('must not run')",
+                                .resolverName = "@umbraflow/shared",
+                            },
+                            FrameworkModule{
+                                .name         = "second",
+                                .source       = "return {}",
+                                .resolverName = "@umbraflow/shared",
+                            },
+                        },
+                    }
+                );
+                REQUIRE_FALSE(engine.has_value());
+                CHECK(engine.error().message().contains("duplicate"));
+                CHECK_FALSE(engine.error().message().contains("must not run"));
+            }
+
+            SUBCASE("a non-canonical alias is refused")
+            {
+                auto const engine = Engine::create(
+                    EngineConfig{
+                        .frameworkModules = {
+                            FrameworkModule{
+                                .name         = "dependency",
+                                .source       = "return {}",
+                                .resolverName = "dependency",
+                            },
+                        },
+                    }
+                );
+                REQUIRE_FALSE(engine.has_value());
+                CHECK(engine.error().message().contains("non-canonical"));
+            }
+        }
+
         TEST_CASE("A framework module cannot capture a dangerous global at load time")
         {
             using testing::ProbeEnvironment;

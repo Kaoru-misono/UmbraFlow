@@ -49,6 +49,10 @@ namespace uf::script
         // stops getmetatable from handing the real metatable -- and with it the
         // __index chain to the main globals -- to anything holding the table.
         constexpr auto k_frameworkEnvironmentLabel = "uf.framework_env";
+        constexpr auto k_frameworkModulePrefix = std::string_view{"@umbraflow/"};
+        constexpr auto k_maximumModuleNameBytes = std::size_t{256U};
+        constexpr auto k_maximumModuleSegments = std::size_t{16U};
+        constexpr auto k_maximumModuleSegmentBytes = std::size_t{64U};
 
         // The project environment's whitelist: every deterministic base function
         // and library a project script may see, named one by one. A whitelist
@@ -126,6 +130,182 @@ namespace uf::script
                 );
             }
             lua_rawsetfield(state, destination, key.c_str());
+            return ok();
+        }
+
+        [[nodiscard]]
+        auto validFrameworkResolverName(std::string_view value) -> bool
+        {
+            if (
+                !value.starts_with(k_frameworkModulePrefix)
+                || value.size() > k_maximumModuleNameBytes
+            )
+            {
+                return false;
+            }
+
+            auto const suffix = value.substr(k_frameworkModulePrefix.size());
+            auto segments     = std::size_t{1U};
+            auto segmentBytes = std::size_t{};
+            for (char const character : suffix)
+            {
+                if (character == '/')
+                {
+                    if (
+                        segmentBytes == 0U
+                        || segments == k_maximumModuleSegments
+                    )
+                    {
+                        return false;
+                    }
+                    segmentBytes = 0U;
+                    ++segments;
+                    continue;
+                }
+
+                auto const first = segmentBytes == 0U;
+                auto const lower = character >= 'a' && character <= 'z';
+                auto const digit = character >= '0' && character <= '9';
+                if (
+                    (
+                        !lower
+                        && (
+                            first
+                            || (
+                                !digit
+                                && character != '_'
+                                && character != '-'
+                            )
+                        )
+                    )
+                    || segmentBytes == k_maximumModuleSegmentBytes
+                )
+                {
+                    return false;
+                }
+                ++segmentBytes;
+            }
+            return segmentBytes != 0U;
+        }
+
+        [[nodiscard]]
+        auto validateFrameworkModules(
+            std::span<FrameworkModule const> modules
+        ) -> Status
+        {
+            for (auto index = std::size_t{}; index < modules.size(); ++index)
+            {
+                auto const& module = modules[index];
+                if (module.name.empty())
+                {
+                    return fail(
+                        AutomationErrorKind::InternalInvariant,
+                        "framework module has an empty publication name"
+                    );
+                }
+                if (
+                    !module.resolverName.empty()
+                    && !validFrameworkResolverName(module.resolverName)
+                )
+                {
+                    return fail(
+                        AutomationErrorKind::InternalInvariant,
+                        "framework module has a non-canonical resolver name: "
+                            + std::string{module.resolverName}
+                    );
+                }
+
+                for (auto prior = std::size_t{}; prior < index; ++prior)
+                {
+                    if (modules[prior].name == module.name)
+                    {
+                        return fail(
+                            AutomationErrorKind::InternalInvariant,
+                            "duplicate framework module publication name: "
+                                + std::string{module.name}
+                        );
+                    }
+                    if (
+                        !module.resolverName.empty()
+                        && modules[prior].resolverName == module.resolverName
+                    )
+                    {
+                        return fail(
+                            AutomationErrorKind::InternalInvariant,
+                            "duplicate framework module resolver name: "
+                                + std::string{module.resolverName}
+                        );
+                    }
+                }
+            }
+            return ok();
+        }
+
+        auto requireFrameworkModule(lua_State* state) -> int
+        {
+            if (
+                lua_gettop(state) != 1
+                || lua_type(state, 1) != LUA_TSTRING
+            )
+            {
+                luaL_error(
+                    state,
+                    "Framework require expects exactly one module-name string"
+                );
+            }
+
+            lua_pushvalue(state, lua_upvalueindex(1));
+            lua_pushvalue(state, 1);
+            lua_rawget(state, -2);
+            if (lua_isnil(state, -1))
+            {
+                luaL_error(
+                    state,
+                    "Framework require rejected an unknown or forward module"
+                );
+            }
+            return 1;
+        }
+
+        [[nodiscard]]
+        auto installFrameworkRequire(
+            lua_State* state,
+            int environmentIndex,
+            std::span<FrameworkModule const> loadedModules
+        ) -> Status
+        {
+            int const environment = lua_absindex(state, environmentIndex);
+            lua_newtable(state);
+            int const dependencies = lua_gettop(state);
+            for (auto const& loaded : loadedModules)
+            {
+                if (loaded.resolverName.empty())
+                {
+                    continue;
+                }
+
+                auto const publication = std::string{loaded.name};
+                lua_rawgetfield(state, environment, publication.c_str());
+                if (lua_isnil(state, -1))
+                {
+                    lua_pop(state, 2);
+                    return fail(
+                        AutomationErrorKind::InternalInvariant,
+                        "framework resolver source is absent after load: "
+                            + publication
+                    );
+                }
+                auto const resolver = std::string{loaded.resolverName};
+                lua_rawsetfield(state, dependencies, resolver.c_str());
+            }
+            lua_setreadonly(state, dependencies, 1);
+            lua_pushcclosure(
+                state,
+                &requireFrameworkModule,
+                "Framework require",
+                1
+            );
+            lua_rawsetfield(state, environment, "require");
             return ok();
         }
 
@@ -353,8 +533,11 @@ namespace uf::script
         InterruptState const* control
     ) -> Status
     {
-        for (auto const& module : modules)
+        UF_TRY(validateFrameworkModules(modules));
+
+        for (auto index = std::size_t{}; index < modules.size(); ++index)
         {
+            auto const& module = modules[index];
             int const stackBase = lua_gettop(state);
             auto stackGuard = scopeExit(
                 [state, stackBase]() noexcept
@@ -373,6 +556,14 @@ namespace uf::script
                 );
             }
 
+            UF_TRY(
+                installFrameworkRequire(
+                    state,
+                    environment,
+                    modules.first(index)
+                )
+            );
+
             UF_TRY_VALUE(
                 thread,
                 resumeChunkOnThread(
@@ -385,6 +576,8 @@ namespace uf::script
                     nullptr
                 )
             );
+            lua_pushnil(state);
+            lua_rawsetfield(state, environment, "require");
             if (lua_gettop(thread) < 1)
             {
                 return fail(

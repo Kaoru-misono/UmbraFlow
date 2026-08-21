@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -23,33 +24,77 @@ namespace uf::task
         {
             std::string_view privateName;
             std::string_view publicName;
+            std::size_t      dependencyDepth{};
         };
 
         struct InternalPureModuleBinding final
         {
             std::string_view privateName;
             std::string_view reservedName;
+            std::size_t      dependencyDepth{};
+        };
+
+        struct FrameworkResolverSpec final
+        {
+            std::string_view name;
+            std::size_t      dependencyDepth{};
         };
 
         constexpr auto k_pureModuleBindings = std::array{
-            PureModuleBinding{"collections", "@umbraflow/collections"},
-            PureModuleBinding{"jcs", "@umbraflow/jcs"},
-            PureModuleBinding{"json", "@umbraflow/json"},
-            PureModuleBinding{"result", "@umbraflow/result"},
-            PureModuleBinding{"text", "@umbraflow/text"},
-            PureModuleBinding{"utf8", "@umbraflow/utf8"},
+            PureModuleBinding{"collections", "@umbraflow/collections", 0U},
+            PureModuleBinding{"jcs", "@umbraflow/jcs", 0U},
+            PureModuleBinding{"json", "@umbraflow/json", 1U},
+            PureModuleBinding{"result", "@umbraflow/result", 0U},
+            PureModuleBinding{"text", "@umbraflow/text", 2U},
+            PureModuleBinding{"utf8", "@umbraflow/utf8", 1U},
         };
 
         constexpr auto k_internalPureModuleBindings = std::array{
             InternalPureModuleBinding{
                 "unicode-text-data",
                 "@umbraflow/internal/unicode-text-data",
+                0U,
             },
             InternalPureModuleBinding{
                 "unicode-utf8-data",
                 "@umbraflow/internal/unicode-utf8-data",
+                0U,
             },
         };
+
+        constexpr auto k_maximumFrameworkDependencyDepth = std::size_t{2U};
+
+        [[nodiscard]]
+        auto frameworkResolverSpec(std::string_view privateName)
+            -> std::optional<FrameworkResolverSpec>
+        {
+            auto const publicBinding = std::ranges::find(
+                k_pureModuleBindings,
+                privateName,
+                &PureModuleBinding::privateName
+            );
+            if (publicBinding != k_pureModuleBindings.end())
+            {
+                return FrameworkResolverSpec{
+                    .name            = publicBinding->publicName,
+                    .dependencyDepth = publicBinding->dependencyDepth,
+                };
+            }
+
+            auto const internalBinding = std::ranges::find(
+                k_internalPureModuleBindings,
+                privateName,
+                &InternalPureModuleBinding::privateName
+            );
+            if (internalBinding != k_internalPureModuleBindings.end())
+            {
+                return FrameworkResolverSpec{
+                    .name            = internalBinding->reservedName,
+                    .dependencyDepth = internalBinding->dependencyDepth,
+                };
+            }
+            return std::nullopt;
+        }
     }
 
     auto frameworkScriptModules() -> std::vector<script::FrameworkModule>
@@ -58,14 +103,30 @@ namespace uf::task
 
         auto modules = std::vector<script::FrameworkModule>{};
         modules.reserve(entries.size());
-        for (auto const& entry : entries)
+        for (
+            auto depth = std::size_t{};
+            depth <= k_maximumFrameworkDependencyDepth;
+            ++depth
+        )
         {
-            modules.emplace_back(
-                script::FrameworkModule{
+            for (auto const& entry : entries)
+            {
+                auto const resolver = frameworkResolverSpec(entry.name);
+                auto const entryDepth = resolver.has_value()
+                    ? resolver->dependencyDepth
+                    : std::size_t{};
+                if (entryDepth != depth)
+                {
+                    continue;
+                }
+                modules.emplace_back(script::FrameworkModule{
                     .name   = entry.name,
                     .source = entry.source,
-                }
-            );
+                    .resolverName = resolver.has_value()
+                        ? resolver->name
+                        : std::string_view{},
+                });
+            }
         }
         return modules;
     }

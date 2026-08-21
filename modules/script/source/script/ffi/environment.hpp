@@ -31,8 +31,12 @@ namespace uf::script
 
     // Loads and runs each module in order under the framework environment,
     // deep-freezes the value it returns, and binds that value in the framework
-    // environment under the module's name, so a later module can reach an
-    // earlier one and nothing outside the framework can reach either.
+    // environment under the module's name. A module may also declare one exact
+    // reserved resolver name. Each module receives a caller-bound `require`
+    // over a frozen snapshot of earlier resolver names only, so unknown names,
+    // forward dependencies, cycles, and duplicate aliases fail closed. The
+    // loader removes `require` after every load and the Project prototype never
+    // copies it.
     //
     // `privateCapabilities`, when present, is a `state` stack index holding the
     // private capability surface, passed to every module as its single chunk

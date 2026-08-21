@@ -109,10 +109,19 @@ namespace uf::script
         // The module's UTF-8 source text.
         std::string_view source{};
 
-        // Whether Project-authored modules may resolve this exact reserved
-        // name. Framework-owned modules may always resolve it, so release-owned
+        // An optional exact reserved name by which a later trusted Framework
+        // module may require this module. The loader admits only @umbraflow/
+        // names, rejects duplicates before running any source, and resolves
+        // against earlier modules only. This is separate from `name`, which
+        // remains the Framework global and Project publication spelling.
+        std::string_view resolverName{};
+
+        // Whether Project-authored PureDataProgram modules may resolve `name`.
+        // Framework-owned pure modules may always resolve it, so release-owned
         // data can remain an implementation detail while still passing through
-        // the same source, bytecode, memory, and identity boundaries.
+        // the same source, bytecode, memory, and identity boundaries. The full
+        // trusted loader uses `resolverName` instead and never publishes its
+        // require function to Project source.
         bool projectVisible{true};
     };
 

@@ -36,9 +36,44 @@ namespace uf::task
             == std::vector<std::string>{"explore"}
         );
 
+        auto modules = frameworkScriptModules();
+        auto const positionOf = [&modules](std::string_view name)
+        {
+            return std::ranges::find(
+                modules,
+                name,
+                &script::FrameworkModule::name
+            );
+        };
+        auto const jcs         = positionOf("jcs");
+        auto const json        = positionOf("json");
+        auto const text        = positionOf("text");
+        auto const textData    = positionOf("unicode-text-data");
+        auto const unicode     = positionOf("utf8");
+        auto const unicodeData = positionOf("unicode-utf8-data");
+        REQUIRE(jcs != modules.end());
+        REQUIRE(json != modules.end());
+        REQUIRE(text != modules.end());
+        REQUIRE(textData != modules.end());
+        REQUIRE(unicode != modules.end());
+        REQUIRE(unicodeData != modules.end());
+        CHECK(jcs->resolverName == "@umbraflow/jcs");
+        CHECK(json->resolverName == "@umbraflow/json");
+        CHECK(text->resolverName == "@umbraflow/text");
+        CHECK(textData->resolverName == "@umbraflow/internal/unicode-text-data");
+        CHECK(unicode->resolverName == "@umbraflow/utf8");
+        CHECK(
+            unicodeData->resolverName
+            == "@umbraflow/internal/unicode-utf8-data"
+        );
+        CHECK(jcs < json);
+        CHECK(textData < text);
+        CHECK(unicodeData < unicode);
+        CHECK(unicode < text);
+
         auto engine = script::Engine::create(
             script::EngineConfig{
-                .frameworkModules        = frameworkScriptModules(),
+                .frameworkModules        = std::move(modules),
                 .projectGlobals          = {},
                 .frameworkProjectGlobals = frameworkProjectGlobals(),
             }
