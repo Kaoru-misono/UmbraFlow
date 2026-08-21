@@ -673,7 +673,8 @@ namespace uf::operator_runtime
         std::string toolName,
         std::string toolVersion,
         std::string canonicalArgs,
-        ContentHash canonicalArgsHash
+        ContentHash canonicalArgsHash,
+        ToolDescriptor descriptor
     )
         : m_identity{identity}
         , m_rootIdentity{rootIdentity}
@@ -685,6 +686,7 @@ namespace uf::operator_runtime
         , m_toolVersion{std::move(toolVersion)}
         , m_canonicalArgs{std::move(canonicalArgs)}
         , m_canonicalArgsHash{canonicalArgsHash}
+        , m_descriptor{std::move(descriptor)}
     {
     }
 
@@ -737,6 +739,7 @@ namespace uf::operator_runtime
             invocation.descriptor().toolVersion,
             invocation.canonicalArgs().bytes(),
             invocation.canonicalArgs().contentHash(),
+            invocation.descriptor(),
         };
     }
 
@@ -794,6 +797,12 @@ namespace uf::operator_runtime
     auto ToolCallPositionIdentity::canonicalArgsHash() const -> ContentHash
     {
         return m_canonicalArgsHash;
+    }
+
+    auto ToolCallPositionIdentity::descriptor() const noexcept
+        -> ToolDescriptor const&
+    {
+        return m_descriptor;
     }
 
     auto ToolCallPositionIdentity::asParent() const -> ToolCallParent

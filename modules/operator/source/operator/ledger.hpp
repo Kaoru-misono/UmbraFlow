@@ -10,6 +10,7 @@
 #include "project-plugin.hpp"
 #include "reconcile-outcome.hpp"
 #include "tool-invocation.hpp"
+#include "tool-runtime.hpp"
 
 #include <task/host-delivery.hpp>
 #include <task/runtime-model-file.hpp>
@@ -555,6 +556,9 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto recoverUncertainDispatches() -> Result<uint64>;
 
+        [[nodiscard]]
+        auto recoverUncertainToolCalls() -> Result<uint64>;
+
         // The transaction-neutral canonical mint: the ten ordered checks
         // (shape, duplicate and parent-cycle relations, identity closure,
         // basis, stable mint, collision, consistency, parent projection,
@@ -593,7 +597,9 @@ namespace uf::operator_runtime
         // runtime_state.current_session_epoch by one, deletes every
         // control_leases row, clears sessions.active, and resolves every
         // dispatch nobody answered for to transport_unknown with its Operation
-        // moved to reconciling.
+        // moved to reconciling. A replacement Tool call whose durable dispatch
+        // boundary was crossed without an outcome becomes possible/unknown and
+        // is never handed out for dispatch again.
         //
         // A non-empty schema reaches those restart writes only when its exact
         // stored-DDL identity is current or a migration is registered under
@@ -870,6 +876,39 @@ namespace uf::operator_runtime
             ToolRootRequestIdentity const& root,
             ToolCallPositionIdentity const& call
         ) -> Result<StoredToolCallPosition>;
+
+        // First-generation replacement admission for read-only Tools. Every
+        // authority member is re-read from the live binding, lease and session;
+        // a caller supplies only the already-minted identity values.
+        [[nodiscard]]
+        auto admitReadOnlyToolCall(
+            ControllerBinding const& controller,
+            ControlLease const& lease,
+            ToolRootRequestIdentity const& root,
+            ToolCallPositionIdentity const& call
+        ) -> Result<ToolCallAdmission>;
+
+        // Commits the dispatch boundary before provider code runs.
+        [[nodiscard]]
+        auto beginToolCallDispatch(
+            ToolCallAdmission const& admission
+        ) -> Result<ToolCallDispatch>;
+
+        // Records the exact provider conclusion. Repeating the same completion
+        // rejoins; changing it after a terminal write is refused.
+        [[nodiscard]]
+        auto completeToolCallDispatch(
+            ToolCallDispatch const& dispatch,
+            ToolCallCompletion const& completion
+        ) -> Result<StoredToolCallOutcome>;
+
+        // Reads durable history only. It never consults a live lease and never
+        // executes a provider, which is why terminal replay survives restart.
+        [[nodiscard]]
+        auto replayToolCall(
+            ToolRootRequestIdentity const& root,
+            ToolCallPositionIdentity const& call
+        ) -> Result<ToolCallReplay>;
 
         // Records that the world moved under us, which is what out-of-band
         // human input is. It is not an Operation and cannot become one: it

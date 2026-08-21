@@ -27,9 +27,21 @@ rewriting existing audit rows, and restart tests prove deterministic rejoin.
 The persisted call identity covers run, Framework release, Tool Runtime
 protocol, environment, provider/catalog, Tool name/version and canonical
 arguments. It deliberately has no session, admission, result, delivery, or
-provider execution state. The existing command path still explicitly rejects
-Framework providers: admission attempts, durable outcomes/recovery, execution
-adapters, and public contract publication have not landed yet.
+provider execution state.
+
+The first read-only runtime checkpoint now persists a separate immutable run
+owner and append-only admission attempts derived from the live controller,
+session, policy, capability profile, lease/fence, registration, and budget
+snapshot. Dispatching is committed before provider execution; exact terminal
+results replay without authority or execution, while restart converts an
+unanswered dispatch to durable `possible` and refuses redispatch. An
+`admitted` call whose dispatch never began may append a fresh, non-expanding
+current-epoch attempt. Sibling positions remain ordered, child calls are
+refused until delegation grants land, and Agent admission charges the Tool-call
+budget exactly once. This checkpoint exposes no provider adapter yet and
+explicitly refuses mutating admission. Mutating authority/freeze,
+reconciliation, nested delegation, execution adapters, and public contract
+publication remain to be implemented.
 
 ## 1. Product boundary
 

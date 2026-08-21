@@ -265,10 +265,20 @@ namespace uf::operator_runtime
             )sql");
         }
 
+        auto removeToolRuntimePersistence(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void
+        {
+            database.execute("DROP TABLE IF EXISTS tool_admission_attempts");
+            database.execute("DROP TABLE IF EXISTS tool_runs");
+            database.execute("DROP TABLE IF EXISTS tool_call_history");
+        }
+
         auto removeToolIdentityPersistence(
             test_support::OperatorDatabaseProbe& database
         ) -> void
         {
+            removeToolRuntimePersistence(database);
             database.execute("DROP INDEX IF EXISTS one_top_level_tool_call_position");
             database.execute("DROP TABLE IF EXISTS tool_call_positions");
             database.execute("DROP TABLE IF EXISTS tool_root_requests");
@@ -3635,6 +3645,69 @@ namespace uf::operator_runtime
         CHECK(refused.error().message().contains("different canonical material"));
     }
 
+    TEST_CASE("Tool replay refuses a corrupted state and outcome combination")
+    {
+        auto temporary        = TemporaryDirectory{};
+        auto const production = temporary.path() / "production";
+        auto preimage         = CanonicalJson::parseExact("{}");
+        REQUIRE(preimage.has_value());
+        auto root = ToolRootRequestIdentity::create(
+            "state-tamper",
+            "request-1",
+            std::move(*preimage)
+        );
+        REQUIRE(root.has_value());
+        auto catalog   = FrameworkToolCatalogOwner::create();
+        auto arguments = CanonicalJson::parseExact("{}");
+        REQUIRE(catalog.has_value());
+        REQUIRE(arguments.has_value());
+        auto invocation = catalog->validate(
+            "framework.screen.observe",
+            std::move(*arguments)
+        );
+        REQUIRE(invocation.has_value());
+        auto call = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            1U,
+            ToolExecutionIdentity{
+                .runIdentity                 = hashOf("state-tamper-run"),
+                .frameworkReleaseIdentity    = hashOf("state-tamper-framework"),
+                .toolRuntimeProtocolIdentity = hashOf("state-tamper-protocol"),
+                .environmentIdentity         = hashOf("state-tamper-environment"),
+            },
+            *invocation
+        );
+        REQUIRE(call.has_value());
+        {
+            auto store = OperatorCoordinator::open(production);
+            REQUIRE(store.has_value());
+            REQUIRE(store->persistToolRootRequest(*root).has_value());
+            REQUIRE(store->persistToolCallPosition(*root, *call).has_value());
+        }
+        {
+            auto database = test_support::OperatorDatabaseProbe{
+                production / "operator-runtime.sqlite",
+            };
+            CHECK(database.refuses(
+                "UPDATE tool_call_history SET state='confirmed', "
+                "active_admission_attempt=1"
+            ));
+            database.execute("PRAGMA ignore_check_constraints=ON");
+            database.execute(
+                "UPDATE tool_call_history SET state='confirmed', "
+                "active_admission_attempt=1"
+            );
+        }
+        auto reopened = OperatorCoordinator::open(production);
+        REQUIRE(reopened.has_value());
+        auto refused = reopened->replayToolCall(*root, *call);
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(refused.error().message().contains(
+            "state and outcome shape disagree"
+        ));
+    }
+
     TEST_CASE("the immediate-prior Tool identity schema migrates audit rows exactly")
     {
         auto temporary          = TemporaryDirectory{};
@@ -3674,7 +3747,7 @@ namespace uf::operator_runtime
         auto const targetIdentity = exactSchemaIdentity(target);
         CHECK(
             targetIdentity
-            == "sha256:50375791a22d12ab8b03f83eb48afc2183091e0d95b07fc5e4be47bb9aa07062"
+            == "sha256:64d3396e51680ec12cb91d944357f965e2136065fbb7b7fccc009d168fc4ac80"
         );
         CHECK(
             target.readRows(
@@ -3699,6 +3772,594 @@ namespace uf::operator_runtime
             target.readRows("SELECT count(*) FROM tool_call_positions")
             == std::vector<std::vector<std::string>>{{"0"}}
         );
+    }
+
+    TEST_CASE("read-only Tool dispatch records and replays one exact terminal outcome")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto preimage  = CanonicalJson::parseExact(
+            R"({"objective":"observe-once"})"
+        );
+        REQUIRE(preimage.has_value());
+        auto root = ToolRootRequestIdentity::create(
+            "controller-1",
+            "tool-runtime-request-1",
+            std::move(*preimage)
+        );
+        REQUIRE(root.has_value());
+        auto catalog   = FrameworkToolCatalogOwner::create();
+        auto arguments = CanonicalJson::parseExact("{}");
+        REQUIRE(catalog.has_value());
+        REQUIRE(arguments.has_value());
+        auto invocation = catalog->validate(
+            "framework.screen.observe",
+            std::move(*arguments)
+        );
+        REQUIRE(invocation.has_value());
+        auto call = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            1U,
+            ToolExecutionIdentity{
+                .runIdentity                 = hashOf("read-only-run"),
+                .frameworkReleaseIdentity    = hashOf("read-only-framework"),
+                .toolRuntimeProtocolIdentity = hashOf("read-only-protocol"),
+                .environmentIdentity         = hashOf("read-only-environment"),
+            },
+            *invocation
+        );
+        REQUIRE(call.has_value());
+        auto nextCall = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            2U,
+            call->executionIdentity(),
+            *invocation
+        );
+        auto childCall = ToolCallPositionIdentity::create(
+            *root,
+            call->asParent(),
+            1U,
+            call->executionIdentity(),
+            *invocation
+        );
+        REQUIRE(nextCall.has_value());
+        REQUIRE(childCall.has_value());
+        REQUIRE(prepared.store.persistToolRootRequest(*root).has_value());
+        REQUIRE(prepared.store.persistToolCallPosition(*root, *call).has_value());
+        auto proposed = prepared.store.replayToolCall(*root, *call);
+        REQUIRE(proposed.has_value());
+        CHECK(proposed->state == ToolCallState::Proposed);
+        CHECK(proposed->revision == 1U);
+
+        auto admission = prepared.store.admitReadOnlyToolCall(
+            prepared.controller,
+            prepared.lease,
+            *root,
+            *call
+        );
+        REQUIRE(admission.has_value());
+        CHECK(admission->attemptNumber() == 1U);
+        CHECK(admission->historyRevision() == 2U);
+        auto repeatedAdmission = prepared.store.admitReadOnlyToolCall(
+            prepared.controller,
+            prepared.lease,
+            *root,
+            *call
+        );
+        REQUIRE(repeatedAdmission.has_value());
+        CHECK(repeatedAdmission->attemptNumber() == 1U);
+        CHECK(repeatedAdmission->historyRevision() == 2U);
+        auto refusedNext = prepared.store.admitReadOnlyToolCall(
+            prepared.controller,
+            prepared.lease,
+            *root,
+            *nextCall
+        );
+        REQUIRE_FALSE(refusedNext.has_value());
+        CHECK(refusedNext.error().message().contains(
+            "no deterministic terminal outcome"
+        ));
+        auto refusedChild = prepared.store.admitReadOnlyToolCall(
+            prepared.controller,
+            prepared.lease,
+            *root,
+            *childCall
+        );
+        REQUIRE_FALSE(refusedChild.has_value());
+        CHECK(refusedChild.error().message().contains(
+            "nested delegation grant"
+        ));
+
+        auto dispatch = prepared.store.beginToolCallDispatch(*admission);
+        REQUIRE(dispatch.has_value());
+        CHECK(dispatch->historyRevision() == 3U);
+        auto dispatching = prepared.store.replayToolCall(*root, *call);
+        REQUIRE(dispatching.has_value());
+        CHECK(dispatching->state == ToolCallState::Dispatching);
+
+        auto result = CanonicalJson::parseExact(
+            R"({"frame_id":"frame-1"})"
+        );
+        auto evidence = CanonicalJson::parseExact(
+            R"({"capture_hash":"capture-1"})"
+        );
+        REQUIRE(result.has_value());
+        REQUIRE(evidence.has_value());
+        auto completion = ToolCallCompletion::confirmed(
+            *result,
+            std::optional{*evidence}
+        );
+        auto completed = prepared.store.completeToolCallDispatch(
+            *dispatch,
+            completion
+        );
+        REQUIRE(completed.has_value());
+        CHECK(completed->lookup == ToolOutcomeLookup::Created);
+        CHECK(completed->state == ToolCallState::Confirmed);
+        CHECK(completed->revision == 4U);
+        auto admittedNext = prepared.store.admitReadOnlyToolCall(
+            prepared.controller,
+            prepared.lease,
+            *root,
+            *nextCall
+        );
+        REQUIRE(admittedNext.has_value());
+        CHECK(admittedNext->attemptNumber() == 1U);
+
+        auto repeated = prepared.store.completeToolCallDispatch(
+            *dispatch,
+            completion
+        );
+        REQUIRE(repeated.has_value());
+        CHECK(repeated->lookup == ToolOutcomeLookup::Existing);
+        CHECK(repeated->revision == 4U);
+        auto changedResult = CanonicalJson::parseExact(
+            R"({"frame_id":"frame-2"})"
+        );
+        REQUIRE(changedResult.has_value());
+        auto changedCompletion = ToolCallCompletion::confirmed(
+            *changedResult,
+            std::optional{*evidence}
+        );
+        auto changed = prepared.store.completeToolCallDispatch(
+            *dispatch,
+            changedCompletion
+        );
+        REQUIRE_FALSE(changed.has_value());
+        CHECK(changed.error().message().contains("immutable"));
+
+        auto replay = prepared.store.replayToolCall(*root, *call);
+        REQUIRE(replay.has_value());
+        REQUIRE(replay->payload.has_value());
+        REQUIRE(replay->evidence.has_value());
+        CHECK(replay->state == ToolCallState::Confirmed);
+        CHECK(replay->payload->bytes() == result->bytes());
+        CHECK(replay->evidence->bytes() == evidence->bytes());
+
+        {
+            auto released = std::move(prepared.store);
+        }
+        auto restarted = OperatorCoordinator::open(
+            temporary.path() / "production"
+        );
+        REQUIRE(restarted.has_value());
+        auto replayAfterRestart = restarted->replayToolCall(*root, *call);
+        REQUIRE(replayAfterRestart.has_value());
+        REQUIRE(replayAfterRestart->payload.has_value());
+        CHECK(replayAfterRestart->state == ToolCallState::Confirmed);
+        CHECK(replayAfterRestart->payload->bytes() == result->bytes());
+    }
+
+    TEST_CASE("restart classifies an unanswered Tool dispatch possible and never redispatches")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto preimage  = CanonicalJson::parseExact(
+            R"({"objective":"crash-during-observe"})"
+        );
+        REQUIRE(preimage.has_value());
+        auto root = ToolRootRequestIdentity::create(
+            "controller-1",
+            "tool-runtime-crash-request",
+            std::move(*preimage)
+        );
+        REQUIRE(root.has_value());
+        auto catalog   = FrameworkToolCatalogOwner::create();
+        auto arguments = CanonicalJson::parseExact("{}");
+        REQUIRE(catalog.has_value());
+        REQUIRE(arguments.has_value());
+        auto invocation = catalog->validate(
+            "framework.screen.observe",
+            std::move(*arguments)
+        );
+        REQUIRE(invocation.has_value());
+        auto call = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            1U,
+            ToolExecutionIdentity{
+                .runIdentity                 = hashOf("crash-run"),
+                .frameworkReleaseIdentity    = hashOf("crash-framework"),
+                .toolRuntimeProtocolIdentity = hashOf("crash-protocol"),
+                .environmentIdentity         = hashOf("crash-environment"),
+            },
+            *invocation
+        );
+        REQUIRE(call.has_value());
+        auto admission = prepared.store.admitReadOnlyToolCall(
+            prepared.controller,
+            prepared.lease,
+            *root,
+            *call
+        );
+        REQUIRE(admission.has_value());
+        auto dispatch = prepared.store.beginToolCallDispatch(*admission);
+        REQUIRE(dispatch.has_value());
+        auto continuationPreimage = CanonicalJson::parseExact(
+            R"({"objective":"admitted-before-restart"})"
+        );
+        REQUIRE(continuationPreimage.has_value());
+        auto continuationRoot = ToolRootRequestIdentity::create(
+            "controller-1",
+            "tool-runtime-admitted-restart",
+            std::move(*continuationPreimage)
+        );
+        REQUIRE(continuationRoot.has_value());
+        auto continuationCall = ToolCallPositionIdentity::create(
+            *continuationRoot,
+            std::nullopt,
+            1U,
+            call->executionIdentity(),
+            *invocation
+        );
+        REQUIRE(continuationCall.has_value());
+        auto priorAdmission = prepared.store.admitReadOnlyToolCall(
+            prepared.controller,
+            prepared.lease,
+            *continuationRoot,
+            *continuationCall
+        );
+        REQUIRE(priorAdmission.has_value());
+        auto manifest = prepared.manifest;
+        {
+            auto released = std::move(prepared.store);
+        }
+
+        auto restarted = OperatorCoordinator::open(
+            temporary.path() / "production"
+        );
+        REQUIRE(restarted.has_value());
+        auto replay = restarted->replayToolCall(*root, *call);
+        REQUIRE(replay.has_value());
+        REQUIRE(replay->payload.has_value());
+        CHECK(replay->state == ToolCallState::Possible);
+        CHECK(
+            replay->payload->bytes()
+            == R"({"reason":"operator_restart_after_dispatch_started"})"
+        );
+        CHECK(replay->revision == 4U);
+
+        auto lateResult = CanonicalJson::parseExact(R"({"late":true})");
+        REQUIRE(lateResult.has_value());
+        auto lateCompletion = ToolCallCompletion::confirmed(*lateResult);
+        auto refusedLate = restarted->completeToolCallDispatch(
+            *dispatch,
+            lateCompletion
+        );
+        REQUIRE_FALSE(refusedLate.has_value());
+        CHECK(refusedLate.error().message().contains(
+            "does not match the active dispatch"
+        ));
+
+        auto resumed = restarted->resumeSession(
+            SessionResume{
+                .authenticatedControllerId = "controller-1",
+                .controlledTargetId        = "target-1",
+                .mode                      = SessionMode::Write,
+                .kind                      = ControllerKind::Script,
+            },
+            manifest
+        );
+        REQUIRE(resumed.has_value());
+        auto lease = restarted->acquireLease(*resumed);
+        REQUIRE(lease.has_value());
+        auto continuedAdmission = restarted->admitReadOnlyToolCall(
+            *resumed,
+            *lease,
+            *continuationRoot,
+            *continuationCall
+        );
+        REQUIRE(continuedAdmission.has_value());
+        CHECK(continuedAdmission->attemptNumber() == 2U);
+        CHECK(continuedAdmission->historyRevision() == 3U);
+        auto staleAdmissionDispatch = restarted->beginToolCallDispatch(
+            *priorAdmission
+        );
+        REQUIRE_FALSE(staleAdmissionDispatch.has_value());
+        CHECK(staleAdmissionDispatch.error().message().contains(
+            "no longer live"
+        ));
+        auto continuedDispatch = restarted->beginToolCallDispatch(
+            *continuedAdmission
+        );
+        REQUIRE(continuedDispatch.has_value());
+        auto continuedResult = CanonicalJson::parseExact(
+            R"({"continued":true})"
+        );
+        REQUIRE(continuedResult.has_value());
+        REQUIRE(restarted->completeToolCallDispatch(
+            *continuedDispatch,
+            ToolCallCompletion::confirmed(*continuedResult)
+        ).has_value());
+        auto refusedReadmission = restarted->admitReadOnlyToolCall(
+            *resumed,
+            *lease,
+            *root,
+            *call
+        );
+        REQUIRE_FALSE(refusedReadmission.has_value());
+        CHECK(refusedReadmission.error().message().contains(
+            "cannot enter read-only admission"
+        ));
+    }
+
+    TEST_CASE("Tool admission charges an Agent once and rechecks lease at dispatch")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+        auto agent = test_support::addController(
+            prepared,
+            ControllerKind::Agent,
+            SessionMode::Write,
+            "agent-tool-runtime",
+            "agent-tool-instance",
+            "agent-tool-target",
+            AgentBudget{
+                .maximumToolCalls    = 1U,
+                .maximumMutations    = 1U,
+                .maximumObservations = 1U,
+                .maximumElapsedMillis = 60'000U,
+                .maximumRiskUnits    = 1U,
+            }
+        );
+        auto lease = prepared.store.acquireLease(agent);
+        REQUIRE(lease.has_value());
+        auto preimage = CanonicalJson::parseExact(
+            R"({"objective":"agent-observe"})"
+        );
+        REQUIRE(preimage.has_value());
+        auto root = ToolRootRequestIdentity::create(
+            "controller-1",
+            "agent-tool-request",
+            std::move(*preimage)
+        );
+        REQUIRE(root.has_value());
+        auto catalog   = FrameworkToolCatalogOwner::create();
+        auto arguments = CanonicalJson::parseExact("{}");
+        REQUIRE(catalog.has_value());
+        REQUIRE(arguments.has_value());
+        auto invocation = catalog->validate(
+            "framework.screen.observe",
+            std::move(*arguments)
+        );
+        REQUIRE(invocation.has_value());
+        auto const execution = ToolExecutionIdentity{
+            .runIdentity                 = hashOf("agent-tool-run"),
+            .frameworkReleaseIdentity    = hashOf("agent-tool-framework"),
+            .toolRuntimeProtocolIdentity = hashOf("agent-tool-protocol"),
+            .environmentIdentity         = hashOf("agent-tool-environment"),
+        };
+        auto first = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            1U,
+            execution,
+            *invocation
+        );
+        auto secondPreimage = CanonicalJson::parseExact(
+            R"({"objective":"agent-observe-second-root"})"
+        );
+        REQUIRE(secondPreimage.has_value());
+        auto secondRoot = ToolRootRequestIdentity::create(
+            "controller-1",
+            "agent-tool-request-2",
+            std::move(*secondPreimage)
+        );
+        REQUIRE(secondRoot.has_value());
+        auto second = ToolCallPositionIdentity::create(
+            *secondRoot,
+            std::nullopt,
+            1U,
+            execution,
+            *invocation
+        );
+        REQUIRE(first.has_value());
+        REQUIRE(second.has_value());
+
+        auto before = prepared.store.remainingBudget(agent);
+        REQUIRE(before.has_value());
+        CHECK(before->toolCalls == 1U);
+        auto admission = prepared.store.admitReadOnlyToolCall(
+            agent,
+            *lease,
+            *root,
+            *first
+        );
+        REQUIRE(admission.has_value());
+        auto after = prepared.store.remainingBudget(agent);
+        REQUIRE(after.has_value());
+        CHECK(after->toolCalls == 0U);
+
+        auto repeated = prepared.store.admitReadOnlyToolCall(
+            agent,
+            *lease,
+            *root,
+            *first
+        );
+        REQUIRE(repeated.has_value());
+        CHECK(repeated->attemptNumber() == admission->attemptNumber());
+        auto afterRepeated = prepared.store.remainingBudget(agent);
+        REQUIRE(afterRepeated.has_value());
+        CHECK(afterRepeated->toolCalls == 0U);
+
+        REQUIRE(prepared.store.releaseLease(*lease).has_value());
+        auto staleDispatch = prepared.store.beginToolCallDispatch(*admission);
+        REQUIRE_FALSE(staleDispatch.has_value());
+        CHECK(staleDispatch.error().message().contains("no longer live"));
+
+        auto replacementLease = prepared.store.acquireLease(agent);
+        REQUIRE(replacementLease.has_value());
+        auto exhausted = prepared.store.admitReadOnlyToolCall(
+            agent,
+            *replacementLease,
+            *secondRoot,
+            *second
+        );
+        REQUIRE_FALSE(exhausted.has_value());
+        CHECK(exhausted.error().message().contains(
+            "tool-call budget is exhausted"
+        ));
+        auto secondReplay = prepared.store.replayToolCall(*secondRoot, *second);
+        REQUIRE(secondReplay.has_value());
+        CHECK(secondReplay->state == ToolCallState::Proposed);
+    }
+
+    TEST_CASE("read-only Tool admission refuses a mutating Project descriptor")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto preimage  = CanonicalJson::parseExact("{}");
+        REQUIRE(preimage.has_value());
+        auto root = ToolRootRequestIdentity::create(
+            "controller-1",
+            "mutating-project-tool",
+            std::move(*preimage)
+        );
+        REQUIRE(root.has_value());
+        auto invocation = toolInvocation(prepared.project, "command-1");
+        REQUIRE(invocation.descriptor().mutability == ToolMutability::Mutating);
+        auto call = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            1U,
+            ToolExecutionIdentity{
+                .runIdentity                 = hashOf("mutating-run"),
+                .frameworkReleaseIdentity    = hashOf("mutating-framework"),
+                .toolRuntimeProtocolIdentity = hashOf("mutating-protocol"),
+                .environmentIdentity         = hashOf("mutating-environment"),
+            },
+            invocation
+        );
+        REQUIRE(call.has_value());
+        auto refused = prepared.store.admitReadOnlyToolCall(
+            prepared.controller,
+            prepared.lease,
+            *root,
+            *call
+        );
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(refused.error().message().contains("mutating descriptor"));
+    }
+
+    TEST_CASE("the immediate-prior Tool runtime schema migrates identity rows exactly")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        auto preimage           = CanonicalJson::parseExact("{}");
+        REQUIRE(preimage.has_value());
+        auto root = ToolRootRequestIdentity::create(
+            "migration-principal",
+            "migration-request",
+            std::move(*preimage)
+        );
+        REQUIRE(root.has_value());
+        auto catalog   = FrameworkToolCatalogOwner::create();
+        auto arguments = CanonicalJson::parseExact("{}");
+        REQUIRE(catalog.has_value());
+        REQUIRE(arguments.has_value());
+        auto invocation = catalog->validate(
+            "framework.screen.observe",
+            std::move(*arguments)
+        );
+        REQUIRE(invocation.has_value());
+        auto call = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            1U,
+            ToolExecutionIdentity{
+                .runIdentity                 = hashOf("migration-run"),
+                .frameworkReleaseIdentity    = hashOf("migration-framework"),
+                .toolRuntimeProtocolIdentity = hashOf("migration-protocol"),
+                .environmentIdentity         = hashOf("migration-environment"),
+            },
+            *invocation
+        );
+        REQUIRE(call.has_value());
+        {
+            auto store = OperatorCoordinator::open(production);
+            REQUIRE(store.has_value());
+            REQUIRE(store->persistToolRootRequest(*root).has_value());
+            REQUIRE(store->persistToolCallPosition(*root, *call).has_value());
+        }
+        auto identityRows   = std::vector<std::vector<std::string>>{};
+        auto sourceIdentity = std::string{};
+        {
+            auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            identityRows = prior.readRows(
+                "SELECT call_identity, root_identity, canonical_args "
+                "FROM tool_call_positions"
+            );
+            removeToolRuntimePersistence(prior);
+            sourceIdentity = exactSchemaIdentity(prior);
+        }
+        CHECK(
+            sourceIdentity
+            == "sha256:50375791a22d12ab8b03f83eb48afc2183091e0d95b07fc5e4be47bb9aa07062"
+        );
+
+        {
+            auto migrated = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(migrated.has_value(), migrated.error().message());
+        }
+        {
+            auto target = test_support::OperatorDatabaseProbe{databasePath};
+            CHECK(
+                exactSchemaIdentity(target)
+                == "sha256:64d3396e51680ec12cb91d944357f965e2136065fbb7b7fccc009d168fc4ac80"
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT call_identity, root_identity, canonical_args "
+                    "FROM tool_call_positions"
+                ) == identityRows
+            );
+            CHECK(
+                target.readRows("SELECT count(*) FROM tool_call_history")
+                == std::vector<std::vector<std::string>>{{"0"}}
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT source_identity, target_identity "
+                    "FROM schema_identity_transitions"
+                )
+                == std::vector<std::vector<std::string>>{
+                    {
+                        sourceIdentity,
+                        "sha256:64d3396e51680ec12cb91d944357f965e2136065fbb7b7fccc009d168fc4ac80",
+                    },
+                }
+            );
+        }
+        auto migrated = OperatorCoordinator::open(production);
+        REQUIRE(migrated.has_value());
+        auto restored = migrated->persistToolCallPosition(*root, *call);
+        REQUIRE(restored.has_value());
+        auto replay = migrated->replayToolCall(*root, *call);
+        REQUIRE(replay.has_value());
+        CHECK(replay->state == ToolCallState::Proposed);
     }
 
     TEST_CASE("format-2 registrations migrate byte-identical and become audit-only")

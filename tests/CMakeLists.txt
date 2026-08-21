@@ -503,6 +503,7 @@ endif()
 if(TARGET ${PROJECT_NAME}_operator)
     cpp_add_test(
         NAME test-operator
+        NO_CTEST
         SOURCES
             operator/test-host-controller.cpp
             operator/test-ledger.cpp
@@ -526,6 +527,17 @@ if(TARGET ${PROJECT_NAME}_operator)
     if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
         cpp_stage_runtime_libraries(test-operator ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
     endif()
+
+    # The Operator suite deliberately drives real SQLite stores and runtime
+    # artifacts. Keep its individual CI gates below the repository-wide
+    # 60-second limit while preserving one executable for focused local runs.
+    add_test(NAME test-operator COMMAND test-operator "--last=72")
+    add_test(NAME test-operator-remainder COMMAND test-operator "--first=73")
+    set_tests_properties(test-operator test-operator-remainder PROPERTIES
+        TIMEOUT 60
+        LABELS "CI"
+    )
+    uf_require_executed_assertions(test-operator test-operator-remainder)
 
     cpp_add_contract_suite(
         TARGET test-contract-operator

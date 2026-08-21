@@ -413,6 +413,110 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
+        auto ensureToolCallHistory(
+            sqlite3* database,
+            ToolCallPositionIdentity const& call
+        ) -> Status
+        {
+            auto const mutating =
+                call.descriptor().mutability == ToolMutability::Mutating;
+            UF_TRY_VALUE(
+                query,
+                prepare(
+                    database,
+                    "SELECT mutating FROM tool_call_history WHERE call_identity=?1"
+                )
+            );
+            UF_TRY(bindText(database, query.get(), 1, call.identity().hex()));
+            auto const queryResult = sqlite3_step(query.get());
+            if (queryResult == SQLITE_ROW)
+            {
+                if ((sqlite3_column_int(query.get(), 0) != 0) != mutating)
+                {
+                    return fail(
+                        AutomationErrorKind::ActionRejected,
+                        "Stored Tool call mutability disagrees with its catalog"
+                    );
+                }
+                return ok();
+            }
+            if (queryResult != SQLITE_DONE)
+            {
+                return databaseFailure(database, "could not read Tool call history");
+            }
+
+            UF_TRY_VALUE(
+                insert,
+                prepare(
+                    database,
+                    "INSERT INTO tool_call_history(call_identity, mutating, state, "
+                    "revision, active_admission_attempt) "
+                    "VALUES(?1, ?2, 'proposed', 1, 0)"
+                )
+            );
+            UF_TRY(bindText(database, insert.get(), 1, call.identity().hex()));
+            UF_TRY(bindInteger(database, insert.get(), 2, mutating ? 1U : 0U));
+            return expectDone(database, insert.get());
+        }
+
+        [[nodiscard]]
+        auto toolCallStateFor(
+            ToolCallCompletionKind kind
+        ) noexcept -> ToolCallState
+        {
+            switch (kind)
+            {
+            case ToolCallCompletionKind::Confirmed:
+                return ToolCallState::Confirmed;
+            case ToolCallCompletionKind::ProvenAbsent:
+                return ToolCallState::ProvenAbsent;
+            case ToolCallCompletionKind::Possible:
+                return ToolCallState::Possible;
+            case ToolCallCompletionKind::TerminalFailure:
+                return ToolCallState::TerminalFailure;
+            }
+            UF_UNREACHABLE_MSG("Unknown Tool call completion kind");
+        }
+
+        [[nodiscard]]
+        auto toolCallStateHasOutcome(ToolCallState state) noexcept -> bool
+        {
+            switch (state)
+            {
+            case ToolCallState::Proposed:
+            case ToolCallState::Admitted:
+            case ToolCallState::Dispatching:
+                return false;
+            case ToolCallState::Confirmed:
+            case ToolCallState::ProvenAbsent:
+            case ToolCallState::Possible:
+            case ToolCallState::Rejected:
+            case ToolCallState::TerminalFailure:
+            case ToolCallState::TerminallyUnresolved:
+                return true;
+            }
+            UF_UNREACHABLE_MSG("Unknown Tool call state outcome relation");
+        }
+
+        [[nodiscard]]
+        auto restoreCanonicalJson(
+            std::string bytes,
+            std::string_view expectedHash,
+            std::string_view field
+        ) -> Result<CanonicalJson>
+        {
+            UF_TRY_VALUE(value, CanonicalJson::parseExact(std::move(bytes)));
+            if (value.contentHash().hex() != expectedHash)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format("Stored {} hash does not match its canonical bytes", field)
+                );
+            }
+            return value;
+        }
+
+        [[nodiscard]]
         auto requireName(
             std::string_view value,
             std::string_view field
@@ -548,7 +652,7 @@ namespace uf::operator_runtime
         // "Delete-on-open has a deadline" section owns
         // the exact-pair migration policy.
         constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
-            "sha256:50375791a22d12ab8b03f83eb48afc2183091e0d95b07fc5e4be47bb9aa07062"
+            "sha256:64d3396e51680ec12cb91d944357f965e2136065fbb7b7fccc009d168fc4ac80"
         };
 
         // A transition row records the applied exact pair; neither the row nor
@@ -675,6 +779,98 @@ namespace uf::operator_runtime
             "CREATE UNIQUE INDEX one_top_level_tool_call_position ON "
             "tool_call_positions(root_identity, call_sequence) "
             "WHERE parent_call_identity IS NULL"
+        };
+
+        constexpr auto k_toolCallHistoryDdl = std::string_view{
+            "CREATE TABLE tool_call_history("
+            "call_identity TEXT PRIMARY KEY REFERENCES "
+            "tool_call_positions(call_identity),"
+            "mutating INTEGER NOT NULL CHECK(mutating IN (0,1)),"
+            "state TEXT NOT NULL CHECK(state IN ('proposed','admitted','dispatching',"
+            "'confirmed','proven_absent','possible','rejected','terminal_failure',"
+            "'terminally_unresolved')),"
+            "revision INTEGER NOT NULL CHECK(revision > 0),"
+            "active_admission_attempt INTEGER NOT NULL "
+            "CHECK(active_admission_attempt >= 0),"
+            "outcome_payload TEXT,"
+            "outcome_payload_hash TEXT,"
+            "evidence TEXT,"
+            "evidence_hash TEXT,"
+            "CHECK((evidence IS NULL AND evidence_hash IS NULL) OR "
+            "(evidence IS NOT NULL AND evidence_hash IS NOT NULL "
+            "AND length(evidence_hash)=64 AND "
+            "evidence_hash NOT GLOB '*[^0-9a-f]*')),"
+            "CHECK((state='proposed' AND active_admission_attempt=0 "
+            "AND outcome_payload IS NULL AND outcome_payload_hash IS NULL "
+            "AND evidence IS NULL AND evidence_hash IS NULL) OR "
+            "(state IN ('admitted','dispatching') AND active_admission_attempt>0 "
+            "AND outcome_payload IS NULL AND outcome_payload_hash IS NULL "
+            "AND evidence IS NULL AND evidence_hash IS NULL) OR "
+            "(state IN ('confirmed','proven_absent','possible','rejected',"
+            "'terminal_failure','terminally_unresolved') "
+            "AND active_admission_attempt>0 AND outcome_payload IS NOT NULL "
+            "AND outcome_payload_hash IS NOT NULL "
+            "AND length(outcome_payload_hash)=64 "
+            "AND outcome_payload_hash NOT GLOB '*[^0-9a-f]*'))"
+            ") STRICT"
+        };
+
+        constexpr auto k_toolRunsDdl = std::string_view{
+            "CREATE TABLE tool_runs("
+            "root_identity TEXT PRIMARY KEY REFERENCES "
+            "tool_root_requests(root_identity),"
+            "origin_principal_id TEXT NOT NULL,"
+            "origin_principal_kind TEXT NOT NULL CHECK(origin_principal_kind IN "
+            "('script','agent','human')),"
+            "controlled_target_id TEXT NOT NULL,"
+            "project_registration_hash TEXT NOT NULL CHECK("
+            "length(project_registration_hash)=64 AND "
+            "project_registration_hash NOT GLOB '*[^0-9a-f]*'),"
+            "run_identity TEXT NOT NULL CHECK(length(run_identity)=64 AND "
+            "run_identity NOT GLOB '*[^0-9a-f]*'),"
+            "framework_release_identity TEXT NOT NULL CHECK("
+            "length(framework_release_identity)=64 AND "
+            "framework_release_identity NOT GLOB '*[^0-9a-f]*'),"
+            "tool_runtime_protocol_identity TEXT NOT NULL CHECK("
+            "length(tool_runtime_protocol_identity)=64 AND "
+            "tool_runtime_protocol_identity NOT GLOB '*[^0-9a-f]*'),"
+            "environment_identity TEXT NOT NULL CHECK("
+            "length(environment_identity)=64 AND "
+            "environment_identity NOT GLOB '*[^0-9a-f]*')"
+            ") STRICT"
+        };
+
+        constexpr auto k_toolAdmissionAttemptsDdl = std::string_view{
+            "CREATE TABLE tool_admission_attempts("
+            "call_identity TEXT NOT NULL REFERENCES tool_call_history(call_identity),"
+            "attempt_number INTEGER NOT NULL CHECK(attempt_number > 0),"
+            "root_identity TEXT NOT NULL REFERENCES tool_runs(root_identity),"
+            "origin_principal_id TEXT NOT NULL,"
+            "origin_principal_kind TEXT NOT NULL CHECK(origin_principal_kind IN "
+            "('script','agent','human')),"
+            "execution_principal_id TEXT NOT NULL,"
+            "execution_principal_kind TEXT NOT NULL CHECK(execution_principal_kind IN "
+            "('script','agent','human')),"
+            "session_id TEXT NOT NULL,"
+            "session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),"
+            "controlled_target_id TEXT NOT NULL,"
+            "project_registration_hash TEXT NOT NULL CHECK("
+            "length(project_registration_hash)=64 AND "
+            "project_registration_hash NOT GLOB '*[^0-9a-f]*'),"
+            "policy_hash TEXT NOT NULL CHECK(length(policy_hash)=64 AND "
+            "policy_hash NOT GLOB '*[^0-9a-f]*'),"
+            "capability_profile_hash TEXT NOT NULL CHECK("
+            "length(capability_profile_hash)=64 AND "
+            "capability_profile_hash NOT GLOB '*[^0-9a-f]*'),"
+            "lease_id TEXT NOT NULL,"
+            "lease_revision INTEGER NOT NULL CHECK(lease_revision > 0),"
+            "fencing_token INTEGER NOT NULL CHECK(fencing_token > 0),"
+            "budget_snapshot TEXT NOT NULL,"
+            "budget_snapshot_hash TEXT NOT NULL CHECK("
+            "length(budget_snapshot_hash)=64 AND "
+            "budget_snapshot_hash NOT GLOB '*[^0-9a-f]*'),"
+            "PRIMARY KEY(call_identity, attempt_number)"
+            ") STRICT"
         };
 
         // Generation-neutral storage retains exact historical manifests while
@@ -986,11 +1182,20 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
+        auto addToolRuntimePersistence(sqlite3* database) -> Status
+        {
+            UF_TRY(execute(database, k_toolCallHistoryDdl));
+            UF_TRY(execute(database, k_toolRunsDdl));
+            return execute(database, k_toolAdmissionAttemptsDdl);
+        }
+
+        [[nodiscard]]
         auto addToolIdentityPersistence(sqlite3* database) -> Status
         {
             UF_TRY(execute(database, k_toolRootRequestsDdl));
             UF_TRY(execute(database, k_toolCallPositionsDdl));
-            return execute(database, k_topLevelToolCallPositionIndexDdl);
+            UF_TRY(execute(database, k_topLevelToolCallPositionIndexDdl));
+            return addToolRuntimePersistence(database);
         }
 
         // project_state_schema_hash was a second copy of a member the same
@@ -1402,12 +1607,31 @@ namespace uf::operator_runtime
             return transaction.commit();
         }
 
+        [[nodiscard]]
+        auto migrateToolRuntimePersistence(
+            sqlite3* database,
+            SchemaMigration const& migration
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY(addToolRuntimePersistence(database));
+            UF_TRY(recordSchemaIdentityTransition(database, migration));
+            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
+            return transaction.commit();
+        }
+
         // A registered pair must have a reproducible fixture that constructs
         // its source identity and proves the migration runs and lands on the
         // target. A pair that cannot be reproduced must be deleted, not kept:
         // a guard nothing can reach is the mirror of a guard production does
         // not reach.
         constexpr auto k_schemaMigrations = std::array{
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:50375791a22d12ab8b03f83eb48afc2183091e0d95b07fc5e4be47bb9aa07062",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = migrateToolRuntimePersistence,
+            },
             SchemaMigration{
                 .sourceIdentity =
                     "sha256:d26b0e12be915009587a72312d4b46f4afc88509df5432f967eb15b016c24257",
@@ -3905,6 +4129,45 @@ namespace uf::operator_runtime
             }};
         }
 
+        // No in-class hash default: every snapshot is content-addressed before
+        // it can enter an admission attempt.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+        struct ToolBudgetSnapshot final
+        {
+            std::string bytes{};
+            ContentHash hash;
+        };
+
+        [[nodiscard]]
+        auto toolBudgetSnapshot(
+            std::optional<AgentBudgetState> const& budget
+        ) -> Result<ToolBudgetSnapshot>
+        {
+            auto bytes = std::string{"null"};
+            if (budget)
+            {
+                bytes = std::format(
+                    "{{\"consecutive_no_progress_steps\":{},"
+                    "\"deadline_steady_millis\":{},"
+                    "\"remaining_mutations\":{},"
+                    "\"remaining_observations\":{},"
+                    "\"remaining_risk_units\":{},"
+                    "\"remaining_tool_calls\":{}}}",
+                    budget->consecutiveNoProgressSteps,
+                    budget->deadlineSteadyMillis,
+                    budget->remainingMutations,
+                    budget->remainingObservations,
+                    budget->remainingRiskUnits,
+                    budget->remainingToolCalls
+                );
+            }
+            UF_TRY_VALUE(hash, sha256(std::as_bytes(std::span{bytes})));
+            return ToolBudgetSnapshot{
+                .bytes = std::move(bytes),
+                .hash  = hash,
+            };
+        }
+
         // Compared, never decremented: elapsed time is not a quantity the
         // ledger hands out. Inclusive at the limit, so a step submitted at the
         // deadline itself is still inside the budget and only one past it is
@@ -4674,6 +4937,7 @@ namespace uf::operator_runtime
             }
         )};
         UF_TRY(coordinator.recoverUncertainDispatches());
+        UF_TRY(coordinator.recoverUncertainToolCalls());
         return coordinator;
     }
 
@@ -5162,6 +5426,63 @@ namespace uf::operator_runtime
         );
         UF_TRY(transaction.commit());
         return resolved;
+    }
+
+    auto OperatorCoordinator::recoverUncertainToolCalls() -> Result<uint64>
+    {
+        UF_TRY_VALUE(
+            explanation,
+            CanonicalJson::parseExact(
+                R"({"reason":"operator_restart_after_dispatch_started"})"
+            )
+        );
+        auto* const database = m_impl->database.get();
+        UF_TRY_VALUE(transaction, Transaction::begin(database));
+        UF_TRY_VALUE(
+            revisionQuery,
+            prepare(
+                database,
+                "SELECT MAX(revision) FROM tool_call_history "
+                "WHERE state='dispatching'"
+            )
+        );
+        if (sqlite3_step(revisionQuery.get()) != SQLITE_ROW)
+        {
+            return databaseFailure(
+                database,
+                "could not inspect dispatching Tool revisions"
+            );
+        }
+        if (sqlite3_column_type(revisionQuery.get(), 0) != SQLITE_NULL)
+        {
+            auto const maximumRevision = static_cast<uint64>(
+                sqlite3_column_int64(revisionQuery.get(), 0)
+            );
+            UF_TRY(checkedSqlIncrement(
+                maximumRevision,
+                "Tool call history revision"
+            ));
+        }
+        UF_TRY_VALUE(
+            update,
+            prepare(
+                database,
+                "UPDATE tool_call_history SET state='possible', revision=revision+1, "
+                "outcome_payload=?1, outcome_payload_hash=?2 "
+                "WHERE state='dispatching'"
+            )
+        );
+        UF_TRY(bindText(database, update.get(), 1, explanation.bytes()));
+        UF_TRY(bindText(
+            database,
+            update.get(),
+            2,
+            explanation.contentHash().hex()
+        ));
+        UF_TRY(expectDone(database, update.get()));
+        auto const recovered = static_cast<uint64>(sqlite3_changes(database));
+        UF_TRY(transaction.commit());
+        return recovered;
     }
 
     auto OperatorCoordinator::recoveredUncertainDispatches()
@@ -8291,6 +8612,7 @@ namespace uf::operator_runtime
                     "Tool call position was replayed with different caller-fixed material"
                 );
             }
+            UF_TRY(ensureToolCallHistory(database, call));
             UF_TRY(transaction.commit());
             return StoredToolCallPosition{
                 .callIdentity = call.identity(),
@@ -8368,11 +8690,992 @@ namespace uf::operator_runtime
         UF_TRY(bindText(database, insert.get(), 14, call.canonicalArgs()));
         UF_TRY(bindText(database, insert.get(), 15, call.canonicalArgsHash().hex()));
         UF_TRY(expectDone(database, insert.get()));
+        UF_TRY(ensureToolCallHistory(database, call));
         UF_TRY(transaction.commit());
         return StoredToolCallPosition{
             .callIdentity = call.identity(),
             .lookup       = ToolIdentityLookup::Created,
         };
+    }
+
+    auto OperatorCoordinator::admitReadOnlyToolCall(
+        ControllerBinding const& controller,
+        ControlLease const& lease,
+        ToolRootRequestIdentity const& root,
+        ToolCallPositionIdentity const& call
+    ) -> Result<ToolCallAdmission>
+    {
+        if (call.parentIdentity())
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Read-only Tool admission requires a nested delegation grant "
+                "for child calls"
+            );
+        }
+        if (call.descriptor().mutability != ToolMutability::ReadOnly)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Read-only Tool admission refuses a mutating descriptor"
+            );
+        }
+        if (
+            controller.sessionId() != lease.sessionId
+            || controller.controllerId() != lease.controllerId
+            || controller.controlledTargetId() != lease.controlledTargetId
+            || controller.sessionEpoch() != lease.sessionEpoch
+            || controller.capabilityProfileHash() != lease.capabilityProfileHash
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool admission binding and lease name different authority"
+            );
+        }
+
+        UF_TRY(persistToolRootRequest(root));
+        UF_TRY(persistToolCallPosition(root, call));
+
+        auto* const database = m_impl->database.get();
+        UF_TRY_VALUE(transaction, Transaction::begin(database));
+        UF_TRY(requireLiveBinding(database, controller));
+        UF_TRY(requireLiveLease(
+            database,
+            lease,
+            "Tool admission control lease was superseded"
+        ));
+
+        UF_TRY_VALUE(
+            sessionQuery,
+            prepare(
+                database,
+                "SELECT session.authenticated_controller_id, "
+                "session.idempotency_namespace, session.project_registration_hash, "
+                "session.controller_capabilities, session.controller_kind, "
+                "session.controlled_target_id, policy.policy_hash, "
+                "registration.registration_format, registration.plugin_identity_kind, "
+                "session.capability_profile_hash, session.session_epoch "
+                "FROM sessions session JOIN session_policies policy "
+                "ON policy.session_id=session.session_id "
+                "JOIN project_registrations registration ON "
+                "registration.registration_hash=session.project_registration_hash "
+                "WHERE session.session_id=?1 AND session.active=1"
+            )
+        );
+        UF_TRY(bindText(database, sessionQuery.get(), 1, controller.sessionId()));
+        if (sqlite3_step(sessionQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool admission requires an active authenticated session"
+            );
+        }
+        UF_TRY(requireExecutableRegistrationFormat(sessionQuery.get(), 7));
+        UF_TRY_VALUE(
+            storedKind,
+            parseControllerKind(columnText(sessionQuery.get(), 4))
+        );
+        auto const sessionMatches =
+            columnText(sessionQuery.get(), 0) == controller.controllerId()
+            && columnText(sessionQuery.get(), 5)
+                == controller.controlledTargetId()
+            && columnText(sessionQuery.get(), 9)
+                == controller.capabilityProfileHash().hex()
+            && static_cast<uint64>(sqlite3_column_int64(sessionQuery.get(), 10))
+                == controller.sessionEpoch()
+            && storedKind == controller.kind();
+        if (!sessionMatches)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool admission session no longer matches its controller binding"
+            );
+        }
+        if (
+            root.callerNamespace().value()
+            != columnText(sessionQuery.get(), 1)
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool root namespace does not match the authenticated session"
+            );
+        }
+        auto const projectRegistrationHash = columnText(sessionQuery.get(), 2);
+        if (auto const* projectProvider = std::get_if<ProjectToolProvider>(
+                &call.provider()
+            );
+            projectProvider != nullptr
+            && projectProvider->projectRegistrationHash.hex()
+                != projectRegistrationHash)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool call was minted for a different ProjectRegistration"
+            );
+        }
+        if (!toolSurfaceAllowed(controller.profile(), call.descriptor().surface))
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Controller profile does not admit this Tool surface"
+            );
+        }
+        UF_TRY_VALUE(
+            heldCapabilities,
+            readNameArray(columnText(sessionQuery.get(), 3))
+        );
+        if (auto const missing = missingRequiredToolCapability(
+                heldCapabilities,
+                call.descriptor().requiredCapabilities
+            ))
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Controller does not hold required capability '" + *missing
+                    + "' for tool " + call.toolName()
+            );
+        }
+        auto const policyHash = columnText(sessionQuery.get(), 6);
+
+        if (call.sequence() > 1U)
+        {
+            UF_TRY_VALUE(
+                predecessorQuery,
+                prepare(
+                    database,
+                    "SELECT history.state FROM tool_call_positions position "
+                    "JOIN tool_call_history history "
+                    "ON history.call_identity=position.call_identity "
+                    "WHERE position.root_identity=?1 "
+                    "AND position.parent_call_identity IS NULL "
+                    "AND position.call_sequence=?2"
+                )
+            );
+            UF_TRY(bindText(
+                database,
+                predecessorQuery.get(),
+                1,
+                root.identity().hex()
+            ));
+            UF_TRY(bindInteger(
+                database,
+                predecessorQuery.get(),
+                2,
+                call.sequence() - 1U
+            ));
+            if (sqlite3_step(predecessorQuery.get()) != SQLITE_ROW)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Tool call sequence has no durable predecessor"
+                );
+            }
+            UF_TRY_VALUE(
+                predecessorState,
+                parseToolCallState(columnText(predecessorQuery.get(), 0))
+            );
+            auto const predecessorFinished =
+                predecessorState == ToolCallState::Confirmed
+                || predecessorState == ToolCallState::ProvenAbsent
+                || predecessorState == ToolCallState::Rejected
+                || predecessorState == ToolCallState::TerminalFailure;
+            if (!predecessorFinished)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Tool call sequence predecessor has no deterministic terminal outcome"
+                );
+            }
+        }
+
+        UF_TRY_VALUE(
+            budget,
+            readAgentBudget(database, controller.sessionId(), controller.kind())
+        );
+        if (budget)
+        {
+            UF_TRY(requireWithinAgentDeadline(*budget));
+        }
+        UF_TRY_VALUE(budgetSnapshot, toolBudgetSnapshot(budget));
+
+        auto const& execution = call.executionIdentity();
+        auto const kindName   = controllerKindWireName(controller.kind());
+        UF_TRY_VALUE(
+            runQuery,
+            prepare(
+                database,
+                "SELECT origin_principal_id, origin_principal_kind, "
+                "controlled_target_id, project_registration_hash, run_identity, "
+                "framework_release_identity, tool_runtime_protocol_identity, "
+                "environment_identity FROM tool_runs WHERE root_identity=?1"
+            )
+        );
+        UF_TRY(bindText(database, runQuery.get(), 1, root.identity().hex()));
+        auto const runResult = sqlite3_step(runQuery.get());
+        if (runResult == SQLITE_ROW)
+        {
+            auto const exactRun =
+                columnText(runQuery.get(), 0) == controller.controllerId()
+                && columnText(runQuery.get(), 1) == kindName
+                && columnText(runQuery.get(), 2)
+                    == controller.controlledTargetId()
+                && columnText(runQuery.get(), 3) == projectRegistrationHash
+                && columnText(runQuery.get(), 4) == execution.runIdentity.hex()
+                && columnText(runQuery.get(), 5)
+                    == execution.frameworkReleaseIdentity.hex()
+                && columnText(runQuery.get(), 6)
+                    == execution.toolRuntimeProtocolIdentity.hex()
+                && columnText(runQuery.get(), 7)
+                    == execution.environmentIdentity.hex();
+            if (!exactRun)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Tool continuation would change its durable run authority"
+                );
+            }
+        }
+        else if (runResult == SQLITE_DONE)
+        {
+            UF_TRY_VALUE(
+                runInsert,
+                prepare(
+                    database,
+                    "INSERT INTO tool_runs(root_identity, origin_principal_id, "
+                    "origin_principal_kind, controlled_target_id, "
+                    "project_registration_hash, run_identity, "
+                    "framework_release_identity, tool_runtime_protocol_identity, "
+                    "environment_identity) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+                )
+            );
+            UF_TRY(bindText(database, runInsert.get(), 1, root.identity().hex()));
+            UF_TRY(bindText(database, runInsert.get(), 2, controller.controllerId()));
+            UF_TRY(bindText(database, runInsert.get(), 3, kindName));
+            UF_TRY(bindText(
+                database,
+                runInsert.get(),
+                4,
+                controller.controlledTargetId()
+            ));
+            UF_TRY(bindText(database, runInsert.get(), 5, projectRegistrationHash));
+            UF_TRY(bindText(database, runInsert.get(), 6, execution.runIdentity.hex()));
+            UF_TRY(bindText(
+                database,
+                runInsert.get(),
+                7,
+                execution.frameworkReleaseIdentity.hex()
+            ));
+            UF_TRY(bindText(
+                database,
+                runInsert.get(),
+                8,
+                execution.toolRuntimeProtocolIdentity.hex()
+            ));
+            UF_TRY(bindText(
+                database,
+                runInsert.get(),
+                9,
+                execution.environmentIdentity.hex()
+            ));
+            UF_TRY(expectDone(database, runInsert.get()));
+        }
+        else
+        {
+            return databaseFailure(database, "could not read durable Tool run");
+        }
+
+        UF_TRY_VALUE(
+            historyQuery,
+            prepare(
+                database,
+                "SELECT state, revision, active_admission_attempt, mutating "
+                "FROM tool_call_history WHERE call_identity=?1"
+            )
+        );
+        UF_TRY(bindText(database, historyQuery.get(), 1, call.identity().hex()));
+        if (sqlite3_step(historyQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "Persisted Tool call has no history row"
+            );
+        }
+        UF_TRY_VALUE(
+            state,
+            parseToolCallState(columnText(historyQuery.get(), 0))
+        );
+        auto const revision = static_cast<uint64>(
+            sqlite3_column_int64(historyQuery.get(), 1)
+        );
+        auto const activeAttempt = static_cast<uint64>(
+            sqlite3_column_int64(historyQuery.get(), 2)
+        );
+        if (sqlite3_column_int(historyQuery.get(), 3) != 0)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Read-only Tool admission found mutating persisted history"
+            );
+        }
+        if (state != ToolCallState::Proposed && state != ToolCallState::Admitted)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool call state cannot enter read-only admission"
+            );
+        }
+
+        if (state == ToolCallState::Admitted)
+        {
+            UF_TRY_VALUE(
+                latestQuery,
+                prepare(
+                    database,
+                    "SELECT execution_principal_id, execution_principal_kind, "
+                    "session_id, session_epoch, controlled_target_id, "
+                    "project_registration_hash, policy_hash, "
+                    "capability_profile_hash, lease_id, lease_revision, "
+                    "fencing_token FROM tool_admission_attempts "
+                    "WHERE call_identity=?1 AND attempt_number=?2"
+                )
+            );
+            UF_TRY(bindText(database, latestQuery.get(), 1, call.identity().hex()));
+            UF_TRY(bindInteger(database, latestQuery.get(), 2, activeAttempt));
+            if (sqlite3_step(latestQuery.get()) != SQLITE_ROW)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "Admitted Tool call has no active admission row"
+                );
+            }
+            auto const exactAttempt =
+                columnText(latestQuery.get(), 0) == controller.controllerId()
+                && columnText(latestQuery.get(), 1) == kindName
+                && columnText(latestQuery.get(), 2) == controller.sessionId()
+                && static_cast<uint64>(sqlite3_column_int64(latestQuery.get(), 3))
+                    == controller.sessionEpoch()
+                && columnText(latestQuery.get(), 4)
+                    == controller.controlledTargetId()
+                && columnText(latestQuery.get(), 5) == projectRegistrationHash
+                && columnText(latestQuery.get(), 6) == policyHash
+                && columnText(latestQuery.get(), 7)
+                    == controller.capabilityProfileHash().hex()
+                && columnText(latestQuery.get(), 8) == lease.leaseId
+                && static_cast<uint64>(sqlite3_column_int64(latestQuery.get(), 9))
+                    == lease.revision
+                && static_cast<uint64>(sqlite3_column_int64(latestQuery.get(), 10))
+                    == lease.fencingToken;
+            if (exactAttempt)
+            {
+                UF_TRY(transaction.commit());
+                return ToolCallAdmission{
+                    call.identity(),
+                    activeAttempt,
+                    revision,
+                };
+            }
+        }
+
+        UF_TRY_VALUE(
+            nextRevision,
+            checkedSqlIncrement(revision, "Tool call history revision")
+        );
+
+        if (
+            activeAttempt
+            == static_cast<uint64>(std::numeric_limits<sqlite3_int64>::max())
+        )
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "Tool admission attempt sequence exhausted"
+            );
+        }
+        auto const nextAttempt = activeAttempt + 1U;
+        UF_TRY_VALUE(
+            admissionInsert,
+            prepare(
+                database,
+                "INSERT INTO tool_admission_attempts(call_identity, attempt_number, "
+                "root_identity, origin_principal_id, origin_principal_kind, "
+                "execution_principal_id, execution_principal_kind, session_id, "
+                "session_epoch, controlled_target_id, project_registration_hash, "
+                "policy_hash, capability_profile_hash, lease_id, lease_revision, "
+                "fencing_token, budget_snapshot, budget_snapshot_hash) "
+                "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, "
+                "?13, ?14, ?15, ?16, ?17, ?18)"
+            )
+        );
+        UF_TRY(bindText(database, admissionInsert.get(), 1, call.identity().hex()));
+        UF_TRY(bindInteger(database, admissionInsert.get(), 2, nextAttempt));
+        UF_TRY(bindText(database, admissionInsert.get(), 3, root.identity().hex()));
+        UF_TRY(bindText(
+            database,
+            admissionInsert.get(),
+            4,
+            controller.controllerId()
+        ));
+        UF_TRY(bindText(database, admissionInsert.get(), 5, kindName));
+        UF_TRY(bindText(
+            database,
+            admissionInsert.get(),
+            6,
+            controller.controllerId()
+        ));
+        UF_TRY(bindText(database, admissionInsert.get(), 7, kindName));
+        UF_TRY(bindText(database, admissionInsert.get(), 8, controller.sessionId()));
+        UF_TRY(bindInteger(
+            database,
+            admissionInsert.get(),
+            9,
+            controller.sessionEpoch()
+        ));
+        UF_TRY(bindText(
+            database,
+            admissionInsert.get(),
+            10,
+            controller.controlledTargetId()
+        ));
+        UF_TRY(bindText(
+            database,
+            admissionInsert.get(),
+            11,
+            projectRegistrationHash
+        ));
+        UF_TRY(bindText(database, admissionInsert.get(), 12, policyHash));
+        UF_TRY(bindText(
+            database,
+            admissionInsert.get(),
+            13,
+            controller.capabilityProfileHash().hex()
+        ));
+        UF_TRY(bindText(database, admissionInsert.get(), 14, lease.leaseId));
+        UF_TRY(bindInteger(database, admissionInsert.get(), 15, lease.revision));
+        UF_TRY(bindInteger(
+            database,
+            admissionInsert.get(),
+            16,
+            lease.fencingToken
+        ));
+        UF_TRY(bindText(
+            database,
+            admissionInsert.get(),
+            17,
+            budgetSnapshot.bytes
+        ));
+        UF_TRY(bindText(
+            database,
+            admissionInsert.get(),
+            18,
+            budgetSnapshot.hash.hex()
+        ));
+        UF_TRY(expectDone(database, admissionInsert.get()));
+
+        if (budget)
+        {
+            UF_TRY(chargeAgentBudget(
+                database,
+                controller.sessionId(),
+                "UPDATE agent_budgets SET remaining_tool_calls = "
+                "remaining_tool_calls - ?2 WHERE session_id=?1",
+                1U,
+                "Agent tool-call budget is exhausted"
+            ));
+        }
+
+        UF_TRY_VALUE(
+            historyUpdate,
+            prepare(
+                database,
+                "UPDATE tool_call_history SET state='admitted', revision=?2, "
+                "active_admission_attempt=?3 WHERE call_identity=?1 "
+                "AND state=?4 AND revision=?5 AND active_admission_attempt=?6"
+            )
+        );
+        UF_TRY(bindText(database, historyUpdate.get(), 1, call.identity().hex()));
+        UF_TRY(bindInteger(database, historyUpdate.get(), 2, nextRevision));
+        UF_TRY(bindInteger(database, historyUpdate.get(), 3, nextAttempt));
+        UF_TRY(bindText(
+            database,
+            historyUpdate.get(),
+            4,
+            toolCallStateWireName(state)
+        ));
+        UF_TRY(bindInteger(database, historyUpdate.get(), 5, revision));
+        UF_TRY(bindInteger(database, historyUpdate.get(), 6, activeAttempt));
+        UF_TRY(expectDone(database, historyUpdate.get()));
+        if (sqlite3_changes(database) != 1)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool admission lost its history CAS"
+            );
+        }
+        UF_TRY(transaction.commit());
+        return ToolCallAdmission{
+            call.identity(),
+            nextAttempt,
+            nextRevision,
+        };
+    }
+
+    auto OperatorCoordinator::beginToolCallDispatch(
+        ToolCallAdmission const& admission
+    ) -> Result<ToolCallDispatch>
+    {
+        auto* const database = m_impl->database.get();
+        UF_TRY_VALUE(transaction, Transaction::begin(database));
+        UF_TRY_VALUE(
+            authorityQuery,
+            prepare(
+                database,
+                "SELECT attempt.session_id, attempt.session_epoch, "
+                "attempt.controlled_target_id, attempt.execution_principal_id, "
+                "attempt.execution_principal_kind, attempt.capability_profile_hash, "
+                "attempt.lease_id, attempt.lease_revision, attempt.fencing_token "
+                "FROM tool_admission_attempts attempt "
+                "JOIN sessions session ON session.session_id=attempt.session_id "
+                "JOIN session_policies policy ON policy.session_id=attempt.session_id "
+                "JOIN control_leases lease ON "
+                "lease.controlled_target_id=attempt.controlled_target_id "
+                "WHERE attempt.call_identity=?1 AND attempt.attempt_number=?2 "
+                "AND session.active=1 AND session.session_epoch=attempt.session_epoch "
+                "AND session.authenticated_controller_id=attempt.execution_principal_id "
+                "AND session.controller_kind=attempt.execution_principal_kind "
+                "AND session.controlled_target_id=attempt.controlled_target_id "
+                "AND session.project_registration_hash="
+                "attempt.project_registration_hash "
+                "AND session.capability_profile_hash=attempt.capability_profile_hash "
+                "AND policy.policy_hash=attempt.policy_hash "
+                "AND lease.session_id=attempt.session_id "
+                "AND lease.controller_id=attempt.execution_principal_id "
+                "AND lease.session_epoch=attempt.session_epoch "
+                "AND lease.lease_id=attempt.lease_id "
+                "AND lease.revision=attempt.lease_revision "
+                "AND lease.fencing_token=attempt.fencing_token "
+                "AND lease.capability_profile_hash=attempt.capability_profile_hash"
+            )
+        );
+        UF_TRY(bindText(
+            database,
+            authorityQuery.get(),
+            1,
+            admission.callIdentity().hex()
+        ));
+        UF_TRY(bindInteger(
+            database,
+            authorityQuery.get(),
+            2,
+            admission.attemptNumber()
+        ));
+        if (sqlite3_step(authorityQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool dispatch admission authority is no longer live"
+            );
+        }
+        UF_TRY_VALUE(
+            kind,
+            parseControllerKind(columnText(authorityQuery.get(), 4))
+        );
+        UF_TRY_VALUE(
+            budget,
+            readAgentBudget(database, columnText(authorityQuery.get(), 0), kind)
+        );
+        if (budget)
+        {
+            UF_TRY(requireWithinAgentDeadline(*budget));
+        }
+        UF_TRY_VALUE(
+            nextRevision,
+            checkedSqlIncrement(
+                admission.historyRevision(),
+                "Tool call history revision"
+            )
+        );
+
+        UF_TRY_VALUE(
+            update,
+            prepare(
+                database,
+                "UPDATE tool_call_history SET state='dispatching', revision=?2 "
+                "WHERE call_identity=?1 AND state='admitted' AND revision=?3 "
+                "AND active_admission_attempt=?4"
+            )
+        );
+        UF_TRY(bindText(database, update.get(), 1, admission.callIdentity().hex()));
+        UF_TRY(bindInteger(
+            database,
+            update.get(),
+            2,
+            nextRevision
+        ));
+        UF_TRY(bindInteger(
+            database,
+            update.get(),
+            3,
+            admission.historyRevision()
+        ));
+        UF_TRY(bindInteger(
+            database,
+            update.get(),
+            4,
+            admission.attemptNumber()
+        ));
+        UF_TRY(expectDone(database, update.get()));
+        if (sqlite3_changes(database) != 1)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool dispatch lost its admitted-state CAS"
+            );
+        }
+        UF_TRY(transaction.commit());
+        return ToolCallDispatch{
+            admission.callIdentity(),
+            admission.attemptNumber(),
+            nextRevision,
+        };
+    }
+
+    auto OperatorCoordinator::completeToolCallDispatch(
+        ToolCallDispatch const& dispatch,
+        ToolCallCompletion const& completion
+    ) -> Result<StoredToolCallOutcome>
+    {
+        auto* const database     = m_impl->database.get();
+        auto const terminalState = toolCallStateFor(completion.kind());
+        auto const& payload      = completion.payload();
+        auto const& evidence     = completion.evidence();
+        UF_TRY_VALUE(transaction, Transaction::begin(database));
+        UF_TRY_VALUE(
+            historyQuery,
+            prepare(
+                database,
+                "SELECT state, revision, active_admission_attempt, "
+                "outcome_payload, outcome_payload_hash, evidence, evidence_hash "
+                "FROM tool_call_history WHERE call_identity=?1"
+            )
+        );
+        UF_TRY(bindText(
+            database,
+            historyQuery.get(),
+            1,
+            dispatch.callIdentity().hex()
+        ));
+        if (sqlite3_step(historyQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool dispatch names no durable call history"
+            );
+        }
+        UF_TRY_VALUE(
+            state,
+            parseToolCallState(columnText(historyQuery.get(), 0))
+        );
+        auto const revision = static_cast<uint64>(
+            sqlite3_column_int64(historyQuery.get(), 1)
+        );
+        auto const activeAttempt = static_cast<uint64>(
+            sqlite3_column_int64(historyQuery.get(), 2)
+        );
+        auto const evidenceBytes = evidence
+            ? std::optional<std::string_view>{evidence->bytes()}
+            : std::nullopt;
+        auto const evidenceHash = evidence
+            ? std::optional<std::string>{evidence->contentHash().hex()}
+            : std::nullopt;
+        if (state == terminalState)
+        {
+            auto const exactOutcome =
+                columnText(historyQuery.get(), 3) == payload.bytes()
+                && columnText(historyQuery.get(), 4)
+                    == payload.contentHash().hex()
+                && optionalColumnText(historyQuery.get(), 5)
+                    == (evidence
+                        ? std::optional<std::string>{evidence->bytes()}
+                        : std::nullopt)
+                && optionalColumnText(historyQuery.get(), 6) == evidenceHash;
+            if (!exactOutcome)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Terminal Tool outcome is immutable"
+                );
+            }
+            UF_TRY(transaction.commit());
+            return StoredToolCallOutcome{
+                .state    = state,
+                .lookup   = ToolOutcomeLookup::Existing,
+                .revision = revision,
+            };
+        }
+        if (
+            state != ToolCallState::Dispatching
+            || revision != dispatch.historyRevision()
+            || activeAttempt != dispatch.attemptNumber()
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool completion does not match the active dispatch"
+            );
+        }
+        UF_TRY_VALUE(
+            nextRevision,
+            checkedSqlIncrement(revision, "Tool call history revision")
+        );
+
+        UF_TRY_VALUE(
+            update,
+            prepare(
+                database,
+                "UPDATE tool_call_history SET state=?2, revision=?3, "
+                "outcome_payload=?4, outcome_payload_hash=?5, evidence=?6, "
+                "evidence_hash=?7 WHERE call_identity=?1 "
+                "AND state='dispatching' AND revision=?8 "
+                "AND active_admission_attempt=?9"
+            )
+        );
+        UF_TRY(bindText(database, update.get(), 1, dispatch.callIdentity().hex()));
+        UF_TRY(bindText(database, update.get(), 2, toolCallStateWireName(terminalState)));
+        UF_TRY(bindInteger(database, update.get(), 3, nextRevision));
+        UF_TRY(bindText(database, update.get(), 4, payload.bytes()));
+        UF_TRY(bindText(database, update.get(), 5, payload.contentHash().hex()));
+        UF_TRY(bindOptionalText(database, update.get(), 6, evidenceBytes));
+        UF_TRY(bindOptionalText(
+            database,
+            update.get(),
+            7,
+            evidenceHash
+                ? std::optional<std::string_view>{*evidenceHash}
+                : std::nullopt
+        ));
+        UF_TRY(bindInteger(database, update.get(), 8, revision));
+        UF_TRY(bindInteger(database, update.get(), 9, activeAttempt));
+        UF_TRY(expectDone(database, update.get()));
+        if (sqlite3_changes(database) != 1)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool completion lost its dispatch CAS"
+            );
+        }
+        UF_TRY(transaction.commit());
+        return StoredToolCallOutcome{
+            .state    = terminalState,
+            .lookup   = ToolOutcomeLookup::Created,
+            .revision = nextRevision,
+        };
+    }
+
+    auto OperatorCoordinator::replayToolCall(
+        ToolRootRequestIdentity const& root,
+        ToolCallPositionIdentity const& call
+    ) -> Result<ToolCallReplay>
+    {
+        if (call.rootIdentity() != root.identity())
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool replay call belongs to a different root"
+            );
+        }
+        auto* const database = m_impl->database.get();
+        UF_TRY_VALUE(
+            rootQuery,
+            prepare(
+                database,
+                "SELECT caller_namespace, request_key, request_preimage, "
+                "request_preimage_hash FROM tool_root_requests WHERE root_identity=?1"
+            )
+        );
+        UF_TRY(bindText(database, rootQuery.get(), 1, root.identity().hex()));
+        if (sqlite3_step(rootQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool replay root is not durable"
+            );
+        }
+        if (
+            columnText(rootQuery.get(), 0) != root.callerNamespace().value()
+            || columnText(rootQuery.get(), 1) != root.requestKey().value()
+            || columnText(rootQuery.get(), 2) != root.requestPreimage().bytes()
+            || columnText(rootQuery.get(), 3)
+                != root.requestPreimage().contentHash().hex()
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool replay root canonical material was changed"
+            );
+        }
+
+        UF_TRY_VALUE(
+            callQuery,
+            prepare(
+                database,
+                "SELECT root_identity, parent_call_identity, call_sequence, "
+                "run_identity, framework_release_identity, "
+                "tool_runtime_protocol_identity, environment_identity, provider_kind, "
+                "project_registration_hash, tool_catalog_hash, tool_name, tool_version, "
+                "canonical_args, canonical_args_hash FROM tool_call_positions "
+                "WHERE call_identity=?1"
+            )
+        );
+        UF_TRY(bindText(database, callQuery.get(), 1, call.identity().hex()));
+        if (sqlite3_step(callQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool replay call position is not durable"
+            );
+        }
+        auto const provider = persistedToolProvider(call.provider());
+        auto const expectedProjectRegistration = provider.projectRegistrationHash
+            ? std::optional{provider.projectRegistrationHash->hex()}
+            : std::nullopt;
+        auto const expectedParent = call.parentIdentity()
+            ? std::optional{call.parentIdentity()->hex()}
+            : std::nullopt;
+        auto const& execution = call.executionIdentity();
+        auto const exactCall =
+            columnText(callQuery.get(), 0) == root.identity().hex()
+            && optionalColumnText(callQuery.get(), 1) == expectedParent
+            && static_cast<uint64>(sqlite3_column_int64(callQuery.get(), 2))
+                == call.sequence()
+            && columnText(callQuery.get(), 3) == execution.runIdentity.hex()
+            && columnText(callQuery.get(), 4)
+                == execution.frameworkReleaseIdentity.hex()
+            && columnText(callQuery.get(), 5)
+                == execution.toolRuntimeProtocolIdentity.hex()
+            && columnText(callQuery.get(), 6)
+                == execution.environmentIdentity.hex()
+            && columnText(callQuery.get(), 7) == provider.kind
+            && optionalColumnText(callQuery.get(), 8)
+                == expectedProjectRegistration
+            && columnText(callQuery.get(), 9) == provider.toolCatalogHash.hex()
+            && columnText(callQuery.get(), 10) == call.toolName()
+            && columnText(callQuery.get(), 11) == call.toolVersion()
+            && columnText(callQuery.get(), 12) == call.canonicalArgs()
+            && columnText(callQuery.get(), 13) == call.canonicalArgsHash().hex();
+        if (!exactCall)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool replay call position diverged from durable history"
+            );
+        }
+
+        UF_TRY_VALUE(
+            historyQuery,
+            prepare(
+                database,
+                "SELECT state, revision, active_admission_attempt, "
+                "outcome_payload, outcome_payload_hash, evidence, evidence_hash, "
+                "mutating FROM tool_call_history WHERE call_identity=?1"
+            )
+        );
+        UF_TRY(bindText(database, historyQuery.get(), 1, call.identity().hex()));
+        if (sqlite3_step(historyQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool replay call has no durable history"
+            );
+        }
+        auto const expectedMutating =
+            call.descriptor().mutability == ToolMutability::Mutating;
+        if (
+            (sqlite3_column_int(historyQuery.get(), 7) != 0)
+            != expectedMutating
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool replay mutability disagrees with its pinned catalog"
+            );
+        }
+        UF_TRY_VALUE(
+            state,
+            parseToolCallState(columnText(historyQuery.get(), 0))
+        );
+        auto replay = ToolCallReplay{
+            .state = state,
+            .revision = static_cast<uint64>(
+                sqlite3_column_int64(historyQuery.get(), 1)
+            ),
+            .activeAdmissionAttempt = static_cast<uint64>(
+                sqlite3_column_int64(historyQuery.get(), 2)
+            ),
+        };
+        auto const payloadBytes = optionalColumnText(historyQuery.get(), 3);
+        auto const payloadHash  = optionalColumnText(historyQuery.get(), 4);
+        if (payloadBytes.has_value() != payloadHash.has_value())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "Stored Tool outcome payload pair is incomplete"
+            );
+        }
+        auto const activeAttempt = replay.activeAdmissionAttempt;
+        if (
+            payloadBytes.has_value() != toolCallStateHasOutcome(state)
+            || (state == ToolCallState::Proposed && activeAttempt != 0U)
+            || (state != ToolCallState::Proposed && activeAttempt == 0U)
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "Stored Tool call state and outcome shape disagree"
+            );
+        }
+        if (payloadBytes)
+        {
+            UF_TRY_VALUE(
+                payload,
+                restoreCanonicalJson(
+                    *payloadBytes,
+                    *payloadHash,
+                    "Tool outcome payload"
+                )
+            );
+            replay.payload.emplace(std::move(payload));
+        }
+        auto const evidenceBytes = optionalColumnText(historyQuery.get(), 5);
+        auto const evidenceHash  = optionalColumnText(historyQuery.get(), 6);
+        if (evidenceBytes.has_value() != evidenceHash.has_value())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "Stored Tool outcome evidence pair is incomplete"
+            );
+        }
+        if (evidenceBytes && !toolCallStateHasOutcome(state))
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "Non-terminal Tool call carries outcome evidence"
+            );
+        }
+        if (evidenceBytes)
+        {
+            UF_TRY_VALUE(
+                evidence,
+                restoreCanonicalJson(
+                    *evidenceBytes,
+                    *evidenceHash,
+                    "Tool outcome evidence"
+                )
+            );
+            replay.evidence.emplace(std::move(evidence));
+        }
+        return replay;
     }
 
     auto OperatorCoordinator::recordExternalInput(
