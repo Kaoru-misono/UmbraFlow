@@ -81,10 +81,11 @@ namespace uf::task
     {
         auto sdk = pureFrameworkScriptModules();
         REQUIRE(sdk.has_value());
-        REQUIRE(sdk->size() == 3U);
+        REQUIRE(sdk->size() == 4U);
         CHECK(sdk->at(0).name == "@umbraflow/collections");
         CHECK(sdk->at(1).name == "@umbraflow/jcs");
         CHECK(sdk->at(2).name == "@umbraflow/result");
+        CHECK(sdk->at(3).name == "@umbraflow/utf8");
 
         constexpr auto entries = std::array{std::string_view{"derive"}};
         auto program = script::PureDataProgram::compile(
@@ -97,6 +98,7 @@ namespace uf::task
 local jcs = require("@umbraflow/jcs")
 local collections = require("@umbraflow/collections")
 local result = require("@umbraflow/result")
+local unicode = require("@umbraflow/utf8")
 return {
     plugin_id = "fixture.sdk",
     derive = function(input)
@@ -146,6 +148,12 @@ return {
         local invalidResult = not pcall(function()
             return result.is_ok({ kind = "invented" })
         end)
+        local points = unicode.codepoints("A🙂中")
+        local pointsFrozen = not pcall(function() points[1] = 0 end)
+        local invalidUtf8 = "\255"
+        local invalidUtf8Rejected = not pcall(function()
+            return unicode.validate(invalidUtf8)
+        end)
         return {
             canonical = jcs.encode(input),
             error = result.match(mappedFailure, function() return "wrong" end,
@@ -158,11 +166,25 @@ return {
             invalid_list = invalidList,
             invalid_map = invalidMap,
             invalid_result = invalidResult,
+            invalid_utf8 = not unicode.is_valid(invalidUtf8) and invalidUtf8Rejected,
+            letter = unicode.classify("A"),
+            mark = unicode.classify(0x0301),
+            number = unicode.classify("9"),
+            other = unicode.classify(0x0378),
+            points = points,
+            points_frozen = pointsFrozen,
             result = result.match(outcome, function(value) return value end,
                 function(failure) return failure.code end),
             skipped = skipped,
             stable = stable[1].id .. stable[2].id .. stable[3].id,
             sorted = ordered,
+            separator = unicode.classify("　"),
+            symbol = unicode.classify("🙂"),
+            unicode_length = unicode.length("A🙂中"),
+            unicode_slice = unicode.slice("A🙂中", 2, 3),
+            unicode_version = unicode.unicode_version,
+            whitespace = unicode.is_whitespace("　")
+                and not unicode.is_whitespace(0x001C),
         }
     end,
 }
@@ -180,7 +202,7 @@ return {
         REQUIRE(result.has_value());
         CHECK(
             json::canonicalBytes(*result)
-            == R"({"canonical":"{\"a\":2,\"b\":1}","error":"fixture.mapped","error_frozen":true,"frozen":true,"has":true,"invalid_comparator":true,"invalid_filter":true,"invalid_list":true,"invalid_map":true,"invalid_result":true,"result":13,"skipped":0,"sorted":[2,4,6],"stable":"cab"})"
+            == R"({"canonical":"{\"a\":2,\"b\":1}","error":"fixture.mapped","error_frozen":true,"frozen":true,"has":true,"invalid_comparator":true,"invalid_filter":true,"invalid_list":true,"invalid_map":true,"invalid_result":true,"invalid_utf8":true,"letter":"letter","mark":"mark","number":"number","other":"other","points":[65,128578,20013],"points_frozen":true,"result":13,"separator":"separator","skipped":0,"sorted":[2,4,6],"stable":"cab","symbol":"symbol","unicode_length":3,"unicode_slice":"🙂中","unicode_version":"15.0.0","whitespace":true})"
         );
     }
 }

@@ -34,6 +34,7 @@ cd "$REPO_ROOT"
 "$PYTHON" scripts/check_modules.py
 "$PYTHON" scripts/check_safety.py
 "$PYTHON" scripts/check_luau_identity.py
+"$PYTHON" scripts/generate_unicode_luau.py --check
 "$PYTHON" scripts/generate_public_contract.py --check
 cmake --preset "$PRESET"
 

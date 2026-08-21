@@ -62,6 +62,7 @@ SCRIPT_CONTRACT_SOURCE = "modules/script/source/script/ffi/pure-data-program.cpp
 PROJECT_PLUGIN_SOURCE = "modules/operator/source/operator/project-plugin.cpp"
 FRAMEWORK_BUNDLE_SOURCE = "modules/task/source/task/framework-bundle.cpp"
 FRAMEWORK_RUNTIME_DIRECTORY = "modules/task/runtime"
+UNICODE_LICENSE = "modules/task/runtime/UNICODE-LICENSE.txt"
 
 # The sources that hold framework schema identities as embedded JSON: the
 # operator protocol the project's plugin answers, and the framework-format
@@ -839,6 +840,7 @@ def script_runtime_contract(root: Path) -> dict[str, object]:
     header = read(root, SCRIPT_CONTRACT_HEADER)
     source = read(root, SCRIPT_CONTRACT_SOURCE)
     framework_bundle = read(root, FRAMEWORK_BUNDLE_SOURCE)
+    read(root, UNICODE_LICENSE)
     constant_expressions: dict[str, str] = {}
     pattern = re.compile(r"(?:static\s+)?constexpr\s+auto\s+(k_\w+)\s*=\s*(.*?);", re.DOTALL)
     for text in (header, source):
@@ -1390,6 +1392,7 @@ def render(root: Path) -> str:
             + ".",
             "Their exact source bytes are release-owned, identity-bound,",
             "deeply frozen after loading and cannot import the Project graph.",
+            f"Unicode-derived data is distributed under `{UNICODE_LICENSE}`.",
             "",
         ]
     )

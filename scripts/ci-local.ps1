@@ -32,6 +32,8 @@ try {
     Assert-NativeSuccess "Safety check" $LASTEXITCODE
     python scripts/check_luau_identity.py
     Assert-NativeSuccess "Luau environment identity check" $LASTEXITCODE
+    python scripts/generate_unicode_luau.py --check
+    Assert-NativeSuccess "Pinned Unicode Luau check" $LASTEXITCODE
     python scripts/generate_public_contract.py --check
     Assert-NativeSuccess "Public contract check" $LASTEXITCODE
     cmake --preset $Preset
