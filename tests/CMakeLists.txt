@@ -511,6 +511,7 @@ if(TARGET ${PROJECT_NAME}_operator)
             operator/test-manifest.cpp
             operator/test-operation.cpp
             operator/test-tool-authority.cpp
+            operator/test-tool-executor.cpp
         LIBS
             ${PROJECT_NAME}_operator
             ${PROJECT_NAME}_service

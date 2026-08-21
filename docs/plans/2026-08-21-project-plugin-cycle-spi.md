@@ -43,6 +43,11 @@ explicitly refuses mutating admission. Mutating authority/freeze,
 reconciliation, nested delegation, execution adapters, and public contract
 publication remain to be implemented.
 
+The first caller-neutral executor now owns terminal fast-path replay, live
+read-only admission, durable dispatch, exactly one provider call, conversion of
+provider errors into canonical terminal failures, and final outcome replay.
+No production Framework or Project provider is attached to that seam yet.
+
 ## 1. Product boundary
 
 Agent, human-operated clients, and Project Luau automation scripts drive a game
