@@ -721,7 +721,7 @@ namespace uf::operator_runtime
         // "Delete-on-open has a deadline" section owns
         // the exact-pair migration policy.
         constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
-            "sha256:64d3396e51680ec12cb91d944357f965e2136065fbb7b7fccc009d168fc4ac80"
+            "sha256:14fbb87b8e84ce4c9f977d423a1b6e981e0425e06ef17f9a7822e6d32a8e87a4"
         };
 
         // A transition row records the applied exact pair; neither the row nor
@@ -938,6 +938,16 @@ namespace uf::operator_runtime
             "budget_snapshot_hash TEXT NOT NULL CHECK("
             "length(budget_snapshot_hash)=64 AND "
             "budget_snapshot_hash NOT GLOB '*[^0-9a-f]*'),"
+            "effect_envelope TEXT,"
+            "effect_envelope_hash TEXT,"
+            "required_approvals TEXT,"
+            "approval_token TEXT,"
+            "CHECK((effect_envelope IS NULL AND effect_envelope_hash IS NULL "
+            "AND required_approvals IS NULL AND approval_token IS NULL) OR "
+            "(effect_envelope IS NOT NULL AND effect_envelope_hash IS NOT NULL "
+            "AND length(effect_envelope_hash)=64 "
+            "AND effect_envelope_hash NOT GLOB '*[^0-9a-f]*' "
+            "AND required_approvals IS NOT NULL)),"
             "PRIMARY KEY(call_identity, attempt_number)"
             ") STRICT"
         };
@@ -1689,12 +1699,54 @@ namespace uf::operator_runtime
             return transaction.commit();
         }
 
+        [[nodiscard]]
+        auto addToolAdmissionAuthority(
+            sqlite3* database,
+            SchemaMigration const& migration
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY(execute(database, "PRAGMA defer_foreign_keys=ON"));
+            UF_TRY(execute(
+                database,
+                "ALTER TABLE tool_admission_attempts RENAME TO "
+                "prior_tool_admission_attempts"
+            ));
+            UF_TRY(execute(database, k_toolAdmissionAttemptsDdl));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO tool_admission_attempts(call_identity, attempt_number, "
+                "root_identity, origin_principal_id, origin_principal_kind, "
+                "execution_principal_id, execution_principal_kind, session_id, "
+                "session_epoch, controlled_target_id, project_registration_hash, "
+                "policy_hash, capability_profile_hash, lease_id, lease_revision, "
+                "fencing_token, budget_snapshot, budget_snapshot_hash) SELECT "
+                "call_identity, attempt_number, root_identity, origin_principal_id, "
+                "origin_principal_kind, execution_principal_id, "
+                "execution_principal_kind, session_id, session_epoch, "
+                "controlled_target_id, project_registration_hash, policy_hash, "
+                "capability_profile_hash, lease_id, lease_revision, fencing_token, "
+                "budget_snapshot, budget_snapshot_hash FROM "
+                "prior_tool_admission_attempts"
+            ));
+            UF_TRY(execute(database, "DROP TABLE prior_tool_admission_attempts"));
+            UF_TRY(recordSchemaIdentityTransition(database, migration));
+            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
+            return transaction.commit();
+        }
+
         // A registered pair must have a reproducible fixture that constructs
         // its source identity and proves the migration runs and lands on the
         // target. A pair that cannot be reproduced must be deleted, not kept:
         // a guard nothing can reach is the mirror of a guard production does
         // not reach.
         constexpr auto k_schemaMigrations = std::array{
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:64d3396e51680ec12cb91d944357f965e2136065fbb7b7fccc009d168fc4ac80",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = addToolAdmissionAuthority,
+            },
             SchemaMigration{
                 .sourceIdentity =
                     "sha256:50375791a22d12ab8b03f83eb48afc2183091e0d95b07fc5e4be47bb9aa07062",
@@ -8777,7 +8829,9 @@ namespace uf::operator_runtime
         ControlLease const& lease,
         ToolRootRequestIdentity const& root,
         ToolCallPositionIdentity const& call,
-        ToolMutability requiredMutability
+        ToolMutability requiredMutability,
+        OperatorPlanAuthority const* planAuthority,
+        std::span<ProposedEffect const> effects
     ) -> Result<ToolCallAdmission>
     {
         if (call.parentIdentity())
@@ -8794,6 +8848,26 @@ namespace uf::operator_runtime
                 requiredMutability == ToolMutability::ReadOnly
                     ? "Read-only Tool admission refuses a mutating descriptor"
                     : "Mutating Tool admission requires a mutating descriptor"
+            );
+        }
+        if (
+            requiredMutability == ToolMutability::Mutating
+            && planAuthority == nullptr
+        )
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "Mutating Tool admission requires an Operator plan authority"
+            );
+        }
+        if (
+            requiredMutability == ToolMutability::ReadOnly
+            && (planAuthority != nullptr || !effects.empty())
+        )
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "Read-only Tool admission cannot carry mutating effects"
             );
         }
         if (
@@ -8954,6 +9028,58 @@ namespace uf::operator_runtime
             );
         }
         auto const policyHash = columnText(sessionQuery.get(), 6);
+        auto effectEnvelope    = std::optional<EffectiveEffectEnvelope>{};
+        auto requiredApprovals = std::vector<std::string>{};
+        if (requiredMutability == ToolMutability::Mutating)
+        {
+            if (effects.empty())
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Mutating Tool admission requires a concrete effect envelope"
+                );
+            }
+            if (
+                planAuthority->projectRegistrationHash().hex()
+                    != projectRegistrationHash
+                || planAuthority->policyHash().hex() != policyHash
+            )
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Tool mutation authority differs from the active session"
+                );
+            }
+            auto proposedEffects = std::vector<ProposedEffect>{
+                effects.begin(),
+                effects.end(),
+            };
+            UF_TRY_VALUE(
+                derivedEnvelope,
+                deriveEffectiveEffectEnvelope(std::move(proposedEffects))
+            );
+            effectEnvelope = std::move(derivedEnvelope);
+            for (auto const& effect : effectEnvelope->effects)
+            {
+                UF_TRY(effectWithinBounds(call.descriptor(), effect));
+            }
+            UF_TRY_VALUE(
+                verdict,
+                planAuthority->m_policy.evaluate(PolicyRequest{
+                    .effects                = effectEnvelope->effects,
+                    .controllerCapabilities = heldCapabilities,
+                    .toolName               = call.toolName(),
+                })
+            );
+            requiredApprovals = std::move(verdict.requiredApprovals);
+            if (!requiredApprovals.empty())
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Mutating Tool policy requires approval before admission"
+                );
+            }
+        }
 
         if (call.sequence() > 1U)
         {
@@ -9158,7 +9284,8 @@ namespace uf::operator_runtime
                     "session_id, session_epoch, controlled_target_id, "
                     "project_registration_hash, policy_hash, "
                     "capability_profile_hash, lease_id, lease_revision, "
-                    "fencing_token FROM tool_admission_attempts "
+                    "fencing_token, effect_envelope, effect_envelope_hash, "
+                    "required_approvals, approval_token FROM tool_admission_attempts "
                     "WHERE call_identity=?1 AND attempt_number=?2"
                 )
             );
@@ -9169,6 +9296,33 @@ namespace uf::operator_runtime
                 return fail(
                     AutomationErrorKind::InternalInvariant,
                     "Admitted Tool call has no active admission row"
+                );
+            }
+            auto const exactEffectAuthority =
+                optionalColumnText(latestQuery.get(), 11)
+                    == (effectEnvelope
+                            ? std::optional<std::string>{
+                                  effectEnvelope->canonicalJcs,
+                              }
+                            : std::nullopt)
+                && optionalColumnText(latestQuery.get(), 12)
+                    == (effectEnvelope
+                            ? std::optional<std::string>{
+                                  effectEnvelope->hash.hex(),
+                              }
+                            : std::nullopt)
+                && optionalColumnText(latestQuery.get(), 13)
+                    == (effectEnvelope
+                            ? std::optional<std::string>{
+                                  canonicalNameArray(requiredApprovals),
+                              }
+                            : std::nullopt)
+                && optionalColumnText(latestQuery.get(), 14) == std::nullopt;
+            if (!exactEffectAuthority)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Tool continuation would change its durable effect authority"
                 );
             }
             auto const exactAttempt =
@@ -9224,9 +9378,11 @@ namespace uf::operator_runtime
                 "execution_principal_id, execution_principal_kind, session_id, "
                 "session_epoch, controlled_target_id, project_registration_hash, "
                 "policy_hash, capability_profile_hash, lease_id, lease_revision, "
-                "fencing_token, budget_snapshot, budget_snapshot_hash) "
+                "fencing_token, budget_snapshot, budget_snapshot_hash, "
+                "effect_envelope, effect_envelope_hash, required_approvals, "
+                "approval_token) "
                 "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, "
-                "?13, ?14, ?15, ?16, ?17, ?18)"
+                "?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)"
             )
         );
         UF_TRY(bindText(database, admissionInsert.get(), 1, call.identity().hex()));
@@ -9291,6 +9447,38 @@ namespace uf::operator_runtime
             admissionInsert.get(),
             18,
             budgetSnapshot.hash.hex()
+        ));
+        UF_TRY(bindOptionalText(
+            database,
+            admissionInsert.get(),
+            19,
+            effectEnvelope
+                ? std::optional<std::string_view>{effectEnvelope->canonicalJcs}
+                : std::nullopt
+        ));
+        auto const effectEnvelopeHash = effectEnvelope
+            ? std::optional<std::string>{effectEnvelope->hash.hex()}
+            : std::nullopt;
+        UF_TRY(bindOptionalText(
+            database,
+            admissionInsert.get(),
+            20,
+            effectEnvelopeHash
+        ));
+        auto const approvals = effectEnvelope
+            ? std::optional<std::string>{canonicalNameArray(requiredApprovals)}
+            : std::nullopt;
+        UF_TRY(bindOptionalText(
+            database,
+            admissionInsert.get(),
+            21,
+            approvals
+        ));
+        UF_TRY(bindOptionalText(
+            database,
+            admissionInsert.get(),
+            22,
+            std::nullopt
         ));
         UF_TRY(expectDone(database, admissionInsert.get()));
 
@@ -9379,7 +9567,9 @@ namespace uf::operator_runtime
             lease,
             root,
             call,
-            ToolMutability::ReadOnly
+            ToolMutability::ReadOnly,
+            nullptr,
+            {}
         );
     }
 
@@ -9387,7 +9577,9 @@ namespace uf::operator_runtime
         ControllerBinding const& controller,
         ControlLease const& lease,
         ToolRootRequestIdentity const& root,
-        ToolCallPositionIdentity const& call
+        ToolCallPositionIdentity const& call,
+        OperatorPlanAuthority const& planAuthority,
+        std::span<ProposedEffect const> effects
     ) -> Result<ToolCallAdmission>
     {
         return admitToolCall(
@@ -9395,7 +9587,9 @@ namespace uf::operator_runtime
             lease,
             root,
             call,
-            ToolMutability::Mutating
+            ToolMutability::Mutating,
+            &planAuthority,
+            effects
         );
     }
 

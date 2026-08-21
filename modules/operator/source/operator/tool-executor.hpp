@@ -3,6 +3,7 @@
 #include "ledger.hpp"
 
 #include <functional>
+#include <span>
 
 namespace uf::operator_runtime
 {
@@ -46,6 +47,8 @@ namespace uf::operator_runtime
             ControlLease const& lease,
             ToolRootRequestIdentity const& root,
             ToolCallPositionIdentity const& call,
+            OperatorPlanAuthority const& planAuthority,
+            std::span<ProposedEffect const> effects,
             MutatingToolProvider const& provider
         ) -> Result<ToolCallReplay>;
     };

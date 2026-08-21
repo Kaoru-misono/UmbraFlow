@@ -651,6 +651,25 @@ namespace uf::operator_runtime::test_support
     }
 
     [[nodiscard]]
+    inline auto routineToolEffect(
+        ProjectFixture const& project,
+        std::string toolName = "command-1"
+    ) -> ProposedEffect
+    {
+        auto invocation = toolInvocation(project, std::move(toolName));
+        REQUIRE_FALSE(invocation.descriptor().effectBounds.empty());
+        auto const& bound = invocation.descriptor().effectBounds.front();
+        return ProposedEffect{
+            .namespacedType    = bound.namespacedType,
+            .risk              = Risk::Low,
+            .scopeKind         = bound.scopeKind,
+            .scopeKey          = "fixture-instance",
+            .payloadSchemaHash = bound.payloadSchemaHash,
+            .opaqueProjectPayload = R"({"value":1})",
+        };
+    }
+
+    [[nodiscard]]
     inline auto loadPlugin(
         ProjectFixture const& project,
         std::string_view pluginBytes
@@ -1406,7 +1425,10 @@ identity = ["fixture.panel.anchor"]
     {
         auto const release = runtimeRelease(path / "session-handoff");
         auto storeResult = OperatorCoordinator::open(path / "production");
-        REQUIRE(storeResult.has_value());
+        auto const storeMessage = storeResult.has_value()
+            ? std::string{}
+            : storeResult.error().message();
+        REQUIRE_MESSAGE(storeResult.has_value(), storeMessage);
         auto store = *std::move(storeResult);
         auto installed = store.installRuntimeArtifact(
             RuntimeArtifactInstallRequest{

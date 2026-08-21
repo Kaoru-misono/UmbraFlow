@@ -342,6 +342,27 @@ namespace uf::operator_runtime
         ContentHash decisionBasisHash;
     };
 
+    // The canonical, order-independent form of one proposed effect set. It is
+    // a value rather than an authority: callers may propose effects, while
+    // descriptor bounds and the Operator-owned PolicyArtifact still decide
+    // whether those effects may be admitted. Keeping this derivation shared
+    // prevents Tool admission and EffectivePlan minting from assigning two
+    // hashes to the same set.
+    //
+    // No in-class initializer for the hash: ContentHash has no default state.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+    struct EffectiveEffectEnvelope final
+    {
+        std::vector<ProposedEffect> effects{};
+        std::string                 canonicalJcs{};
+        ContentHash                 hash;
+    };
+
+    [[nodiscard]]
+    auto deriveEffectiveEffectEnvelope(
+        std::vector<ProposedEffect> effects
+    ) -> Result<EffectiveEffectEnvelope>;
+
     // Everything the ledger must present to mint one step. The frozen plan
     // arrives as the exact canonical bytes and hash stored in operation_plans
     // rather than as an EffectivePlan value, because after a freeze the plan

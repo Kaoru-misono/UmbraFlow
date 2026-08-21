@@ -7,6 +7,7 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -251,6 +252,9 @@ namespace uf::operator_runtime
             prepared.project,
             "mutating-possible-run"
         );
+        auto effects = std::array{
+            test_support::routineToolEffect(prepared.project),
+        };
         auto executor      = ToolRuntimeExecutor{prepared.store};
         auto providerCalls = uint64{};
         auto possible = executor.invokeMutating(
@@ -258,6 +262,8 @@ namespace uf::operator_runtime
             prepared.lease,
             firstRoot,
             firstCall,
+            prepared.planAuthority,
+            effects,
             [&providerCalls](ToolCallPositionIdentity const&)
                 -> Result<ToolCallCompletion>
             {
@@ -289,6 +295,8 @@ namespace uf::operator_runtime
             prepared.lease,
             secondRoot,
             secondCall,
+            prepared.planAuthority,
+            effects,
             [&blockedProviderCalls](ToolCallPositionIdentity const&)
             {
                 ++blockedProviderCalls;
@@ -365,6 +373,8 @@ namespace uf::operator_runtime
             prepared.lease,
             secondRoot,
             secondCall,
+            prepared.planAuthority,
+            effects,
             [&blockedProviderCalls](ToolCallPositionIdentity const&)
             {
                 ++blockedProviderCalls;
@@ -388,6 +398,9 @@ namespace uf::operator_runtime
             prepared.project,
             "terminally-unresolved-run"
         );
+        auto effects = std::array{
+            test_support::routineToolEffect(prepared.project),
+        };
         auto executor = ToolRuntimeExecutor{prepared.store};
         auto error = CanonicalJson::parseExact(R"({"delivery":"unknown"})");
         REQUIRE(error.has_value());
@@ -396,6 +409,8 @@ namespace uf::operator_runtime
             prepared.lease,
             firstRoot,
             firstCall,
+            prepared.planAuthority,
+            effects,
             [&error](ToolCallPositionIdentity const&)
             {
                 return ToolCallCompletion::terminalFailure(*error);
@@ -439,6 +454,8 @@ namespace uf::operator_runtime
             prepared.lease,
             secondRoot,
             secondCall,
+            prepared.planAuthority,
+            effects,
             [](ToolCallPositionIdentity const&)
             {
                 auto result = CanonicalJson::parseExact(R"({"delivered":true})");
@@ -475,6 +492,9 @@ namespace uf::operator_runtime
             prepared.project,
             "tool-beside-legacy-mutation-run"
         );
+        auto effects = std::array{
+            test_support::routineToolEffect(prepared.project),
+        };
         auto providerCalls = uint64{};
         auto executor      = ToolRuntimeExecutor{prepared.store};
         auto blocked = executor.invokeMutating(
@@ -482,6 +502,8 @@ namespace uf::operator_runtime
             prepared.lease,
             root,
             call,
+            prepared.planAuthority,
+            effects,
             [&providerCalls](ToolCallPositionIdentity const&)
             {
                 ++providerCalls;

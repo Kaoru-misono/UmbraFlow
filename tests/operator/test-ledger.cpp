@@ -274,6 +274,62 @@ namespace uf::operator_runtime
             database.execute("DROP TABLE IF EXISTS tool_call_history");
         }
 
+        auto restorePriorToolAdmissionAuthority(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void
+        {
+            database.execute(
+                "PRAGMA foreign_keys=OFF;"
+                "ALTER TABLE tool_admission_attempts RENAME TO "
+                "new_tool_admission_attempts;"
+                "CREATE TABLE tool_admission_attempts("
+                "call_identity TEXT NOT NULL REFERENCES tool_call_history(call_identity),"
+                "attempt_number INTEGER NOT NULL CHECK(attempt_number > 0),"
+                "root_identity TEXT NOT NULL REFERENCES tool_runs(root_identity),"
+                "origin_principal_id TEXT NOT NULL,"
+                "origin_principal_kind TEXT NOT NULL CHECK(origin_principal_kind IN "
+                "('script','agent','human')),"
+                "execution_principal_id TEXT NOT NULL,"
+                "execution_principal_kind TEXT NOT NULL CHECK(execution_principal_kind IN "
+                "('script','agent','human')),"
+                "session_id TEXT NOT NULL,"
+                "session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),"
+                "controlled_target_id TEXT NOT NULL,"
+                "project_registration_hash TEXT NOT NULL CHECK("
+                "length(project_registration_hash)=64 AND "
+                "project_registration_hash NOT GLOB '*[^0-9a-f]*'),"
+                "policy_hash TEXT NOT NULL CHECK(length(policy_hash)=64 AND "
+                "policy_hash NOT GLOB '*[^0-9a-f]*'),"
+                "capability_profile_hash TEXT NOT NULL CHECK("
+                "length(capability_profile_hash)=64 AND "
+                "capability_profile_hash NOT GLOB '*[^0-9a-f]*'),"
+                "lease_id TEXT NOT NULL,"
+                "lease_revision INTEGER NOT NULL CHECK(lease_revision > 0),"
+                "fencing_token INTEGER NOT NULL CHECK(fencing_token > 0),"
+                "budget_snapshot TEXT NOT NULL,"
+                "budget_snapshot_hash TEXT NOT NULL CHECK("
+                "length(budget_snapshot_hash)=64 AND "
+                "budget_snapshot_hash NOT GLOB '*[^0-9a-f]*'),"
+                "PRIMARY KEY(call_identity, attempt_number)"
+                ") STRICT;"
+                "INSERT INTO tool_admission_attempts(call_identity, attempt_number, "
+                "root_identity, origin_principal_id, origin_principal_kind, "
+                "execution_principal_id, execution_principal_kind, session_id, "
+                "session_epoch, controlled_target_id, project_registration_hash, "
+                "policy_hash, capability_profile_hash, lease_id, lease_revision, "
+                "fencing_token, budget_snapshot, budget_snapshot_hash) SELECT "
+                "call_identity, attempt_number, root_identity, origin_principal_id, "
+                "origin_principal_kind, execution_principal_id, "
+                "execution_principal_kind, session_id, session_epoch, "
+                "controlled_target_id, project_registration_hash, policy_hash, "
+                "capability_profile_hash, lease_id, lease_revision, fencing_token, "
+                "budget_snapshot, budget_snapshot_hash FROM "
+                "new_tool_admission_attempts;"
+                "DROP TABLE new_tool_admission_attempts;"
+                "PRAGMA foreign_keys=ON;"
+            );
+        }
+
         auto removeToolIdentityPersistence(
             test_support::OperatorDatabaseProbe& database
         ) -> void
@@ -3747,7 +3803,7 @@ namespace uf::operator_runtime
         auto const targetIdentity = exactSchemaIdentity(target);
         CHECK(
             targetIdentity
-            == "sha256:64d3396e51680ec12cb91d944357f965e2136065fbb7b7fccc009d168fc4ac80"
+            == "sha256:14fbb87b8e84ce4c9f977d423a1b6e981e0425e06ef17f9a7822e6d32a8e87a4"
         );
         CHECK(
             target.readRows(
@@ -4122,6 +4178,9 @@ namespace uf::operator_runtime
         );
         REQUIRE(root.has_value());
         auto invocation = toolInvocation(prepared.project, "command-1");
+        auto effects = std::array{
+            test_support::routineToolEffect(prepared.project),
+        };
         auto const execution = ToolExecutionIdentity{
             .runIdentity                 = hashOf("mutating-crash-run"),
             .frameworkReleaseIdentity    = hashOf("mutating-crash-framework"),
@@ -4140,7 +4199,9 @@ namespace uf::operator_runtime
             prepared.controller,
             prepared.lease,
             *root,
-            *call
+            *call,
+            prepared.planAuthority,
+            effects
         );
         REQUIRE(admission.has_value());
         auto dispatch = prepared.store.beginToolCallDispatch(*admission);
@@ -4193,7 +4254,9 @@ namespace uf::operator_runtime
             *resumed,
             *lease,
             *secondRoot,
-            *secondCall
+            *secondCall,
+            prepared.planAuthority,
+            effects
         );
         REQUIRE_FALSE(blocked.has_value());
         CHECK(blocked.error().message().contains("state possible"));
@@ -4218,7 +4281,9 @@ namespace uf::operator_runtime
             *resumed,
             *lease,
             *secondRoot,
-            *secondCall
+            *secondCall,
+            prepared.planAuthority,
+            effects
         );
         REQUIRE(unblocked.has_value());
     }
@@ -4406,6 +4471,9 @@ namespace uf::operator_runtime
         auto lease = prepared.store.acquireLease(agent);
         REQUIRE(lease.has_value());
         auto invocation = toolInvocation(prepared.project, "command-1");
+        auto effects = std::array{
+            test_support::routineToolEffect(prepared.project),
+        };
         auto const execution = ToolExecutionIdentity{
             .runIdentity                 = hashOf("agent-mutating-run"),
             .frameworkReleaseIdentity    = hashOf("agent-mutating-framework"),
@@ -4434,7 +4502,9 @@ namespace uf::operator_runtime
             agent,
             *lease,
             *firstRoot,
-            *firstCall
+            *firstCall,
+            prepared.planAuthority,
+            effects
         );
         REQUIRE(admitted.has_value());
         auto afterFirst = prepared.store.remainingBudget(agent);
@@ -4447,7 +4517,9 @@ namespace uf::operator_runtime
             agent,
             *lease,
             *firstRoot,
-            *firstCall
+            *firstCall,
+            prepared.planAuthority,
+            effects
         );
         REQUIRE(repeated.has_value());
         CHECK(repeated->attemptNumber() == admitted->attemptNumber());
@@ -4499,7 +4571,9 @@ namespace uf::operator_runtime
             agent,
             *lease,
             *secondRoot,
-            *secondCall
+            *secondCall,
+            prepared.planAuthority,
+            effects
         );
         REQUIRE_FALSE(exhausted.has_value());
         CHECK(exhausted.error().message().contains(
@@ -4509,6 +4583,232 @@ namespace uf::operator_runtime
         REQUIRE(afterExhaustion.has_value());
         CHECK(afterExhaustion->toolCalls == 1U);
         CHECK(afterExhaustion->mutations == 0U);
+    }
+
+    TEST_CASE("mutating Tool admission persists one immutable policy effect envelope")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto preimage = CanonicalJson::parseExact(
+            R"({"objective":"effect-authority"})"
+        );
+        REQUIRE(preimage.has_value());
+        auto root = ToolRootRequestIdentity::create(
+            "controller-1",
+            "effect-authority",
+            std::move(*preimage)
+        );
+        REQUIRE(root.has_value());
+        auto invocation = toolInvocation(prepared.project, "command-1");
+        auto call = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            1U,
+            ToolExecutionIdentity{
+                .runIdentity                 = hashOf("effect-authority-run"),
+                .frameworkReleaseIdentity    = hashOf("effect-authority-framework"),
+                .toolRuntimeProtocolIdentity = hashOf("effect-authority-protocol"),
+                .environmentIdentity         = hashOf("effect-authority-environment"),
+            },
+            invocation
+        );
+        REQUIRE(call.has_value());
+        auto effects = std::array{
+            test_support::routineToolEffect(prepared.project),
+        };
+        auto expected = deriveEffectiveEffectEnvelope(
+            std::vector<ProposedEffect>{effects.begin(), effects.end()}
+        );
+        REQUIRE(expected.has_value());
+        auto admitted = prepared.store.admitMutatingToolCall(
+            prepared.controller,
+            prepared.lease,
+            *root,
+            *call,
+            prepared.planAuthority,
+            effects
+        );
+        REQUIRE(admitted.has_value());
+
+        auto changedEffects = effects;
+        changedEffects.front().scopeKey = "another-fixture-instance";
+        auto changed = prepared.store.admitMutatingToolCall(
+            prepared.controller,
+            prepared.lease,
+            *root,
+            *call,
+            prepared.planAuthority,
+            changedEffects
+        );
+        REQUIRE_FALSE(changed.has_value());
+        CHECK(changed.error().message().contains("durable effect authority"));
+        { auto released = std::move(prepared.store); }
+
+        auto database = test_support::OperatorDatabaseProbe{
+            temporary.path() / "production" / "operator-runtime.sqlite",
+        };
+        CHECK(
+            database.readRows(
+                "SELECT effect_envelope, effect_envelope_hash, "
+                "required_approvals, coalesce(approval_token, '') FROM "
+                "tool_admission_attempts WHERE call_identity='"
+                + call->identity().hex() + "'"
+            ) == std::vector<std::vector<std::string>>{
+                {
+                    expected->canonicalJcs,
+                    expected->hash.hex(),
+                    "[]",
+                    "",
+                },
+            }
+        );
+    }
+
+    TEST_CASE("mutating Tool admission stops at the policy approval boundary")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto preimage  = CanonicalJson::parseExact(R"({"objective":"high-risk"})");
+        REQUIRE(preimage.has_value());
+        auto root = ToolRootRequestIdentity::create(
+            "controller-1",
+            "high-risk-effect",
+            std::move(*preimage)
+        );
+        REQUIRE(root.has_value());
+        auto invocation = toolInvocation(prepared.project, "command-1");
+        auto call = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            1U,
+            ToolExecutionIdentity{
+                .runIdentity                 = hashOf("high-risk-run"),
+                .frameworkReleaseIdentity    = hashOf("high-risk-framework"),
+                .toolRuntimeProtocolIdentity = hashOf("high-risk-protocol"),
+                .environmentIdentity         = hashOf("high-risk-environment"),
+            },
+            invocation
+        );
+        REQUIRE(call.has_value());
+        auto effect  = test_support::routineToolEffect(prepared.project);
+        effect.risk  = Risk::High;
+        auto effects = std::array{effect};
+        auto refused = prepared.store.admitMutatingToolCall(
+            prepared.controller,
+            prepared.lease,
+            *root,
+            *call,
+            prepared.planAuthority,
+            effects
+        );
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(refused.error().message().contains("requires approval"));
+        auto replay = prepared.store.replayToolCall(*root, *call);
+        REQUIRE(replay.has_value());
+        CHECK(replay->state == ToolCallState::Proposed);
+    }
+
+    TEST_CASE("the immediate-prior Tool admission schema migrates attempts exactly")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        {
+            auto prepared = prepareStore(temporary.path());
+            auto preimage = CanonicalJson::parseExact(
+                R"({"objective":"migration-observe"})"
+            );
+            REQUIRE(preimage.has_value());
+            auto root = ToolRootRequestIdentity::create(
+                "controller-1",
+                "migration-observe",
+                std::move(*preimage)
+            );
+            REQUIRE(root.has_value());
+            auto catalog   = FrameworkToolCatalogOwner::create();
+            auto arguments = CanonicalJson::parseExact("{}");
+            REQUIRE(catalog.has_value());
+            REQUIRE(arguments.has_value());
+            auto invocation = catalog->validate(
+                "framework.screen.observe",
+                std::move(*arguments)
+            );
+            REQUIRE(invocation.has_value());
+            auto call = ToolCallPositionIdentity::create(
+                *root,
+                std::nullopt,
+                1U,
+                ToolExecutionIdentity{
+                    .runIdentity = hashOf("authority-migration-run"),
+                    .frameworkReleaseIdentity =
+                        hashOf("authority-migration-framework"),
+                    .toolRuntimeProtocolIdentity =
+                        hashOf("authority-migration-protocol"),
+                    .environmentIdentity =
+                        hashOf("authority-migration-environment"),
+                },
+                *invocation
+            );
+            REQUIRE(call.has_value());
+            auto admitted = prepared.store.admitReadOnlyToolCall(
+                prepared.controller,
+                prepared.lease,
+                *root,
+                *call
+            );
+            REQUIRE(admitted.has_value());
+        }
+
+        auto oldRows        = std::vector<std::vector<std::string>>{};
+        auto sourceIdentity = std::string{};
+        {
+            auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            oldRows = prior.readRows(
+                "SELECT call_identity, attempt_number, root_identity, "
+                "policy_hash, budget_snapshot_hash FROM tool_admission_attempts"
+            );
+            restorePriorToolAdmissionAuthority(prior);
+            sourceIdentity = exactSchemaIdentity(prior);
+        }
+        CHECK(
+            sourceIdentity
+            == "sha256:64d3396e51680ec12cb91d944357f965e2136065fbb7b7fccc009d168fc4ac80"
+        );
+
+        {
+            auto migrated = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(migrated.has_value(), migrated.error().message());
+        }
+        auto target = test_support::OperatorDatabaseProbe{databasePath};
+        CHECK(
+            exactSchemaIdentity(target)
+            == "sha256:14fbb87b8e84ce4c9f977d423a1b6e981e0425e06ef17f9a7822e6d32a8e87a4"
+        );
+        CHECK(
+            target.readRows(
+                "SELECT call_identity, attempt_number, root_identity, "
+                "policy_hash, budget_snapshot_hash FROM tool_admission_attempts"
+            ) == oldRows
+        );
+        CHECK(
+            target.readRows(
+                "SELECT count(*) FROM tool_admission_attempts WHERE "
+                "effect_envelope IS NOT NULL OR effect_envelope_hash IS NOT NULL "
+                "OR required_approvals IS NOT NULL OR approval_token IS NOT NULL"
+            ) == std::vector<std::vector<std::string>>{{"0"}}
+        );
+        CHECK(
+            target.readRows(
+                "SELECT source_identity, target_identity FROM "
+                "schema_identity_transitions WHERE source_identity='"
+                + sourceIdentity + "'"
+            ) == std::vector<std::vector<std::string>>{
+                {
+                    sourceIdentity,
+                    "sha256:14fbb87b8e84ce4c9f977d423a1b6e981e0425e06ef17f9a7822e6d32a8e87a4",
+                },
+            }
+        );
     }
 
     TEST_CASE("the immediate-prior Tool runtime schema migrates identity rows exactly")
@@ -4576,7 +4876,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:64d3396e51680ec12cb91d944357f965e2136065fbb7b7fccc009d168fc4ac80"
+                == "sha256:14fbb87b8e84ce4c9f977d423a1b6e981e0425e06ef17f9a7822e6d32a8e87a4"
             );
             CHECK(
                 target.readRows(
@@ -4596,7 +4896,7 @@ namespace uf::operator_runtime
                 == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:64d3396e51680ec12cb91d944357f965e2136065fbb7b7fccc009d168fc4ac80",
+                        "sha256:14fbb87b8e84ce4c9f977d423a1b6e981e0425e06ef17f9a7822e6d32a8e87a4",
                     },
                 }
             );

@@ -66,6 +66,15 @@ reconciliation with mandatory canonical evidence may classify the call
 observation budgets are charged together in the first admitted transaction and
 not charged again on exact rejoin.
 
+Mutating admission now also requires a concrete effect set and the verified
+Operator plan authority for the active session. The shared effect canonicalizer
+orders and hashes the set exactly as EffectivePlan does; descriptor bounds and
+the pinned PolicyArtifact are evaluated before admission, and the canonical
+envelope, hash, policy hash, and verdict are immutable fields of the durable
+attempt. A rule requiring approval currently stops before provider dispatch;
+the call-bound, single-use Tool approval ticket is the remaining part of this
+authorization checkpoint.
+
 ## 1. Product boundary
 
 Agent, human-operated clients, and Project Luau automation scripts drive a game

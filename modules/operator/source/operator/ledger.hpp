@@ -27,6 +27,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -565,7 +566,9 @@ namespace uf::operator_runtime
             ControlLease const& lease,
             ToolRootRequestIdentity const& root,
             ToolCallPositionIdentity const& call,
-            ToolMutability requiredMutability
+            ToolMutability requiredMutability,
+            OperatorPlanAuthority const* planAuthority,
+            std::span<ProposedEffect const> effects
         ) -> Result<ToolCallAdmission>;
 
         // The transaction-neutral canonical mint: the ten ordered checks
@@ -906,7 +909,9 @@ namespace uf::operator_runtime
             ControllerBinding const& controller,
             ControlLease const& lease,
             ToolRootRequestIdentity const& root,
-            ToolCallPositionIdentity const& call
+            ToolCallPositionIdentity const& call,
+            OperatorPlanAuthority const& planAuthority,
+            std::span<ProposedEffect const> effects
         ) -> Result<ToolCallAdmission>;
 
         // Commits the dispatch boundary before provider code runs.

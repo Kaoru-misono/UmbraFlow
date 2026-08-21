@@ -196,61 +196,6 @@ namespace uf::operator_runtime
             return output;
         }
 
-        // The plan's effective_effects and the hash the frozen plan publishes
-        // over them as effect_envelope_hash. It is deliberately not called an
-        // EffectEnvelope: that name belongs to OP:`EffectEnvelope`, which is
-        // ONE effect, and this is the whole ordered set with its digest.
-        struct EffectiveEffects final
-        {
-            std::vector<ProposedEffect> effects{};
-            ContentHash                 hash;
-        };
-
-        // The declared effects in one determined order, and the hash over that
-        // order. JCS does not sort arrays, so without this the same effect set
-        // proposed in two orders would produce two digests and two approvals
-        // for one decision. The rule mirrors the artifact-root rule the frozen
-        // authority already fixes: non-empty, unique, sorted by UTF-8 bytes.
-        [[nodiscard]]
-        auto deriveEffectiveEffects(
-            std::vector<ProposedEffect> effects
-        ) -> Result<EffectiveEffects>
-        {
-            auto ordered = std::move(effects);
-            for (auto const& effect : ordered)
-            {
-                UF_TRY(requireField(effect.namespacedType, "effect namespaced_type"));
-                UF_TRY(requireField(effect.scopeKind, "effect scope_kind"));
-                UF_TRY(requireField(effect.scopeKey, "effect scope_key"));
-                UF_TRY(requireField(
-                    effect.opaqueProjectPayload,
-                    "effect opaque_project_payload"
-                ));
-            }
-            std::ranges::sort(ordered, {}, [](ProposedEffect const& effect) {
-                return std::tie(effect.namespacedType, effect.scopeKind, effect.scopeKey);
-            });
-            for (auto index = std::size_t{1}; index < ordered.size(); ++index)
-            {
-                auto const& previous = ordered[index - 1U];
-                auto const& current  = ordered[index];
-                if (
-                    previous.namespacedType == current.namespacedType
-                    && previous.scopeKind == current.scopeKind
-                    && previous.scopeKey == current.scopeKey
-                )
-                {
-                    return fail(
-                        AutomationErrorKind::ActionRejected,
-                        "PlanProposal declares one effect scope twice"
-                    );
-                }
-            }
-            auto const material = effectsJcs(ordered);
-            UF_TRY_VALUE(hash, sha256(std::as_bytes(std::span{material})));
-            return EffectiveEffects{.effects = std::move(ordered), .hash = hash};
-        }
-
         [[nodiscard]]
         auto highestRisk(std::span<ProposedEffect const> effects) noexcept -> Risk
         {
@@ -581,6 +526,49 @@ namespace uf::operator_runtime
         UF_UNREACHABLE_MSG("Unknown StepKind value");
     }
 
+    auto deriveEffectiveEffectEnvelope(
+        std::vector<ProposedEffect> effects
+    ) -> Result<EffectiveEffectEnvelope>
+    {
+        auto ordered = std::move(effects);
+        for (auto const& effect : ordered)
+        {
+            UF_TRY(requireField(effect.namespacedType, "effect namespaced_type"));
+            UF_TRY(requireField(effect.scopeKind, "effect scope_kind"));
+            UF_TRY(requireField(effect.scopeKey, "effect scope_key"));
+            UF_TRY(requireField(
+                effect.opaqueProjectPayload,
+                "effect opaque_project_payload"
+            ));
+        }
+        std::ranges::sort(ordered, {}, [](ProposedEffect const& effect) {
+            return std::tie(effect.namespacedType, effect.scopeKind, effect.scopeKey);
+        });
+        for (auto index = std::size_t{1}; index < ordered.size(); ++index)
+        {
+            auto const& previous = ordered[index - 1U];
+            auto const& current  = ordered[index];
+            if (
+                previous.namespacedType == current.namespacedType
+                && previous.scopeKind == current.scopeKind
+                && previous.scopeKey == current.scopeKey
+            )
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Effect envelope declares one effect scope twice"
+                );
+            }
+        }
+        auto material = effectsJcs(ordered);
+        UF_TRY_VALUE(hash, sha256(std::as_bytes(std::span{material})));
+        return EffectiveEffectEnvelope{
+            .effects      = std::move(ordered),
+            .canonicalJcs = std::move(material),
+            .hash         = hash,
+        };
+    }
+
     EffectivePlan::EffectivePlan(
         ContentHash projectRegistrationHash,
         ContentHash operatorProtocolSchemaHash,
@@ -902,7 +890,10 @@ namespace uf::operator_runtime
         std::ranges::sort(allowed);
         allowed.erase(std::ranges::unique(allowed).begin(), allowed.end());
 
-        UF_TRY_VALUE(effective, deriveEffectiveEffects(std::move(claims.effects)));
+        UF_TRY_VALUE(
+            effective,
+            deriveEffectiveEffectEnvelope(std::move(claims.effects))
+        );
         if (effective.effects.empty())
         {
             // A mutating plan with no effect would reach the policy with

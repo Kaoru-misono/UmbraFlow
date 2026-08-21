@@ -62,7 +62,9 @@ namespace uf::operator_runtime
             ToolRootRequestIdentity const& root,
             ToolCallPositionIdentity const& call,
             ReadOnlyToolProvider const& provider,
-            ToolMutability requiredMutability
+            ToolMutability requiredMutability,
+            OperatorPlanAuthority const* planAuthority,
+            std::span<ProposedEffect const> effects
         ) -> Result<ToolCallReplay>
         {
             if (!provider)
@@ -70,6 +72,16 @@ namespace uf::operator_runtime
                 return fail(
                     AutomationErrorKind::InvalidResource,
                     "Tool invocation requires a provider"
+                );
+            }
+            if (
+                requiredMutability == ToolMutability::Mutating
+                && planAuthority == nullptr
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "Mutating Tool executor requires plan authority"
                 );
             }
 
@@ -106,7 +118,9 @@ namespace uf::operator_runtime
                       controller,
                       lease,
                       root,
-                      call
+                      call,
+                      *planAuthority,
+                      effects
                   );
             UF_TRY_VALUE(admitted, std::move(admission));
             UF_TRY_VALUE(dispatch, coordinator.beginToolCallDispatch(admitted));
@@ -162,7 +176,9 @@ namespace uf::operator_runtime
             root,
             call,
             provider,
-            ToolMutability::ReadOnly
+            ToolMutability::ReadOnly,
+            nullptr,
+            {}
         );
     }
 
@@ -171,6 +187,8 @@ namespace uf::operator_runtime
         ControlLease const& lease,
         ToolRootRequestIdentity const& root,
         ToolCallPositionIdentity const& call,
+        OperatorPlanAuthority const& planAuthority,
+        std::span<ProposedEffect const> effects,
         MutatingToolProvider const& provider
     ) -> Result<ToolCallReplay>
     {
@@ -181,7 +199,9 @@ namespace uf::operator_runtime
             root,
             call,
             provider,
-            ToolMutability::Mutating
+            ToolMutability::Mutating,
+            &planAuthority,
+            effects
         );
     }
 }
