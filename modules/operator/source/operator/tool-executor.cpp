@@ -64,7 +64,8 @@ namespace uf::operator_runtime
             ReadOnlyToolProvider const& provider,
             ToolMutability requiredMutability,
             OperatorPlanAuthority const* planAuthority,
-            std::span<ProposedEffect const> effects
+            std::span<ProposedEffect const> effects,
+            std::span<ToolApprovalGrant const> approvals
         ) -> Result<ToolCallReplay>
         {
             if (!provider)
@@ -120,7 +121,8 @@ namespace uf::operator_runtime
                       root,
                       call,
                       *planAuthority,
-                      effects
+                      effects,
+                      approvals
                   );
             UF_TRY_VALUE(admitted, std::move(admission));
             UF_TRY_VALUE(dispatch, coordinator.beginToolCallDispatch(admitted));
@@ -178,6 +180,7 @@ namespace uf::operator_runtime
             provider,
             ToolMutability::ReadOnly,
             nullptr,
+            {},
             {}
         );
     }
@@ -189,6 +192,7 @@ namespace uf::operator_runtime
         ToolCallPositionIdentity const& call,
         OperatorPlanAuthority const& planAuthority,
         std::span<ProposedEffect const> effects,
+        std::span<ToolApprovalGrant const> approvals,
         MutatingToolProvider const& provider
     ) -> Result<ToolCallReplay>
     {
@@ -201,7 +205,8 @@ namespace uf::operator_runtime
             provider,
             ToolMutability::Mutating,
             &planAuthority,
-            effects
+            effects,
+            approvals
         );
     }
 }

@@ -1577,7 +1577,11 @@ identity = ["fixture.panel.anchor"]
         std::string const& sessionId,
         std::string const& projectInstanceKey,
         std::string const& controlledTargetId,
-        std::optional<AgentBudget> const& budget = std::nullopt
+        std::optional<AgentBudget> const& budget = std::nullopt,
+        std::string controllerId = "controller-1",
+        std::vector<std::string> controllerCapabilities = {
+            std::string{conformance::k_operateCapability},
+        }
     ) -> ControllerBinding
     {
         REQUIRE(prepared.store.provisionProjectInstance(
@@ -1611,10 +1615,10 @@ identity = ["fixture.panel.anchor"]
         REQUIRE(prepared.store.pinSession(
             SessionPin{
                 .sessionId                 = sessionId,
-                .authenticatedControllerId = "controller-1",
-                .idempotencyNamespace      = "controller-1",
+                .authenticatedControllerId = controllerId,
+                .idempotencyNamespace      = controllerId,
                 .projectRegistrationHash   = prepared.project.registration.hash(),
-                .controllerCapabilities    = {std::string{conformance::k_operateCapability}},
+                .controllerCapabilities    = std::move(controllerCapabilities),
                 .controlledTargetId        = controlledTargetId,
                 .projectInstanceKey        = projectInstanceKey,
                 .mode                      = mode,

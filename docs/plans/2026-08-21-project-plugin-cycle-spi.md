@@ -71,9 +71,12 @@ Operator plan authority for the active session. The shared effect canonicalizer
 orders and hashes the set exactly as EffectivePlan does; descriptor bounds and
 the pinned PolicyArtifact are evaluated before admission, and the canonical
 envelope, hash, policy hash, and verdict are immutable fields of the durable
-attempt. A rule requiring approval currently stops before provider dispatch;
-the call-bound, single-use Tool approval ticket is the remaining part of this
-authorization checkpoint.
+attempt. A rule requiring approval now accepts only call/root/effect/policy and
+live lease/fence-bound tokens. Every required capability needs one token; they
+are consumed atomically with the admitted attempt, remain immutable on exact
+rejoin, cannot cross calls, and must still be unexpired at dispatch. Trusted
+Framework/Project compilation of the proposed root effects remains before a
+production mutating provider may be exposed.
 
 ## 1. Product boundary
 

@@ -274,6 +274,25 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
+        auto bindOptionalInteger(
+            sqlite3* database,
+            sqlite3_stmt* statement,
+            int index,
+            std::optional<uint64> value
+        ) -> Status
+        {
+            if (value)
+            {
+                return bindInteger(database, statement, index, *value);
+            }
+            if (sqlite3_bind_null(statement, index) != SQLITE_OK)
+            {
+                return databaseFailure(database, "could not bind null integer");
+            }
+            return ok();
+        }
+
+        [[nodiscard]]
         auto checkedSqlIncrement(
             uint64 value,
             std::string_view field
@@ -567,6 +586,54 @@ namespace uf::operator_runtime
             return ok();
         }
 
+        struct EvaluatedToolMutation final
+        {
+            EffectiveEffectEnvelope  envelope;
+            std::vector<std::string> requiredApprovals{};
+        };
+
+        [[nodiscard]]
+        auto evaluateToolMutation(
+            VerifiedPolicyArtifact const& policy,
+            ToolDescriptor const& descriptor,
+            std::string_view toolName,
+            std::span<ProposedEffect const> effects,
+            std::span<std::string const> controllerCapabilities
+        ) -> Result<EvaluatedToolMutation>
+        {
+            if (effects.empty())
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Mutating Tool admission requires a concrete effect envelope"
+                );
+            }
+            auto proposedEffects = std::vector<ProposedEffect>{
+                effects.begin(),
+                effects.end(),
+            };
+            UF_TRY_VALUE(
+                envelope,
+                deriveEffectiveEffectEnvelope(std::move(proposedEffects))
+            );
+            for (auto const& effect : envelope.effects)
+            {
+                UF_TRY(effectWithinBounds(descriptor, effect));
+            }
+            UF_TRY_VALUE(
+                verdict,
+                policy.evaluate(PolicyRequest{
+                    .effects                = envelope.effects,
+                    .controllerCapabilities = controllerCapabilities,
+                    .toolName               = toolName,
+                })
+            );
+            return EvaluatedToolMutation{
+                .envelope          = std::move(envelope),
+                .requiredApprovals = std::move(verdict.requiredApprovals),
+            };
+        }
+
         [[nodiscard]]
         auto restoreCanonicalJson(
             std::string bytes,
@@ -721,7 +788,7 @@ namespace uf::operator_runtime
         // "Delete-on-open has a deadline" section owns
         // the exact-pair migration policy.
         constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
-            "sha256:14fbb87b8e84ce4c9f977d423a1b6e981e0425e06ef17f9a7822e6d32a8e87a4"
+            "sha256:53c56cce2064c47a07bd29529320aac7e7f8f4e8c01a74dc54da936159dd44f8"
         };
 
         // A transition row records the applied exact pair; neither the row nor
@@ -941,14 +1008,51 @@ namespace uf::operator_runtime
             "effect_envelope TEXT,"
             "effect_envelope_hash TEXT,"
             "required_approvals TEXT,"
-            "approval_token TEXT,"
+            "approval_tokens TEXT,"
+            "approval_expires_at_unix_millis INTEGER "
+            "CHECK(approval_expires_at_unix_millis IS NULL OR "
+            "approval_expires_at_unix_millis > 0),"
             "CHECK((effect_envelope IS NULL AND effect_envelope_hash IS NULL "
-            "AND required_approvals IS NULL AND approval_token IS NULL) OR "
+            "AND required_approvals IS NULL AND approval_tokens IS NULL "
+            "AND approval_expires_at_unix_millis IS NULL) OR "
             "(effect_envelope IS NOT NULL AND effect_envelope_hash IS NOT NULL "
             "AND length(effect_envelope_hash)=64 "
             "AND effect_envelope_hash NOT GLOB '*[^0-9a-f]*' "
-            "AND required_approvals IS NOT NULL)),"
+            "AND required_approvals IS NOT NULL AND approval_tokens IS NOT NULL)),"
             "PRIMARY KEY(call_identity, attempt_number)"
+            ") STRICT"
+        };
+
+        constexpr auto k_toolApprovalsDdl = std::string_view{
+            "CREATE TABLE tool_approvals("
+            "token TEXT PRIMARY KEY,"
+            "call_identity TEXT NOT NULL REFERENCES tool_call_history(call_identity),"
+            "root_identity TEXT NOT NULL REFERENCES tool_root_requests(root_identity),"
+            "session_id TEXT NOT NULL,"
+            "controller_id TEXT NOT NULL,"
+            "controlled_target_id TEXT NOT NULL,"
+            "lease_id TEXT NOT NULL,"
+            "lease_revision INTEGER NOT NULL CHECK(lease_revision > 0),"
+            "session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),"
+            "fencing_token INTEGER NOT NULL CHECK(fencing_token > 0),"
+            "project_registration_hash TEXT NOT NULL CHECK("
+            "length(project_registration_hash)=64 AND "
+            "project_registration_hash NOT GLOB '*[^0-9a-f]*'),"
+            "policy_hash TEXT NOT NULL CHECK(length(policy_hash)=64 AND "
+            "policy_hash NOT GLOB '*[^0-9a-f]*'),"
+            "effect_envelope_hash TEXT NOT NULL CHECK("
+            "length(effect_envelope_hash)=64 AND "
+            "effect_envelope_hash NOT GLOB '*[^0-9a-f]*'),"
+            "approver_principal TEXT NOT NULL,"
+            "approver_capability TEXT NOT NULL,"
+            "authority_decision_id TEXT NOT NULL UNIQUE,"
+            "expires_at_unix_millis INTEGER NOT NULL "
+            "CHECK(expires_at_unix_millis > 0),"
+            "consumed INTEGER NOT NULL DEFAULT 0 CHECK(consumed IN (0,1)),"
+            "consumed_by_attempt INTEGER,"
+            "CHECK((consumed=0 AND consumed_by_attempt IS NULL) OR "
+            "(consumed=1 AND consumed_by_attempt IS NOT NULL "
+            "AND consumed_by_attempt > 0))"
             ") STRICT"
         };
 
@@ -1265,7 +1369,8 @@ namespace uf::operator_runtime
         {
             UF_TRY(execute(database, k_toolCallHistoryDdl));
             UF_TRY(execute(database, k_toolRunsDdl));
-            return execute(database, k_toolAdmissionAttemptsDdl);
+            UF_TRY(execute(database, k_toolAdmissionAttemptsDdl));
+            return execute(database, k_toolApprovalsDdl);
         }
 
         [[nodiscard]]
@@ -1730,6 +1835,73 @@ namespace uf::operator_runtime
                 "prior_tool_admission_attempts"
             ));
             UF_TRY(execute(database, "DROP TABLE prior_tool_admission_attempts"));
+            UF_TRY(execute(database, k_toolApprovalsDdl));
+            UF_TRY(recordSchemaIdentityTransition(database, migration));
+            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
+            return transaction.commit();
+        }
+
+        [[nodiscard]]
+        auto addToolApprovals(
+            sqlite3* database,
+            SchemaMigration const& migration
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY(execute(database, "PRAGMA defer_foreign_keys=ON"));
+            {
+                UF_TRY_VALUE(
+                    legacyTokenQuery,
+                    prepare(
+                        database,
+                        "SELECT count(*) FROM tool_admission_attempts "
+                        "WHERE approval_token IS NOT NULL"
+                    )
+                );
+                auto const step = sqlite3_step(legacyTokenQuery.get());
+                if (step != SQLITE_ROW)
+                {
+                    return databaseFailure(
+                        database,
+                        "could not inspect immediate-prior Tool approvals"
+                    );
+                }
+                if (sqlite3_column_int64(legacyTokenQuery.get(), 0) != 0)
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "Immediate-prior Tool admission rows contain an approval "
+                        "token that generation never issued"
+                    );
+                }
+            }
+            UF_TRY(execute(
+                database,
+                "ALTER TABLE tool_admission_attempts RENAME TO "
+                "prior_tool_admission_attempts"
+            ));
+            UF_TRY(execute(database, k_toolAdmissionAttemptsDdl));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO tool_admission_attempts(call_identity, attempt_number, "
+                "root_identity, origin_principal_id, origin_principal_kind, "
+                "execution_principal_id, execution_principal_kind, session_id, "
+                "session_epoch, controlled_target_id, project_registration_hash, "
+                "policy_hash, capability_profile_hash, lease_id, lease_revision, "
+                "fencing_token, budget_snapshot, budget_snapshot_hash, "
+                "effect_envelope, effect_envelope_hash, required_approvals, "
+                "approval_tokens) SELECT call_identity, attempt_number, "
+                "root_identity, origin_principal_id, origin_principal_kind, "
+                "execution_principal_id, execution_principal_kind, session_id, "
+                "session_epoch, controlled_target_id, project_registration_hash, "
+                "policy_hash, capability_profile_hash, lease_id, lease_revision, "
+                "fencing_token, budget_snapshot, budget_snapshot_hash, "
+                "effect_envelope, effect_envelope_hash, required_approvals, "
+                "CASE WHEN effect_envelope IS NULL THEN NULL ELSE '[]' END "
+                "FROM prior_tool_admission_attempts"
+            ));
+            UF_TRY(execute(database, "DROP TABLE prior_tool_admission_attempts"));
+            UF_TRY(execute(database, k_toolApprovalsDdl));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -1741,6 +1913,12 @@ namespace uf::operator_runtime
         // a guard nothing can reach is the mirror of a guard production does
         // not reach.
         constexpr auto k_schemaMigrations = std::array{
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:14fbb87b8e84ce4c9f977d423a1b6e981e0425e06ef17f9a7822e6d32a8e87a4",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = addToolApprovals,
+            },
             SchemaMigration{
                 .sourceIdentity =
                     "sha256:64d3396e51680ec12cb91d944357f965e2136065fbb7b7fccc009d168fc4ac80",
@@ -8831,7 +9009,8 @@ namespace uf::operator_runtime
         ToolCallPositionIdentity const& call,
         ToolMutability requiredMutability,
         OperatorPlanAuthority const* planAuthority,
-        std::span<ProposedEffect const> effects
+        std::span<ProposedEffect const> effects,
+        std::span<ToolApprovalGrant const> approvals
     ) -> Result<ToolCallAdmission>
     {
         if (call.parentIdentity())
@@ -8862,7 +9041,7 @@ namespace uf::operator_runtime
         }
         if (
             requiredMutability == ToolMutability::ReadOnly
-            && (planAuthority != nullptr || !effects.empty())
+            && (planAuthority != nullptr || !effects.empty() || !approvals.empty())
         )
         {
             return fail(
@@ -9030,15 +9209,10 @@ namespace uf::operator_runtime
         auto const policyHash = columnText(sessionQuery.get(), 6);
         auto effectEnvelope    = std::optional<EffectiveEffectEnvelope>{};
         auto requiredApprovals = std::vector<std::string>{};
+        auto approvalTokens    = std::vector<std::string>{};
+        auto approvalExpiry    = std::optional<uint64>{};
         if (requiredMutability == ToolMutability::Mutating)
         {
-            if (effects.empty())
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "Mutating Tool admission requires a concrete effect envelope"
-                );
-            }
             if (
                 planAuthority->projectRegistrationHash().hex()
                     != projectRegistrationHash
@@ -9050,33 +9224,53 @@ namespace uf::operator_runtime
                     "Tool mutation authority differs from the active session"
                 );
             }
-            auto proposedEffects = std::vector<ProposedEffect>{
-                effects.begin(),
-                effects.end(),
-            };
             UF_TRY_VALUE(
-                derivedEnvelope,
-                deriveEffectiveEffectEnvelope(std::move(proposedEffects))
+                evaluated,
+                evaluateToolMutation(
+                    planAuthority->m_policy,
+                    call.descriptor(),
+                    call.toolName(),
+                    effects,
+                    heldCapabilities
+                )
             );
-            effectEnvelope = std::move(derivedEnvelope);
-            for (auto const& effect : effectEnvelope->effects)
+            effectEnvelope    = std::move(evaluated.envelope);
+            requiredApprovals = std::move(evaluated.requiredApprovals);
+            for (auto const& approval : approvals)
             {
-                UF_TRY(effectWithinBounds(call.descriptor(), effect));
+                UF_TRY(requireName(approval.token, "Tool approval token"));
+                UF_TRY(requireName(
+                    approval.authorityDecisionId.value(),
+                    "Tool approval authority_decision_id"
+                ));
+                approvalTokens.emplace_back(approval.token);
             }
-            UF_TRY_VALUE(
-                verdict,
-                planAuthority->m_policy.evaluate(PolicyRequest{
-                    .effects                = effectEnvelope->effects,
-                    .controllerCapabilities = heldCapabilities,
-                    .toolName               = call.toolName(),
-                })
-            );
-            requiredApprovals = std::move(verdict.requiredApprovals);
-            if (!requiredApprovals.empty())
+            std::ranges::sort(approvalTokens);
+            if (
+                std::ranges::adjacent_find(approvalTokens)
+                != approvalTokens.end()
+            )
             {
                 return fail(
                     AutomationErrorKind::ActionRejected,
-                    "Mutating Tool policy requires approval before admission"
+                    "Mutating Tool admission repeats one approval token"
+                );
+            }
+            if (requiredApprovals.empty() != approvals.empty())
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    requiredApprovals.empty()
+                        ? "Mutating Tool policy allows no approval tokens"
+                        : "Mutating Tool policy requires approval before admission"
+                );
+            }
+            if (approvals.size() != requiredApprovals.size())
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Mutating Tool admission requires one token for every "
+                    "policy approval capability"
                 );
             }
         }
@@ -9285,7 +9479,7 @@ namespace uf::operator_runtime
                     "project_registration_hash, policy_hash, "
                     "capability_profile_hash, lease_id, lease_revision, "
                     "fencing_token, effect_envelope, effect_envelope_hash, "
-                    "required_approvals, approval_token FROM tool_admission_attempts "
+                    "required_approvals, approval_tokens FROM tool_admission_attempts "
                     "WHERE call_identity=?1 AND attempt_number=?2"
                 )
             );
@@ -9316,8 +9510,7 @@ namespace uf::operator_runtime
                             ? std::optional<std::string>{
                                   canonicalNameArray(requiredApprovals),
                               }
-                            : std::nullopt)
-                && optionalColumnText(latestQuery.get(), 14) == std::nullopt;
+                            : std::nullopt);
             if (!exactEffectAuthority)
             {
                 return fail(
@@ -9341,7 +9534,13 @@ namespace uf::operator_runtime
                 && static_cast<uint64>(sqlite3_column_int64(latestQuery.get(), 9))
                     == lease.revision
                 && static_cast<uint64>(sqlite3_column_int64(latestQuery.get(), 10))
-                    == lease.fencingToken;
+                    == lease.fencingToken
+                && optionalColumnText(latestQuery.get(), 14)
+                    == (effectEnvelope
+                            ? std::optional<std::string>{
+                                  canonicalNameArray(approvalTokens),
+                              }
+                            : std::nullopt);
             if (exactAttempt)
             {
                 UF_TRY(transaction.commit());
@@ -9369,6 +9568,129 @@ namespace uf::operator_runtime
             );
         }
         auto const nextAttempt = activeAttempt + 1U;
+        if (!requiredApprovals.empty())
+        {
+            UF_TRY_VALUE(currentUnixMillis, unixTimeMilliseconds());
+            auto approvedCapabilities = std::vector<std::string>{};
+            for (auto const& approval : approvals)
+            {
+                UF_TRY_VALUE(
+                    approvalQuery,
+                    prepare(
+                        database,
+                        "SELECT approver_capability, expires_at_unix_millis "
+                        "FROM tool_approvals "
+                        "WHERE token=?1 AND call_identity=?2 AND root_identity=?3 "
+                        "AND session_id=?4 AND controller_id=?5 "
+                        "AND controlled_target_id=?6 AND lease_id=?7 "
+                        "AND lease_revision=?8 AND session_epoch=?9 "
+                        "AND fencing_token=?10 AND project_registration_hash=?11 "
+                        "AND policy_hash=?12 AND effect_envelope_hash=?13 "
+                        "AND authority_decision_id=?14 AND consumed=0 "
+                        "AND expires_at_unix_millis>?15"
+                    )
+                );
+                UF_TRY(bindText(database, approvalQuery.get(), 1, approval.token));
+                UF_TRY(bindText(
+                    database,
+                    approvalQuery.get(),
+                    2,
+                    call.identity().hex()
+                ));
+                UF_TRY(bindText(
+                    database,
+                    approvalQuery.get(),
+                    3,
+                    root.identity().hex()
+                ));
+                UF_TRY(bindText(
+                    database,
+                    approvalQuery.get(),
+                    4,
+                    controller.sessionId()
+                ));
+                UF_TRY(bindText(
+                    database,
+                    approvalQuery.get(),
+                    5,
+                    controller.controllerId()
+                ));
+                UF_TRY(bindText(
+                    database,
+                    approvalQuery.get(),
+                    6,
+                    controller.controlledTargetId()
+                ));
+                UF_TRY(bindText(database, approvalQuery.get(), 7, lease.leaseId));
+                UF_TRY(bindInteger(
+                    database,
+                    approvalQuery.get(),
+                    8,
+                    lease.revision
+                ));
+                UF_TRY(bindInteger(
+                    database,
+                    approvalQuery.get(),
+                    9,
+                    lease.sessionEpoch
+                ));
+                UF_TRY(bindInteger(
+                    database,
+                    approvalQuery.get(),
+                    10,
+                    lease.fencingToken
+                ));
+                UF_TRY(bindText(
+                    database,
+                    approvalQuery.get(),
+                    11,
+                    projectRegistrationHash
+                ));
+                UF_TRY(bindText(database, approvalQuery.get(), 12, policyHash));
+                UF_TRY(bindText(
+                    database,
+                    approvalQuery.get(),
+                    13,
+                    effectEnvelope->hash.hex()
+                ));
+                UF_TRY(bindText(
+                    database,
+                    approvalQuery.get(),
+                    14,
+                    approval.authorityDecisionId.value()
+                ));
+                UF_TRY(bindInteger(
+                    database,
+                    approvalQuery.get(),
+                    15,
+                    currentUnixMillis
+                ));
+                if (sqlite3_step(approvalQuery.get()) != SQLITE_ROW)
+                {
+                    return fail(
+                        AutomationErrorKind::ActionRejected,
+                        "Tool approval is stale, expired, mismatched, or already consumed"
+                    );
+                }
+                approvedCapabilities.emplace_back(
+                    columnText(approvalQuery.get(), 0)
+                );
+                auto const expiresAt = static_cast<uint64>(
+                    sqlite3_column_int64(approvalQuery.get(), 1)
+                );
+                approvalExpiry = approvalExpiry
+                    ? std::min(*approvalExpiry, expiresAt)
+                    : expiresAt;
+            }
+            std::ranges::sort(approvedCapabilities);
+            if (approvedCapabilities != requiredApprovals)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Tool approvals do not satisfy the policy capability set"
+                );
+            }
+        }
         UF_TRY_VALUE(
             admissionInsert,
             prepare(
@@ -9380,9 +9702,9 @@ namespace uf::operator_runtime
                 "policy_hash, capability_profile_hash, lease_id, lease_revision, "
                 "fencing_token, budget_snapshot, budget_snapshot_hash, "
                 "effect_envelope, effect_envelope_hash, required_approvals, "
-                "approval_token) "
+                "approval_tokens, approval_expires_at_unix_millis) "
                 "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, "
-                "?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)"
+                "?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)"
             )
         );
         UF_TRY(bindText(database, admissionInsert.get(), 1, call.identity().hex()));
@@ -9465,22 +9787,63 @@ namespace uf::operator_runtime
             20,
             effectEnvelopeHash
         ));
-        auto const approvals = effectEnvelope
+        auto const requiredApprovalList = effectEnvelope
             ? std::optional<std::string>{canonicalNameArray(requiredApprovals)}
             : std::nullopt;
         UF_TRY(bindOptionalText(
             database,
             admissionInsert.get(),
             21,
-            approvals
+            requiredApprovalList
         ));
+        auto const approvalTokenList = effectEnvelope
+            ? std::optional<std::string>{canonicalNameArray(approvalTokens)}
+            : std::nullopt;
         UF_TRY(bindOptionalText(
             database,
             admissionInsert.get(),
             22,
-            std::nullopt
+            approvalTokenList
+        ));
+        UF_TRY(bindOptionalInteger(
+            database,
+            admissionInsert.get(),
+            23,
+            approvalExpiry
         ));
         UF_TRY(expectDone(database, admissionInsert.get()));
+
+        for (auto const& approval : approvals)
+        {
+            UF_TRY_VALUE(
+                consumeApproval,
+                prepare(
+                    database,
+                    "UPDATE tool_approvals SET consumed=1, "
+                    "consumed_by_attempt=?2 WHERE token=?1 AND consumed=0"
+                )
+            );
+            UF_TRY(bindText(
+                database,
+                consumeApproval.get(),
+                1,
+                approval.token
+            ));
+            UF_TRY(bindInteger(
+                database,
+                consumeApproval.get(),
+                2,
+                nextAttempt
+            ));
+            UF_TRY(expectDone(database, consumeApproval.get()));
+            if (sqlite3_changes(database) != 1)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Tool approval consumption lost its single-use CAS"
+                );
+            }
+        }
 
         if (budget)
         {
@@ -9569,6 +9932,7 @@ namespace uf::operator_runtime
             call,
             ToolMutability::ReadOnly,
             nullptr,
+            {},
             {}
         );
     }
@@ -9579,7 +9943,8 @@ namespace uf::operator_runtime
         ToolRootRequestIdentity const& root,
         ToolCallPositionIdentity const& call,
         OperatorPlanAuthority const& planAuthority,
-        std::span<ProposedEffect const> effects
+        std::span<ProposedEffect const> effects,
+        std::span<ToolApprovalGrant const> approvals
     ) -> Result<ToolCallAdmission>
     {
         return admitToolCall(
@@ -9589,8 +9954,351 @@ namespace uf::operator_runtime
             call,
             ToolMutability::Mutating,
             &planAuthority,
-            effects
+            effects,
+            approvals
         );
+    }
+
+    auto OperatorCoordinator::issueToolApproval(
+        ControllerBinding const& controller,
+        ControlLease const& lease,
+        ControllerBinding const& approver,
+        ToolRootRequestIdentity const& root,
+        ToolCallPositionIdentity const& call,
+        OperatorPlanAuthority const& planAuthority,
+        std::span<ProposedEffect const> effects,
+        ToolApprovalRequest const& request,
+        AuthorityDecisionId const& authorityDecisionId
+    ) -> Result<ToolApprovalGrant>
+    {
+        if (call.parentIdentity())
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool approval requires a top-level mutation"
+            );
+        }
+        if (call.descriptor().mutability != ToolMutability::Mutating)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool approval requires a mutating descriptor"
+            );
+        }
+        if (
+            controller.sessionId() != lease.sessionId
+            || controller.controllerId() != lease.controllerId
+            || controller.controlledTargetId() != lease.controlledTargetId
+            || controller.sessionEpoch() != lease.sessionEpoch
+            || controller.capabilityProfileHash() != lease.capabilityProfileHash
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool approval binding and lease name different authority"
+            );
+        }
+        if (
+            approver.kind() != ControllerKind::Human
+            || approver.controlledTargetId() != controller.controlledTargetId()
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool approval requires a human binding on the same target"
+            );
+        }
+        UF_TRY(requireName(authorityDecisionId.value(), "authority_decision_id"));
+        UF_TRY(requireName(request.approverCapability, "approver_capability"));
+        UF_TRY_VALUE(currentUnixMillis, unixTimeMilliseconds());
+        if (request.expiresAtUnixMillis <= currentUnixMillis)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "Tool approval expiry must be in the future"
+            );
+        }
+
+        UF_TRY(persistToolRootRequest(root));
+        UF_TRY(persistToolCallPosition(root, call));
+        auto* const database = m_impl->database.get();
+        UF_TRY_VALUE(transaction, Transaction::begin(database));
+        UF_TRY(requireLiveBinding(database, controller));
+        UF_TRY(requireLiveBinding(database, approver));
+        UF_TRY(requireLiveLease(
+            database,
+            lease,
+            "Tool approval control lease was superseded"
+        ));
+        UF_TRY_VALUE(
+            sessionQuery,
+            prepare(
+                database,
+                "SELECT session.idempotency_namespace, "
+                "session.project_registration_hash, "
+                "session.controller_capabilities, policy.policy_hash, "
+                "session.authenticated_controller_id, session.controller_kind, "
+                "session.controlled_target_id, session.capability_profile_hash, "
+                "session.session_epoch, registration.registration_format, "
+                "registration.plugin_identity_kind "
+                "FROM sessions session JOIN session_policies policy "
+                "ON policy.session_id=session.session_id "
+                "JOIN project_registrations registration ON "
+                "registration.registration_hash=session.project_registration_hash "
+                "WHERE session.session_id=?1 AND session.active=1"
+            )
+        );
+        UF_TRY(bindText(database, sessionQuery.get(), 1, controller.sessionId()));
+        if (sqlite3_step(sessionQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool approval requires an active authenticated session"
+            );
+        }
+        UF_TRY(requireExecutableRegistrationFormat(sessionQuery.get(), 9));
+        UF_TRY_VALUE(
+            storedKind,
+            parseControllerKind(columnText(sessionQuery.get(), 5))
+        );
+        if (
+            columnText(sessionQuery.get(), 4) != controller.controllerId()
+            || columnText(sessionQuery.get(), 6)
+                != controller.controlledTargetId()
+            || columnText(sessionQuery.get(), 7)
+                != controller.capabilityProfileHash().hex()
+            || static_cast<uint64>(sqlite3_column_int64(sessionQuery.get(), 8))
+                != controller.sessionEpoch()
+            || storedKind != controller.kind()
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool approval session no longer matches its controller binding"
+            );
+        }
+        if (root.callerNamespace().value() != columnText(sessionQuery.get(), 0))
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool approval root namespace differs from the active session"
+            );
+        }
+        auto const projectRegistrationHash = columnText(sessionQuery.get(), 1);
+        auto const policyHash               = columnText(sessionQuery.get(), 3);
+        if (
+            planAuthority.projectRegistrationHash().hex()
+                    != projectRegistrationHash
+            || planAuthority.policyHash().hex() != policyHash
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool approval authority differs from the active session"
+            );
+        }
+        if (auto const* projectProvider = std::get_if<ProjectToolProvider>(
+                &call.provider()
+            );
+            projectProvider != nullptr
+            && projectProvider->projectRegistrationHash.hex()
+                != projectRegistrationHash)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool approval call belongs to another ProjectRegistration"
+            );
+        }
+        if (!toolSurfaceAllowed(controller.profile(), call.descriptor().surface))
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Controller profile does not admit this Tool approval surface"
+            );
+        }
+        UF_TRY_VALUE(
+            heldCapabilities,
+            readNameArray(columnText(sessionQuery.get(), 2))
+        );
+        if (auto const missing = missingRequiredToolCapability(
+                heldCapabilities,
+                call.descriptor().requiredCapabilities
+            ))
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Controller does not hold required capability '" + *missing
+                    + "' for tool " + call.toolName()
+            );
+        }
+        UF_TRY_VALUE(
+            evaluated,
+            evaluateToolMutation(
+                planAuthority.m_policy,
+                call.descriptor(),
+                call.toolName(),
+                effects,
+                heldCapabilities
+            )
+        );
+        if (
+            !std::ranges::contains(
+                evaluated.requiredApprovals,
+                request.approverCapability
+            )
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool policy does not require approver capability "
+                    + request.approverCapability
+            );
+        }
+        UF_TRY_VALUE(
+            approverQuery,
+            prepare(
+                database,
+                "SELECT session.controller_capabilities, "
+                "session.project_registration_hash, session.controlled_target_id, "
+                "policy.policy_hash FROM sessions session "
+                "JOIN session_policies policy ON policy.session_id=session.session_id "
+                "WHERE session.session_id=?1 AND session.active=1"
+            )
+        );
+        UF_TRY(bindText(database, approverQuery.get(), 1, approver.sessionId()));
+        if (sqlite3_step(approverQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool approver session is no longer active"
+            );
+        }
+        if (
+            columnText(approverQuery.get(), 1) != projectRegistrationHash
+            || columnText(approverQuery.get(), 2)
+                != controller.controlledTargetId()
+            || columnText(approverQuery.get(), 3) != policyHash
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool approver is bound to another target, Project, or policy"
+            );
+        }
+        UF_TRY_VALUE(
+            approverCapabilities,
+            readNameArray(columnText(approverQuery.get(), 0))
+        );
+        if (!std::ranges::contains(
+                approverCapabilities,
+                request.approverCapability
+            ))
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Authenticated Tool approver does not hold capability "
+                    + request.approverCapability
+            );
+        }
+
+        UF_TRY_VALUE(
+            historyQuery,
+            prepare(
+                database,
+                "SELECT state, mutating FROM tool_call_history "
+                "WHERE call_identity=?1"
+            )
+        );
+        UF_TRY(bindText(database, historyQuery.get(), 1, call.identity().hex()));
+        if (
+            sqlite3_step(historyQuery.get()) != SQLITE_ROW
+            || sqlite3_column_int(historyQuery.get(), 1) == 0
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool approval found no durable mutating call"
+            );
+        }
+        UF_TRY_VALUE(
+            state,
+            parseToolCallState(columnText(historyQuery.get(), 0))
+        );
+        if (state != ToolCallState::Proposed && state != ToolCallState::Admitted)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool approval call has already crossed dispatch"
+            );
+        }
+
+        UF_TRY_VALUE(token, randomToken(database));
+        UF_TRY_VALUE(
+            insert,
+            prepare(
+                database,
+                "INSERT INTO tool_approvals(token, call_identity, root_identity, "
+                "session_id, controller_id, controlled_target_id, lease_id, "
+                "lease_revision, session_epoch, fencing_token, "
+                "project_registration_hash, policy_hash, effect_envelope_hash, "
+                "approver_principal, approver_capability, authority_decision_id, "
+                "expires_at_unix_millis) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, "
+                "?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)"
+            )
+        );
+        UF_TRY(bindText(database, insert.get(), 1, token));
+        UF_TRY(bindText(database, insert.get(), 2, call.identity().hex()));
+        UF_TRY(bindText(database, insert.get(), 3, root.identity().hex()));
+        UF_TRY(bindText(database, insert.get(), 4, controller.sessionId()));
+        UF_TRY(bindText(database, insert.get(), 5, controller.controllerId()));
+        UF_TRY(bindText(
+            database,
+            insert.get(),
+            6,
+            controller.controlledTargetId()
+        ));
+        UF_TRY(bindText(database, insert.get(), 7, lease.leaseId));
+        UF_TRY(bindInteger(database, insert.get(), 8, lease.revision));
+        UF_TRY(bindInteger(database, insert.get(), 9, lease.sessionEpoch));
+        UF_TRY(bindInteger(database, insert.get(), 10, lease.fencingToken));
+        UF_TRY(bindText(database, insert.get(), 11, projectRegistrationHash));
+        UF_TRY(bindText(database, insert.get(), 12, policyHash));
+        UF_TRY(bindText(
+            database,
+            insert.get(),
+            13,
+            evaluated.envelope.hash.hex()
+        ));
+        UF_TRY(bindText(
+            database,
+            insert.get(),
+            14,
+            approver.controllerId()
+        ));
+        UF_TRY(bindText(
+            database,
+            insert.get(),
+            15,
+            request.approverCapability
+        ));
+        UF_TRY(bindText(
+            database,
+            insert.get(),
+            16,
+            authorityDecisionId.value()
+        ));
+        UF_TRY(bindInteger(
+            database,
+            insert.get(),
+            17,
+            request.expiresAtUnixMillis
+        ));
+        UF_TRY(expectDone(database, insert.get()));
+        UF_TRY(transaction.commit());
+        return ToolApprovalGrant{
+            .token               = std::move(token),
+            .authorityDecisionId = authorityDecisionId,
+        };
     }
 
     auto OperatorCoordinator::beginToolCallDispatch(
@@ -9606,7 +10314,8 @@ namespace uf::operator_runtime
                 "SELECT attempt.session_id, attempt.session_epoch, "
                 "attempt.controlled_target_id, attempt.execution_principal_id, "
                 "attempt.execution_principal_kind, attempt.capability_profile_hash, "
-                "attempt.lease_id, attempt.lease_revision, attempt.fencing_token "
+                "attempt.lease_id, attempt.lease_revision, attempt.fencing_token, "
+                "attempt.approval_expires_at_unix_millis "
                 "FROM tool_admission_attempts attempt "
                 "JOIN sessions session ON session.session_id=attempt.session_id "
                 "JOIN session_policies policy ON policy.session_id=attempt.session_id "
@@ -9648,6 +10357,23 @@ namespace uf::operator_runtime
                 AutomationErrorKind::ActionRejected,
                 "Tool dispatch admission authority is no longer live"
             );
+        }
+        if (sqlite3_column_type(authorityQuery.get(), 9) != SQLITE_NULL)
+        {
+            UF_TRY_VALUE(currentUnixMillis, unixTimeMilliseconds());
+            if (
+                currentUnixMillis
+                >= static_cast<uint64>(sqlite3_column_int64(
+                    authorityQuery.get(),
+                    9
+                ))
+            )
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Tool dispatch approval expired after admission"
+                );
+            }
         }
         UF_TRY_VALUE(
             kind,

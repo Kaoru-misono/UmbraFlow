@@ -25,6 +25,7 @@
 #include <format>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -269,6 +270,7 @@ namespace uf::operator_runtime
             test_support::OperatorDatabaseProbe& database
         ) -> void
         {
+            database.execute("DROP TABLE IF EXISTS tool_approvals");
             database.execute("DROP TABLE IF EXISTS tool_admission_attempts");
             database.execute("DROP TABLE IF EXISTS tool_runs");
             database.execute("DROP TABLE IF EXISTS tool_call_history");
@@ -280,6 +282,7 @@ namespace uf::operator_runtime
         {
             database.execute(
                 "PRAGMA foreign_keys=OFF;"
+                "DROP TABLE IF EXISTS tool_approvals;"
                 "ALTER TABLE tool_admission_attempts RENAME TO "
                 "new_tool_admission_attempts;"
                 "CREATE TABLE tool_admission_attempts("
@@ -325,6 +328,75 @@ namespace uf::operator_runtime
                 "capability_profile_hash, lease_id, lease_revision, fencing_token, "
                 "budget_snapshot, budget_snapshot_hash FROM "
                 "new_tool_admission_attempts;"
+                "DROP TABLE new_tool_admission_attempts;"
+                "PRAGMA foreign_keys=ON;"
+            );
+        }
+
+        auto restorePriorToolApprovalSchema(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void
+        {
+            database.execute(
+                "PRAGMA foreign_keys=OFF;"
+                "DROP TABLE tool_approvals;"
+                "ALTER TABLE tool_admission_attempts RENAME TO "
+                "new_tool_admission_attempts;"
+                "CREATE TABLE tool_admission_attempts("
+                "call_identity TEXT NOT NULL REFERENCES tool_call_history(call_identity),"
+                "attempt_number INTEGER NOT NULL CHECK(attempt_number > 0),"
+                "root_identity TEXT NOT NULL REFERENCES tool_runs(root_identity),"
+                "origin_principal_id TEXT NOT NULL,"
+                "origin_principal_kind TEXT NOT NULL CHECK(origin_principal_kind IN "
+                "('script','agent','human')),"
+                "execution_principal_id TEXT NOT NULL,"
+                "execution_principal_kind TEXT NOT NULL CHECK(execution_principal_kind IN "
+                "('script','agent','human')),"
+                "session_id TEXT NOT NULL,"
+                "session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),"
+                "controlled_target_id TEXT NOT NULL,"
+                "project_registration_hash TEXT NOT NULL CHECK("
+                "length(project_registration_hash)=64 AND "
+                "project_registration_hash NOT GLOB '*[^0-9a-f]*'),"
+                "policy_hash TEXT NOT NULL CHECK(length(policy_hash)=64 AND "
+                "policy_hash NOT GLOB '*[^0-9a-f]*'),"
+                "capability_profile_hash TEXT NOT NULL CHECK("
+                "length(capability_profile_hash)=64 AND "
+                "capability_profile_hash NOT GLOB '*[^0-9a-f]*'),"
+                "lease_id TEXT NOT NULL,"
+                "lease_revision INTEGER NOT NULL CHECK(lease_revision > 0),"
+                "fencing_token INTEGER NOT NULL CHECK(fencing_token > 0),"
+                "budget_snapshot TEXT NOT NULL,"
+                "budget_snapshot_hash TEXT NOT NULL CHECK("
+                "length(budget_snapshot_hash)=64 AND "
+                "budget_snapshot_hash NOT GLOB '*[^0-9a-f]*'),"
+                "effect_envelope TEXT,"
+                "effect_envelope_hash TEXT,"
+                "required_approvals TEXT,"
+                "approval_token TEXT,"
+                "CHECK((effect_envelope IS NULL AND effect_envelope_hash IS NULL "
+                "AND required_approvals IS NULL AND approval_token IS NULL) OR "
+                "(effect_envelope IS NOT NULL AND effect_envelope_hash IS NOT NULL "
+                "AND length(effect_envelope_hash)=64 "
+                "AND effect_envelope_hash NOT GLOB '*[^0-9a-f]*' "
+                "AND required_approvals IS NOT NULL)),"
+                "PRIMARY KEY(call_identity, attempt_number)"
+                ") STRICT;"
+                "INSERT INTO tool_admission_attempts(call_identity, attempt_number, "
+                "root_identity, origin_principal_id, origin_principal_kind, "
+                "execution_principal_id, execution_principal_kind, session_id, "
+                "session_epoch, controlled_target_id, project_registration_hash, "
+                "policy_hash, capability_profile_hash, lease_id, lease_revision, "
+                "fencing_token, budget_snapshot, budget_snapshot_hash, "
+                "effect_envelope, effect_envelope_hash, required_approvals, "
+                "approval_token) SELECT call_identity, attempt_number, "
+                "root_identity, origin_principal_id, origin_principal_kind, "
+                "execution_principal_id, execution_principal_kind, session_id, "
+                "session_epoch, controlled_target_id, project_registration_hash, "
+                "policy_hash, capability_profile_hash, lease_id, lease_revision, "
+                "fencing_token, budget_snapshot, budget_snapshot_hash, "
+                "effect_envelope, effect_envelope_hash, required_approvals, NULL "
+                "FROM new_tool_admission_attempts;"
                 "DROP TABLE new_tool_admission_attempts;"
                 "PRAGMA foreign_keys=ON;"
             );
@@ -3803,7 +3875,7 @@ namespace uf::operator_runtime
         auto const targetIdentity = exactSchemaIdentity(target);
         CHECK(
             targetIdentity
-            == "sha256:14fbb87b8e84ce4c9f977d423a1b6e981e0425e06ef17f9a7822e6d32a8e87a4"
+            == "sha256:53c56cce2064c47a07bd29529320aac7e7f8f4e8c01a74dc54da936159dd44f8"
         );
         CHECK(
             target.readRows(
@@ -4201,7 +4273,8 @@ namespace uf::operator_runtime
             *root,
             *call,
             prepared.planAuthority,
-            effects
+            effects,
+            {}
         );
         REQUIRE(admission.has_value());
         auto dispatch = prepared.store.beginToolCallDispatch(*admission);
@@ -4256,7 +4329,8 @@ namespace uf::operator_runtime
             *secondRoot,
             *secondCall,
             prepared.planAuthority,
-            effects
+            effects,
+            {}
         );
         REQUIRE_FALSE(blocked.has_value());
         CHECK(blocked.error().message().contains("state possible"));
@@ -4283,7 +4357,8 @@ namespace uf::operator_runtime
             *secondRoot,
             *secondCall,
             prepared.planAuthority,
-            effects
+            effects,
+            {}
         );
         REQUIRE(unblocked.has_value());
     }
@@ -4504,7 +4579,8 @@ namespace uf::operator_runtime
             *firstRoot,
             *firstCall,
             prepared.planAuthority,
-            effects
+            effects,
+            {}
         );
         REQUIRE(admitted.has_value());
         auto afterFirst = prepared.store.remainingBudget(agent);
@@ -4519,7 +4595,8 @@ namespace uf::operator_runtime
             *firstRoot,
             *firstCall,
             prepared.planAuthority,
-            effects
+            effects,
+            {}
         );
         REQUIRE(repeated.has_value());
         CHECK(repeated->attemptNumber() == admitted->attemptNumber());
@@ -4573,7 +4650,8 @@ namespace uf::operator_runtime
             *secondRoot,
             *secondCall,
             prepared.planAuthority,
-            effects
+            effects,
+            {}
         );
         REQUIRE_FALSE(exhausted.has_value());
         CHECK(exhausted.error().message().contains(
@@ -4626,7 +4704,8 @@ namespace uf::operator_runtime
             *root,
             *call,
             prepared.planAuthority,
-            effects
+            effects,
+            {}
         );
         REQUIRE(admitted.has_value());
 
@@ -4638,7 +4717,8 @@ namespace uf::operator_runtime
             *root,
             *call,
             prepared.planAuthority,
-            changedEffects
+            changedEffects,
+            {}
         );
         REQUIRE_FALSE(changed.has_value());
         CHECK(changed.error().message().contains("durable effect authority"));
@@ -4650,7 +4730,7 @@ namespace uf::operator_runtime
         CHECK(
             database.readRows(
                 "SELECT effect_envelope, effect_envelope_hash, "
-                "required_approvals, coalesce(approval_token, '') FROM "
+                "required_approvals, approval_tokens FROM "
                 "tool_admission_attempts WHERE call_identity='"
                 + call->identity().hex() + "'"
             ) == std::vector<std::vector<std::string>>{
@@ -4658,7 +4738,7 @@ namespace uf::operator_runtime
                     expected->canonicalJcs,
                     expected->hash.hex(),
                     "[]",
-                    "",
+                    "[]",
                 },
             }
         );
@@ -4667,7 +4747,7 @@ namespace uf::operator_runtime
     TEST_CASE("mutating Tool admission stops at the policy approval boundary")
     {
         auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
+        auto prepared  = test_support::prepareStore(temporary.path());
         auto preimage  = CanonicalJson::parseExact(R"({"objective":"high-risk"})");
         REQUIRE(preimage.has_value());
         auto root = ToolRootRequestIdentity::create(
@@ -4693,19 +4773,244 @@ namespace uf::operator_runtime
         auto effect  = test_support::routineToolEffect(prepared.project);
         effect.risk  = Risk::High;
         auto effects = std::array{effect};
+        auto approver = test_support::addController(
+            prepared,
+            ControllerKind::Human,
+            SessionMode::Read,
+            "high-risk-approver-session",
+            "high-risk-approver-instance",
+            prepared.controller.controlledTargetId(),
+            std::nullopt,
+            "human-approver",
+            {"approve"}
+        );
         auto refused = prepared.store.admitMutatingToolCall(
             prepared.controller,
             prepared.lease,
             *root,
             *call,
             prepared.planAuthority,
-            effects
+            effects,
+            {}
         );
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().message().contains("requires approval"));
         auto replay = prepared.store.replayToolCall(*root, *call);
         REQUIRE(replay.has_value());
         CHECK(replay->state == ToolCallState::Proposed);
+
+        auto selfApproved = prepared.store.issueToolApproval(
+            prepared.controller,
+            prepared.lease,
+            prepared.controller,
+            *root,
+            *call,
+            prepared.planAuthority,
+            effects,
+            ToolApprovalRequest{
+                .approverCapability = "approve",
+                .expiresAtUnixMillis = static_cast<uint64>(
+                    std::numeric_limits<int64>::max()
+                ),
+            },
+            AuthorityDecisionId{"self-approval-decision"}
+        );
+        REQUIRE_FALSE(selfApproved.has_value());
+        CHECK(selfApproved.error().message().contains("human binding"));
+
+        auto unprivilegedApprover = test_support::addController(
+            prepared,
+            ControllerKind::Human,
+            SessionMode::Read,
+            "unprivileged-approver-session",
+            "unprivileged-approver-instance",
+            prepared.controller.controlledTargetId(),
+            std::nullopt,
+            "unprivileged-approver",
+            {"operate"}
+        );
+        auto inventedCapability = prepared.store.issueToolApproval(
+            prepared.controller,
+            prepared.lease,
+            unprivilegedApprover,
+            *root,
+            *call,
+            prepared.planAuthority,
+            effects,
+            ToolApprovalRequest{
+                .approverCapability = "approve",
+                .expiresAtUnixMillis = static_cast<uint64>(
+                    std::numeric_limits<int64>::max()
+                ),
+            },
+            AuthorityDecisionId{"invented-capability-decision"}
+        );
+        REQUIRE_FALSE(inventedCapability.has_value());
+        CHECK(inventedCapability.error().message().contains(
+            "does not hold capability"
+        ));
+
+        auto wrongCapability = prepared.store.issueToolApproval(
+            prepared.controller,
+            prepared.lease,
+            approver,
+            *root,
+            *call,
+            prepared.planAuthority,
+            effects,
+            ToolApprovalRequest{
+                .approverCapability = "not-an-approver",
+                .expiresAtUnixMillis = static_cast<uint64>(
+                    std::numeric_limits<int64>::max()
+                ),
+            },
+            AuthorityDecisionId{"wrong-capability-decision"}
+        );
+        REQUIRE_FALSE(wrongCapability.has_value());
+        CHECK_MESSAGE(
+            wrongCapability.error().message().contains(
+                "does not require approver capability"
+            ),
+            wrongCapability.error().message()
+        );
+
+        auto approval = prepared.store.issueToolApproval(
+            prepared.controller,
+            prepared.lease,
+            approver,
+            *root,
+            *call,
+            prepared.planAuthority,
+            effects,
+            ToolApprovalRequest{
+                .approverCapability = "approve",
+                .expiresAtUnixMillis = static_cast<uint64>(
+                    std::numeric_limits<int64>::max()
+                ),
+            },
+            AuthorityDecisionId{"high-risk-decision"}
+        );
+        auto const approvalWhy = approval.has_value()
+            ? std::string{}
+            : approval.error().message();
+        REQUIRE_MESSAGE(approval.has_value(), approvalWhy);
+        auto forged = std::array{
+            ToolApprovalGrant{
+                .token = approval->token,
+                .authorityDecisionId = AuthorityDecisionId{"another-decision"},
+            },
+        };
+        auto mismatched = prepared.store.admitMutatingToolCall(
+            prepared.controller,
+            prepared.lease,
+            *root,
+            *call,
+            prepared.planAuthority,
+            effects,
+            forged
+        );
+        REQUIRE_FALSE(mismatched.has_value());
+        CHECK(mismatched.error().message().contains(
+            "stale, expired, mismatched, or already consumed"
+        ));
+
+        auto approvals = std::array{*approval};
+        auto admitted = prepared.store.admitMutatingToolCall(
+            prepared.controller,
+            prepared.lease,
+            *root,
+            *call,
+            prepared.planAuthority,
+            effects,
+            approvals
+        );
+        REQUIRE(admitted.has_value());
+        auto repeated = prepared.store.admitMutatingToolCall(
+            prepared.controller,
+            prepared.lease,
+            *root,
+            *call,
+            prepared.planAuthority,
+            effects,
+            approvals
+        );
+        REQUIRE(repeated.has_value());
+        CHECK(repeated->attemptNumber() == admitted->attemptNumber());
+
+        auto dispatch = prepared.store.beginToolCallDispatch(*admitted);
+        REQUIRE(dispatch.has_value());
+        auto delivered = CanonicalJson::parseExact(R"({"delivered":true})");
+        REQUIRE(delivered.has_value());
+        REQUIRE(prepared.store.completeToolCallDispatch(
+            *dispatch,
+            ToolCallCompletion::confirmed(*delivered)
+        ).has_value());
+        auto secondPreimage = CanonicalJson::parseExact(
+            R"({"objective":"high-risk-second-call"})"
+        );
+        REQUIRE(secondPreimage.has_value());
+        auto secondRoot = ToolRootRequestIdentity::create(
+            "controller-1",
+            "high-risk-second-call",
+            std::move(*secondPreimage)
+        );
+        REQUIRE(secondRoot.has_value());
+        auto secondCall = ToolCallPositionIdentity::create(
+            *secondRoot,
+            std::nullopt,
+            1U,
+            call->executionIdentity(),
+            invocation
+        );
+        REQUIRE(secondCall.has_value());
+        auto reused = prepared.store.admitMutatingToolCall(
+            prepared.controller,
+            prepared.lease,
+            *secondRoot,
+            *secondCall,
+            prepared.planAuthority,
+            effects,
+            approvals
+        );
+        REQUIRE_FALSE(reused.has_value());
+        CHECK(reused.error().message().contains(
+            "stale, expired, mismatched, or already consumed"
+        ));
+
+        auto leaseBoundApproval = prepared.store.issueToolApproval(
+            prepared.controller,
+            prepared.lease,
+            approver,
+            *secondRoot,
+            *secondCall,
+            prepared.planAuthority,
+            effects,
+            ToolApprovalRequest{
+                .approverCapability = "approve",
+                .expiresAtUnixMillis = static_cast<uint64>(
+                    std::numeric_limits<int64>::max()
+                ),
+            },
+            AuthorityDecisionId{"lease-bound-decision"}
+        );
+        REQUIRE(leaseBoundApproval.has_value());
+        REQUIRE(prepared.store.releaseLease(prepared.lease).has_value());
+        auto replacementLease = prepared.store.acquireLease(prepared.controller);
+        REQUIRE(replacementLease.has_value());
+        auto leaseBoundApprovals = std::array{*leaseBoundApproval};
+        auto staleLeaseApproval = prepared.store.admitMutatingToolCall(
+            prepared.controller,
+            *replacementLease,
+            *secondRoot,
+            *secondCall,
+            prepared.planAuthority,
+            effects,
+            leaseBoundApprovals
+        );
+        REQUIRE_FALSE(staleLeaseApproval.has_value());
+        CHECK(staleLeaseApproval.error().message().contains(
+            "stale, expired, mismatched, or already consumed"
+        ));
     }
 
     TEST_CASE("the immediate-prior Tool admission schema migrates attempts exactly")
@@ -4782,7 +5087,7 @@ namespace uf::operator_runtime
         auto target = test_support::OperatorDatabaseProbe{databasePath};
         CHECK(
             exactSchemaIdentity(target)
-            == "sha256:14fbb87b8e84ce4c9f977d423a1b6e981e0425e06ef17f9a7822e6d32a8e87a4"
+            == "sha256:53c56cce2064c47a07bd29529320aac7e7f8f4e8c01a74dc54da936159dd44f8"
         );
         CHECK(
             target.readRows(
@@ -4794,7 +5099,7 @@ namespace uf::operator_runtime
             target.readRows(
                 "SELECT count(*) FROM tool_admission_attempts WHERE "
                 "effect_envelope IS NOT NULL OR effect_envelope_hash IS NOT NULL "
-                "OR required_approvals IS NOT NULL OR approval_token IS NOT NULL"
+                "OR required_approvals IS NOT NULL OR approval_tokens IS NOT NULL"
             ) == std::vector<std::vector<std::string>>{{"0"}}
         );
         CHECK(
@@ -4805,9 +5110,190 @@ namespace uf::operator_runtime
             ) == std::vector<std::vector<std::string>>{
                 {
                     sourceIdentity,
-                    "sha256:14fbb87b8e84ce4c9f977d423a1b6e981e0425e06ef17f9a7822e6d32a8e87a4",
+                    "sha256:53c56cce2064c47a07bd29529320aac7e7f8f4e8c01a74dc54da936159dd44f8",
                 },
             }
+        );
+    }
+
+    TEST_CASE("Tool approval must remain live until the dispatch boundary")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+        auto preimage  = CanonicalJson::parseExact(R"({"objective":"expiry"})");
+        REQUIRE(preimage.has_value());
+        auto root = ToolRootRequestIdentity::create(
+            "controller-1",
+            "approval-expiry",
+            std::move(*preimage)
+        );
+        REQUIRE(root.has_value());
+        auto invocation = toolInvocation(prepared.project, "command-1");
+        auto call = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            1U,
+            ToolExecutionIdentity{
+                .runIdentity                 = hashOf("approval-expiry-run"),
+                .frameworkReleaseIdentity    = hashOf("approval-expiry-framework"),
+                .toolRuntimeProtocolIdentity = hashOf("approval-expiry-protocol"),
+                .environmentIdentity         = hashOf("approval-expiry-environment"),
+            },
+            invocation
+        );
+        REQUIRE(call.has_value());
+        auto effect  = test_support::routineToolEffect(prepared.project);
+        effect.risk  = Risk::High;
+        auto effects = std::array{effect};
+        auto approver = test_support::addController(
+            prepared,
+            ControllerKind::Human,
+            SessionMode::Read,
+            "expiry-approver-session",
+            "expiry-approver-instance",
+            prepared.controller.controlledTargetId(),
+            std::nullopt,
+            "expiry-approver",
+            {"approve"}
+        );
+        auto const now = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()
+        ).count();
+        REQUIRE(now > 0);
+        auto const expiresAt = static_cast<uint64>(now) + 1'000U;
+        auto approval = prepared.store.issueToolApproval(
+            prepared.controller,
+            prepared.lease,
+            approver,
+            *root,
+            *call,
+            prepared.planAuthority,
+            effects,
+            ToolApprovalRequest{
+                .approverCapability  = "approve",
+                .expiresAtUnixMillis = expiresAt,
+            },
+            AuthorityDecisionId{"expiry-decision"}
+        );
+        REQUIRE(approval.has_value());
+        auto approvals = std::array{*approval};
+        auto admitted = prepared.store.admitMutatingToolCall(
+            prepared.controller,
+            prepared.lease,
+            *root,
+            *call,
+            prepared.planAuthority,
+            effects,
+            approvals
+        );
+        REQUIRE(admitted.has_value());
+
+        std::this_thread::sleep_until(std::chrono::system_clock::time_point{
+            std::chrono::milliseconds{static_cast<int64>(expiresAt + 100U)},
+        });
+        auto expired = prepared.store.beginToolCallDispatch(*admitted);
+        REQUIRE_FALSE(expired.has_value());
+        CHECK(expired.error().message().contains(
+            "approval expired after admission"
+        ));
+    }
+
+    TEST_CASE("the immediate-prior Tool approval schema migrates effect authority")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        {
+            auto prepared = prepareStore(temporary.path());
+            auto preimage = CanonicalJson::parseExact(
+                R"({"objective":"approval-schema-migration"})"
+            );
+            REQUIRE(preimage.has_value());
+            auto root = ToolRootRequestIdentity::create(
+                "controller-1",
+                "approval-schema-migration",
+                std::move(*preimage)
+            );
+            REQUIRE(root.has_value());
+            auto invocation = toolInvocation(prepared.project, "command-1");
+            auto call = ToolCallPositionIdentity::create(
+                *root,
+                std::nullopt,
+                1U,
+                ToolExecutionIdentity{
+                    .runIdentity = hashOf("approval-migration-run"),
+                    .frameworkReleaseIdentity =
+                        hashOf("approval-migration-framework"),
+                    .toolRuntimeProtocolIdentity =
+                        hashOf("approval-migration-protocol"),
+                    .environmentIdentity =
+                        hashOf("approval-migration-environment"),
+                },
+                invocation
+            );
+            REQUIRE(call.has_value());
+            auto effects = std::array{
+                test_support::routineToolEffect(prepared.project),
+            };
+            auto admitted = prepared.store.admitMutatingToolCall(
+                prepared.controller,
+                prepared.lease,
+                *root,
+                *call,
+                prepared.planAuthority,
+                effects,
+                {}
+            );
+            REQUIRE(admitted.has_value());
+        }
+
+        auto authorityRows  = std::vector<std::vector<std::string>>{};
+        auto sourceIdentity = std::string{};
+        {
+            auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            authorityRows = prior.readRows(
+                "SELECT call_identity, attempt_number, effect_envelope, "
+                "effect_envelope_hash, required_approvals FROM "
+                "tool_admission_attempts"
+            );
+            restorePriorToolApprovalSchema(prior);
+            sourceIdentity = exactSchemaIdentity(prior);
+        }
+        CHECK(
+            sourceIdentity
+            == "sha256:14fbb87b8e84ce4c9f977d423a1b6e981e0425e06ef17f9a7822e6d32a8e87a4"
+        );
+
+        {
+            auto migrated = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(migrated.has_value(), migrated.error().message());
+        }
+        auto target = test_support::OperatorDatabaseProbe{databasePath};
+        auto migratedAuthorityRows = target.readRows(
+            "SELECT call_identity, attempt_number, effect_envelope, "
+            "effect_envelope_hash, required_approvals, approval_tokens FROM "
+            "tool_admission_attempts"
+        );
+        REQUIRE(migratedAuthorityRows.size() == authorityRows.size());
+        for (auto index = std::size_t{}; index < authorityRows.size(); ++index)
+        {
+            REQUIRE(migratedAuthorityRows[index].size() == 6U);
+            CHECK(std::vector<std::string>{
+                migratedAuthorityRows[index].begin(),
+                migratedAuthorityRows[index].begin() + 5,
+            } == authorityRows[index]);
+            CHECK(migratedAuthorityRows[index][5] == "[]");
+        }
+        CHECK(
+            target.readRows("SELECT count(*) FROM tool_approvals")
+            == std::vector<std::vector<std::string>>{{"0"}}
+        );
+        CHECK(
+            target.readRows(
+                "SELECT source_identity, target_identity FROM "
+                "schema_identity_transitions WHERE source_identity='"
+                + sourceIdentity + "'"
+            ).size() == 1U
         );
     }
 
@@ -4876,7 +5362,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:14fbb87b8e84ce4c9f977d423a1b6e981e0425e06ef17f9a7822e6d32a8e87a4"
+                == "sha256:53c56cce2064c47a07bd29529320aac7e7f8f4e8c01a74dc54da936159dd44f8"
             );
             CHECK(
                 target.readRows(
@@ -4896,7 +5382,7 @@ namespace uf::operator_runtime
                 == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:14fbb87b8e84ce4c9f977d423a1b6e981e0425e06ef17f9a7822e6d32a8e87a4",
+                        "sha256:53c56cce2064c47a07bd29529320aac7e7f8f4e8c01a74dc54da936159dd44f8",
                     },
                 }
             );

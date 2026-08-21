@@ -8,6 +8,7 @@
 #include <doctest/doctest.h>
 
 #include <array>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -264,6 +265,7 @@ namespace uf::operator_runtime
             firstCall,
             prepared.planAuthority,
             effects,
+            {},
             [&providerCalls](ToolCallPositionIdentity const&)
                 -> Result<ToolCallCompletion>
             {
@@ -297,6 +299,7 @@ namespace uf::operator_runtime
             secondCall,
             prepared.planAuthority,
             effects,
+            {},
             [&blockedProviderCalls](ToolCallPositionIdentity const&)
             {
                 ++blockedProviderCalls;
@@ -375,6 +378,7 @@ namespace uf::operator_runtime
             secondCall,
             prepared.planAuthority,
             effects,
+            {},
             [&blockedProviderCalls](ToolCallPositionIdentity const&)
             {
                 ++blockedProviderCalls;
@@ -386,6 +390,102 @@ namespace uf::operator_runtime
         REQUIRE(unblocked.has_value());
         CHECK(unblocked->state == ToolCallState::Confirmed);
         CHECK(blockedProviderCalls == 1U);
+    }
+
+    TEST_CASE("mutating Tool executor dispatches only after a call-bound approval")
+    {
+        auto temporary = test_support::TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+        auto root      = toolRoot("executor-high-risk-approval");
+        auto call = mutatingProjectCall(
+            root,
+            prepared.project,
+            "executor-high-risk-approval-run"
+        );
+        auto effect        = test_support::routineToolEffect(prepared.project);
+        effect.risk        = Risk::High;
+        auto effects       = std::array{effect};
+        auto executor      = ToolRuntimeExecutor{prepared.store};
+        auto providerCalls = uint64{};
+        auto approver = test_support::addController(
+            prepared,
+            ControllerKind::Human,
+            SessionMode::Read,
+            "executor-approver-session",
+            "executor-approver-instance",
+            prepared.controller.controlledTargetId(),
+            std::nullopt,
+            "executor-approver",
+            {"approve"}
+        );
+        auto provider = [&providerCalls](ToolCallPositionIdentity const&)
+            -> Result<ToolCallCompletion>
+        {
+            ++providerCalls;
+            auto result = CanonicalJson::parseExact(R"({"delivered":true})");
+            REQUIRE(result.has_value());
+            return ToolCallCompletion::confirmed(*result);
+        };
+
+        auto refused = executor.invokeMutating(
+            prepared.controller,
+            prepared.lease,
+            root,
+            call,
+            prepared.planAuthority,
+            effects,
+            {},
+            provider
+        );
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(refused.error().message().contains("requires approval"));
+        CHECK(providerCalls == 0U);
+
+        auto approval = prepared.store.issueToolApproval(
+            prepared.controller,
+            prepared.lease,
+            approver,
+            root,
+            call,
+            prepared.planAuthority,
+            effects,
+            ToolApprovalRequest{
+                .approverCapability = "approve",
+                .expiresAtUnixMillis = static_cast<uint64>(
+                    std::numeric_limits<int64>::max()
+                ),
+            },
+            AuthorityDecisionId{"executor-approval-decision"}
+        );
+        REQUIRE(approval.has_value());
+        auto approvals = std::array{*approval};
+        auto invoked = executor.invokeMutating(
+            prepared.controller,
+            prepared.lease,
+            root,
+            call,
+            prepared.planAuthority,
+            effects,
+            approvals,
+            provider
+        );
+        REQUIRE(invoked.has_value());
+        CHECK(invoked->state == ToolCallState::Confirmed);
+        CHECK(providerCalls == 1U);
+
+        auto replayed = executor.invokeMutating(
+            prepared.controller,
+            prepared.lease,
+            root,
+            call,
+            prepared.planAuthority,
+            effects,
+            {},
+            provider
+        );
+        REQUIRE(replayed.has_value());
+        CHECK(replayed->state == ToolCallState::Confirmed);
+        CHECK(providerCalls == 1U);
     }
 
     TEST_CASE("terminally unresolved mutating Tool keeps the target frozen")
@@ -411,6 +511,7 @@ namespace uf::operator_runtime
             firstCall,
             prepared.planAuthority,
             effects,
+            {},
             [&error](ToolCallPositionIdentity const&)
             {
                 return ToolCallCompletion::terminalFailure(*error);
@@ -456,6 +557,7 @@ namespace uf::operator_runtime
             secondCall,
             prepared.planAuthority,
             effects,
+            {},
             [](ToolCallPositionIdentity const&)
             {
                 auto result = CanonicalJson::parseExact(R"({"delivered":true})");
@@ -504,6 +606,7 @@ namespace uf::operator_runtime
             call,
             prepared.planAuthority,
             effects,
+            {},
             [&providerCalls](ToolCallPositionIdentity const&)
             {
                 ++providerCalls;

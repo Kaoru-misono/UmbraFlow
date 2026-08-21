@@ -49,6 +49,7 @@ namespace uf::operator_runtime
             ToolCallPositionIdentity const& call,
             OperatorPlanAuthority const& planAuthority,
             std::span<ProposedEffect const> effects,
+            std::span<ToolApprovalGrant const> approvals,
             MutatingToolProvider const& provider
         ) -> Result<ToolCallReplay>;
     };

@@ -435,6 +435,18 @@ namespace uf::operator_runtime
         AuthorityDecisionId authorityDecisionId;
     };
 
+    struct ToolApprovalGrant final
+    {
+        std::string         token{};
+        AuthorityDecisionId authorityDecisionId;
+    };
+
+    struct ToolApprovalRequest final
+    {
+        std::string approverCapability{};
+        uint64      expiresAtUnixMillis{};
+    };
+
     // What a human approver states, and nothing else. The plan hash, the step
     // intent, the decision basis and the effect envelope are read from
     // operation_plans and the pending operation_steps row, because an approver
@@ -568,7 +580,8 @@ namespace uf::operator_runtime
             ToolCallPositionIdentity const& call,
             ToolMutability requiredMutability,
             OperatorPlanAuthority const* planAuthority,
-            std::span<ProposedEffect const> effects
+            std::span<ProposedEffect const> effects,
+            std::span<ToolApprovalGrant const> approvals
         ) -> Result<ToolCallAdmission>;
 
         // The transaction-neutral canonical mint: the ten ordered checks
@@ -911,8 +924,25 @@ namespace uf::operator_runtime
             ToolRootRequestIdentity const& root,
             ToolCallPositionIdentity const& call,
             OperatorPlanAuthority const& planAuthority,
-            std::span<ProposedEffect const> effects
+            std::span<ProposedEffect const> effects,
+            std::span<ToolApprovalGrant const> approvals
         ) -> Result<ToolCallAdmission>;
+
+        // Mints one call-bound approval after re-evaluating the active
+        // session's exact effect envelope and PolicyArtifact. The token is
+        // consumed only by a matching admission attempt.
+        [[nodiscard]]
+        auto issueToolApproval(
+            ControllerBinding const& controller,
+            ControlLease const& lease,
+            ControllerBinding const& approver,
+            ToolRootRequestIdentity const& root,
+            ToolCallPositionIdentity const& call,
+            OperatorPlanAuthority const& planAuthority,
+            std::span<ProposedEffect const> effects,
+            ToolApprovalRequest const& request,
+            AuthorityDecisionId const& authorityDecisionId
+        ) -> Result<ToolApprovalGrant>;
 
         // Commits the dispatch boundary before provider code runs.
         [[nodiscard]]
