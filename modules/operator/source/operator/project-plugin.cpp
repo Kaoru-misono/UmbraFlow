@@ -205,6 +205,29 @@ namespace uf::operator_runtime
     {
     }
 
+    auto CanonicalJson::parseExact(std::string exactJcs) -> Result<CanonicalJson>
+    {
+        if (
+            exactJcs.empty()
+            || exactJcs.size() > k_maximumCanonicalBytes
+            || !isValidUtf8(exactJcs)
+        )
+        {
+            return refuse("canonical JSON must be non-empty bounded UTF-8");
+        }
+        UF_TRY_VALUE_CONTEXT(
+            value,
+            json::parse(exactJcs),
+            "parsing canonical JSON"
+        );
+        if (json::canonicalBytes(value) != exactJcs)
+        {
+            return refuse("canonical JSON must be exact RFC 8785 JCS");
+        }
+        UF_TRY_VALUE(contentHash, sha256(std::as_bytes(std::span{exactJcs})));
+        return CanonicalJson{contentHash, std::move(exactJcs), std::move(value)};
+    }
+
     auto CanonicalJson::contentHash() const -> ContentHash
     {
         return m_contentHash;

@@ -15,11 +15,31 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace uf::operator_runtime
 {
     class ProjectToolCatalogSchemaOwner;
+    class FrameworkToolCatalogOwner;
+
+    // No in-class initializers for hashes: ContentHash has no default state.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+    struct FrameworkToolProvider final
+    {
+        ContentHash toolCatalogHash;
+    };
+
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+    struct ProjectToolProvider final
+    {
+        ContentHash projectRegistrationHash;
+        ContentHash toolCatalogHash;
+    };
+
+    using ToolProviderIdentity = std::variant<
+        FrameworkToolProvider,
+        ProjectToolProvider>;
 
     // One tool call the catalog owner recognised, carrying the descriptor the
     // catalog declared for it. Only the owner bound to the exact
@@ -32,21 +52,24 @@ namespace uf::operator_runtime
     class ValidatedToolInvocation final
     {
         friend class ProjectToolCatalogSchemaOwner;
+        friend class FrameworkToolCatalogOwner;
 
-        ContentHash    m_projectRegistrationHash;
-        std::string    m_toolName;
-        CanonicalJson  m_canonicalArgs;
-        ToolDescriptor m_descriptor;
+        ToolProviderIdentity m_provider;
+        std::string          m_toolName;
+        CanonicalJson        m_canonicalArgs;
+        ToolDescriptor       m_descriptor;
 
         ValidatedToolInvocation(
-            ContentHash projectRegistrationHash,
+            ToolProviderIdentity provider,
             std::string toolName,
             CanonicalJson canonicalArgs,
             ToolDescriptor descriptor
         );
 
     public:
-        [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;
+        [[nodiscard]]
+        auto provider() const noexcept UF_LIFETIME_BOUND
+            -> ToolProviderIdentity const&;
 
         [[nodiscard]]
         auto toolName() const noexcept UF_LIFETIME_BOUND -> std::string const&;
@@ -166,6 +189,48 @@ namespace uf::operator_runtime
         //
         // heldCapabilities is a call-scoped borrow of the session's own
         // capability set; nothing here stores it.
+        [[nodiscard]]
+        auto offeredTools(
+            ControllerProfile profile,
+            std::span<std::string const> heldCapabilities
+        ) const -> std::vector<OfferedTool>;
+    };
+
+    // Framework owns this catalog and derives its identity from exact material
+    // rendered from its built-in definitions. Callers can select a name and
+    // canonical arguments, but cannot inject a descriptor, validator, digest,
+    // or namespace entry.
+    class FrameworkToolCatalogOwner final
+    {
+        ContentHash                   m_toolCatalogHash;
+        std::string                   m_canonicalJcs;
+        std::vector<ToolCatalogEntry> m_tools;
+
+        FrameworkToolCatalogOwner(
+            ContentHash toolCatalogHash,
+            std::string canonicalJcs,
+            std::vector<ToolCatalogEntry> tools
+        );
+
+    public:
+        [[nodiscard]]
+        static auto create() -> Result<FrameworkToolCatalogOwner>;
+
+        [[nodiscard]] auto toolCatalogHash() const -> ContentHash;
+
+        [[nodiscard]]
+        auto canonicalJcs() const noexcept UF_LIFETIME_BOUND
+            -> std::string const&;
+
+        [[nodiscard]]
+        auto validate(
+            std::string toolName,
+            CanonicalJson canonicalArgs
+        ) const -> Result<ValidatedToolInvocation>;
+
+        [[nodiscard]]
+        auto describe(std::string_view toolName) const -> Result<ToolDescriptor>;
+
         [[nodiscard]]
         auto offeredTools(
             ControllerProfile profile,

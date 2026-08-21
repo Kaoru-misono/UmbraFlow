@@ -31,6 +31,7 @@
 #include <system_error>
 #include <tuple>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace uf::operator_runtime
@@ -7491,11 +7492,24 @@ namespace uf::operator_runtime
                 "Command authority does not match the authenticated current-epoch session"
             );
         }
+        auto const* const p_projectProvider = std::get_if<ProjectToolProvider>(
+            &invocation.provider()
+        );
+        if (p_projectProvider == nullptr)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "The current Project command path accepts only Project Tools"
+            );
+        }
         // Comparing the registration root also pins the Tool Catalog: the root
         // hashes the canonical registration JCS, and tool_catalog_hash is one of
         // its members, so an invocation minted against another catalog cannot
         // present this root.
-        if (invocation.projectRegistrationHash().hex() != columnText(sessionQuery.get(), 4))
+        if (
+            p_projectProvider->projectRegistrationHash.hex()
+            != columnText(sessionQuery.get(), 4)
+        )
         {
             return fail(
                 AutomationErrorKind::ActionRejected,

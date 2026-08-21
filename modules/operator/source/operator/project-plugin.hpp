@@ -60,6 +60,9 @@ namespace uf::operator_runtime
         );
 
     public:
+        [[nodiscard]]
+        static auto parseExact(std::string exactJcs) -> Result<CanonicalJson>;
+
         [[nodiscard]] auto contentHash() const -> ContentHash;
 
         [[nodiscard]]

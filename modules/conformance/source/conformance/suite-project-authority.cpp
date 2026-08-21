@@ -26,6 +26,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <variant>
 
 namespace uf::operator_runtime::conformance
 {
@@ -70,7 +71,12 @@ namespace uf::operator_runtime::conformance
             words.mutatingTool
         );
         CHECK(mutating.descriptor().mutability == ToolMutability::Mutating);
-        CHECK(mutating.projectRegistrationHash() == underTest.registration.hash());
+        REQUIRE(std::holds_alternative<ProjectToolProvider>(mutating.provider()));
+        CHECK(
+            std::get<ProjectToolProvider>(mutating.provider())
+                    .projectRegistrationHash
+            == underTest.registration.hash()
+        );
         CHECK_FALSE(mutating.descriptor().toolVersion.empty());
 
         // The descriptor decides, so the read-only tool reaches the same
@@ -159,13 +165,19 @@ namespace uf::operator_runtime::conformance
             ProjectRole::Foreign,
             vocabularyFor(project, ProjectRole::Foreign).mutatingTool
         );
-        CHECK(
-            foreignInvocation.projectRegistrationHash()
-            == foreign.registration.hash()
+        REQUIRE(
+            std::holds_alternative<ProjectToolProvider>(
+                foreignInvocation.provider()
+            )
+        );
+        auto const& foreignProvider = std::get<ProjectToolProvider>(
+            foreignInvocation.provider()
         );
         CHECK(
-            foreignInvocation.projectRegistrationHash()
-            != underTest.registration.hash()
+            foreignProvider.projectRegistrationHash == foreign.registration.hash()
+        );
+        CHECK(
+            foreignProvider.projectRegistrationHash != underTest.registration.hash()
         );
 
         auto const foreignEntry = journalEntry(

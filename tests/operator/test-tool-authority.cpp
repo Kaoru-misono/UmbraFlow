@@ -29,6 +29,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace uf::operator_runtime
@@ -465,6 +466,150 @@ namespace uf::operator_runtime
                 "session manifest does not pin"
             ));
         }
+    }
+
+    TEST_CASE("Framework and Project tools share one validated invocation type")
+    {
+        auto frameworkCatalog = FrameworkToolCatalogOwner::create();
+        REQUIRE(frameworkCatalog.has_value());
+
+        auto observeArguments = CanonicalJson::parseExact("{}");
+        REQUIRE(observeArguments.has_value());
+        auto observe = frameworkCatalog->validate(
+            "framework.screen.observe",
+            std::move(*observeArguments)
+        );
+        REQUIRE(observe.has_value());
+        REQUIRE(std::holds_alternative<FrameworkToolProvider>(observe->provider()));
+        CHECK(
+            std::get<FrameworkToolProvider>(observe->provider()).toolCatalogHash
+            == frameworkCatalog->toolCatalogHash()
+        );
+        CHECK(observe->descriptor().mutability == ToolMutability::ReadOnly);
+        CHECK(observe->descriptor().limits.maximumObservations == 1U);
+
+        auto waitArguments = CanonicalJson::parseExact(
+            R"({"duration_ms":500})"
+        );
+        REQUIRE(waitArguments.has_value());
+        auto wait = frameworkCatalog->validate(
+            "framework.workflow.wait",
+            std::move(*waitArguments)
+        );
+        REQUIRE(wait.has_value());
+        CHECK(wait->descriptor().limits.maximumWaits == 1U);
+        CHECK(wait->descriptor().timeout.maximumElapsedMillis == 60'000U);
+
+        auto noCapabilities = std::array<std::string, 0U>{};
+        auto const offered = frameworkCatalog->offeredTools(
+            controllerProfile(ControllerKind::Agent),
+            noCapabilities
+        );
+        REQUIRE(offered.size() == 2U);
+        CHECK(offered[0].name == "framework.screen.observe");
+        CHECK(offered[1].name == "framework.workflow.wait");
+
+        auto catalogMaterial = CanonicalJson::parseExact(
+            frameworkCatalog->canonicalJcs()
+        );
+        REQUIRE(catalogMaterial.has_value());
+        CHECK(
+            catalogMaterial->contentHash()
+            == frameworkCatalog->toolCatalogHash()
+        );
+    }
+
+    TEST_CASE("Framework wait and observe arguments are exact and bounded")
+    {
+        auto frameworkCatalog = FrameworkToolCatalogOwner::create();
+        REQUIRE(frameworkCatalog.has_value());
+
+        struct ArgumentCase final
+        {
+            std::string_view tool{};
+            std::string_view arguments{};
+        };
+        constexpr auto k_refused = std::array{
+            ArgumentCase{"framework.screen.observe", R"({"duration_ms":0})"},
+            ArgumentCase{"framework.workflow.wait", "{}"},
+            ArgumentCase{"framework.workflow.wait", "[]"},
+            ArgumentCase{"framework.workflow.wait", R"({"duration_ms":-1})"},
+            ArgumentCase{"framework.workflow.wait", R"({"duration_ms":60001})"},
+            ArgumentCase{"framework.workflow.wait", R"({"duration_ms":"1"})"},
+            ArgumentCase{
+                "framework.workflow.wait",
+                R"({"duration_ms":1,"extra":true})",
+            },
+        };
+
+        for (auto const& refusedCase : k_refused)
+        {
+            CAPTURE(refusedCase.tool);
+            CAPTURE(refusedCase.arguments);
+            auto arguments = CanonicalJson::parseExact(
+                std::string{refusedCase.arguments}
+            );
+            REQUIRE(arguments.has_value());
+            CHECK_FALSE(
+                frameworkCatalog->validate(
+                    std::string{refusedCase.tool},
+                    std::move(*arguments)
+                ).has_value()
+            );
+        }
+
+        auto projectArguments = CanonicalJson::parseExact("{}");
+        REQUIRE(projectArguments.has_value());
+        CHECK_FALSE(
+            frameworkCatalog->validate(
+                "fixture.command",
+                std::move(*projectArguments)
+            ).has_value()
+        );
+    }
+
+    TEST_CASE("Project Tool Catalog cannot claim the Framework namespace")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto descriptor = prepared.project.toolCatalogSchemaOwner.describe(
+            "command-1"
+        );
+        REQUIRE(descriptor.has_value());
+
+        auto const refused = ProjectToolCatalogSchemaOwner::create(
+            prepared.project.registration,
+            prepared.project.toolCatalogBytes,
+            [descriptor = std::move(*descriptor)]()
+                -> Result<std::vector<ToolCatalogEntry>>
+            {
+                return std::vector<ToolCatalogEntry>{
+                    ToolCatalogEntry{
+                        .name       = "framework.screen.observe",
+                        .descriptor = descriptor,
+                    },
+                };
+            },
+            [](std::string_view, std::string_view) -> Status { return ok(); }
+        );
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(refused.error().message().contains("reserved framework namespace"));
+
+        auto arguments = test_support::canonical(
+            prepared.project.schemaOwner,
+            R"({"value":1})"
+        );
+        auto invocation = prepared.project.toolCatalogSchemaOwner.validate(
+            "command-1",
+            std::move(arguments)
+        );
+        REQUIRE(invocation.has_value());
+        REQUIRE(std::holds_alternative<ProjectToolProvider>(invocation->provider()));
+        auto const& provider = std::get<ProjectToolProvider>(
+            invocation->provider()
+        );
+        CHECK(provider.projectRegistrationHash == prepared.project.registration.hash());
+        CHECK(provider.toolCatalogHash == prepared.project.registration.toolCatalogHash());
     }
 
     TEST_CASE("a plan is bounded by its own tool's descriptor")
