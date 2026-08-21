@@ -7,6 +7,7 @@
 #include <operator/manifest.hpp>
 #include <operator/policy.hpp>
 #include <operator/project-plugin.hpp>
+#include <operator/tool-executor.hpp>
 
 #include <task/platform/confined-file.hpp>
 #include <task/runtime-model-file.hpp>
@@ -19,6 +20,8 @@
 
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
+
+#include <json/value.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -130,6 +133,21 @@ namespace uf::service
                 );
             }
             return *document;
+        }
+
+        [[nodiscard]]
+        auto confirmedToolResult(json::Value value)
+            -> Result<operator_runtime::ToolCallCompletion>
+        {
+            UF_TRY_VALUE(
+                canonical,
+                operator_runtime::CanonicalJson::parseExact(
+                    json::canonicalBytes(value)
+                )
+            );
+            return operator_runtime::ToolCallCompletion::confirmed(
+                std::move(canonical)
+            );
         }
     }
 
@@ -479,6 +497,149 @@ namespace uf::service
             .snapshot = std::move(snapshot),
             .ui       = std::move(observation),
         };
+    }
+
+    auto ProductLifecycle::invokeFrameworkReadOnlyTool(
+        FrameworkReadOnlyToolCall request,
+        task::TaskContext& context
+    ) -> Result<operator_runtime::ToolCallReplay>
+    {
+        UF_TRY_VALUE(
+            rootPreimage,
+            operator_runtime::CanonicalJson::parseExact(
+                std::move(request.exactRootRequestPreimageJcs)
+            )
+        );
+        UF_TRY_VALUE(
+            root,
+            operator_runtime::ToolRootRequestIdentity::create(
+                m_impl->controller.controllerId(),
+                std::move(request.requestKey),
+                std::move(rootPreimage)
+            )
+        );
+        UF_TRY_VALUE(
+            arguments,
+            operator_runtime::CanonicalJson::parseExact(
+                std::move(request.exactArgumentsJcs)
+            )
+        );
+        UF_TRY_VALUE(catalog, operator_runtime::FrameworkToolCatalogOwner::create());
+        UF_TRY_VALUE(
+            invocation,
+            catalog.validate(std::move(request.toolName), std::move(arguments))
+        );
+        UF_TRY_VALUE(
+            call,
+            operator_runtime::ToolCallPositionIdentity::create(
+                root,
+                std::nullopt,
+                request.sequence,
+                request.executionIdentity,
+                invocation
+            )
+        );
+
+        auto executor = operator_runtime::ToolRuntimeExecutor{
+            m_impl->operatorHost.coordinator(),
+        };
+        auto provider = [this, &context](
+                            operator_runtime::ToolCallPositionIdentity const&
+                                admittedCall
+                        ) -> Result<operator_runtime::ToolCallCompletion>
+        {
+            if (admittedCall.toolName() == "framework.screen.observe")
+            {
+                UF_TRY_VALUE(observed, observe(context));
+                UF_TRY_VALUE(
+                    stateResolution,
+                    operator_runtime::CanonicalJson::parseExact(
+                        observed.ui.canonicalJcs()
+                    )
+                );
+                auto const& deployed = m_impl->deployment();
+                return confirmedToolResult(json::Value::ofObject({
+                    {"artifact_root_hash",
+                     json::Value::ofString(
+                         observed.ui.artifactRootHash().hex()
+                     )},
+                    {"controlled_target_id",
+                     json::Value::ofString(
+                         m_impl->controller.controlledTargetId()
+                     )},
+                    {"decision_basis_hash",
+                     json::Value::ofString(
+                         observed.snapshot.decisionBasisHash.hex()
+                     )},
+                    {"host_generation",
+                     json::Value::ofString(std::to_string(
+                         observed.ui.generation().value()
+                     ))},
+                    {"observation_id",
+                     json::Value::ofString(observed.ui.observationId())},
+                    {"project_registration_hash",
+                     json::Value::ofString(deployed.registration.hash().hex())},
+                    {"snapshot_identity_hash",
+                     json::Value::ofString(
+                         observed.snapshot.identityHash.hex()
+                     )},
+                    {"snapshot_ref",
+                     json::Value::ofString(observed.snapshot.token)},
+                    {"state_resolution", stateResolution.value()},
+                    {"state_resolution_hash",
+                     json::Value::ofString(
+                         observed.ui.stateResolutionHash().hex()
+                     )},
+                    {"target_generation",
+                     json::Value::ofString(std::to_string(
+                         observed.ui.targetGeneration().value()
+                     ))},
+                }));
+            }
+
+            if (admittedCall.toolName() == "framework.workflow.wait")
+            {
+                UF_TRY_VALUE(
+                    waitArguments,
+                    operator_runtime::CanonicalJson::parseExact(
+                        admittedCall.canonicalArgs()
+                    )
+                );
+                auto const* const p_duration =
+                    waitArguments.value().find("duration_ms");
+                UF_CHECK(p_duration != nullptr);
+                auto const durationMillis = static_cast<uint64>(
+                    p_duration->number()
+                );
+                context.settle(std::chrono::milliseconds{durationMillis});
+                if (context.cancellationRequested())
+                {
+                    return fail(
+                        AutomationErrorKind::Cancelled,
+                        "framework.workflow.wait was cancelled"
+                    );
+                }
+                return confirmedToolResult(json::Value::ofObject({
+                    {"completed", json::Value::ofBoolean(true)},
+                    {"duration_ms",
+                     json::Value::ofNumber(
+                         static_cast<double>(durationMillis)
+                     )},
+                }));
+            }
+
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "Framework Tool Catalog admitted a Tool with no provider"
+            );
+        };
+        return executor.invokeReadOnly(
+            m_impl->controller,
+            m_impl->controlLease(),
+            root,
+            call,
+            provider
+        );
     }
 
     auto ProductLifecycle::execute(

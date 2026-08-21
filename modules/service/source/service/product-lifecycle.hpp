@@ -78,6 +78,24 @@ namespace uf::service
         task::UiObservationSnapshot      ui;
     };
 
+    // The trusted adapter input for one top-level Framework read-only Tool.
+    // Caller namespace is deliberately absent: ProductLifecycle derives it
+    // from the authenticated controller binding, so an adapter cannot attach a
+    // request key to another principal's durable root. The remaining identity
+    // hashes are fixed before dispatch by the adapter generation that invokes
+    // this internal API; public actor envelopes will derive them rather than
+    // accepting them from untrusted wire input.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+    struct FrameworkReadOnlyToolCall final
+    {
+        std::string                             requestKey{};
+        std::string                             exactRootRequestPreimageJcs{};
+        uint64                                  sequence{};
+        operator_runtime::ToolExecutionIdentity executionIdentity;
+        std::string                             toolName{};
+        std::string                             exactArgumentsJcs{};
+    };
+
     // The production session over an Operator root. The exact published
     // Operator protocol schema has a production reader here: its catalog bytes
     // are pinned into SessionManifest and passed to OperatorPlanAuthority with
@@ -117,6 +135,15 @@ namespace uf::service
         [[nodiscard]]
         auto observe(task::TaskContext& context)
             -> Result<ProductObservation>;
+
+        // Runs a Framework-owned read-only Tool through the same durable Tool
+        // Runtime seam every actor adapter uses. Exact terminal replay returns
+        // without recapturing, waiting, or consulting provider code.
+        [[nodiscard]]
+        auto invokeFrameworkReadOnlyTool(
+            FrameworkReadOnlyToolCall request,
+            task::TaskContext& context
+        ) -> Result<operator_runtime::ToolCallReplay>;
 
         [[nodiscard]]
         auto execute(

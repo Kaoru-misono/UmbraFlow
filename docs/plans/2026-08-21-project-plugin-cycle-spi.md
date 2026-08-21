@@ -38,15 +38,20 @@ unanswered dispatch to durable `possible` and refuses redispatch. An
 `admitted` call whose dispatch never began may append a fresh, non-expanding
 current-epoch attempt. Sibling positions remain ordered, child calls are
 refused until delegation grants land, and Agent admission charges the Tool-call
-budget exactly once. This checkpoint exposes no provider adapter yet and
-explicitly refuses mutating admission. Mutating authority/freeze,
+budget exactly once. That persistence checkpoint deliberately exposed no
+provider adapter and explicitly refuses mutating admission. Mutating authority/freeze,
 reconciliation, nested delegation, execution adapters, and public contract
 publication remain to be implemented.
 
 The first caller-neutral executor now owns terminal fast-path replay, live
 read-only admission, durable dispatch, exactly one provider call, conversion of
 provider errors into canonical terminal failures, and final outcome replay.
-No production Framework or Project provider is attached to that seam yet.
+`ProductLifecycle` now attaches the production `framework.screen.observe` and
+`framework.workflow.wait` providers to that seam. The authenticated controller
+binding supplies the root namespace; observe returns an opaque durable snapshot
+reference plus pinned resolution metadata, wait uses the caller's validated
+bounded duration, and exact terminal replay performs neither operation again.
+Public actor adapters and Project providers remain to be implemented.
 
 ## 1. Product boundary
 

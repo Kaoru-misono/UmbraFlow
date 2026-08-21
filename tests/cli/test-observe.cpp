@@ -32,8 +32,14 @@
 #include <domain/space.hpp>
 
 #include <engine/ports.hpp>
+#include <engine/session.hpp>
+
+#include <json/value.hpp>
 
 #include <ocr/engine.hpp>
+
+#include <trace/file-sink.hpp>
+#include <trace/recorder.hpp>
 
 #include "../json/repository-path.hpp"
 
@@ -312,6 +318,14 @@ namespace uf::cli
             };
         }
 
+        [[nodiscard]]
+        auto frameworkToolIdentity(std::string_view material) -> ContentHash
+        {
+            auto const hashed = sha256(std::as_bytes(std::span{material}));
+            REQUIRE(hashed.has_value());
+            return *hashed;
+        }
+
         // The exemplar copied out of the repository, its RuntimeArtifact
         // installed into a production Operator root beside it, and the capture
         // the project published.
@@ -566,6 +580,154 @@ namespace uf::cli
         // The whole of the phase limit, in one number. A verb that planned,
         // minted a Receipt or dispatched would post here.
         CHECK(*delivered == 0U);
+    }
+
+    TEST_CASE(
+        "production Framework read-only Tools execute and replay through ProductLifecycle"
+    )
+    {
+        auto const world     = RecordedWorld{};
+        auto const args      = world.args("framework-tools.jsonl");
+        auto const delivered = std::make_shared<uint32>();
+        auto sources = world.sources(
+            delivered,
+            std::make_unique<PresentReader>()
+        );
+        auto const liveFingerprint = sources.liveFingerprint;
+
+        auto const scope = operator_runtime::ObservedInstanceWorldScope::run(
+            "recorded-tool-target",
+            1
+        );
+        REQUIRE(scope.has_value());
+        auto lifecycle = service::ProductLifecycle::start(
+            service::ProductStart{
+                .projectDirectory          = args.project,
+                .runtimeDirectory          = args.runtime,
+                .authenticatedControllerId = "framework-tool-adapter",
+                .controllerCapabilities    = {},
+                .controlledTargetId        = "recorded-tool-target",
+                .worldScope                = *scope,
+            }
+        );
+        auto const lifecycleWhy = lifecycle.has_value()
+            ? std::string{}
+            : lifecycle.error().message();
+        REQUIRE_MESSAGE(
+            lifecycle.has_value(),
+            lifecycleWhy
+        );
+        auto const identity = lifecycle->identity();
+
+        auto sink = trace::FileTraceSink::createNew(args.trace);
+        REQUIRE(sink.has_value());
+        auto recorder = trace::TraceRecorder::create(
+            std::move(*sink),
+            trace::TraceStreamSpec{
+                .sessionId           = identity.sessionId,
+                .sessionManifestHash = identity.sessionManifestHash,
+                .producer            = "framework-tool-adapter-test",
+            }
+        );
+        REQUIRE(recorder.has_value());
+        auto session = engine::EngineSession::create(
+            std::move(sources.frameSource),
+            std::move(sources.actionSink),
+            *recorder,
+            engine::EngineSessionConfig{
+                .liveFingerprint         = liveFingerprint,
+                .projectFingerprint      = identity.runtimeModel.fingerprint(),
+                .maximumPixelComparisons = args.budget,
+                .recognitionTimeout      = args.recognitionTimeout,
+            },
+            std::move(sources.ocrEngine)
+        );
+        REQUIRE(session.has_value());
+        auto context = task::TaskContext{std::move(*session), *recorder};
+
+        auto const executionIdentity = operator_runtime::ToolExecutionIdentity{
+            .runIdentity = frameworkToolIdentity("framework-tool-run"),
+            .frameworkReleaseIdentity = frameworkToolIdentity(
+                "framework-release"
+            ),
+            .toolRuntimeProtocolIdentity = frameworkToolIdentity(
+                "tool-runtime-protocol"
+            ),
+            .environmentIdentity = frameworkToolIdentity(
+                "native-adapter-environment"
+            ),
+        };
+        auto observeCall = [&executionIdentity]()
+        {
+            return service::FrameworkReadOnlyToolCall{
+                .requestKey                 = "recorded-observe-and-wait",
+                .exactRootRequestPreimageJcs =
+                    R"({"objective":"observe and wait"})",
+                .sequence          = 1U,
+                .executionIdentity = executionIdentity,
+                .toolName          = "framework.screen.observe",
+                .exactArgumentsJcs = "{}",
+            };
+        };
+
+        auto const first = lifecycle->invokeFrameworkReadOnlyTool(
+            observeCall(),
+            context
+        );
+        auto const firstWhy = first.has_value()
+            ? std::string{}
+            : first.error().message();
+        REQUIRE_MESSAGE(
+            first.has_value(),
+            firstWhy
+        );
+        REQUIRE(first->state == operator_runtime::ToolCallState::Confirmed);
+        REQUIRE(first->payload.has_value());
+        auto const firstPayload = first->payload->bytes();
+        auto const parsedPayload = json::parse(firstPayload);
+        REQUIRE(parsedPayload.has_value());
+        auto const* const p_snapshotRef = parsedPayload->find("snapshot_ref");
+        REQUIRE(p_snapshotRef != nullptr);
+        CHECK_FALSE(p_snapshotRef->string().empty());
+        auto const* const p_stateResolution =
+            parsedPayload->find("state_resolution");
+        REQUIRE(p_stateResolution != nullptr);
+        CHECK(p_stateResolution->kind() == json::ValueKind::Object);
+        auto const* const p_target =
+            parsedPayload->find("controlled_target_id");
+        REQUIRE(p_target != nullptr);
+        CHECK(p_target->string() == "recorded-tool-target");
+
+        // The recorded source returns the same frame repeatedly, but a second
+        // provider execution would still mint a new observation id. Exact
+        // replay must return the first result bytes unchanged.
+        auto const replayed = lifecycle->invokeFrameworkReadOnlyTool(
+            observeCall(),
+            context
+        );
+        REQUIRE(replayed.has_value());
+        REQUIRE(replayed->payload.has_value());
+        CHECK(replayed->state == operator_runtime::ToolCallState::Confirmed);
+        CHECK(replayed->payload->bytes() == firstPayload);
+
+        auto const waited = lifecycle->invokeFrameworkReadOnlyTool(
+            service::FrameworkReadOnlyToolCall{
+                .requestKey                 = "recorded-observe-and-wait",
+                .exactRootRequestPreimageJcs =
+                    R"({"objective":"observe and wait"})",
+                .sequence          = 2U,
+                .executionIdentity = executionIdentity,
+                .toolName          = "framework.workflow.wait",
+                .exactArgumentsJcs = R"({"duration_ms":0})",
+            },
+            context
+        );
+        REQUIRE(waited.has_value());
+        REQUIRE(waited->payload.has_value());
+        CHECK(waited->state == operator_runtime::ToolCallState::Confirmed);
+        CHECK(waited->payload->bytes() == R"({"completed":true,"duration_ms":0})");
+        CHECK(*delivered == 0U);
+        CHECK(lifecycle->shutdown().has_value());
     }
 
     TEST_CASE("observe restarts through Coordinator and remains repeatable")
