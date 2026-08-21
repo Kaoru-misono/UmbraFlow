@@ -265,6 +265,15 @@ namespace uf::operator_runtime
             )sql");
         }
 
+        auto removeToolIdentityPersistence(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void
+        {
+            database.execute("DROP INDEX IF EXISTS one_top_level_tool_call_position");
+            database.execute("DROP TABLE IF EXISTS tool_call_positions");
+            database.execute("DROP TABLE IF EXISTS tool_root_requests");
+        }
+
         // Rebuilds only the registration table to the exact format-2 shape
         // that preceded the generation-neutral columns. Row keys and canonical
         // bytes are copied unchanged; module_manifest becomes the historical
@@ -273,6 +282,7 @@ namespace uf::operator_runtime
             test_support::OperatorDatabaseProbe& database
         ) -> void
         {
+            removeToolIdentityPersistence(database);
             database.execute(R"sql(
                 PRAGMA foreign_keys=OFF;
                 CREATE TABLE prior_project_registrations(
@@ -3349,6 +3359,345 @@ namespace uf::operator_runtime
         CHECK_MESSAGE(
             storedUserVersion(databasePath) == k_nonIdentityUserVersion,
             "the open must neither read nor write user_version"
+        );
+    }
+
+    TEST_CASE("Tool root and call identities rejoin exact positions across restart")
+    {
+        auto temporary        = TemporaryDirectory{};
+        auto const production = temporary.path() / "production";
+
+        auto preimage = CanonicalJson::parseExact(
+            R"({"objective":"drive"})"
+        );
+        REQUIRE(preimage.has_value());
+        auto root = ToolRootRequestIdentity::create(
+            "script:fixture",
+            "request-1",
+            std::move(*preimage)
+        );
+        REQUIRE(root.has_value());
+
+        auto frameworkCatalog = FrameworkToolCatalogOwner::create();
+        REQUIRE(frameworkCatalog.has_value());
+        auto observeArguments = CanonicalJson::parseExact("{}");
+        auto waitArguments = CanonicalJson::parseExact(
+            R"({"duration_ms":250})"
+        );
+        REQUIRE(observeArguments.has_value());
+        REQUIRE(waitArguments.has_value());
+        auto observe = frameworkCatalog->validate(
+            "framework.screen.observe",
+            std::move(*observeArguments)
+        );
+        auto wait = frameworkCatalog->validate(
+            "framework.workflow.wait",
+            std::move(*waitArguments)
+        );
+        REQUIRE(observe.has_value());
+        REQUIRE(wait.has_value());
+
+        auto const execution = ToolExecutionIdentity{
+            .runIdentity                 = hashOf("run-1"),
+            .frameworkReleaseIdentity    = hashOf("framework-release-1"),
+            .toolRuntimeProtocolIdentity = hashOf("tool-runtime-protocol-1"),
+            .environmentIdentity         = hashOf("environment-1"),
+        };
+        auto first = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            1U,
+            execution,
+            *observe
+        );
+        auto changedAtFirstPosition = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            1U,
+            execution,
+            *wait
+        );
+        auto parent = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            2U,
+            execution,
+            *observe
+        );
+        REQUIRE(first.has_value());
+        REQUIRE(changedAtFirstPosition.has_value());
+        REQUIRE(parent.has_value());
+        auto child = ToolCallPositionIdentity::create(
+            *root,
+            parent->asParent(),
+            1U,
+            execution,
+            *wait
+        );
+        REQUIRE(child.has_value());
+
+        {
+            auto store = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(store.has_value(), store.error().message());
+
+            auto createdRoot = store->persistToolRootRequest(*root);
+            REQUIRE(createdRoot.has_value());
+            CHECK(createdRoot->lookup == ToolIdentityLookup::Created);
+            CHECK(createdRoot->rootIdentity == root->identity());
+
+            auto repeatedRoot = store->persistToolRootRequest(*root);
+            REQUIRE(repeatedRoot.has_value());
+            CHECK(repeatedRoot->lookup == ToolIdentityLookup::Existing);
+
+            auto conflictingPreimage = CanonicalJson::parseExact(
+                R"({"objective":"different"})"
+            );
+            REQUIRE(conflictingPreimage.has_value());
+            auto conflictingRoot = ToolRootRequestIdentity::create(
+                "script:fixture",
+                "request-1",
+                std::move(*conflictingPreimage)
+            );
+            REQUIRE(conflictingRoot.has_value());
+            auto refusedRoot = store->persistToolRootRequest(*conflictingRoot);
+            REQUIRE_FALSE(refusedRoot.has_value());
+            CHECK(refusedRoot.error().message().contains(
+                "different canonical material"
+            ));
+
+            auto createdCall = store->persistToolCallPosition(*root, *first);
+            REQUIRE(createdCall.has_value());
+            CHECK(createdCall->lookup == ToolIdentityLookup::Created);
+            CHECK(createdCall->callIdentity == first->identity());
+
+            auto repeatedCall = store->persistToolCallPosition(*root, *first);
+            REQUIRE(repeatedCall.has_value());
+            CHECK(repeatedCall->lookup == ToolIdentityLookup::Existing);
+
+            auto nondeterministic =
+                store->persistToolCallPosition(*root, *changedAtFirstPosition);
+            REQUIRE_FALSE(nondeterministic.has_value());
+            CHECK(nondeterministic.error().message().contains(
+                "different caller-fixed material"
+            ));
+
+            auto missingParent = store->persistToolCallPosition(*root, *child);
+            REQUIRE_FALSE(missingParent.has_value());
+            CHECK(missingParent.error().message().contains(
+                "parent call to be persisted first"
+            ));
+            REQUIRE(store->persistToolCallPosition(*root, *parent).has_value());
+            REQUIRE(store->persistToolCallPosition(*root, *child).has_value());
+
+            auto foreignPreimage = CanonicalJson::parseExact("{}");
+            REQUIRE(foreignPreimage.has_value());
+            auto foreignRoot = ToolRootRequestIdentity::create(
+                "script:fixture",
+                "request-2",
+                std::move(*foreignPreimage)
+            );
+            REQUIRE(foreignRoot.has_value());
+            auto foreignCall = ToolCallPositionIdentity::create(
+                *foreignRoot,
+                std::nullopt,
+                1U,
+                execution,
+                *observe
+            );
+            REQUIRE(foreignCall.has_value());
+            auto crossRoot = store->persistToolCallPosition(*root, *foreignCall);
+            REQUIRE_FALSE(crossRoot.has_value());
+            CHECK(crossRoot.error().message().contains("different root request"));
+        }
+
+        {
+            auto database = test_support::OperatorDatabaseProbe{
+                production / "operator-runtime.sqlite",
+            };
+            CHECK(
+                database.readRows(
+                    "SELECT root_identity, caller_namespace, request_key, "
+                    "request_preimage, request_preimage_hash "
+                    "FROM tool_root_requests"
+                )
+                == std::vector<std::vector<std::string>>{
+                    {
+                        root->identity().hex(),
+                        "script:fixture",
+                        "request-1",
+                        root->requestPreimage().bytes(),
+                        root->requestPreimage().contentHash().hex(),
+                    },
+                }
+            );
+            CHECK(
+                database.readRows(
+                    "SELECT root_identity, coalesce(parent_call_identity, ''), "
+                    "call_sequence, canonical_args FROM tool_call_positions "
+                    "WHERE call_identity='" + child->identity().hex() + "'"
+                )
+                == std::vector<std::vector<std::string>>{
+                    {
+                        root->identity().hex(),
+                        parent->identity().hex(),
+                        "1",
+                        child->canonicalArgs(),
+                    },
+                }
+            );
+            CHECK(
+                database.readRows("SELECT count(*) FROM tool_call_positions")
+                == std::vector<std::vector<std::string>>{{"3"}}
+            );
+        }
+
+        auto restarted = OperatorCoordinator::open(production);
+        REQUIRE_MESSAGE(restarted.has_value(), restarted.error().message());
+        auto repeatedRoot = restarted->persistToolRootRequest(*root);
+        auto repeatedCall = restarted->persistToolCallPosition(*root, *first);
+        REQUIRE(repeatedRoot.has_value());
+        REQUIRE(repeatedCall.has_value());
+        CHECK(repeatedRoot->lookup == ToolIdentityLookup::Existing);
+        CHECK(repeatedCall->lookup == ToolIdentityLookup::Existing);
+    }
+
+    TEST_CASE("Tool identity replay refuses stored canonical-byte tampering")
+    {
+        auto temporary        = TemporaryDirectory{};
+        auto const production = temporary.path() / "production";
+        auto preimage         = CanonicalJson::parseExact(R"({"request":1})");
+        REQUIRE(preimage.has_value());
+        auto root = ToolRootRequestIdentity::create(
+            "script:tamper",
+            "request-1",
+            std::move(*preimage)
+        );
+        REQUIRE(root.has_value());
+        auto frameworkCatalog = FrameworkToolCatalogOwner::create();
+        auto arguments        = CanonicalJson::parseExact("{}");
+        REQUIRE(frameworkCatalog.has_value());
+        REQUIRE(arguments.has_value());
+        auto invocation = frameworkCatalog->validate(
+            "framework.screen.observe",
+            std::move(*arguments)
+        );
+        REQUIRE(invocation.has_value());
+        auto call = ToolCallPositionIdentity::create(
+            *root,
+            std::nullopt,
+            1U,
+            ToolExecutionIdentity{
+                .runIdentity                 = hashOf("tamper-run"),
+                .frameworkReleaseIdentity    = hashOf("tamper-framework"),
+                .toolRuntimeProtocolIdentity = hashOf("tamper-protocol"),
+                .environmentIdentity         = hashOf("tamper-environment"),
+            },
+            *invocation
+        );
+        REQUIRE(call.has_value());
+        {
+            auto store = OperatorCoordinator::open(production);
+            REQUIRE(store.has_value());
+            REQUIRE(store->persistToolRootRequest(*root).has_value());
+            REQUIRE(store->persistToolCallPosition(*root, *call).has_value());
+        }
+        {
+            auto database = test_support::OperatorDatabaseProbe{
+                production / "operator-runtime.sqlite",
+            };
+            database.execute(
+                "UPDATE tool_call_positions SET canonical_args='[]' "
+                "WHERE call_identity='" + call->identity().hex() + "'"
+            );
+        }
+        {
+            auto reopened = OperatorCoordinator::open(production);
+            REQUIRE(reopened.has_value());
+            auto refused = reopened->persistToolCallPosition(*root, *call);
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(refused.error().message().contains(
+                "different caller-fixed material"
+            ));
+        }
+        {
+            auto database = test_support::OperatorDatabaseProbe{
+                production / "operator-runtime.sqlite",
+            };
+            database.execute(
+                "UPDATE tool_root_requests SET request_preimage='{}' "
+                "WHERE root_identity='" + root->identity().hex() + "'"
+            );
+        }
+        auto reopened = OperatorCoordinator::open(production);
+        REQUIRE(reopened.has_value());
+        auto refused = reopened->persistToolRootRequest(*root);
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(refused.error().message().contains("different canonical material"));
+    }
+
+    TEST_CASE("the immediate-prior Tool identity schema migrates audit rows exactly")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        auto operationId        = std::string{};
+        {
+            auto prepared = prepareStore(temporary.path());
+            operationId = proposedOperation(
+                prepared,
+                "tool-identity-migration-request",
+                "command-1"
+            ).operationId;
+        }
+
+        auto sourceIdentity = std::string{};
+        auto auditRows      = std::vector<std::vector<std::string>>{};
+        {
+            auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            auditRows = prior.readRows(
+                "SELECT operation_id, client_request_id, tool_name, state "
+                "FROM operations WHERE operation_id='" + operationId + "'"
+            );
+            removeToolIdentityPersistence(prior);
+            sourceIdentity = exactSchemaIdentity(prior);
+        }
+        CHECK(
+            sourceIdentity
+            == "sha256:d26b0e12be915009587a72312d4b46f4afc88509df5432f967eb15b016c24257"
+        );
+
+        {
+            auto migrated = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(migrated.has_value(), migrated.error().message());
+        }
+        auto target = test_support::OperatorDatabaseProbe{databasePath};
+        auto const targetIdentity = exactSchemaIdentity(target);
+        CHECK(
+            targetIdentity
+            == "sha256:50375791a22d12ab8b03f83eb48afc2183091e0d95b07fc5e4be47bb9aa07062"
+        );
+        CHECK(
+            target.readRows(
+                "SELECT operation_id, client_request_id, tool_name, state "
+                "FROM operations WHERE operation_id='" + operationId + "'"
+            ) == auditRows
+        );
+        CHECK(
+            target.readRows(
+                "SELECT source_identity, target_identity "
+                "FROM schema_identity_transitions"
+            )
+            == std::vector<std::vector<std::string>>{
+                {sourceIdentity, targetIdentity},
+            }
+        );
+        CHECK(
+            target.readRows("SELECT count(*) FROM tool_root_requests")
+            == std::vector<std::vector<std::string>>{{"0"}}
+        );
+        CHECK(
+            target.readRows("SELECT count(*) FROM tool_call_positions")
+            == std::vector<std::vector<std::string>>{{"0"}}
         );
     }
 

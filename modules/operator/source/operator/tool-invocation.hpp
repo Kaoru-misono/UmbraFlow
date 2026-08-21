@@ -212,6 +212,7 @@ namespace uf::operator_runtime
         ToolProviderIdentity       m_provider;
         std::string                m_toolName;
         std::string                m_toolVersion;
+        std::string                m_canonicalArgs;
         ContentHash                m_canonicalArgsHash;
 
         ToolCallPositionIdentity(
@@ -223,6 +224,7 @@ namespace uf::operator_runtime
             ToolProviderIdentity provider,
             std::string toolName,
             std::string toolVersion,
+            std::string canonicalArgs,
             ContentHash canonicalArgsHash
         );
 
@@ -258,6 +260,10 @@ namespace uf::operator_runtime
 
         [[nodiscard]]
         auto toolVersion() const noexcept UF_LIFETIME_BOUND
+            -> std::string const&;
+
+        [[nodiscard]]
+        auto canonicalArgs() const noexcept UF_LIFETIME_BOUND
             -> std::string const&;
 
         [[nodiscard]] auto canonicalArgsHash() const -> ContentHash;

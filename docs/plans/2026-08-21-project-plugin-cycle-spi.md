@@ -12,27 +12,24 @@ This live plan owns the experiments and atomic implementation. The current
 five-function ProjectPlugin code and generated public contract remain the
 executable contract until this plan's replacement generation lands in full.
 
-Internal checkpoint on 2026-08-21: `ValidatedToolInvocation` now carries a
-provider-neutral Framework-or-Project identity, and Operator owns a generated,
+Internal checkpoint on 2026-08-21: `ValidatedToolInvocation` carries a
+provider-neutral Framework-or-Project identity, and Operator owns the
 content-addressed Framework Tool Catalog for `framework.screen.observe` and
-`framework.workflow.wait`. Their arguments are exact and bounded, and Project
-catalogs cannot claim the reserved `framework.` namespace. The existing command
-path still explicitly rejects Framework providers: execution adapters, durable
-call persistence/replay, and public contract publication have not landed yet.
+`framework.workflow.wait`. Root request and call-position identities now have
+durable Operator rows. Exact reuse of a caller namespace/root key or
+root/parent/sequence rejoins the existing row; changed canonical root bytes or
+caller-fixed call material is refused as conflict/nondeterminism. Parent calls
+must already exist under the same root. Exact canonical preimages and arguments
+are retained and rechecked, so hash-only or stored-byte tampering cannot pass
+replay. A registered exact schema migration adds the two tables without
+rewriting existing audit rows, and restart tests prove deterministic rejoin.
 
-The next internal checkpoint adds the outcome-independent identity model only.
-A root now derives from a validated authenticated-caller namespace, stable root
-request key, and immutable canonical request preimage; reuse of one namespace
-and key with a different preimage is an explicit conflict. A call position now
-derives from that root, its typed optional parent and sequence, caller-fixed run
-identity, Framework release identity, Tool Runtime protocol identity,
-environment identity, provider/catalog identity, Tool name/version, and
-canonical argument hash. Framework and Project invocations use the same
-builder. Caller namespaces and root keys are opaque non-empty strings bounded
-to 256 bytes. Provider results, delivery classification, and
-admission-selected principal/policy/approval/lease/budget material have no
-identity input. These values are not persisted or executed yet, and no ledger,
-recovery, adapter, or wire-contract generation has changed.
+The persisted call identity covers run, Framework release, Tool Runtime
+protocol, environment, provider/catalog, Tool name/version and canonical
+arguments. It deliberately has no session, admission, result, delivery, or
+provider execution state. The existing command path still explicitly rejects
+Framework providers: admission attempts, durable outcomes/recovery, execution
+adapters, and public contract publication have not landed yet.
 
 ## 1. Product boundary
 

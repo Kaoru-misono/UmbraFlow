@@ -305,6 +305,29 @@ namespace uf::operator_runtime
         ContentHash     commandFingerprint;
     };
 
+    enum class ToolIdentityLookup : uint8
+    {
+        Created,
+        Existing,
+    };
+
+    // The outcome-independent identity rows used by the replacement Tool
+    // Runtime. They deliberately carry no session, admission or provider
+    // result: those become separate append-only records in later slices.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+    struct StoredToolRootRequest final
+    {
+        ContentHash        rootIdentity;
+        ToolIdentityLookup lookup{ToolIdentityLookup::Created};
+    };
+
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+    struct StoredToolCallPosition final
+    {
+        ContentHash        callIdentity;
+        ToolIdentityLookup lookup{ToolIdentityLookup::Created};
+    };
+
     // What one frozen plan settled. Every member is derived inside freezePlan's
     // transaction from bytes the ledger already held, so a caller reads them
     // here and can no longer state them anywhere.
@@ -830,6 +853,23 @@ namespace uf::operator_runtime
             CommandRequest const& request,
             ValidatedToolInvocation const& invocation
         ) -> Result<AcceptedCommand>;
+
+        // Internal replacement-generation identity persistence. The root key
+        // is unique only inside its authenticated caller namespace. Reusing it
+        // with exact bytes rejoins; changing those bytes is a conflict.
+        [[nodiscard]]
+        auto persistToolRootRequest(
+            ToolRootRequestIdentity const& root
+        ) -> Result<StoredToolRootRequest>;
+
+        // A root/parent/sequence position may carry exactly one immutable call
+        // fingerprint. Exact replay rejoins it; changed caller-fixed material
+        // is nondeterminism and cannot create another row at that position.
+        [[nodiscard]]
+        auto persistToolCallPosition(
+            ToolRootRequestIdentity const& root,
+            ToolCallPositionIdentity const& call
+        ) -> Result<StoredToolCallPosition>;
 
         // Records that the world moved under us, which is what out-of-band
         // human input is. It is not an Operation and cannot become one: it

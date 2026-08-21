@@ -228,6 +228,25 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
+        auto bindOptionalText(
+            sqlite3* database,
+            sqlite3_stmt* statement,
+            int index,
+            std::optional<std::string_view> value
+        ) -> Status
+        {
+            if (value)
+            {
+                return bindText(database, statement, index, *value);
+            }
+            if (sqlite3_bind_null(statement, index) != SQLITE_OK)
+            {
+                return databaseFailure(database, "could not bind null text");
+            }
+            return ok();
+        }
+
+        [[nodiscard]]
         auto bindInteger(
             sqlite3* database,
             sqlite3_stmt* statement,
@@ -332,6 +351,17 @@ namespace uf::operator_runtime
             return value;
         }
 
+        [[nodiscard]]
+        auto optionalColumnText(
+            sqlite3_stmt* statement,
+            int index
+        ) -> std::optional<std::string>
+        {
+            return sqlite3_column_type(statement, index) == SQLITE_NULL
+                ? std::nullopt
+                : std::optional{columnText(statement, index)};
+        }
+
         // Every hash column in this database holds bare lowercase hex, because
         // that is the form each comparison against ContentHash::hex() needs.
         // Rebuilding a ContentHash from a column therefore has to restore the
@@ -340,6 +370,46 @@ namespace uf::operator_runtime
         auto parseHashColumn(std::string_view columnHex) -> Result<ContentHash>
         {
             return ContentHash::parse(std::format("sha256:{}", columnHex));
+        }
+
+        // No in-class default for the catalog hash: ContentHash has no empty
+        // state, and every provider variant supplies one.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+        struct PersistedToolProvider final
+        {
+            std::string_view           kind{};
+            std::optional<ContentHash> projectRegistrationHash{};
+            ContentHash                toolCatalogHash;
+        };
+
+        struct PersistedToolProviderVisitor final
+        {
+            auto operator()(FrameworkToolProvider const& provider) const
+                -> PersistedToolProvider
+            {
+                return PersistedToolProvider{
+                    .kind                    = "framework",
+                    .projectRegistrationHash = std::nullopt,
+                    .toolCatalogHash         = provider.toolCatalogHash,
+                };
+            }
+
+            auto operator()(ProjectToolProvider const& provider) const
+                -> PersistedToolProvider
+            {
+                return PersistedToolProvider{
+                    .kind                    = "project",
+                    .projectRegistrationHash = provider.projectRegistrationHash,
+                    .toolCatalogHash         = provider.toolCatalogHash,
+                };
+            }
+        };
+
+        [[nodiscard]]
+        auto persistedToolProvider(ToolProviderIdentity const& provider)
+            -> PersistedToolProvider
+        {
+            return std::visit(PersistedToolProviderVisitor{}, provider);
         }
 
         [[nodiscard]]
@@ -478,7 +548,7 @@ namespace uf::operator_runtime
         // "Delete-on-open has a deadline" section owns
         // the exact-pair migration policy.
         constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
-            "sha256:d26b0e12be915009587a72312d4b46f4afc88509df5432f967eb15b016c24257"
+            "sha256:50375791a22d12ab8b03f83eb48afc2183091e0d95b07fc5e4be47bb9aa07062"
         };
 
         // A transition row records the applied exact pair; neither the row nor
@@ -546,6 +616,65 @@ namespace uf::operator_runtime
             "restored_artifact_root_hash TEXT NOT NULL,"
             "reason TEXT NOT NULL"
             ") STRICT"
+        };
+
+        constexpr auto k_toolRootRequestsDdl = std::string_view{
+            "CREATE TABLE tool_root_requests("
+            "root_identity TEXT PRIMARY KEY CHECK(length(root_identity)=64 AND "
+            "root_identity NOT GLOB '*[^0-9a-f]*'),"
+            "caller_namespace TEXT NOT NULL CHECK(length(CAST(caller_namespace AS BLOB)) "
+            "BETWEEN 1 AND 256),"
+            "request_key TEXT NOT NULL CHECK(length(CAST(request_key AS BLOB)) "
+            "BETWEEN 1 AND 256),"
+            "request_preimage TEXT NOT NULL CHECK("
+            "length(CAST(request_preimage AS BLOB)) > 0),"
+            "request_preimage_hash TEXT NOT NULL CHECK(length(request_preimage_hash)=64 "
+            "AND request_preimage_hash NOT GLOB '*[^0-9a-f]*'),"
+            "UNIQUE(caller_namespace, request_key)"
+            ") STRICT"
+        };
+
+        constexpr auto k_toolCallPositionsDdl = std::string_view{
+            "CREATE TABLE tool_call_positions("
+            "call_identity TEXT PRIMARY KEY CHECK(length(call_identity)=64 AND "
+            "call_identity NOT GLOB '*[^0-9a-f]*'),"
+            "root_identity TEXT NOT NULL REFERENCES tool_root_requests(root_identity),"
+            "parent_call_identity TEXT,"
+            "call_sequence INTEGER NOT NULL CHECK(call_sequence BETWEEN 1 AND 4294967295),"
+            "run_identity TEXT NOT NULL CHECK(length(run_identity)=64 AND "
+            "run_identity NOT GLOB '*[^0-9a-f]*'),"
+            "framework_release_identity TEXT NOT NULL CHECK(length(framework_release_identity)=64 "
+            "AND framework_release_identity NOT GLOB '*[^0-9a-f]*'),"
+            "tool_runtime_protocol_identity TEXT NOT NULL "
+            "CHECK(length(tool_runtime_protocol_identity)=64 AND "
+            "tool_runtime_protocol_identity NOT GLOB '*[^0-9a-f]*'),"
+            "environment_identity TEXT NOT NULL CHECK(length(environment_identity)=64 AND "
+            "environment_identity NOT GLOB '*[^0-9a-f]*'),"
+            "provider_kind TEXT NOT NULL CHECK(provider_kind IN ('framework','project')),"
+            "project_registration_hash TEXT,"
+            "tool_catalog_hash TEXT NOT NULL CHECK(length(tool_catalog_hash)=64 AND "
+            "tool_catalog_hash NOT GLOB '*[^0-9a-f]*'),"
+            "tool_name TEXT NOT NULL CHECK(length(CAST(tool_name AS BLOB)) BETWEEN 1 AND 256),"
+            "tool_version TEXT NOT NULL CHECK(length(CAST(tool_version AS BLOB)) BETWEEN 1 AND 256),"
+            "canonical_args TEXT NOT NULL CHECK("
+            "length(CAST(canonical_args AS BLOB)) > 0),"
+            "canonical_args_hash TEXT NOT NULL CHECK(length(canonical_args_hash)=64 AND "
+            "canonical_args_hash NOT GLOB '*[^0-9a-f]*'),"
+            "CHECK((provider_kind='framework' AND project_registration_hash IS NULL) OR "
+            "(provider_kind='project' AND project_registration_hash IS NOT NULL "
+            "AND length(project_registration_hash)=64 AND "
+            "project_registration_hash NOT GLOB '*[^0-9a-f]*')),"
+            "UNIQUE(root_identity, call_identity),"
+            "UNIQUE(root_identity, parent_call_identity, call_sequence),"
+            "FOREIGN KEY(root_identity, parent_call_identity) REFERENCES "
+            "tool_call_positions(root_identity, call_identity)"
+            ") STRICT"
+        };
+
+        constexpr auto k_topLevelToolCallPositionIndexDdl = std::string_view{
+            "CREATE UNIQUE INDEX one_top_level_tool_call_position ON "
+            "tool_call_positions(root_identity, call_sequence) "
+            "WHERE parent_call_identity IS NULL"
         };
 
         // Generation-neutral storage retains exact historical manifests while
@@ -856,6 +985,14 @@ namespace uf::operator_runtime
             return execute(database, k_runtimeUpgradeFailuresDdl);
         }
 
+        [[nodiscard]]
+        auto addToolIdentityPersistence(sqlite3* database) -> Status
+        {
+            UF_TRY(execute(database, k_toolRootRequestsDdl));
+            UF_TRY(execute(database, k_toolCallPositionsDdl));
+            return execute(database, k_topLevelToolCallPositionIndexDdl);
+        }
+
         // project_state_schema_hash was a second copy of a member the same
         // row's canonical_manifest already carries, and both readers compared
         // it inside the same disjunction as a full canonical-bytes comparison.
@@ -1120,6 +1257,7 @@ namespace uf::operator_runtime
             UF_TRY(addSessionWorldScopeColumns(database));
             UF_TRY(addObservedInstanceBindingLocalRef(database));
             UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
+            UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -1158,6 +1296,7 @@ namespace uf::operator_runtime
             UF_TRY(addSessionWorldScopeColumns(database));
             UF_TRY(addObservedInstanceBindingLocalRef(database));
             UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
+            UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
 
             // No migration commits under an identity other than the exact
@@ -1180,6 +1319,7 @@ namespace uf::operator_runtime
             UF_TRY(addSessionWorldScopeColumns(database));
             UF_TRY(addObservedInstanceBindingLocalRef(database));
             UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
+            UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -1197,6 +1337,7 @@ namespace uf::operator_runtime
             UF_TRY(addSessionWorldScopeColumns(database));
             UF_TRY(addObservedInstanceBindingLocalRef(database));
             UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
+            UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -1213,6 +1354,7 @@ namespace uf::operator_runtime
             UF_TRY(addSessionWorldScopeColumns(database));
             UF_TRY(addObservedInstanceBindingLocalRef(database));
             UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
+            UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -1227,6 +1369,7 @@ namespace uf::operator_runtime
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(addObservedInstanceBindingLocalRef(database));
             UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
+            UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -1240,6 +1383,20 @@ namespace uf::operator_runtime
         {
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
+            UF_TRY(addToolIdentityPersistence(database));
+            UF_TRY(recordSchemaIdentityTransition(database, migration));
+            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
+            return transaction.commit();
+        }
+
+        [[nodiscard]]
+        auto migrateToolIdentityPersistence(
+            sqlite3* database,
+            SchemaMigration const& migration
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -1251,6 +1408,12 @@ namespace uf::operator_runtime
         // a guard nothing can reach is the mirror of a guard production does
         // not reach.
         constexpr auto k_schemaMigrations = std::array{
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:d26b0e12be915009587a72312d4b46f4afc88509df5432f967eb15b016c24257",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = migrateToolIdentityPersistence,
+            },
             SchemaMigration{
                 .sourceIdentity =
                     "sha256:b26344e031574f95020ed445e16e9de396f76442d98c5a3b758a91d84660237e",
@@ -3114,6 +3277,7 @@ namespace uf::operator_runtime
             UF_TRY(execute(database, k_schemaIdentityTransitionsDdl));
             UF_TRY(execute(database, k_releaseCapabilityApprovalsDdl));
             UF_TRY(execute(database, k_runtimeUpgradeFailuresDdl));
+            UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(verifyExactDatabaseSchema(database));
             return transaction.commit();
         }
@@ -7949,6 +8113,265 @@ namespace uf::operator_runtime
                 .hasDispatched = false,
             },
             .commandFingerprint = commandFingerprint,
+        };
+    }
+
+    auto OperatorCoordinator::persistToolRootRequest(
+        ToolRootRequestIdentity const& root
+    ) -> Result<StoredToolRootRequest>
+    {
+        auto* const database = m_impl->database.get();
+        UF_TRY_VALUE(transaction, Transaction::begin(database));
+        UF_TRY_VALUE(
+            query,
+            prepare(
+                database,
+                "SELECT root_identity, request_preimage, request_preimage_hash "
+                "FROM tool_root_requests WHERE caller_namespace=?1 AND request_key=?2"
+            )
+        );
+        UF_TRY(bindText(database, query.get(), 1, root.callerNamespace().value()));
+        UF_TRY(bindText(database, query.get(), 2, root.requestKey().value()));
+        auto const queryResult = sqlite3_step(query.get());
+        if (queryResult == SQLITE_ROW)
+        {
+            auto const exactMatch = columnText(query.get(), 0) == root.identity().hex()
+                && columnText(query.get(), 1) == root.requestPreimage().bytes()
+                && columnText(query.get(), 2)
+                    == root.requestPreimage().contentHash().hex();
+            if (!exactMatch)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Tool root request key was replayed with different canonical material"
+                );
+            }
+            UF_TRY(transaction.commit());
+            return StoredToolRootRequest{
+                .rootIdentity = root.identity(),
+                .lookup       = ToolIdentityLookup::Existing,
+            };
+        }
+        if (queryResult != SQLITE_DONE)
+        {
+            return databaseFailure(database, "could not read Tool root request");
+        }
+
+        UF_TRY_VALUE(
+            insert,
+            prepare(
+                database,
+                "INSERT INTO tool_root_requests(root_identity, caller_namespace, "
+                "request_key, request_preimage, request_preimage_hash) "
+                "VALUES(?1, ?2, ?3, ?4, ?5)"
+            )
+        );
+        UF_TRY(bindText(database, insert.get(), 1, root.identity().hex()));
+        UF_TRY(bindText(database, insert.get(), 2, root.callerNamespace().value()));
+        UF_TRY(bindText(database, insert.get(), 3, root.requestKey().value()));
+        UF_TRY(bindText(database, insert.get(), 4, root.requestPreimage().bytes()));
+        UF_TRY(bindText(
+            database,
+            insert.get(),
+            5,
+            root.requestPreimage().contentHash().hex()
+        ));
+        UF_TRY(expectDone(database, insert.get()));
+        UF_TRY(transaction.commit());
+        return StoredToolRootRequest{
+            .rootIdentity = root.identity(),
+            .lookup       = ToolIdentityLookup::Created,
+        };
+    }
+
+    auto OperatorCoordinator::persistToolCallPosition(
+        ToolRootRequestIdentity const& root,
+        ToolCallPositionIdentity const& call
+    ) -> Result<StoredToolCallPosition>
+    {
+        if (call.rootIdentity() != root.identity())
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool call position belongs to a different root request"
+            );
+        }
+
+        auto* const database = m_impl->database.get();
+        UF_TRY_VALUE(transaction, Transaction::begin(database));
+        UF_TRY_VALUE(
+            rootQuery,
+            prepare(
+                database,
+                "SELECT caller_namespace, request_key, request_preimage, "
+                "request_preimage_hash FROM tool_root_requests WHERE root_identity=?1"
+            )
+        );
+        UF_TRY(bindText(database, rootQuery.get(), 1, root.identity().hex()));
+        auto const rootQueryResult = sqlite3_step(rootQuery.get());
+        if (rootQueryResult != SQLITE_ROW)
+        {
+            if (rootQueryResult != SQLITE_DONE)
+            {
+                return databaseFailure(database, "could not read Tool call root request");
+            }
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool call position requires its root request to be persisted first"
+            );
+        }
+        auto const rootMatches =
+            columnText(rootQuery.get(), 0) == root.callerNamespace().value()
+            && columnText(rootQuery.get(), 1) == root.requestKey().value()
+            && columnText(rootQuery.get(), 2) == root.requestPreimage().bytes()
+            && columnText(rootQuery.get(), 3)
+                == root.requestPreimage().contentHash().hex();
+        if (!rootMatches)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Persisted Tool root request does not match its canonical material"
+            );
+        }
+
+        auto const provider = persistedToolProvider(call.provider());
+        auto const projectRegistrationHash = provider.projectRegistrationHash
+            ? std::optional{provider.projectRegistrationHash->hex()}
+            : std::nullopt;
+        auto const parentIdentity = call.parentIdentity()
+            ? std::optional{call.parentIdentity()->hex()}
+            : std::nullopt;
+
+        auto positionSql = std::string{
+            "SELECT call_identity, run_identity, framework_release_identity, "
+            "tool_runtime_protocol_identity, environment_identity, provider_kind, "
+            "project_registration_hash, tool_catalog_hash, tool_name, tool_version, "
+            "canonical_args, canonical_args_hash FROM tool_call_positions "
+            "WHERE root_identity=?1 AND "
+        };
+        positionSql += parentIdentity
+            ? "parent_call_identity=?2 AND call_sequence=?3"
+            : "parent_call_identity IS NULL AND call_sequence=?2";
+        UF_TRY_VALUE(positionQuery, prepare(database, positionSql));
+        UF_TRY(bindText(database, positionQuery.get(), 1, root.identity().hex()));
+        auto sequenceIndex = 2;
+        if (parentIdentity)
+        {
+            UF_TRY(bindText(database, positionQuery.get(), 2, *parentIdentity));
+            sequenceIndex = 3;
+        }
+        UF_TRY(bindInteger(database, positionQuery.get(), sequenceIndex, call.sequence()));
+        auto const positionQueryResult = sqlite3_step(positionQuery.get());
+        if (positionQueryResult == SQLITE_ROW)
+        {
+            auto const& execution = call.executionIdentity();
+            auto const exactMatch =
+                columnText(positionQuery.get(), 0) == call.identity().hex()
+                && columnText(positionQuery.get(), 1) == execution.runIdentity.hex()
+                && columnText(positionQuery.get(), 2)
+                    == execution.frameworkReleaseIdentity.hex()
+                && columnText(positionQuery.get(), 3)
+                    == execution.toolRuntimeProtocolIdentity.hex()
+                && columnText(positionQuery.get(), 4)
+                    == execution.environmentIdentity.hex()
+                && columnText(positionQuery.get(), 5) == provider.kind
+                && optionalColumnText(positionQuery.get(), 6)
+                    == projectRegistrationHash
+                && columnText(positionQuery.get(), 7)
+                    == provider.toolCatalogHash.hex()
+                && columnText(positionQuery.get(), 8) == call.toolName()
+                && columnText(positionQuery.get(), 9) == call.toolVersion()
+                && columnText(positionQuery.get(), 10) == call.canonicalArgs()
+                && columnText(positionQuery.get(), 11)
+                    == call.canonicalArgsHash().hex();
+            if (!exactMatch)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Tool call position was replayed with different caller-fixed material"
+                );
+            }
+            UF_TRY(transaction.commit());
+            return StoredToolCallPosition{
+                .callIdentity = call.identity(),
+                .lookup       = ToolIdentityLookup::Existing,
+            };
+        }
+        if (positionQueryResult != SQLITE_DONE)
+        {
+            return databaseFailure(database, "could not read Tool call position");
+        }
+
+        if (parentIdentity)
+        {
+            UF_TRY_VALUE(
+                parentQuery,
+                prepare(
+                    database,
+                    "SELECT 1 FROM tool_call_positions WHERE root_identity=?1 "
+                    "AND call_identity=?2"
+                )
+            );
+            UF_TRY(bindText(database, parentQuery.get(), 1, root.identity().hex()));
+            UF_TRY(bindText(database, parentQuery.get(), 2, *parentIdentity));
+            auto const parentResult = sqlite3_step(parentQuery.get());
+            if (parentResult != SQLITE_ROW)
+            {
+                if (parentResult != SQLITE_DONE)
+                {
+                    return databaseFailure(database, "could not read Tool call parent");
+                }
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Tool call position requires its parent call to be persisted first"
+                );
+            }
+        }
+
+        UF_TRY_VALUE(
+            insert,
+            prepare(
+                database,
+                "INSERT INTO tool_call_positions(call_identity, root_identity, "
+                "parent_call_identity, call_sequence, run_identity, "
+                "framework_release_identity, tool_runtime_protocol_identity, "
+                "environment_identity, provider_kind, project_registration_hash, "
+                "tool_catalog_hash, tool_name, tool_version, canonical_args, "
+                "canonical_args_hash) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, "
+                "?9, ?10, ?11, ?12, ?13, ?14, ?15)"
+            )
+        );
+        auto const& execution = call.executionIdentity();
+        UF_TRY(bindText(database, insert.get(), 1, call.identity().hex()));
+        UF_TRY(bindText(database, insert.get(), 2, root.identity().hex()));
+        UF_TRY(bindOptionalText(database, insert.get(), 3, parentIdentity));
+        UF_TRY(bindInteger(database, insert.get(), 4, call.sequence()));
+        UF_TRY(bindText(database, insert.get(), 5, execution.runIdentity.hex()));
+        UF_TRY(bindText(
+            database,
+            insert.get(),
+            6,
+            execution.frameworkReleaseIdentity.hex()
+        ));
+        UF_TRY(bindText(
+            database,
+            insert.get(),
+            7,
+            execution.toolRuntimeProtocolIdentity.hex()
+        ));
+        UF_TRY(bindText(database, insert.get(), 8, execution.environmentIdentity.hex()));
+        UF_TRY(bindText(database, insert.get(), 9, provider.kind));
+        UF_TRY(bindOptionalText(database, insert.get(), 10, projectRegistrationHash));
+        UF_TRY(bindText(database, insert.get(), 11, provider.toolCatalogHash.hex()));
+        UF_TRY(bindText(database, insert.get(), 12, call.toolName()));
+        UF_TRY(bindText(database, insert.get(), 13, call.toolVersion()));
+        UF_TRY(bindText(database, insert.get(), 14, call.canonicalArgs()));
+        UF_TRY(bindText(database, insert.get(), 15, call.canonicalArgsHash().hex()));
+        UF_TRY(expectDone(database, insert.get()));
+        UF_TRY(transaction.commit());
+        return StoredToolCallPosition{
+            .callIdentity = call.identity(),
+            .lookup       = ToolIdentityLookup::Created,
         };
     }
 
