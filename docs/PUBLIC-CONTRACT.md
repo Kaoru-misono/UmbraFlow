@@ -166,6 +166,7 @@ member below is a hash.
 | `reconcile_manifest` |
 | `reconcile_schema` |
 | `resources` |
+| `tool_bindings` |
 | `tool_catalog` |
 | `tool_precondition_schema` |
 
@@ -403,6 +404,7 @@ a ProjectRegistration must be exact RFC 8785 JCS: {}
 a deployment's plugin module count exceeds its ceiling
 a deployment's plugin module closure exceeds its byte ceiling
 a deployment's plugin module paths must be unique
+a deployment binds the Tool {} twice
 a deployment's resource count exceeds its ceiling
 a deployment's resource closure exceeds its byte ceiling
 a deployment declares the resource {} twice

@@ -38,6 +38,19 @@ every bound a plan is judged against is declared here and nowhere else, so a
 widened bound moves `tool_catalog_hash` and therefore
 `project_registration_hash`.
 
+`name` is a **namespaced** Tool name, and the dot is required rather than
+optional: the namespace is the owner's registered namespace -- `framework` for
+the Framework, and the deployment's own `plugin_id` for a Project -- and the
+local name is what follows the dot that ends it. That is the whole of the
+ownership rule, and the catalog owner enforces it at admission: a descriptor
+naming anything outside the namespace this document's `plugin_id` registers is
+refused, whether that namespace belongs to the Framework or to another Project.
+There is no separate reserved-prefix refusal beside it; a registration whose
+`plugin_id` fell inside `framework.` is refused at the registration instead, so
+the positive rule has nothing left to be the negative half of. The same spelling
+is the one a `child_tool_names` grant and a ProjectRegistration `tool_name`
+carry, because they are all one name.
+
 `argument_schema` and `result_schema` are both `$defs` names resolved inside the
 deployment's tool-precondition schema, and both are required on every row. A
 call's arguments and the answer that call is judged by are two halves of one
@@ -46,6 +59,18 @@ nothing is entitled to judge. `mutability` is `mutating` or `read_only` and
 `surface` is `semantic` or `privileged`, both lowercase and both required —
 `ToolDescriptor` defaults them to the restricted value in C++, and "absent means
 the safe default" is still "absent means".
+
+`child_effects` is required on every row and has no absent form either: what a
+tool may request while it runs — the exact child tools by name, and the
+strongest surface, mutability and risk it may delegate to them, together with
+how many child calls one invocation may make — is requested, never granted, so
+admission still intersects it against the root envelope, policy, approvals,
+session authority, lease, fence and remaining budgets. A tool that issues no
+child call still writes that fact down: the empty declaration — no names, zero
+calls, and the most restricted ceiling of each kind — is the one spelling of
+"issues no child call". An absent member would be an absence carrying a
+meaning, which is the same reading `mutability` and `surface` above already
+refuse.
 
 The binding that says which code answers a call is deliberately **not** here. It
 is a member of the ProjectRegistration, beside `tool_catalog_hash` and outside
@@ -56,7 +81,7 @@ a contract digest.
 <!-- example: umbraflow-tool-catalog/v1 -->
 ```json
 {
-  "$comment": "chaos.click is absent on purpose: the design refuses a universal click, which is why the conformance vocabulary's absent_tool has a value at all.",
+  "$comment": "chaos.dream.click is absent on purpose: the design refuses a universal click, which is why the conformance vocabulary's absent_tool has a value at all.",
   "schema": "umbraflow-tool-catalog/v1",
   "plugin_id": "chaos.dream",
   "tool_precondition_sha256": "ddcbf99944a2ecd02b63c549afdc1b7a038126776cc8a990b4450df78209b2c0",
@@ -65,7 +90,7 @@ a contract digest.
   ],
   "tools": [
     {
-      "name": "chaos.choose_event_option",
+      "name": "chaos.dream.choose_event_option",
       "version": "1",
       "mutability": "mutating",
       "idempotency": "keyed_external",
@@ -81,6 +106,13 @@ a contract digest.
           "payload_schema_hash": "2eb9225d5bf5b9a694158b0b456e8df6512669ad4b50f90f936a0ab0f1615598"
         }
       ],
+      "child_effects": {
+        "child_tool_names": ["chaos.dream.get_battle_state", "framework.screen.observe"],
+        "maximum_child_calls": 8,
+        "maximum_child_mutability": "read_only",
+        "maximum_child_risk": "read_only",
+        "maximum_child_surface": "semantic"
+      },
       "ui_action_bounds": ["chaos.choose_option"],
       "workflow_limits": {
         "maximum_steps": 8,
@@ -92,7 +124,7 @@ a contract digest.
       "timeout_policy": {"maximum_elapsed_ms": 30000, "on_timeout": "reobserve"}
     },
     {
-      "name": "chaos.get_battle_state",
+      "name": "chaos.dream.get_battle_state",
       "version": "1",
       "mutability": "read_only",
       "idempotency": "read_safe",
@@ -101,6 +133,13 @@ a contract digest.
       "result_schema": "ReadBattleStateResult",
       "required_capabilities": [],
       "effect_bounds": [],
+      "child_effects": {
+        "child_tool_names": [],
+        "maximum_child_calls": 0,
+        "maximum_child_mutability": "read_only",
+        "maximum_child_risk": "read_only",
+        "maximum_child_surface": "semantic"
+      },
       "ui_action_bounds": [],
       "workflow_limits": {
         "maximum_steps": 1,

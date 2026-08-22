@@ -8,7 +8,9 @@ Status: **owner-approved direction; internal implementation in progress**
 
 The ruling is frozen in
 [`tools are the shared game-driving boundary`](../decisions/2026-08-21-tools-are-the-shared-game-driving-boundary.md).
-Four later rulings refine it and are equally binding on this plan:
+Nine later rulings refine it and are equally binding on this plan.
+
+Four fix the shape of the generation being built:
 [`scoped Tool execution is a third program type`](../decisions/2026-08-22-scoped-tool-execution-is-a-third-program-type.md)
 fixes the scoped program type, the native call shape, facade authorship, the
 replay key, and the audit path;
@@ -20,10 +22,30 @@ semantics, and the root-positioned call row;
 fixes how every caller reaches admission and what the four-way fixture is for;
 and
 [`production reachability is the cut invariant`](../decisions/2026-08-22-production-reachability-is-the-cut-invariant.md)
-fixes how the generation is staged and flipped. This live plan owns the
-experiments and atomic implementation. The current five-function ProjectPlugin
-code and generated public contract remain the executable contract until this
-plan's replacement generation lands in full.
+fixes how the generation is staged and flipped.
+
+Five more fix the final cut itself:
+[`one job, one vehicle`](../decisions/2026-08-22-one-job-one-vehicle.md)
+fixes what survives of the pure program type — `reduce` and nothing else — and
+makes a registration carry two closures with two manifest hashes, breaking the
+"ONE closure, ONE manifest hash" invariant outright;
+[`provisioning rekeys to the registration generation`](../decisions/2026-08-22-provisioning-rekeys-to-the-registration-generation.md)
+fixes what provisions a scoped-generation Project and what the flip owes each
+stored baseline;
+[`a Tool name is owned by its namespace`](../decisions/2026-08-22-a-tool-name-is-owned-by-its-namespace.md)
+fixes the Tool-name grammar, the positive ownership check, and the premise the
+deleted reserved-prefix refusal rests on;
+[`a join needs two independent sources`](../decisions/2026-08-22-a-join-needs-two-independent-sources.md)
+fixes where `exportedEntryPoints` comes from and forbids the loader deriving or
+observing it; and
+[`re-entry is keyed on recorded children`](../decisions/2026-08-22-re-entry-is-keyed-on-recorded-children.md)
+fixes which crashed dispatches re-enter and which stay uncertain.
+
+This live plan owns the experiments, the atomic implementation, and the stage
+order those rulings are implemented in — section 13 holds that order, because an
+ordering is work rather than a frozen ruling. The current five-function
+ProjectPlugin code and generated public contract remain the executable contract
+until this plan's replacement generation lands in full.
 
 Checkpoint paragraphs below state what is in the tree at the commit or date each
 one names. Every other statement is a requirement on the finished generation,
@@ -270,14 +292,35 @@ above `script`: `currentScopedToolEnvironmentHash()` in
 and Project visibility of every Framework module the scoped closure admits and
 the reserved name of the pinned catalog resource, and
 `ProjectToolProgramRegistrar::registerProject` stamps it on the loaded program
-handle. No `ToolExecutionIdentity` is built from it, because nothing yet
-dispatches a Project Tool.
+handle. Project Tools are dispatched now (section 5.1), and a dispatched call
+does carry that digest: the only caller that mints such a position today,
+`tests/operator/test-tool-dispatch.cpp`, sets
+`ToolExecutionIdentity::environmentIdentity` to
+`ProjectToolProgramHandle::environmentIdentity()`, so a run that reached a
+different scoped generation diverges on a named field. Nothing outside a test
+mints one, because the producer that would is section 13's next stage, and
+`ToolExecutionIdentity` still carries no member of its own for the compiled
+program. Both gaps above stay requirements.
 
 ### 3.2 Namespaces and discovery
 
+[`A Tool name is owned by its namespace`](../decisions/2026-08-22-a-tool-name-is-owned-by-its-namespace.md)
+fixes this section's naming rule, the check that enforces it, and the deletion
+that follows from the check. This plan implements it as ruled.
+
 Framework owns `framework.*`. A Project owns its registered namespace, normally
-its `plugin_id`. Tool discovery returns only what the current actor may see. A
-descriptor that is not offered may not be invoked by spelling its name anyway.
+its `plugin_id`. A Tool name is namespaced — the dot is required, not optional —
+and the namespace is the owner's **whole registered namespace**: `framework` for
+the Framework, one segment, and a Project's entire `plugin_id`, at least two.
+The local name is everything after the dot that ends the namespace, so Tools are
+spelled `framework.screen.observe`, `arcana.expedition.move`,
+`fixture.control.command-1`, and the check is a prefix test at a dot boundary
+rather than a split at the first dot. The ruling records why the first-dot
+reading is not available: a `plugin_id` is itself namespaced, so a first-dot
+split would put every Project Tool outside the namespace its own registrant owns
+and refuse the entire Project tier. Tool discovery returns only what the current
+actor may see. A descriptor that is not offered may not be invoked by spelling
+its name anyway.
 
 Framework initially needs read-only observation/capture/status Tools, a
 separate bounded wait Tool, and input Tools capable of consuming
@@ -289,13 +332,24 @@ Project Tools carry game interpretation, recognition, planning,
 reconciliation, and high-level goal execution. Their exact handlers, schemas,
 descriptors, and resources are registration-pinned.
 
-Internal checkpoint in the working tree on 2026-08-22: still only the negative
-half of the namespace rule is enforced. Catalog validation refuses a Project
-descriptor whose name starts with the reserved framework prefix, and refuses
-duplicates. Nothing compares a Project tool name against that Project's
-`plugin_id`, so a Project may today register a tool in any non-reserved
-namespace, including another Project's. The positive binding remains a
-requirement.
+Internal checkpoint in the working tree on 2026-08-22: the positive half is
+enforced and the negative half is gone. A Tool name is now a namespaced name in
+every document that carries one -- the Tool Catalog's `name`, a plan's
+`tool_name`, each `child_tool_names` entry, and the registration's binding
+`tool_name` all validate as the `ToolName` type, whose grammar is the
+registration's own `namespaced_name` -- so the dot is required and every Tool
+has an owner. `ProjectToolCatalogSchemaOwner::create` and
+`project::generateToolCatalog` both refuse a descriptor whose namespace is not
+the registrant's `plugin_id`, through the one
+`operator_runtime::validateToolNameOwnership`, so a Project can no longer
+declare a Tool in another Project's namespace or in the Framework's. The
+reserved-prefix refusal that was the negative half is deleted: it became
+unreachable once `validateClaims` refused a `plugin_id` inside `framework.`,
+which is where the Framework's ownership of `framework.*` is now stated once.
+The rename half landed with the schema rather than beside it: an undotted name
+no longer validates anywhere, so every fixture, shipped example and recorded
+name that still declares a Tool declares a namespaced one, and the schema is
+what says so rather than a survey.
 
 The Framework catalog is now eight tools wide, declared in
 `modules/operator/source/operator/tool-invocation.cpp`:
@@ -530,7 +584,7 @@ fixes how that is built, and this plan implements it as ruled:
   structured worker owned by the run context.
 - `@umbraflow/audit` is Luau sugar over a genuine `framework.audit.record` Tool
   with a Framework Tool Catalog descriptor, invoked through
-  `ToolRuntimeExecutor::invokeReadOnly`. The record, auto-attributed by the
+  `ToolRuntimeExecutor::invoke`. The record, auto-attributed by the
   seam-supplied root and position, is the call's own durable outcome, and the
   provider performs no external work. Read-only here means no external-world
   effect requiring plan authority, so audit needs no `OperatorPlanAuthority` and
@@ -579,13 +633,19 @@ the run-scoped state it borrows is declared before the VM in `ScopedToolRun` so
 member order enforces the lifetime contract.
 
 Three things this section requires are not met. `framework.audit.record` has a
-Framework Tool Catalog descriptor and argument validation, but no provider
-answers it, so the audit path is a declared Tool rather than a durable outcome
-yet. A loader now constructs a `ScopedToolProgram` outside the tests that first
-exercised it — `ProjectToolProgramRegistrar::registerProject` compiles one per
-Project registration generation (section 5.1) — but no production caller reaches
-that registrar, and no production `ToolRuntimeInvoke` binds the facades to
-`ToolRuntimeExecutor`: the seam is a parameter, and only tests supply one. And
+Framework Tool Catalog descriptor and argument validation, but no production
+provider answers it, so outside a test's own provider the audit path is a
+declared Tool rather than a durable outcome yet. A loader now constructs a
+`ScopedToolProgram` outside the tests that first exercised it —
+`ProjectToolProgramRegistrar::registerProject` compiles one per Project
+registration generation (section 5.1) — and a first-party `ToolRuntimeInvoke`
+now binds the facades to `ToolRuntimeExecutor`:
+`ProjectToolDispatcher::toolRuntimeSeam()` in
+`modules/operator/source/operator/project-tool-dispatch.{hpp,cpp}` is the seam
+every program of a registration is compiled with, and it funnels into the same
+`ToolRuntimeExecutor::invoke` a Framework provider call already goes
+through. What is absent is a production caller: nothing in `ProductLifecycle`
+builds a dispatcher or reaches that registrar, so only tests start a run. And
 "the run executes on a structured worker owned by the run context" is
 unimplemented:
 `ScopedToolProgram::invoke` runs on its caller's thread, and only the stop token
@@ -689,13 +749,38 @@ One declaration therefore pins all of it, across the two documents section 5.2
 keeps apart. The descriptor, inside `tool_catalog_hash`, pins the argument and
 result schemas, the requested child Tool set and profile, and every requested
 ceiling and budget. The binding row, inside the registration root and outside
-`tool_catalog_hash`, pins the entry. The closed Project module closure is the
-registration's own, singular, and is what both are read against.
+`tool_catalog_hash`, pins the entry. The closed Project module closure both are
+read against is the registration's own tool closure.
+
+A registration carries **two** closures, not one.
+[`One job, one vehicle`](../decisions/2026-08-22-one-job-one-vehicle.md) breaks
+the "ONE closure, ONE manifest hash" invariant outright: a registration carries a
+reducer closure compiled on `PureDataProgram` and a tool closure compiled on
+`ScopedToolProgram`, each with its own module manifest hash, and both slots are
+mandatory. There is no absent-means-pure reading and no absent-means-scoped one.
+The pure type's whole contract after the flip is the single entry `reduce`;
+`derive`, `plan`, `next_step` and `reconcile` die with the contract the Tool
+Runtime replaces, and the bridge's exact-export admission runs per closure —
+`{plugin_id, reduce}` for the reducer, `plugin_id` plus the binding union for the
+tool closure.
+
+Each closure states the entries it exports.
+[`A join needs two independent sources`](../decisions/2026-08-22-a-join-needs-two-independent-sources.md)
+fixes where that statement comes from: `exportedEntryPoints` is produced by the
+authoring path on every authoring build, carried by deployment into the
+registration, covered by the manifest hash, cross-checked against the binding
+union at load, and proven against the closure's actual exports by the bridge at
+execution. The loader may neither derive it from the binding table nor execute
+the module to observe it, because either collapse makes the check compare one
+source to itself and leaves a refusal no test can make fail. The authoring tool
+computes it by running the module in the author's own sandbox — nothing short of
+running reads a Luau table's keys — but what ships is a committed, hashed
+statement rather than a re-derivation.
 
 None of that is a grant. Every declared bound is an input to Operator admission,
 never a permission: the effective Tool set and budgets are the intersection of
 the declaration, actor/session authority, Tool descriptors, policy, approvals,
-and runtime limits. The loader and registrar bind that closure, the SDK
+and runtime limits. The loader and registrar bind that tool closure, the SDK
 generation, the Tool Runtime generation, the Project Tool Catalog, and the
 Project registration before a run starts.
 
@@ -760,23 +845,44 @@ resource `umbraflow.tool-catalog` that `@umbraflow/tools` reads, so description
 costs no Tool-call budget and cannot move under a running script.
 
 Internal checkpoint on what the tree does not meet; each of these stays a
-requirement. The Project Tool Catalog wire schema in
+requirement. The wire spellings this section needs now exist, and what is
+missing is a project that uses them. The Project Tool Catalog wire schema in
 `modules/deployment/source/deployment/project-deployment.cpp` requires
-`argument_schema` and `result_schema` on every row but declares no
-`child_effects`, and the Project Kit authoring path writes none, so a Project
-descriptor's `ChildEffectDeclaration` is empty on every catalog a deployment can
-author. The requested child Tool set and profile above therefore have no wire
-spelling yet; only the Framework catalog's descriptor material carries one.
-Neither does the entry: no authoring document anywhere states one, and the
-project directory loader derives every registration with an empty
-`project_tool_bindings`. That is the honest statement that no project declares a
-handler entry yet, and it is also why the only non-empty binding table in the
-tree is built by a test. Nothing above the loader starts a run either: the
-registrar is reached only from tests,
-`ProjectToolProgramHandle::invokeBoundTool` deliberately stops at running the
-entry — it establishes no issuing context, spends no budget and writes no
-durable row — and no producer admits an actor to start an entry at the top of a
-run.
+`child_effects` on every row beside `argument_schema` and `result_schema`, with
+every member of the declaration required and no absent form, and the Project Kit
+scaffold writes the empty declaration out rather than omitting it — so the
+requested child Tool set and profile above have a wire spelling on the Project
+side and not only on the Framework's. The entry has one too: an authoring
+document states `tool_bindings`, `readToolBindings` in
+`modules/deployment/source/deployment/project-directory.cpp` canonicalises and
+de-duplicates them into `project_tool_bindings`, and it asks neither whether the
+catalog declares the named Tool nor whether the closure exports the named entry,
+because those are the two halves `ProjectToolBindingTable::bind` refuses a
+disagreement between. What no project does yet is bind anything: the scaffold
+ships the pure five-function shape and writes an empty array, so the only
+non-empty binding table outside a test fixture is still one a test builds.
+
+`exportedEntryPoints` has no wire spelling at all, and the ruling that governs
+it is unimplemented. The registration schema
+`schema/umbraflow-project-registration-v2.schema.json` declares no member for
+it, so nothing carries an authored statement of a closure's exports into the
+registration or under the manifest hash; the loader receives the span from its
+caller, and the only caller that supplies one is a test that writes the list by
+hand. Every clause of
+[`a join needs two independent sources`](../decisions/2026-08-22-a-join-needs-two-independent-sources.md)
+therefore stays a requirement: authored production, deployment carriage, hash
+coverage, and the standing prohibition on the loader deriving or observing it.
+A run does start above the loader now, but only from
+inside dispatch of an already-admitted call: `ProjectToolDispatcher`
+(section 5.3) establishes the issuing context, takes the call through the one
+shared path — the same replay, admission, dispatch boundary and budget charging
+a Framework provider call already goes through — validates the answer against
+the entry's `result_schema` and writes the terminal row, while
+`ProjectToolProgramHandle::invokeBoundTool` still deliberately stops at running
+the entry. The registrar and the dispatcher are both reached only from tests,
+and no producer admits an actor to start an entry at the top of a run, so
+nothing yet starts a run that is not already a child of one. That producer stays
+a requirement.
 
 ### 5.2 Durable call history
 
@@ -860,10 +966,17 @@ Internal checkpoint in the working tree on 2026-08-22:
   it so no caller can hand the seam an ordinal, and
   `ToolCallIssuingContext::forRoot` and `forHandler` are the two issuing
   contexts this section names.
-- The parent coordinate is never absent, so no query switches on its presence.
-  `ToolCallPositionIdentity::m_parentIdentity` is a plain `ContentHash`,
-  `ScopedRunRequest::parentPosition` carries no optional,
-  `tool_call_positions.parent_call_identity` is `NOT NULL`, and the
+- The parent coordinate is never absent, so no query switches on its presence,
+  and it is now the real durable identity rather than a placeholder ordinal.
+  `ToolCallPositionIdentity::m_parentIdentity` is a plain `ContentHash`;
+  `script::ToolCallCoordinate::parentPosition` and
+  `ScopedRunRequest::parentPosition` are `ContentHash` with no in-class
+  initializer, so a run anchored on nothing cannot be spelled and the closure
+  admission `compile()` performs builds no request at all — it installs a
+  second capability table whose `invoke` records a terminal failure and breaks
+  the VM without minting a coordinate, rather than answering "no" on behalf of a
+  run that does not exist. `tool_call_positions.parent_call_identity` is
+  `NOT NULL`, and the
   sibling-predecessor and coordinate queries bind it directly. A call the run's
   own context issues names the root request; a handler's child names the
   handler's position. `persistToolCallPosition` proves the named coordinate
@@ -899,12 +1012,118 @@ recorded result:
 |---|---|
 | `proposed` | No admission or dispatch occurred; repeat current admission for the same call id. |
 | `admitted` with durable proof dispatch never began | Recheck current continuation authority, append a new admission attempt, and dispatch once under the same call id. |
-| `dispatching` or provider state with no terminal outcome | Atomically classify `possible/unknown` and never redispatch that attempt. A trusted idempotent provider query may instead prove `confirmed` or `proven_absent`; only a later explicit call may act after proven absence. |
+| `dispatching` or provider state with no terminal outcome, for a **mutating direct-effect leaf** — both halves required, and each read off a durable column: `tool_call_positions.provider_kind` names an answerer that reaches the world directly rather than through recorded children (today only `framework`), **and** `tool_call_history.mutating` is 1 | Atomically classify `possible/unknown` and never redispatch that attempt. A trusted idempotent provider query may instead prove `confirmed` or `proven_absent`; only a later explicit call may act after proven absence. |
+| `dispatching` with no terminal outcome, for **every call the row above does not name** — a composed call, whose `provider_kind` names an answerer that reaches the world only through recorded children (today `project`, a bound handler), at either mutability; or a direct-effect leaf whose row carries `mutating` 0 | Left `dispatching` and re-entered under the same call id, because neither shape can have moved the world without a durable row saying so. A composed call's bound handler runs again from the top on a fresh issuing context numbering from 1, meets its recorded children without executing them, and executes only the first position beyond history; re-running the handler is replay and not redispatch, because every external effect it caused is one of those recorded children, and that holds however mutating the handler's own descriptor is. A read-only leaf has no recorded children and needs none: it declares no external effect for a delivery to be uncertain about, so running its provider again delivers nothing twice. The restart itself never classifies either `possible`. |
 | `confirmed`, `proven_absent`, `rejected`, or terminal failure | Replay the exact durable outcome without provider execution. |
 | `possible/unknown` | Replay that classification and keep the target-wide mutation barrier. |
 
 No startup path may infer `proven_absent` merely from a process crash. The
 trusted provider reconciliation query and its evidence are themselves durable.
+
+The **first** `dispatching` row is the exception, and the second is simply what
+is left once the one non-replayable shape has been named exactly. Which row
+applies is decided by two facts the call's own durable rows already carry, never
+by a judgement made at recovery time: `tool_call_positions.provider_kind`, which
+fixes whether the call is composed of recorded children or reaches the world as a
+direct-effect leaf, and `tool_call_history.mutating`, which is the descriptor's
+declared mutability copied onto the row at admission. Both are columns, both were
+written before the crash, and the first row is their **conjunction**.
+
+Neither half is sufficient alone, and reading either half as sufficient inverts
+the rule in one direction or the other. Leaf alone is not enough: a read-only
+Framework call is a leaf and is re-entered, because there is no declared effect
+for a delivery to be uncertain about. Mutating alone is not enough: a mutating
+Project handler's row says mutating and is re-entered, because its whole effect
+surface is children that already carry their own classification. So the second
+row is not a relaxation granted to a kind of call, and it cannot be read as one:
+it governs whatever the conjunction does not, and the conjunction can only widen
+by adding an answerer to the closed set of answerers that reach the world
+directly — a decision taken once, at that set, rather than a default inherited at
+recovery time. Which calls the first row governs is therefore enumerable rather
+than judged: today it is exactly the Framework-provided calls whose descriptor
+declares them mutating.
+
+The rule is written once and both places that enforce it are derived from that
+one statement. The restart's row filter over `tool_call_history` joined to
+`tool_call_positions` is *generated* from the same predicate the re-entry gate
+calls, across the closed set of (answerer, mutability) pairs, so every pair the
+predicate calls unrecordable becomes one disjunct of the filter. The
+classification a restart applies and the shape a re-entry refuses cannot
+disagree, because there is one statement rather than two kept in step. A
+hand-written SQL copy of the rule beside the predicate is forbidden for that
+reason: the two are read months apart and only a crash exercises them together.
+This is
+[`re-entry is keyed on recorded children`](../decisions/2026-08-22-re-entry-is-keyed-on-recorded-children.md),
+which this plan implements as ruled.
+
+The reason is not that re-entry is cheaper. A dispatch may be re-entered only
+when nothing outside the ledger can have happened that the ledger does not
+already classify. The property that decides this is **composed of recorded
+children, versus direct-effect leaf** — not read-only versus mutating, and not
+Project versus Framework. A composed frame re-enters under this invariant:
+
+> A scoped handler's only channel to the world is a bound tool call; every bound
+> call is an admitted, durably recorded child; on re-entry, a child call matching
+> the next recorded child consumes the recorded result without live dispatch;
+> live dispatch is permitted only past the recorded frontier; a divergence from
+> the record refuses the frame loudly.
+
+Under it, re-execution is effect-free up to the frontier, and "no unrecorded
+effect" is enforced structurally rather than by audit, because scoped Luau has no
+other capability. A call answered by a bound handler is composed: the
+handler's only channel to the world is a bound tool call, every bound call is an
+admitted, durably recorded child, and each child already carries its own durable
+classification — so re-running the handler re-derives the same child coordinates,
+meets the recorded rows, and executes only the first position beyond history,
+which is this section's replay contract rather than a redelivery. That is
+equally true whether the handler's own descriptor is read-only or mutating,
+because a mutating handler's mutating work is likewise child calls. A
+Framework-provided call is a leaf: it is answered by a provider this side cannot
+re-run deterministically, so an unanswered one has no recorded child standing
+between the record and the world. Being a leaf is what makes uncertainty
+*possible*, and the descriptor's mutability is what makes it *real* — a
+read-only leaf declares no effect for the record to be silent about, so the
+ledger classifies everything that could have happened by classifying nothing.
+[`A Tool handler and an automation script are one mechanism`](../decisions/2026-08-22-handler-and-automation-script-are-one-mechanism.md)
+requires exactly this for its "parent `dispatching`, crashed mid-run" case, so
+classifying a composed call `possible` would both contradict a frozen ruling and
+convert a replayable handler into a barrier nothing can resolve. Nothing else in
+this section moves with it: no outcome this section calls uncertain becomes
+certain, a `possible/unknown` classification still cannot be converted to
+rejection, moved to another parent or sequence, or retried, and rule 5 above
+stands unchanged.
+
+**The one non-replayable atom is a leaf mutating provider in flight**: a
+recorded child with no recorded result, where the world may or may not have
+changed and no record can say. That child stays `possible` and needs its own
+protocol — an idempotency key, an effect-confirmation handshake, or operator
+adjudication. The parent handler above it re-enters, replays to that child, and
+**inherits its unresolved state rather than re-issuing it**; re-issuing at that
+point is a duplicate effect, and the fact that the parent is replaying is not
+authority to produce one. Re-entry safety is compositional, and the leaf is where
+it bottoms out.
+
+Whether a mutating handler may re-enter is **decided**, not deferred to whoever
+lands mutating handler dispatch. It may, on the conjunction above, and the
+forcing argument is that the alternative is not a decision at all. The
+restriction that kept a mutating handler from re-entering lived entirely in what
+the recovery pass converted; the re-entry path refused on provider kind alone
+and would have admitted a mutating Project call the moment one reached it. So
+giving a mutating handler a dispatch path would have widened re-entry **by
+default**, with no line of code expressing the choice and no test failing to
+announce it. A property acquired that way is inherited silently, and the flip
+must not be where it is discovered. Deciding it ahead of the capability is the
+only way the decision exists anywhere.
+
+The gate re-key and its pinning test therefore land **before any production
+mutating provider exists**, not with the first one. The reclassification of a
+mutating Project call to `possible` is exactly what made the admission gate's
+mutating-admit path unreachable, so that path becomes reachable with the re-key
+and must be exercised rather than inherited green: an admit is not a check, which
+is the technicality that let an unreachable path survive the dead-branch rule
+without anything going red. The pin is one test: kill after child *N*'s effect
+and its record, restart, prove no duplicate effect and prove completion, then
+force a divergence and prove the loud refusal.
 
 Two further divergences stop the run: a restarted script that terminates leaving
 recorded calls unconsumed for some issuing context, and a call arriving under a
@@ -920,28 +1139,111 @@ comparison to implement.
 
 Internal checkpoint in the working tree on 2026-08-22:
 
-- Rule 3 is still a per-call refusal, not a run-level kill. Divergence is now
-  detected *and named by field* at both replay sites, which satisfies the
-  frozen ruling's naming requirement, but both sites still return before any
-  write, `tool_runs` still has no state column, and nothing marks a root
-  terminated. "Terminates the run" stays as the requirement.
-- The two further divergences at the end of this section are unimplemented for
-  the same reason: nothing tracks a restarted script's consumption of recorded
-  calls per issuing context, because no restart path drives a script at all. A
-  call arriving under a different parent is caught — it is a coordinate miss —
-  but it is reported as an absent position rather than as a changed parent.
-- The `dispatching` recovery row's trusted-provider-query seam still does not
-  exist. `recoverUncertainToolCalls` has no provider hook and unconditionally
-  writes `possible` to every `dispatching` row;
-  `ToolCallCompletion::provenAbsent` and `ToolCallReconciliation::provenAbsent`
-  still have zero call sites, and nothing drives a durable row into
-  `ToolCallState::ProvenAbsent`. The `@umbraflow/workflow` facade now classifies
-  a `proven_absent` answer, which makes the gap reachable from script code
-  without making it producible. The row also applies to read-only calls, which
-  `reconcileMutatingToolCall` then refuses outright — so a read-only call left
-  `possible` by a crash can never be resolved and permanently blocks its root's
-  next sequence. Both the provider-query seam and a resolution path for
-  read-only `possible` are required and unbuilt.
+- Rules 1, 2 and 3 have a real restart path behind them now, for a dispatched
+  handler. `ProjectToolDispatcher` in
+  `modules/operator/source/operator/project-tool-dispatch.{hpp,cpp}` is the
+  dispatch executor, and its kill-and-restart fixtures in
+  `tests/operator/test-tool-dispatch.cpp` cover a terminal parent whose handler
+  never runs, an admitted parent dispatching against empty history, a handler
+  left mid-flight that re-enters and executes only past history, and a
+  fenced-out incarnation that can neither re-enter nor complete. Rule 4's
+  continuation gates are not what re-entry runs — it re-reads the live binding
+  and lease and refuses a different origin principal or controlled target, which
+  is narrower than section 5.4's recheck. Rule 5 now has a dispatch path and
+  coverage: `tests/operator/test-tool-executor.cpp` drives a mutating call to
+  `possible`, proves the target-wide freeze, and proves that only a trusted
+  query's evidence lifts it. That path is not reachable from a scoped script,
+  because `ProjectToolDispatcher` builds no mutation on the seam and so no
+  mutating call can be issued from Luau; the mutating calls under test are
+  admitted directly. Nothing starts a run at the top of a root either, so all
+  six rules over a *root* run remain untested and stay requirements.
+- Rule 3 is still a per-call refusal, not a run-level kill. Divergence is
+  detected *and named by field* at both replay sites, and both sites still
+  return before any write; what has changed is that the returned divergence is
+  now converted into the exact terminal-failure outcome of the call that was
+  running, so a diverging handler stops and the field that diverged is inside
+  its own durable row. That is still one call, not the run: `tool_runs` has no
+  state column and nothing marks a root terminated. "Terminates the run" stays
+  as the requirement.
+- The first of the two further divergences at the end of this section is
+  implemented. `OperatorCoordinator::sealToolCallContext` closes an issuing
+  context at handler teardown and refuses it when a recorded call beyond the
+  context's own issued count is left unconsumed, naming the ordinal; the
+  dispatcher calls it on every bound-entry run and
+  `tests/operator/test-tool-dispatch.cpp` proves it across a restart. The second
+  is unchanged: a call arriving under a different parent is caught — it is a
+  coordinate miss — but it is reported as an absent position rather than as a
+  changed parent.
+- The gate re-key has landed and the two `dispatching` rows above are what the
+  tree does. The rule has one statement: `toolCallEffectMayBeUnrecorded` in
+  `modules/operator/source/operator/ledger.cpp` is true exactly when a call's
+  composition is `DirectLeaf` and its declared mutability is `Mutating`.
+  `reenterToolCallDispatch` calls it to refuse, and
+  `unrecordedEffectDispatchFilter` *generates* `recoverUncertainToolCalls`'s row
+  filter from the same predicate by evaluating it over every (answerer,
+  mutability) pair, so the restart writes `possible` only to
+  `(history.mutating=1 AND position.provider_kind='framework')` and the two
+  enforcement points cannot disagree. Composed-versus-leaf is not judged either:
+  the closed `k_toolAnswerers` table is the one place the durable
+  `provider_kind` vocabulary is joined to what an answerer can do, and it rests
+  on the load-time refusal of a Project descriptor with no binding
+  (`ProjectToolBindingTable::bind`), which is what makes `provider_kind='project'`
+  mean "answered by a bound scoped entry". The crash/replay pin landed with it:
+  `tests/operator/test-tool-dispatch.cpp` kills a *mutating* handler after a
+  child's effect and its record and proves no duplicate effect and completion,
+  proves the loud refusal on a forced divergence, and proves that a restart
+  classifies the mutating leaf uncertain while leaving every other dispatch
+  re-enterable. The admission gate's mutating-admit path is reached by that
+  first test rather than inherited green.
+- The trusted-provider-query seam exists. `OperatorCoordinator::reconcileMutatingToolCall`
+  takes a `ToolReconciliationQuery` and **invokes** it, outside any ledger
+  transaction and only after it has proven the row `possible`, the descriptor
+  mutating, and the binding, lease and durable run authority live; it then
+  writes the answer's outcome and its mandatory evidence under a
+  `state='possible' AND mutating=1` CAS. `proven_absent` now has producers on
+  both sides — a mutating provider may report it at completion, and a
+  reconciliation answer may reach it — and
+  `tests/operator/test-tool-executor.cpp` covers both. No startup path reaches
+  the query, so the section's "no startup path may infer `proven_absent`" still
+  holds by construction.
+- The read-only `possible` gap is closed, and how it closed matters: **no
+  resolution path for a read-only `possible` was added — its two producers were
+  removed.** The restart was one producer, and the conjunction above ended it: a
+  read-only leaf is no longer converted. Completion was the other, and
+  `completeToolCallDispatch` now refuses a read-only row that reports `possible`
+  or `proven_absent`, on the ground that both are claims about whether an
+  external effect landed and a read-only Tool declares none. `Possible` is
+  therefore structurally mutating-only, and reconciliation — mutating by
+  construction, because only a mutation can be uncertain — can resolve every row
+  that can reach it. A resolution path for a read-only `possible` is no longer a
+  requirement, because no such row can be minted; if a future change gives one a
+  producer it must supply the path in the same change.
+- Completion-time classification is still keyed on **mutability alone**, and
+  re-keying it on the same composed-versus-leaf property is a requirement this
+  section now owns. `completeToolCallDispatch` refuses terminal failure for any
+  row whose `mutating` column is 1, and `ToolRuntimeExecutor::invoke` converts a
+  mutating provider's returned error or terminal failure into `possible`. Both
+  read the descriptor's mutability and neither reads the answerer. For a
+  mutating *handler* — whose whole effect surface is its own recorded children,
+  each already terminally classified — that turns an outcome the ledger can be
+  certain about into a target-wide barrier that only reconciliation can lift.
+  The property that decides a restart decides this too, and re-keying completion
+  on it is the natural completion of this cut. Whoever lands production mutating
+  providers must decide it; until then a mutating handler that fails cleanly is
+  over-classified.
+- A fixture-reality mismatch to convert before anything leans on it. Several
+  cases in `tests/operator/test-tool-executor.cpp` build a *Project*-provided
+  call — `mutatingProjectCall` mints a position whose `provider_kind` is
+  `project` — and answer it with an arbitrary lambda `ToolProvider` rather than
+  through a bound entry. Production cannot reach that shape: a Project
+  descriptor with no binding is refused at load, so `provider_kind='project'`
+  means "answered by a bound scoped entry" everywhere outside those fixtures. It
+  is harmless today because the executor is provider-agnostic and the restart
+  rule reads the durable column rather than the callable. It stops being
+  harmless the moment a change leans harder on "project-provided implies bound
+  handler" — a completion re-key on composition would be exactly such a change —
+  and those fixtures must be converted to real bound handlers in the same change
+  rather than after it.
 - Item 6's budget set is far from met. For a Script controller none of it
   applies: the controller profile sets `budgetsRequired=false`, admission
   refuses an `AgentProfile` for that kind, and every charge is skipped. For an
@@ -1014,12 +1316,21 @@ section are still unimplemented, and every one of them stays a requirement:
   consult it.
 - `framework.workflow.reconcile` is now a Framework Tool Catalog descriptor —
   read-only, `Privileged`, taking exactly one `call_identity` content hash — but
-  no provider answers it, and it is not what `reconcileMutatingToolCall`
-  consults. That transition still stores unverified caller-supplied JSON
-  verbatim, with no binding to a snapshot, observation, Host generation, or
-  lease-fresh capture. "Only a Framework-owned reconciliation Tool/transition
-  may consume fresh Host evidence" is the target; what exists is a declared Tool
-  beside an unbound evidence field.
+  no provider answers it, and it is still not what `reconcileMutatingToolCall`
+  consults. That half stands. What the transition consults has changed: it no
+  longer stores a caller-supplied outcome verbatim. It takes a trusted
+  `ToolReconciliationQuery` and **invokes** it over the durable call position the
+  Coordinator itself holds, after proving the row `possible`, the descriptor
+  mutating, and the binding, lease and durable run authority live — so a querier
+  cannot choose which call an answer is about — and every reconciliation kind
+  carries mandatory evidence that is stored beside the outcome it produced. What
+  is still missing is the binding of that evidence to a snapshot, observation,
+  Host generation or lease-fresh capture, and a Framework-owned Tool with a
+  provider standing where the in-process query stands. The evidence is durable
+  and mandatory rather than verified. "Only a Framework-owned reconciliation
+  Tool/transition may consume fresh Host evidence" therefore stays a
+  requirement, now with a narrower gap than a declared Tool beside an unbound
+  field.
 
 ## 6. Observation and action authority
 
@@ -1072,7 +1383,12 @@ admitted child calls.
 Handler globals and module state do not carry durable truth. A handler that
 needs durable project facts proposes Journal events; one that needs operation
 progress relies on its call tree and recorded child results. A restart replays
-the handler on the same terms as a top-level automation script.
+the handler on the same terms as a top-level automation script, and on the same
+terms whether the handler is read-only or mutating:
+[`re-entry is keyed on recorded children`](../decisions/2026-08-22-re-entry-is-keyed-on-recorded-children.md)
+keys that on the handler's effect surface being exhausted by its own recorded
+children rather than on its declared mutability, and section 5.3 states the
+recovery rule it fixes.
 
 Journal proposals are persisted only as call-bound provisional records against
 the exact call-tree and outcome revision; they are not Journal events or durable
@@ -1101,11 +1417,13 @@ across all four producers, modulo actor identity, because structure cannot see
 whether two producers canonicalise the same input the same way. Both are
 required, and neither discharges the other.
 
-Internal checkpoint in the working tree on 2026-08-22: the binding and the
-compiled program exist; the path that runs a handler does not. The binding is
-not a `ToolDescriptor` member and is not meant to become one — it is
-`project_tool_bindings` on the ProjectRegistration, beside `tool_catalog_hash`
-and outside it, and the module closure it names is the registration's own, so
+Internal checkpoint in the working tree on 2026-08-22: the binding, the compiled
+program and the path that runs a handler all exist; no producer starts one from
+outside a call, and neither half of the caller-independence ruling is finished.
+The binding is not a `ToolDescriptor` member and is not meant to become one —
+it is `project_tool_bindings` on the ProjectRegistration, beside
+`tool_catalog_hash` and outside it, and the module closure it names is the
+registration's own, so
 "which code answers this Tool" now has an answer a durable row could record.
 `ProjectToolProgramRegistrar` joins the two and compiles one
 `script::ScopedToolProgram` per registration generation over the bound entries
@@ -1114,23 +1432,42 @@ well: `result_schema` is required on every Tool Catalog row beside
 `argument_schema`, and a deployment naming a definition its tool-precondition
 schema does not declare is refused.
 
-Everything this section says about running a handler is still unbuilt, and the
-nested-call machinery of section 3.3 must still not be read as implementing it.
-Nothing constructs an issuing context for a handler invocation, spends its
-budget, validates its answer against the `result_schema` its entry declared, or
-writes its terminal row: `ProjectToolProgramHandle::invokeBoundTool` runs the
-entry and deliberately stops there, and its only caller is
-`tests/operator/test-project-tool-program.cpp`. "Returns a schema-validated
-Tool result" is therefore a requirement the catalog can now express and no
-executed path yet enforces. There are no call-bound provisional Journal
-proposals, and no test compares the actor paths against a shared semantic
-fixture. Neither half of the caller-independence ruling is built: there is no
-single internal admission-request value either —
-`OperatorCoordinator::admitToolCall` takes controller, lease, root, position,
-mutability, plan authority, effects, approvals and delegation as separate
-parameters — and `ToolCallPositionIdentity::create` is still the only downstream
-artifact private to the runtime. What section 3.3 is remains the admission path
-a handler's child calls will take.
+A handler now runs, and it runs on the one path. `ProjectToolDispatcher`
+(`modules/operator/source/operator/project-tool-dispatch.{hpp,cpp}`) constructs
+the issuing context for a handler invocation from that call's own durable
+position, runs the bound entry with its canonical arguments, judges the answer
+against the `result_schema` its entry declared through
+`ProjectToolProgramHandle::validateToolResult`, and writes the terminal row —
+all of it inside `ToolRuntimeExecutor::invoke` with the bound handler
+supplied as the provider, so replay, admission, the durable dispatch boundary,
+budget charging and the terminal write are the same code a Framework provider
+call goes through. "Returns a schema-validated Tool result" is therefore
+enforced by an executed path, and "a restart replays the handler on the same
+terms as a top-level automation script" is met for the handler half by re-entry
+(section 5.3). The nested-call machinery of section 3.3 is what a handler's
+child calls take, and the dispatcher's two seams — `dispatch(...)` for a
+producer and `toolRuntimeSeam()` for the `script::ToolRuntimeInvoke` every
+program of a registration is compiled with — are the same private
+`dispatchCall`, which is what keeps one Tool calling another from being a second
+path.
+
+What this section still owes. Nothing above dispatch admits an actor to start a
+handler at the top of a run, so the "whether its caller is Agent, human, another
+Project Tool, or a Project run started at the top" claim has only one producer
+to compare, and no test compares the actor paths against a shared semantic
+fixture. There are no call-bound provisional Journal proposals. Neither half of
+the caller-independence ruling is finished, though the two halves stand
+differently. The private-mint half is largely in the tree already:
+`ToolCallPositionIdentity::create` is private to the issuing context, and
+`ToolCallAdmission`, `ToolCallDispatch` and `ToolDelegationGrant` each have a
+private constructor befriended only to `OperatorCoordinator`, so an adapter can
+construct none of them — but they are copyable values rather than the move-only
+capability the ruling names. The funnel half does not exist at all:
+`OperatorCoordinator::admitToolCall` still takes controller, lease, root,
+position, mutability, plan authority, effects, approvals and delegation as nine
+separate parameters, and there is no one internal admission-request value for a
+producer to build. Both halves, and the fixture, stay as this section states
+them.
 
 ## 8. Journal reduction
 
@@ -1157,6 +1494,16 @@ admission list: the reducer runs on `PureDataProgram`, whose resolver has no
 scoped module in it at all, while scoped code runs on `ScopedToolProgram`. That
 is what makes E7's "fail by module name" a load-time resolver property rather
 than a runtime check.
+
+After the flip, `reduce` is the **whole** of the pure type's contract.
+[`One job, one vehicle`](../decisions/2026-08-22-one-job-one-vehicle.md)
+retires `derive`, `plan`, `next_step` and `reconcile` with the contract the Tool
+Runtime replaces, so the pure registrar's expected entry set becomes `{reduce}`
+and the exactly-five admission check and its pins die with it. The resolver
+refusal above is explicitly **not** in that deletion set: it is retargeted onto
+the single-entry reducer type in the same change, because it is what makes the
+reducer's isolation a property of the type rather than a comment, and losing it
+with the four entries would delete the evidence for this section's whole claim.
 
 Internal checkpoint in the working tree on 2026-08-22, on two points:
 
@@ -1201,6 +1548,80 @@ The old five-function registration and persisted sessions remain audit-only.
 When the cut closes there is no dual entry table, optional Tool bridge, fallback
 dispatch, or replay under a different SDK generation.
 
+**The registration break is part of the cut, not a consequence of it.**
+[`One job, one vehicle`](../decisions/2026-08-22-one-job-one-vehicle.md) makes a
+registration carry two closures with two manifest hashes and shrinks the pure
+type's contract to `{reduce}`, so "ONE closure, ONE manifest hash" is broken
+outright in this generation rather than adapted. Keeping `derive`, `plan`,
+`next_step` and `reconcile` alive beside tool dispatch past the flip would be two
+generations of one job — project orchestration — simultaneously reachable with
+something choosing between them per project, which is the forbidden
+compatibility path of section 9.1 word for word, and a promise to delete them in
+a later commit does not change what exists in the interval.
+
+**At the flip commit, only mechanics remain.** Rewire the production entry to
+the root producer; delete the five-function registrar, `ProjectPluginHandle`, the
+old provisioning path, the four dead entries and their pins; refold-verify — or
+regenerate-and-state — every instance row and re-stamp it; nothing new lands.
+Four preconditions make that one commit rather than a series leaving a mixed
+state: every new-generation path is already test-reachable end to end; every
+consumer's new call site is already written, because the flip switches call sites
+and does not author them; the deletion set is enumerated up front as a greppable
+inventory; and no selector exists at any instant before the commit, the new
+generation staying test-only to the last moment. Five items must land before the
+flip while reading like something else, and section 13 sequences them: the
+section 5.3 gate re-key, which reads as mutating-provider work; the refold-verify
+harness, which reads as flip tooling but must pass beforehand or the flip cannot
+prove the claim it makes; authored `exportedEntryPoints` production, without
+which flip pressure invites the loader-derivation that
+[`a join needs two independent sources`](../decisions/2026-08-22-a-join-needs-two-independent-sources.md)
+forbids; the data migration of already-authored Tool names under section 3.2;
+and retargeting the pure-resolver refusal test onto the single-entry reducer type
+so it survives the deletion of the five-entry pins.
+
+**What provisions a scoped-generation Project, and why the cut owns it.** No
+session can be pinned for a Project that has no `project_instances`
+row: `pinSession` looks the registration-hash and instance-key pair up and
+refuses outright when it is absent. The only path that writes that row is
+`OperatorCoordinator::provisionProjectInstance`, which requires the exact pinned
+`ProjectPluginHandle` and reduces the baseline through it — that is, a closure
+admitted under `PureDataProgram` against all five of `derive`, `plan`,
+`next_step`, `reconcile` and `reduce`. A Project whose closure is genuinely
+scoped — bound handler entries plus a reducer, and none of the other four — can
+therefore hold no session at all, and a Project that cannot hold a session can
+drive nothing. This is visible today only as a test workaround: the dispatch
+fixture registers one closure twice against one registration, once as the pure
+plugin its instance is provisioned from and once as the scoped program the
+dispatcher runs, and names its handler entries after the five plugin functions
+so the same bytes admit under both program types.
+
+[`Provisioning rekeys to the registration generation`](../decisions/2026-08-22-provisioning-rekeys-to-the-registration-generation.md)
+answers it, and this plan implements it as ruled. The question is not answered by
+deleting the five-function path: the ProjectInstance row and its reduced baseline
+are Journal state that outlives the entry surface that happens to produce them
+today, so something must still establish an instance and its initial state for a
+Project that exports no `derive`, `plan`, `next_step` or `reconcile`. The row
+therefore survives in shape — instance identity plus reduced baseline — and its
+provenance moves from `ProjectPluginHandle` to the **registration generation**,
+which is already the unit of compilation and now carries both compiled programs.
+`provisionProjectInstance` becomes a function of the registration;
+`ProjectPluginHandle` dies with the old registrar; `pinSession` chains session to
+instance to generation, with no step naming a superseded type.
+
+The stored baselines are proved rather than re-stamped. The reducer's logic
+survives the flip unchanged — the same authored fold recompiled on the shrunk
+pure type — so the flip commit must **refold each instance's admitted-batch
+history through the new-generation reducer and assert byte equality with the
+stored baseline**, then re-stamp the row to the generation. Determinism is what
+makes that a real proof that changing the vehicle changed nothing, and where the
+equality holds, migrating and regenerating are the same act. Where the Journal
+does not retain the fold inputs, do not re-stamp unverified bytes across a
+trust-boundary rewrite: regenerate from what is retained, state the recomputed
+baseline as the new truth — nothing is released, so restating is available — and
+say in the commit message which of the two happened. The refold-verify harness
+is built and passing on test data **before** the flip commit is written; it is a
+precondition of WP10 rather than a consequence of it.
+
 ### 9.1 What makes the intermediate state legitimate
 
 The list above cannot land in one commit, so for the length of the cut the new
@@ -1238,20 +1659,32 @@ sole caller is `tests/cli/test-observe.cpp`.
 
 Everything added since — `script::ScopedToolProgram` and the four scoped
 facades, the eight-tool Framework Tool Catalog, `ToolDelegationGrant` and the
-nested-call admission path, `SnapshotObservationAuthority`, and
-`ToolRuntimeExecutor::invokeMutating` — is reached only from
+nested-call admission path, `SnapshotObservationAuthority`,
+`ToolRuntimeExecutor::invokeMutating`, and now `ProjectToolDispatcher` with the
+handler re-entry path it drives — is reached only from
 `tests/script/test-scoped-tool-program.cpp`,
 `tests/task/test-scoped-framework-modules.cpp`,
 `tests/operator/test-tool-nested-calls.cpp`,
-`tests/operator/test-tool-snapshot-reference.cpp` and
-`tests/operator/test-tool-executor.cpp`. No selector exists anywhere: no flag,
-no version field, no dual entry table, no catalog-presence branch. Both rules of
-this section hold, and a reader must not read the size of the dark generation as
-evidence that the cut has happened. It has not; WP10 has not started.
+`tests/operator/test-tool-snapshot-reference.cpp`,
+`tests/operator/test-tool-executor.cpp` and
+`tests/operator/test-tool-dispatch.cpp`. The dispatcher is dark by construction
+rather than by omission: nothing in `ProductLifecycle` builds one, and the
+Framework Tools a scoped run reaches are answered by a provider its caller
+installs rather than by a registry the module owns, so there is no production
+composition to disable. No selector exists anywhere: no flag, no version field,
+no dual entry table, no catalog-presence branch. Both rules of this section
+hold, and a reader must not read the size of the dark generation as evidence
+that the cut has happened. It has not; WP10 has not started.
 
-Nothing is released, so there are no durable bytes to migrate at the flip. Where
-development-time ledgers exist they are regenerated rather than taught to read
-two row shapes.
+Nothing is released, so no consumer's bytes have to be migrated at the flip, and
+where development-time ledgers exist they are regenerated rather than taught to
+read two row shapes. That freedom does not extend to the reduced baselines:
+[`provisioning rekeys to the registration generation`](../decisions/2026-08-22-provisioning-rekeys-to-the-registration-generation.md)
+requires each one to be refolded through the new-generation reducer and proven
+byte-equal before it is re-stamped, or regenerated with the commit message
+saying so. Regenerating a ledger that nothing derives state from is cheap;
+re-stamping a baseline every later revision is derived from without recomputing
+it is the one place "nothing is released" would buy an unchecked claim.
 
 ## 10. Required experiments
 
@@ -1372,9 +1805,22 @@ deleted or reworded by this paragraph; it only says where each one stands.
   root-positioned call is now an ordinary position row rather than a null parent
   — `tool_call_positions.parent_call_identity` is `NOT NULL` and names the root
   request row, with every row an earlier generation left null migrated to its
-  own `root_identity`. Its remaining gaps are the ones sections 5.2, 5.3 and 5.4
-  name — no `rejected` producer, no run-level termination, no trusted
-  provider-query seam, and no admitted root effect envelope on `tool_runs`.
+  own `root_identity`. Restart recovery is now keyed on the conjunction section
+  5.3 states: `recoverUncertainToolCalls` classifies a `dispatching` row
+  uncertain only when it is a mutating direct-effect leaf, through a row filter
+  *generated* from the same predicate `OperatorCoordinator::reenterToolCallDispatch`
+  calls to refuse, and re-entry admits everything else — a composed call at
+  either mutability, and a read-only leaf — while still refusing to widen the
+  admission it re-enters (section 5.3). The trusted provider-query seam landed
+  with it: `reconcileMutatingToolCall` invokes a `ToolReconciliationQuery` after
+  proving the row `possible`, the descriptor mutating, and the binding, lease
+  and durable run authority live. Its remaining gaps are the ones sections 5.2,
+  5.3 and 5.4 name — no `rejected` producer, no run-level termination
+  (`tool_runs` still has no state column, so a divergence stops one call and not
+  the run), no admitted root effect envelope on `tool_runs`, neither release
+  path for `terminally_unresolved`, and the completion-time classification that
+  section 5.3 now requires re-keying onto the same composed-versus-leaf property
+  that decides a restart.
 - WP3 has not started. There are no Agent, Workbench/CLI or automation adapters.
 - WP4 is done except for the cross-platform identity tests, which do not exist:
   the identity is computed and asserted on the host that runs the suite, and
@@ -1382,21 +1828,33 @@ deleted or reworded by this paragraph; it only says where each one stands.
   has since landed (section 4.1).
 - WP5 is done. See section 4.2's checkpoint for what landed and the three
   parts of it that are still unwired.
-- WP6 is half done, and which half has changed. Nested calls are implemented
-  (section 3.3), and Project Tool handler binding is too: the binding table is a
+- WP6 is done except for the authoring path. Nested calls are implemented
+  (section 3.3); Project Tool handler binding is too — the binding table is a
   registration member, the loader joins it against the pinned catalog and the
   exact closure with three refusals, and one program per registration generation
-  is compiled from it (section 5.1). What is missing is the dispatch that runs a
-  bound handler — no issuing context, no budget spend, no result-schema
-  validation, no terminal row — and any authoring path that could state a
-  binding outside a test.
-- WP7's declaration and loader are done; its restart and replay are not. Under
-  section 5.1 there is no separate automation declaration left to build — an
-  entry an actor starts at the top of a run is a catalog descriptor plus a
-  binding row, and the loader and registrar that bind it to the SDK generation,
-  the Tool Runtime seam, the Project Tool Catalog and the Project registration
-  exist. Deterministic restart and replay of a scoped run do not, because
-  nothing starts one.
+  is compiled from it (section 5.1); and the dispatch that runs a bound handler
+  now exists — `ProjectToolDispatcher` establishes the issuing context, takes
+  the call through admission and the durable dispatch boundary, validates the
+  answer against the entry's `result_schema` and writes the terminal row
+  (sections 5.3 and 7). The authoring path now has a wire spelling — an
+  authoring document declares `tool_bindings` and the directory loader carries
+  them into `project_tool_bindings` — so what is still missing is a project that
+  binds anything: the Project Kit scaffold writes the empty array, and nothing
+  states `exportedEntryPoints`, which stage REGISTRATION of section 13 owns
+  (section 5.1).
+- WP7's declaration, loader and per-handler restart are done; restart and
+  replay of a run started at the top are not. Under section 5.1 there is no
+  separate automation declaration left to build — an entry an actor starts at
+  the top of a run is a catalog descriptor plus a binding row, and the loader
+  and registrar that bind it to the SDK generation, the Tool Runtime seam, the
+  Project Tool Catalog and the Project registration exist. Deterministic restart
+  and replay now exist for a dispatched handler: a killed incarnation re-enters,
+  its context is fresh and numbers from 1, recorded children replay without
+  executing, an unconsumed recorded call and a diverged attribute each stop the
+  run with the offending ordinal or field named, and a fenced-out incarnation
+  can neither re-enter nor write (section 5.3). The same rules over a run an
+  actor started at the top are untested and unbuilt, because no producer starts
+  one.
 - WP8 is descriptors only. All eight Framework Tool descriptors exist and the
   snapshot-reference boundary exists, but only `framework.screen.observe` and
   `framework.workflow.wait` have providers, and no input Tool resolves a
@@ -1434,6 +1892,7 @@ generation grew with it — `tests/operator/test-tool-nested-calls.cpp`,
 `tests/operator/test-tool-snapshot-reference.cpp`,
 `tests/operator/test-tool-binding.cpp`,
 `tests/operator/test-project-tool-program.cpp`,
+`tests/operator/test-tool-dispatch.cpp`,
 `tests/script/test-scoped-tool-program.cpp` and
 `tests/task/test-scoped-framework-modules.cpp` are all new and all registered in
 `tests/CMakeLists.txt` — and none of it is conformance coverage. The same three
@@ -1456,11 +1915,15 @@ of these is required before the flip, not after it.
 Implementation has reached the scoped program type, the four scoped facades, the
 eight-tool Framework Tool Catalog, nested Tool calls, the snapshot-observation
 refusal matrix, the Project Tool binding table inside the registration root, the
-root-positioned call row that replaced the null parent, and the loader and
-registrar that compile one program per Project registration generation — the
-last three as
+root-positioned call row that replaced the null parent, the loader and registrar
+that compile one program per Project registration generation, the dispatch
+executor that runs a bound handler from an admitted call to its terminal durable
+row — those four as
 [`a Tool handler and an automation script are one mechanism`](../decisions/2026-08-22-handler-and-automation-script-are-one-mechanism.md)
-fixes them. All of it is production-unreachable; see section 9's state
+fixes them — and the restart re-key that decides which crashed dispatches
+re-enter, as
+[`re-entry is keyed on recorded children`](../decisions/2026-08-22-re-entry-is-keyed-on-recorded-children.md)
+fixes it. All of it is production-unreachable; see section 9's state
 paragraph.
 
 **Gate state.** The `fe6dbe0` breakage this checkpoint used to report was that
@@ -1470,7 +1933,12 @@ repair is in the working tree: the generator now reads a binding's fields
 through `braced_span` rather than a fixed arity, reads the shared closed-graph
 constants out of `ffi/program-runtime.{hpp,cpp}`, and has its own
 `ScopedModuleBinding` pattern feeding a separate scoped section;
-`docs/PUBLIC-CONTRACT.md` carries that section. Whether the whole gate passes is
+`docs/PUBLIC-CONTRACT.md` carries that section. The dispatch executor's sources
+and its test are likewise in the working tree, and so are stage RE-ENTRY's: the
+one-statement rule and its generated filter in
+`modules/operator/source/operator/ledger.cpp`, and the crash/replay coverage in
+`tests/operator/test-tool-dispatch.cpp` and
+`tests/operator/test-tool-executor.cpp`. Whether the whole gate passes is
 not established by this checkpoint — nothing here ran it. Confirm `GATE: PASS`
 before treating any unstarted step below as startable.
 
@@ -1480,43 +1948,105 @@ building each stage dark — complete, compiled and conformance-tested with no
 production caller — until the flip. Completed steps stay in the list: the order
 that was followed is as much a part of the handoff as what remains.
 
-Two things have moved since the previous checkpoint, and a third is in progress
-between them. Identity and registration shape landed first — the binding table
-inside the registration root and outside `tool_catalog_hash`, the required
-per-tool `result_schema`, the root-positioned call row, and the recorded
-fixtures migrated in the same change — because every later step pins on those
-digests, and changing hash inputs late invalidates every fixture and replay row
-built on top, which is the most expensive rework available. The loader and
-registrar of step 5 landed next, ahead of step 4. In progress now, complete in
-neither the list nor the tree, is the dispatch executor: from an admitted call
-in `dispatching` to an issuing context keyed on the parent position, a program
-invoke with canonical arguments, result-schema validation, and a terminal row
-write, with kill-and-restart fixtures proving fresh-from-1 replay, the
-mismatch-names-the-field halt, and fence exclusion. It is the shared bottom of
-every caller path and what replaces step 3's fake-executor coverage for a
-Project Tool, so anything built before it stands on a stub and gets rebuilt. Do
-not describe it as done. Step 4 remains the earliest step of this list that
-nothing has started, subject to the re-cut of the remaining order below.
+Three things have moved since the previous checkpoint. Identity and registration
+shape landed first — the binding table inside the registration root and outside
+`tool_catalog_hash`, the required per-tool `result_schema`, the root-positioned
+call row, and the recorded fixtures migrated in the same change — because every
+later step pins on those digests, and changing hash inputs late invalidates
+every fixture and replay row built on top, which is the most expensive rework
+available. The loader and registrar of step 5 landed next, ahead of step 4.
 
-The remaining order was re-cut when the unified entry declaration landed, and
-this is the order to follow from here. After the dispatch executor comes the
-**root producer**: Operator admission of an actor's start at the top of a run,
-constructing the same admission request with a root coordinate. It is a stage of
-its own because the moment it exists automation scripts exist and no separate
-feature remains to build. Then the **actor adapters**, as thin translators onto
-the one internal admission request
-[`caller independence is structural`](../decisions/2026-08-22-caller-independence-is-structural.md)
-requires, with that ruling's four-way semantic fixture landing with the second
-adapter and growing with each. **Production mutating providers
-come last**, after every adapter: everything above them runs end to end against
-test providers, and they are the only stage whose doubles are cheap and whose
-real versions carry external risk. Step 4's read-only providers may therefore
-land at any point once the dispatch executor exists, but its two
-`framework.input.*` providers belong to that last stage, and the flip is the one
-commit after it. The minimum chain for the first real Project Tool end to end is
-identity and registration shape, the loader and registrar, and the dispatch
-executor, plus one admission producer, plus a provider only if that Tool's
-children need one.
+The dispatch executor has now landed as well:
+`modules/operator/source/operator/project-tool-dispatch.{hpp,cpp}` carries an
+admitted call in `dispatching` to an issuing context keyed on its own durable
+parent position, a program invoke with canonical arguments, result-schema
+validation and a terminal row write, and `tests/operator/test-tool-dispatch.cpp`
+is the kill-and-restart coverage for fresh-from-1 replay, the
+mismatch-names-the-field halt, the unconsumed-recorded-call halt and fence
+exclusion. Two seams reach it and they are one path: `dispatch(...)` for a
+producer, and `toolRuntimeSeam()` as the `script::ToolRuntimeInvoke` every
+program of a registration is compiled with. Both funnel into
+`ToolRuntimeExecutor::invoke` with the bound handler supplied as the
+provider, so it is the shared bottom of every caller path and it replaces step
+3's fake-executor coverage for a Project Tool. There is one provider protocol
+and one seam rather than a read-only and a mutating pair: which of the two a
+call is comes from the descriptor inside its coordinate, so a second callable
+would only be a second spelling of one signature.
+
+**The order was re-cut again by the five rulings the header's second group
+names, and the stages below are the sequence to follow from here.** They
+supersede the previous re-cut, which ran dispatch executor, root producer, actor
+adapters, production mutating providers, flip. The work is the same; the gating
+is not. What moves a stage now is a ruling rather than a scheduling preference,
+and every stage is still built dark under the two rules of section 9.1. These
+stages are named rather than numbered, because the numbered list further down
+this section is the separate bottom-up dependency order and its step numbers do
+not correspond.
+
+- **Stage NAME — the Tool-name tightening and its ownership enforcement.**
+  Section 3.2's grammar, the positive ownership check, the deletion of the
+  negative refusal, and the rename of every fixture, shipped example and recorded
+  name. **First**, because every artifact authored afterwards is born valid,
+  while done late it re-migrates everything landed in between; it is also the
+  smallest and the only fully independent stage. *Landed — section 3.2's
+  checkpoint says what is in the tree.*
+- **Stage REGISTRATION — the registration break and authored
+  `exportedEntryPoints`, together.** The two closures with two manifest hashes
+  and the single-entry pure contract of
+  [`one job, one vehicle`](../decisions/2026-08-22-one-job-one-vehicle.md),
+  and the authored, hashed statement of each closure's exports that
+  [`a join needs two independent sources`](../decisions/2026-08-22-a-join-needs-two-independent-sources.md)
+  requires. **One cluster**, because the registration schema and its only
+  production producer must move together. Test-reachable only.
+- **Stage PROVISIONING — provisioning rekeyed to the generation**, per
+  [`provisioning rekeys to the registration generation`](../decisions/2026-08-22-provisioning-rekeys-to-the-registration-generation.md),
+  with the refold-verify harness built and passing on test data. Depends on
+  REGISTRATION, because the generation it rekeys to is the one that stage
+  defines.
+- **Stage RE-ENTRY — the restart re-key**, per
+  [`re-entry is keyed on recorded children`](../decisions/2026-08-22-re-entry-is-keyed-on-recorded-children.md):
+  the restart classification, the gate re-key, and the crash/replay pin of
+  section 5.3. Independent of REGISTRATION and PROVISIONING, and **a hard
+  precondition for MUTATING PROVIDERS**. *Landed — section 5.3's checkpoint says
+  what is in the tree, including the two open items it leaves behind: the
+  completion-time classification is still keyed on mutability alone, and the
+  executor fixtures that answer a Project-provided call with a lambda must be
+  converted before anything leans on "project-provided implies bound handler".*
+- **Stage MUTATING PROVIDERS — the production mutating providers**, only after
+  RE-ENTRY, whose landing is what unblocks this stage. This is where the sequence
+  differs from the previous re-cut, which placed them after every adapter. What
+  moved them is not a relaxed risk judgement but a precondition that did not
+  exist before: without RE-ENTRY, a mutating handler dispatch inherits re-entry
+  silently and the admission gate's mutating-admit path is unreachable and
+  untested. Everything the earlier reading protected still holds: a production
+  mutating provider stays production-unreachable until the flip like every other
+  stage, and the stages around it still run end to end against test providers
+  whose doubles are cheap. The two open items RE-ENTRY left are this stage's to
+  decide, because a production mutating provider is the first caller that makes
+  either of them observable.
+- **Stage ROOT PRODUCER — Operator admission of an actor's start at the top of a
+  run**, constructing the same admission request with a root coordinate, built
+  against the post-REGISTRATION schema and proven end to end by test: author,
+  deploy, register, provision, pin, dispatch, crash-replay, reduce, baseline. It
+  is a stage of its own because the moment it exists automation scripts exist and
+  no separate feature remains to build.
+- **Stage ADAPTERS — the actor adapters**, as thin translators onto the one
+  internal admission request
+  [`caller independence is structural`](../decisions/2026-08-22-caller-independence-is-structural.md)
+  requires, with that ruling's four-way semantic fixture landing with the second
+  adapter and growing with each. Each consumer's new-generation call site is
+  written and test-proven here and left dormant from production, because the flip
+  switches call sites and does not author them.
+
+Then the flip. The read-only providers of the numbered list's step 4 are
+unblocked by the dispatch executor and may land at any point once it exists, but
+its two `framework.input.*` providers belong to stage MUTATING PROVIDERS. The
+minimum chain for the first real Project Tool end to end is identity and
+registration shape, the loader and registrar, and the dispatch executor, plus one
+admission producer, plus a provider only if that Tool's children need one.
+
+Nothing yet admits an actor to start an entry at the top of a run, so every run
+in the tree is still a child of a call some test admitted by hand.
 
 1. **Mostly done** — identity, envelope and ledger row types, and their
    conformance coverage. The types exist and carry unit coverage, and the
@@ -1534,26 +2064,40 @@ children need one.
    catalog identity that covers the child-effect declaration; every catalog row
    now declares a `result_schema` beside its `argument_schema`, and a deployment
    naming a definition the tool-precondition schema does not declare is refused;
-   Project catalog validation refuses the reserved namespace and duplicates. Two
-   rules are still missing: the positive namespace binding of section 3.2, and a
-   `child_effects` member on the Project catalog wire schema, without which a
-   Project descriptor's child-effect declaration is empty by construction
-   (section 5.1).
+   Project catalog validation refuses duplicates. The two rules this step used to
+   be missing have both landed. The positive namespace binding of section 3.2 is
+   enforced by one `validateToolNameOwnership` that the Operator and the
+   authoring tier both call, and the negative reserved-prefix refusal it made
+   unreachable is deleted, its premise now stated once at registration-claim
+   validation. And `child_effects` is a required member of the Project catalog
+   wire schema with every sub-member required and no absent form, so a Project
+   descriptor's child-effect declaration is a stated document rather than empty
+   by construction (section 5.1).
 3. **Done** — `ScopedToolProgram`, its resolver, and the scoped facades, tested
    against a fake executor. `tests/script/test-scoped-tool-program.cpp` and
    `tests/task/test-scoped-framework-modules.cpp` are that fake-executor
    coverage. Section 4.2's checkpoint lists the three parts of the ruling this
-   step left unwired.
-4. **Next unstarted step** — providers, and the observation and input contracts.
+   step left unwired; the seam half of the second has since been built, because
+   the dispatch executor is the first-party `ToolRuntimeInvoke` those facades
+   are compiled against for a Project registration — but no production caller
+   reaches it, and the other two are untouched.
+4. **Unstarted, and unblocked** — providers, and the observation and input
+   contracts. It is the earliest step of this list nothing has started. Its
+   read-only half may land at any point now, but it is split across two stages of
+   the re-cut order above: the two `framework.input.*` providers are stage
+   MUTATING PROVIDERS, whose one gate — stage RE-ENTRY — has landed, while the
+   rest is gated on nothing.
    `SnapshotObservationReference`/`Authority` and the eleven-way refusal matrix
    landed ahead of this step and are its input; what is missing is the provider
    side. `framework.audit.record`, `framework.screen.capture`,
    `framework.workflow.status`, `framework.workflow.reconcile` and both
-   `framework.input.*` Tools are descriptors no provider answers, and nothing
-   resolves an observation reference through the authority. WP6's nested-call
-   admission landed alongside step 1's ledger work rather than after this step,
-   and step 5's loader and registrar landed ahead of it as well, so nothing here
-   waits on either.
+   `framework.input.*` Tools are descriptors no production provider answers, and
+   nothing resolves an observation reference through the authority. WP6's
+   nested-call admission landed alongside step 1's ledger work rather than after
+   this step, and step 5's loader and registrar and the dispatch executor landed
+   ahead of it as well, so nothing here waits on any of them. The dispatcher
+   takes the Framework provider as a constructor parameter, so this step
+   replaces a test double rather than reopening the dispatch path.
 5. **Started ahead of step 4** — registration and manifest pinning, then policy,
    budget, lease, and recovery. The registration half has landed:
    `ProjectToolProgramRegistrar::registerProject` binds the verified
@@ -1564,18 +2108,30 @@ children need one.
    `currentScopedToolEnvironmentHash()` now has a consumer and stamps the loaded
    handle, but no registration or manifest carries that digest, so nothing
    refuses on inequality between a registered scoped environment and the running
-   one (section 4.3). Policy, budget, lease and recovery are untouched.
-6. **Not started** — adapters and Project Kit scaffolds. WP6's other half, the
-   Project Tool handler binding, is no longer among what is missing here: it
-   landed with step 5's loader, as a registration member rather than a
-   `ToolDescriptor` field (section 5.1). What this step still owes is the
-   producers and the authoring path — the Agent and human Workbench/CLI
-   adapters, the producer that admits an actor's start at the top of a run (the
-   moment it exists, automation scripts exist and no separate feature remains to
-   build), each a thin translator onto one internal admission request; and a
-   Project Kit scaffold and directory format through which a project can state a
-   handler entry at all, since the project directory loader derives every
-   registration with an empty binding table today.
+   one (section 4.3). The recovery half has moved: section 5.3's restart
+   classification, its re-entry gate, the generated filter that keeps the two in
+   one statement, and the crash/replay pin under them are stage RE-ENTRY and are
+   in the tree, and `reconcileMutatingToolCall` invokes a trusted query rather
+   than storing a caller-supplied outcome. Policy, budget and lease are
+   untouched, and so is the rest of recovery — continuation authority, the
+   admitted root effect envelope on `tool_runs`, and either release path for
+   `terminally_unresolved` (section 5.4).
+6. **Not started, and its root producer is the next stage to build** — adapters
+   and Project Kit scaffolds. WP6's other half, the Project Tool handler
+   binding, is no longer among what is missing here: it landed with step 5's
+   loader, as a registration member rather than a `ToolDescriptor` field
+   (section 5.1), and the dispatch that runs a bound handler has landed too.
+   What this step still owes is the producers — first the producer that admits
+   an actor's start at the top of a run (the moment it exists, automation
+   scripts exist and no separate feature remains to build), then the Agent and
+   human Workbench/CLI adapters, each a thin translator onto one internal
+   admission request. The authoring half has moved and is not finished. The
+   directory format through which a project states a handler entry exists: an
+   authoring document declares `tool_bindings` and `readToolBindings` carries
+   them into `project_tool_bindings`. What no scaffold does is use it — the
+   Project Kit scaffold ships the pure five-function shape and writes an empty
+   array — and no authoring document states `exportedEntryPoints` at all, which
+   is stage REGISTRATION's other half rather than this step's (section 5.1).
 7. WP10, the flip: rewire `ProductLifecycle`, migrate every consumer, and delete
    the superseded paths in one commit, followed by cross-repository review,
    synchronization, publication, one final full CI, commits, and pushes.

@@ -167,6 +167,23 @@ behaviour it describes is one the declarative tier already expresses. A
 justification that is present and false leaves `project check` green, by design;
 it is a review finding and never a gate finding.
 
+A negative refusal is made unreachable the moment a positive rule lands over the
+same ground, and the two look complementary rather than redundant right up to
+that point. The Tool Catalog owner used to refuse a Project descriptor whose
+name began with `framework.`. When ownership became positive -- a Tool's
+namespace must equal the registrant's `plugin_id`
+(`operator_runtime::validateToolNameOwnership`) -- that refusal could no longer
+fire for any reachable input, because the only registrant whose `plugin_id`
+could carry the reserved prefix is one `validateClaims` now refuses outright. Two
+things follow. The negative check must be deleted rather than kept "for depth":
+it is a branch no test can make red, and the test that used to pin it was
+retargeted onto the positive rule instead. And the premise the positive rule
+rests on must itself be enforced and pinned somewhere -- here, at the
+`plugin_id` claim -- or deleting the negative check opens the hole it used to
+cover. When a positive rule replaces a negative one, name the input that used to
+reach the negative branch and say which check refuses it now; if no check does,
+the replacement is not equivalent.
+
 ## Review checklist
 
 - Can the named production rule be neutralized without breaking fixture setup?
@@ -176,3 +193,5 @@ it is a review finding and never a gate finding.
 - Is an external pin checked against the external source, not only another pin?
 - For every schema, where are its producer, consumer, and joining assertion?
 - If no executable detector is practical, is the limitation explicit?
+- When a positive rule replaces a negative one, which check now refuses the
+  input the negative branch used to catch?
