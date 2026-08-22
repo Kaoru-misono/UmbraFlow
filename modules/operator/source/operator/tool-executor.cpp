@@ -61,6 +61,7 @@ namespace uf::operator_runtime
             ControlLease const& lease,
             ToolRootRequestIdentity const& root,
             ToolCallPositionIdentity const& call,
+            ToolDelegationGrant const* delegation,
             ReadOnlyToolProvider const& provider,
             ToolMutability requiredMutability,
             OperatorPlanAuthority const* planAuthority,
@@ -113,7 +114,8 @@ namespace uf::operator_runtime
                       controller,
                       lease,
                       root,
-                      call
+                      call,
+                      delegation
                   )
                 : coordinator.admitMutatingToolCall(
                       controller,
@@ -122,7 +124,8 @@ namespace uf::operator_runtime
                       call,
                       *planAuthority,
                       effects,
-                      approvals
+                      approvals,
+                      delegation
                   );
             UF_TRY_VALUE(admitted, std::move(admission));
             UF_TRY_VALUE(dispatch, coordinator.beginToolCallDispatch(admitted));
@@ -168,6 +171,7 @@ namespace uf::operator_runtime
         ControlLease const& lease,
         ToolRootRequestIdentity const& root,
         ToolCallPositionIdentity const& call,
+        ToolDelegationGrant const* delegation,
         ReadOnlyToolProvider const& provider
     ) -> Result<ToolCallReplay>
     {
@@ -177,6 +181,7 @@ namespace uf::operator_runtime
             lease,
             root,
             call,
+            delegation,
             provider,
             ToolMutability::ReadOnly,
             nullptr,
@@ -190,6 +195,7 @@ namespace uf::operator_runtime
         ControlLease const& lease,
         ToolRootRequestIdentity const& root,
         ToolCallPositionIdentity const& call,
+        ToolDelegationGrant const* delegation,
         OperatorPlanAuthority const& planAuthority,
         std::span<ProposedEffect const> effects,
         std::span<ToolApprovalGrant const> approvals,
@@ -202,6 +208,7 @@ namespace uf::operator_runtime
             lease,
             root,
             call,
+            delegation,
             provider,
             ToolMutability::Mutating,
             &planAuthority,

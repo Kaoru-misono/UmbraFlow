@@ -82,103 +82,102 @@ namespace uf::operator_runtime
             }
             UF_UNREACHABLE_MSG("unknown ProjectResourceKind");
         }
+    } // namespace
 
-        [[nodiscard]]
-        auto verifyResourceClosure(
-            VerifiedProjectRegistration const& registration,
-            std::vector<ProjectPluginRegistrar::ResourceBlob> exactBlobs
-        ) -> Result<std::vector<script::PureDataProgram::Resource>>
+    auto verifyProjectResourceClosure(
+        VerifiedProjectRegistration const& registration,
+        std::vector<ProjectPluginRegistrar::ResourceBlob> exactBlobs
+    ) -> Result<std::vector<script::PureDataProgram::Resource>>
+    {
+        UF_TRY(validateProjectResourceClosure(exactBlobs));
+        auto const& resources = registration.projectResources();
+        if (
+            resources.size() > script::PureDataProgram::k_maximumResourceCount
+            || exactBlobs.size() > script::PureDataProgram::k_maximumResourceCount
+        )
         {
-            UF_TRY(validateProjectResourceClosure(exactBlobs));
-            auto const& resources = registration.projectResources();
+            return refuse("Project resource count exceeds its ceiling");
+        }
+
+        auto blobsByName = std::map<
+            std::string,
+            std::pair<ProjectResourceKind, std::string>
+        >{};
+        auto totalBytes = std::size_t{0};
+        for (auto& blob : exactBlobs)
+        {
+            if (blob.bytes.size() > script::PureDataProgram::k_maximumResourceBytes)
+            {
+                return refuse("Project resource exceeds its byte ceiling");
+            }
             if (
-                resources.size() > script::PureDataProgram::k_maximumResourceCount
-                || exactBlobs.size() > script::PureDataProgram::k_maximumResourceCount
+                totalBytes
+                > script::PureDataProgram::k_maximumResourceClosureBytes
+                    - blob.bytes.size()
             )
             {
-                return refuse("ProjectPlugin resource count exceeds its ceiling");
+                return refuse("Project resources exceed their total ceiling");
             }
+            totalBytes += blob.bytes.size();
 
-            auto blobsByName = std::map<
-                std::string,
-                std::pair<ProjectResourceKind, std::string>
-            >{};
-            auto totalBytes = std::size_t{0};
-            for (auto& blob : exactBlobs)
+            bool const inserted = blobsByName.try_emplace(
+                std::move(blob.name),
+                blob.kind,
+                std::move(blob.bytes)
+            ).second;
+            if (!inserted)
             {
-                if (blob.bytes.size() > script::PureDataProgram::k_maximumResourceBytes)
-                {
-                    return refuse("ProjectPlugin resource exceeds its byte ceiling");
-                }
-                if (
-                    totalBytes
-                    > script::PureDataProgram::k_maximumResourceClosureBytes
-                        - blob.bytes.size()
-                )
-                {
-                    return refuse("ProjectPlugin resources exceed their total ceiling");
-                }
-                totalBytes += blob.bytes.size();
-
-                bool const inserted = blobsByName.try_emplace(
-                    std::move(blob.name),
-                    blob.kind,
-                    std::move(blob.bytes)
-                ).second;
-                if (!inserted)
-                {
-                    return refuse("ProjectPlugin resource names must be unique");
-                }
+                return refuse("Project resource names must be unique");
             }
-
-            for (auto const& blob : blobsByName)
-            {
-                if (
-                    std::ranges::find(resources, blob.first, &ProjectResource::name)
-                    == resources.end()
-                )
-                {
-                    return refuse("ProjectPlugin received an unregistered resource");
-                }
-            }
-            auto verified = std::vector<script::PureDataProgram::Resource>{};
-            verified.reserve(resources.size());
-            for (auto const& resource : resources)
-            {
-                auto const found = blobsByName.find(resource.name);
-                if (found == blobsByName.end())
-                {
-                    return refuse(
-                        "ProjectPlugin resource is missing for registered name '"
-                        + resource.name
-                        + "'"
-                    );
-                }
-                if (found->second.first != resource.kind)
-                {
-                    return refuse("ProjectPlugin resource kind does not match its registration");
-                }
-                if (found->second.second.size() != resource.size)
-                {
-                    return refuse("ProjectPlugin resource size does not match its registration");
-                }
-                UF_TRY_VALUE(
-                    actualHash,
-                    sha256(std::as_bytes(std::span{found->second.second}))
-                );
-                if (actualHash != resource.hash)
-                {
-                    return refuse("ProjectPlugin resource bytes do not match their registration");
-                }
-                verified.emplace_back(script::PureDataProgram::Resource{
-                    .kind = resourceKind(resource.kind),
-                    .name = resource.name,
-                    .bytes = std::move(found->second.second),
-                });
-            }
-            return verified;
         }
-    } // namespace
+
+        for (auto const& blob : blobsByName)
+        {
+            if (
+                std::ranges::find(resources, blob.first, &ProjectResource::name)
+                == resources.end()
+            )
+            {
+                return refuse("Project closure carries an unregistered resource");
+            }
+        }
+        auto verified = std::vector<script::PureDataProgram::Resource>{};
+        verified.reserve(resources.size());
+        for (auto const& resource : resources)
+        {
+            auto const found = blobsByName.find(resource.name);
+            if (found == blobsByName.end())
+            {
+                return refuse(
+                    "Project resource is missing for registered name '"
+                    + resource.name
+                    + "'"
+                );
+            }
+            if (found->second.first != resource.kind)
+            {
+                return refuse("Project resource kind does not match its registration");
+            }
+            if (found->second.second.size() != resource.size)
+            {
+                return refuse("Project resource size does not match its registration");
+            }
+            UF_TRY_VALUE(
+                actualHash,
+                sha256(std::as_bytes(std::span{found->second.second}))
+            );
+            if (actualHash != resource.hash)
+            {
+                return refuse("Project resource bytes do not match their registration");
+            }
+            verified.emplace_back(script::PureDataProgram::Resource{
+                .kind = resourceKind(resource.kind),
+                .name = resource.name,
+                .bytes = std::move(found->second.second),
+            });
+        }
+        return verified;
+    }
 
     class ProjectSchemaOwner::State final
     {
@@ -544,7 +543,7 @@ namespace uf::operator_runtime
 
         UF_TRY_VALUE(
             verifiedResources,
-            verifyResourceClosure(registration, std::move(exactResources))
+            verifyProjectResourceClosure(registration, std::move(exactResources))
         );
 
         auto modules = std::vector<script::PureDataProgram::Module>{};
@@ -693,6 +692,8 @@ namespace uf::operator_runtime
                 sha256(std::as_bytes(std::span{module.source}))
             );
             moduleRows.emplace_back(json::Value::ofObject({
+                {"dependency_depth",
+                 json::Value::ofNumber(static_cast<double>(module.dependencyDepth))},
                 {"name", json::Value::ofString(std::string{module.name})},
                 {"project_visible", json::Value::ofBoolean(module.projectVisible)},
                 {"source_hash", json::Value::ofString(sourceHash.hex())},
@@ -705,10 +706,6 @@ namespace uf::operator_runtime
              json::Value::ofString("deep-keys-and-values-v1")},
             {"framework_pure_modules",
              json::Value::ofArray(std::move(moduleRows))},
-            {"module_resolver",
-             json::Value::ofString(
-                 "project-relative-plus-visible-reserved-framework-v2"
-             )},
             {"pure_data_environment", std::move(pureDataEnvironment)},
         }));
     }

@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace uf::operator_runtime
 {
@@ -192,6 +193,96 @@ namespace uf::operator_runtime
             UF_UNREACHABLE_MSG("Unknown DeliveryClass value");
         }();
         return claimedRank >= std::to_underlying(declared);
+    }
+
+    auto childEffectDeclarationValid(ChildEffectDeclaration const& declaration)
+        -> Status
+    {
+        if (declaration.childToolNames.empty() != (declaration.maximumChildCalls == 0U))
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                declaration.childToolNames.empty()
+                    ? "Tool child_effects admits child calls but names no child tool"
+                    : "Tool child_effects names a child tool but admits no child call"
+            );
+        }
+        auto const empty = std::ranges::find(declaration.childToolNames, "");
+        if (empty != declaration.childToolNames.end())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "Tool child_effects names an empty child tool"
+            );
+        }
+        auto sorted = declaration.childToolNames;
+        std::ranges::sort(sorted);
+        if (std::ranges::adjacent_find(sorted) != sorted.end())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "Tool child_effects names one child tool twice"
+            );
+        }
+        return ok();
+    }
+
+    auto childToolWithinDeclaration(
+        ChildEffectDeclaration const& declaration,
+        std::string_view parentToolName,
+        std::string_view childToolName,
+        ToolDescriptor const& childDescriptor
+    ) -> Status
+    {
+        if (!std::ranges::contains(declaration.childToolNames, childToolName))
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Parent Tool " + std::string{parentToolName}
+                    + " declares no child effect for " + std::string{childToolName}
+            );
+        }
+        if (childDescriptor.surface > declaration.maximumChildSurface)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Parent Tool " + std::string{parentToolName}
+                    + " may not delegate the "
+                    + std::string{toolSurfaceWireName(childDescriptor.surface)}
+                    + " surface of " + std::string{childToolName}
+            );
+        }
+        if (childDescriptor.mutability > declaration.maximumChildMutability)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Parent Tool " + std::string{parentToolName}
+                    + " may not delegate the mutating child "
+                    + std::string{childToolName}
+            );
+        }
+        return ok();
+    }
+
+    auto childEffectWithinDeclaration(
+        ChildEffectDeclaration const& declaration,
+        std::string_view parentToolName,
+        ProposedEffect const& effect
+    ) -> Status
+    {
+        if (effect.risk > declaration.maximumChildRisk)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Parent Tool " + std::string{parentToolName}
+                    + " may not delegate effect " + effect.namespacedType + " at "
+                    + std::string{riskWireName(effect.risk)}
+                    + " risk, above the "
+                    + std::string{riskWireName(declaration.maximumChildRisk)}
+                    + " its child_effects allow"
+            );
+        }
+        return ok();
     }
 
     auto effectWithinBounds(

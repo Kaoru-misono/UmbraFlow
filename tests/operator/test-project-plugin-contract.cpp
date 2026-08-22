@@ -163,6 +163,15 @@ return {
                 }));
             }
 
+            auto bindings = std::vector<json::Value>{};
+            for (auto const& binding : claims.projectToolBindings)
+            {
+                bindings.emplace_back(json::Value::ofObject({
+                    {"entry_point", json::Value::ofString(binding.entryPoint)},
+                    {"tool_name", json::Value::ofString(binding.toolName)},
+                }));
+            }
+
             return json::canonicalBytes(json::Value::ofObject({
                 {"baseline_event_type", json::Value::ofString(claims.baselineEventType)},
                 {"journal_event_schema_manifest_hash",
@@ -181,6 +190,7 @@ return {
                 {"project_resources", json::Value::ofArray(std::move(resources))},
                 {"project_state_schema_hash",
                  json::Value::ofString(claims.projectStateSchemaHash.hex())},
+                {"project_tool_bindings", json::Value::ofArray(std::move(bindings))},
                 {"project_tool_precondition_schema_hash",
                  json::Value::ofString(claims.projectToolPreconditionSchemaHash.hex())},
                 {"reconcile_payload_schema_manifest_hash",
@@ -403,10 +413,6 @@ return {
         REQUIRE(parsed.has_value());
         CHECK(json::canonicalBytes(*parsed) == *material);
         CHECK(
-            parsed->find("module_resolver")->string()
-            == "project-relative-plus-visible-reserved-framework-v2"
-        );
-        CHECK(
             parsed->find("framework_module_freeze")->string()
             == "deep-keys-and-values-v1"
         );
@@ -461,7 +467,7 @@ return {
         CHECK(*hash == *expected);
         CHECK(
             hash->hex()
-            == "ed11c6d951a2288e5a0cbe4b415b8cd90666d725febb81491527eb80b1d2c4be"
+            == "d62bc899f92cb4ae17c4b0335f6470bc95a7fd7e2e026e8447763984e2af918b"
         );
     }
 
@@ -810,7 +816,7 @@ return {
             REQUIRE_FALSE(result.has_value());
             CHECK_MESSAGE(
                 result.error().message()
-                    == "ProjectPlugin resource is missing for registered name "
+                    == "Project resource is missing for registered name "
                        "'attestations'",
                 "a missing blob must be refused by name, not by category"
             );

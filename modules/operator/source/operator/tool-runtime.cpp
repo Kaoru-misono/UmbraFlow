@@ -3,6 +3,7 @@
 #include <core/error/contracts.hpp>
 
 #include <array>
+#include <string>
 #include <utility>
 
 namespace uf::operator_runtime
@@ -222,6 +223,47 @@ namespace uf::operator_runtime
     auto ToolCallAdmission::historyRevision() const noexcept -> uint64
     {
         return m_historyRevision;
+    }
+
+    ToolDelegationGrant::ToolDelegationGrant(
+        std::string grantId,
+        ContentHash rootIdentity,
+        ContentHash parentCallIdentity,
+        uint64 parentAttemptNumber,
+        std::string executionPrincipalId
+    )
+        : m_grantId{std::move(grantId)}
+        , m_rootIdentity{rootIdentity}
+        , m_parentCallIdentity{parentCallIdentity}
+        , m_parentAttemptNumber{parentAttemptNumber}
+        , m_executionPrincipalId{std::move(executionPrincipalId)}
+    {
+    }
+
+    auto ToolDelegationGrant::grantId() const noexcept -> std::string const&
+    {
+        return m_grantId;
+    }
+
+    auto ToolDelegationGrant::rootIdentity() const -> ContentHash
+    {
+        return m_rootIdentity;
+    }
+
+    auto ToolDelegationGrant::parentCallIdentity() const -> ContentHash
+    {
+        return m_parentCallIdentity;
+    }
+
+    auto ToolDelegationGrant::parentAttemptNumber() const noexcept -> uint64
+    {
+        return m_parentAttemptNumber;
+    }
+
+    auto ToolDelegationGrant::executionPrincipalId() const noexcept
+        -> std::string const&
+    {
+        return m_executionPrincipalId;
     }
 
     ToolCallDispatch::ToolCallDispatch(

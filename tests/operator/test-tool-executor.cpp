@@ -1,6 +1,7 @@
 #include <operator/tool-executor.hpp>
 
 #include "project-fixture.hpp"
+#include "tool-call-fixture.hpp"
 
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
@@ -18,6 +19,8 @@ namespace uf::operator_runtime
 {
     namespace
     {
+        using test_support::toolCallAt;
+
         [[nodiscard]]
         auto testHash(std::string_view text) -> ContentHash
         {
@@ -41,9 +44,9 @@ namespace uf::operator_runtime
                 std::move(*arguments)
             );
             REQUIRE(invocation.has_value());
-            auto call = ToolCallPositionIdentity::create(
+            auto call = toolCallAt(
                 root,
-                std::nullopt,
+                nullptr,
                 1U,
                 ToolExecutionIdentity{
                     .runIdentity                 = testHash(runName),
@@ -66,9 +69,9 @@ namespace uf::operator_runtime
         {
             auto invocation = test_support::toolInvocation(project, "command-1");
             REQUIRE(invocation.descriptor().mutability == ToolMutability::Mutating);
-            auto call = ToolCallPositionIdentity::create(
+            auto call = toolCallAt(
                 root,
-                std::nullopt,
+                nullptr,
                 1U,
                 ToolExecutionIdentity{
                     .runIdentity                 = testHash(runName),
@@ -126,6 +129,7 @@ namespace uf::operator_runtime
                 prepared.lease,
                 *root,
                 call,
+                nullptr,
                 [&providerCalls, &result](ToolCallPositionIdentity const& presented)
                 {
                     ++providerCalls;
@@ -155,6 +159,7 @@ namespace uf::operator_runtime
                 prepared.lease,
                 *failureRoot,
                 failureCall,
+                nullptr,
                 [](ToolCallPositionIdentity const&) -> Result<ToolCallCompletion>
                 {
                     return fail(
@@ -176,6 +181,7 @@ namespace uf::operator_runtime
                 prepared.lease,
                 *failureRoot,
                 failureCall,
+                nullptr,
                 [&refusedReplayExecutions](ToolCallPositionIdentity const&)
                 {
                     ++refusedReplayExecutions;
@@ -202,6 +208,7 @@ namespace uf::operator_runtime
             prepared.lease,
             *root,
             call,
+            nullptr,
             [&providerCalls](ToolCallPositionIdentity const&)
             {
                 ++providerCalls;
@@ -231,6 +238,7 @@ namespace uf::operator_runtime
             prepared.lease,
             *missingRoot,
             missingCall,
+            nullptr,
             {}
         );
         REQUIRE_FALSE(refused.has_value());
@@ -263,6 +271,7 @@ namespace uf::operator_runtime
             prepared.lease,
             firstRoot,
             firstCall,
+            nullptr,
             prepared.planAuthority,
             effects,
             {},
@@ -297,6 +306,7 @@ namespace uf::operator_runtime
             prepared.lease,
             secondRoot,
             secondCall,
+            nullptr,
             prepared.planAuthority,
             effects,
             {},
@@ -339,6 +349,7 @@ namespace uf::operator_runtime
             prepared.lease,
             observeRoot,
             observeCall,
+            nullptr,
             [&observation](ToolCallPositionIdentity const&)
             {
                 return ToolCallCompletion::confirmed(*observation);
@@ -376,6 +387,7 @@ namespace uf::operator_runtime
             prepared.lease,
             secondRoot,
             secondCall,
+            nullptr,
             prepared.planAuthority,
             effects,
             {},
@@ -432,6 +444,7 @@ namespace uf::operator_runtime
             prepared.lease,
             root,
             call,
+            nullptr,
             prepared.planAuthority,
             effects,
             {},
@@ -464,6 +477,7 @@ namespace uf::operator_runtime
             prepared.lease,
             root,
             call,
+            nullptr,
             prepared.planAuthority,
             effects,
             approvals,
@@ -478,6 +492,7 @@ namespace uf::operator_runtime
             prepared.lease,
             root,
             call,
+            nullptr,
             prepared.planAuthority,
             effects,
             {},
@@ -509,6 +524,7 @@ namespace uf::operator_runtime
             prepared.lease,
             firstRoot,
             firstCall,
+            nullptr,
             prepared.planAuthority,
             effects,
             {},
@@ -555,6 +571,7 @@ namespace uf::operator_runtime
             prepared.lease,
             secondRoot,
             secondCall,
+            nullptr,
             prepared.planAuthority,
             effects,
             {},
@@ -604,6 +621,7 @@ namespace uf::operator_runtime
             prepared.lease,
             root,
             call,
+            nullptr,
             prepared.planAuthority,
             effects,
             {},

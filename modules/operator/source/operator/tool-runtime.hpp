@@ -8,6 +8,7 @@
 #include <domain/content-hash.hpp>
 
 #include <optional>
+#include <string>
 #include <string_view>
 
 namespace uf::operator_runtime
@@ -184,6 +185,56 @@ namespace uf::operator_runtime
         [[nodiscard]] auto callIdentity() const -> ContentHash;
         [[nodiscard]] auto attemptNumber() const noexcept -> uint64;
         [[nodiscard]] auto historyRevision() const noexcept -> uint64;
+    };
+
+    // The authority one live handler invocation holds to issue child calls.
+    //
+    // It is unforgeable for the reason ToolCallAdmission is: only the
+    // Coordinator can mint one, and only over a call whose durable state is
+    // already dispatching. That is what makes "a child call belongs to a
+    // handler that is actually running" a fact about the ledger rather than a
+    // claim a caller makes, and it is why a call arriving under a parent that
+    // is not dispatching is refused as a changed parent.
+    //
+    // The grant deliberately carries no effect bound of its own. What the
+    // parent may delegate is the parent descriptor's registered child-effect
+    // declaration, which the grant row records at issue time; re-stating it
+    // here would be a second copy of one catalog statement.
+    class ToolDelegationGrant final
+    {
+        friend class OperatorCoordinator;
+
+        std::string m_grantId;
+        ContentHash m_rootIdentity;
+        ContentHash m_parentCallIdentity;
+        uint64      m_parentAttemptNumber;
+
+        // The principal that executes the children, recorded separately from
+        // the run's origin actor. Section 3.3 requires the handler execution
+        // principal never to substitute its own profile for the origin's
+        // admitted objective, so the two travel as two values and are written
+        // to two column pairs.
+        std::string m_executionPrincipalId;
+
+        ToolDelegationGrant(
+            std::string grantId,
+            ContentHash rootIdentity,
+            ContentHash parentCallIdentity,
+            uint64 parentAttemptNumber,
+            std::string executionPrincipalId
+        );
+
+    public:
+        [[nodiscard]]
+        auto grantId() const noexcept UF_LIFETIME_BOUND -> std::string const&;
+
+        [[nodiscard]] auto rootIdentity() const -> ContentHash;
+        [[nodiscard]] auto parentCallIdentity() const -> ContentHash;
+        [[nodiscard]] auto parentAttemptNumber() const noexcept -> uint64;
+
+        [[nodiscard]]
+        auto executionPrincipalId() const noexcept UF_LIFETIME_BOUND
+            -> std::string const&;
     };
 
     enum class ToolOutcomeLookup : uint8

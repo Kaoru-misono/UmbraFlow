@@ -2,6 +2,8 @@
 
 #include "manifest.hpp"
 
+#include <script/pure-data-program.hpp>
+
 #include <json/value.hpp>
 
 #include <core/error/result.hpp>
@@ -316,6 +318,21 @@ namespace uf::operator_runtime
     auto validateProjectResourceClosure(
         std::span<ProjectPluginRegistrar::ResourceBlob const> resources
     ) -> Status;
+
+    // The exact Project resource closure a registration pinned, held to that
+    // registration blob by blob -- name, kind, size and sha256 -- and returned
+    // in the registration's own order, ready for a program to be compiled over.
+    //
+    // It is one function rather than one per loader because a registration
+    // pins ONE resource closure and both program types a registration loads
+    // read it. Two copies of this check would be two answers to "which bytes
+    // did this project register", and only one of them would be inside
+    // project_registration_hash.
+    [[nodiscard]]
+    auto verifyProjectResourceClosure(
+        VerifiedProjectRegistration const& registration,
+        std::vector<ProjectPluginRegistrar::ResourceBlob> exactResources
+    ) -> Result<std::vector<script::PureDataProgram::Resource>>;
 
     [[nodiscard]]
     auto currentProjectPluginEnvironmentMaterial() -> Result<std::string>;

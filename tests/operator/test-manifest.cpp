@@ -85,7 +85,19 @@ namespace uf::operator_runtime
             }
             result += "],\"project_state_schema_hash\":\""
                 + claims.projectStateSchemaHash.hex()
-                + "\",\"project_tool_precondition_schema_hash\":\""
+                + "\",\"project_tool_bindings\":[";
+            for (
+                auto index = std::size_t{0};
+                index < claims.projectToolBindings.size();
+                ++index
+            )
+            {
+                if (index != 0U) result.push_back(',');
+                auto const& binding = claims.projectToolBindings[index];
+                result += "{\"entry_point\":\"" + binding.entryPoint
+                    + "\",\"tool_name\":\"" + binding.toolName + "\"}";
+            }
+            result += "],\"project_tool_precondition_schema_hash\":\""
                 + claims.projectToolPreconditionSchemaHash.hex()
                 + "\",\"reconcile_payload_schema_manifest_hash\":\""
                 + claims.reconcilePayloadSchemaManifestHash.hex()

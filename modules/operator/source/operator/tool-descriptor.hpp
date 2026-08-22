@@ -193,6 +193,39 @@ namespace uf::operator_runtime
         std::string opaqueProjectPayload{};
     };
 
+    // What one Tool's handler may issue as child calls, and how far. It is the
+    // parent half of section 3.3's intersection: a child call is admitted only
+    // from what this declares, intersected with the admitted root effect
+    // envelope, current policy and approvals, target and session authority,
+    // lease and fence, and remaining budgets. A descriptor can request an
+    // envelope; it can never grant or widen one.
+    //
+    // An empty declaration is the whole statement "this tool issues no child
+    // calls", which is what a descriptor that says nothing about children
+    // declares. There is deliberately no second spelling of that: no optional
+    // wrapper, and no flag beside the list.
+    struct ChildEffectDeclaration final
+    {
+        // The exact child Tool names this handler may issue, by the name the
+        // child's own catalog declares it under. A name absent from this list
+        // is refused even when every other bound would admit it, which is what
+        // makes delegated authority enumerated rather than inferred.
+        std::vector<std::string> childToolNames{};
+
+        // The strongest child surface, mutability and effect risk this handler
+        // may delegate. Every default is the most restricted of its kind, so a
+        // declaration that lists a name without stating a ceiling delegates the
+        // least rather than the most.
+        ToolSurface    maximumChildSurface{ToolSurface::Semantic};
+        ToolMutability maximumChildMutability{ToolMutability::ReadOnly};
+        Risk           maximumChildRisk{Risk::ReadOnly};
+
+        // How many child calls one handler invocation may issue. Zero is the
+        // only value a declaration naming no child may carry, and a
+        // declaration naming a child must carry at least one.
+        uint32 maximumChildCalls{};
+    };
+
     // What one Tool Catalog descriptor says about a tool. Returned by the
     // catalog owner; there is no path by which a request proposes it.
     //
@@ -217,6 +250,10 @@ namespace uf::operator_runtime
         // which is what keeps a step key from reaching mintStep at all.
         std::vector<std::string> uiActionBounds{};
 
+        // What this tool's handler may call while it runs. See
+        // ChildEffectDeclaration: empty is "no child call at all".
+        ChildEffectDeclaration childEffects{};
+
         WorkflowLimits limits{};
         TimeoutPolicy  timeout{};
 
@@ -233,6 +270,33 @@ namespace uf::operator_runtime
         // make about redelivery is what an unstated one is read as.
         ToolIdempotency idempotency{ToolIdempotency::NonIdempotent};
     };
+
+    // Whether one declaration is well formed at all. A declaration that names
+    // a child while admitting no child call, or admits child calls while
+    // naming none, states two halves of one permission that contradict each
+    // other, and a catalog owner refuses it rather than picking a half.
+    [[nodiscard]]
+    auto childEffectDeclarationValid(ChildEffectDeclaration const& declaration)
+        -> Status;
+
+    // Whether the parent declaration admits this child tool at all. Risk is
+    // judged per proposed effect and is deliberately not folded in here: a
+    // read-only child proposes none, and folding the two would make the
+    // absence of an effect look like a risk verdict.
+    [[nodiscard]]
+    auto childToolWithinDeclaration(
+        ChildEffectDeclaration const& declaration,
+        std::string_view parentToolName,
+        std::string_view childToolName,
+        ToolDescriptor const& childDescriptor
+    ) -> Status;
+
+    [[nodiscard]]
+    auto childEffectWithinDeclaration(
+        ChildEffectDeclaration const& declaration,
+        std::string_view parentToolName,
+        ProposedEffect const& effect
+    ) -> Status;
 
     // Whether this descriptor declared a bound that admits this effect. Both
     // arguments are call-scoped borrows and nothing is retained.

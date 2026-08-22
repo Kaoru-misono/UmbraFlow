@@ -213,6 +213,41 @@ namespace uf::operator_runtime
                     );
                 }
             }
+
+            // The binding table is sorted and unique by tool name for the same
+            // reason the resources are: the loader sorts before it writes, so a
+            // claim set in any other order is a document the loader never
+            // derived. One tool binds to one entry, and a second row for the
+            // same name would be two answers to the question the dispatcher
+            // asks once.
+            for (
+                auto index = std::size_t{0};
+                index < claims.projectToolBindings.size();
+                ++index
+            )
+            {
+                auto const& binding = claims.projectToolBindings[index];
+                UF_TRY(validateDottedName(binding.toolName, "tool binding name", true));
+                UF_TRY(validateDottedName(
+                    binding.entryPoint,
+                    "tool binding entry point",
+                    false
+                ));
+                if (
+                    index != 0U
+                    && !jsonMemberNameLess(
+                        claims.projectToolBindings[index - 1U].toolName,
+                        binding.toolName
+                    )
+                )
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "ProjectRegistration Tool bindings must be unique and "
+                        "JCS-ordered by tool name"
+                    );
+                }
+            }
             return ok();
         }
     }
@@ -291,6 +326,12 @@ namespace uf::operator_runtime
     auto VerifiedProjectRegistration::toolCatalogHash() const -> ContentHash
     {
         return m_claims.toolCatalogHash;
+    }
+
+    auto VerifiedProjectRegistration::projectToolBindings() const noexcept
+        -> std::vector<ProjectToolBinding> const&
+    {
+        return m_claims.projectToolBindings;
     }
 
     auto VerifiedProjectRegistration::projectObservationSchemaHash() const

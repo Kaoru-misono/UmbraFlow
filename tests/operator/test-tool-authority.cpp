@@ -15,6 +15,7 @@
 #include <deployment/project-deployment.hpp>
 
 #include "project-fixture.hpp"
+#include "tool-call-fixture.hpp"
 
 #include <core/error/result.hpp>
 
@@ -37,6 +38,8 @@ namespace uf::operator_runtime
 {
     namespace
     {
+        using test_support::toolCallAt;
+
         using test_support::freezePlanFor;
         using test_support::mintStepFor;
         using test_support::prepareStore;
@@ -45,26 +48,31 @@ namespace uf::operator_runtime
 
         template <typename Extra>
         concept AdditionalToolCallIdentityInputAccepted = requires(
-            ToolRootRequestIdentity const& root,
-            std::optional<ToolCallParent> const& parent,
-            ToolExecutionIdentity executionIdentity,
+            ToolCallIssuingContext& context,
             ValidatedToolInvocation const& invocation,
             Extra const& extra
-        ) {
-            ToolCallPositionIdentity::create(
-                root,
-                parent,
-                uint64{1},
-                executionIdentity,
-                invocation,
-                extra
-            );
-        };
+        ) { context.issue(invocation, extra); };
 
         static_assert(
             !AdditionalToolCallIdentityInputAccepted<CanonicalJson>,
             "Tool results and other canonical outcome material must not enter "
             "call identity"
+        );
+
+        // The seam owns the child index, so there is no factory a caller can
+        // hand an ordinal to at all. R4 makes that structural rather than
+        // documented, and this is the compile-time reading of it.
+        template <typename Ordinal>
+        concept CallerSuppliedSequenceAccepted = requires(
+            ToolCallIssuingContext& context,
+            ValidatedToolInvocation const& invocation,
+            Ordinal ordinal
+        ) { context.issue(invocation, ordinal); };
+
+        static_assert(
+            !CallerSuppliedSequenceAccepted<uint64>,
+            "The Tool Runtime seam assigns the child index; no caller may pass "
+            "one"
         );
 
         // The fixture's PolicyArtifact with one clause rewritten wherever it
@@ -525,14 +533,20 @@ namespace uf::operator_runtime
         CHECK(wait->descriptor().limits.maximumWaits == 1U);
         CHECK(wait->descriptor().timeout.maximumElapsedMillis == 60'000U);
 
+        // An Agent is offered the Semantic Framework Tools and none of the
+        // Privileged ones: raw capture, bare-coordinate input, and the
+        // reconciliation transition are absent rather than present and refused.
         auto noCapabilities = std::array<std::string, 0U>{};
         auto const offered = frameworkCatalog->offeredTools(
             controllerProfile(ControllerKind::Agent),
             noCapabilities
         );
-        REQUIRE(offered.size() == 2U);
-        CHECK(offered[0].name == "framework.screen.observe");
-        CHECK(offered[1].name == "framework.workflow.wait");
+        REQUIRE(offered.size() == 5U);
+        CHECK(offered[0].name == "framework.audit.record");
+        CHECK(offered[1].name == "framework.input.semantic_target");
+        CHECK(offered[2].name == "framework.screen.observe");
+        CHECK(offered[3].name == "framework.workflow.status");
+        CHECK(offered[4].name == "framework.workflow.wait");
 
         auto catalogMaterial = CanonicalJson::parseExact(
             frameworkCatalog->canonicalJcs()
@@ -780,16 +794,16 @@ namespace uf::operator_runtime
             .toolRuntimeProtocolIdentity = test_support::hashOf("tool-runtime-1"),
             .environmentIdentity         = test_support::hashOf("environment-1"),
         };
-        auto first = ToolCallPositionIdentity::create(
+        auto first = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             1U,
             execution,
             *invocation
         );
-        auto repeated = ToolCallPositionIdentity::create(
+        auto repeated = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             1U,
             execution,
             *invocation
@@ -865,9 +879,9 @@ namespace uf::operator_runtime
         for (auto const& callerFixedCase : callerFixedCases)
         {
             CAPTURE(callerFixedCase.name);
-            auto moved = ToolCallPositionIdentity::create(
+            auto moved = toolCallAt(
                 callerFixedCase.root,
-                std::nullopt,
+                nullptr,
                 1U,
                 callerFixedCase.executionIdentity,
                 *invocation
@@ -886,9 +900,9 @@ namespace uf::operator_runtime
                 std::move(changedArguments)
             );
         REQUIRE(changedArgumentInvocation.has_value());
-        auto changedArgument = ToolCallPositionIdentity::create(
+        auto changedArgument = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             1U,
             execution,
             *changedArgumentInvocation
@@ -906,9 +920,9 @@ namespace uf::operator_runtime
                 std::move(changedNameArguments)
             );
         REQUIRE(changedNameInvocation.has_value());
-        auto changedName = ToolCallPositionIdentity::create(
+        auto changedName = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             1U,
             execution,
             *changedNameInvocation
@@ -946,9 +960,9 @@ namespace uf::operator_runtime
             std::move(changedVersionArguments)
         );
         REQUIRE(changedVersionInvocation.has_value());
-        auto changedVersion = ToolCallPositionIdentity::create(
+        auto changedVersion = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             1U,
             execution,
             *changedVersionInvocation
@@ -971,9 +985,9 @@ namespace uf::operator_runtime
                 std::move(changedProviderArguments)
             );
         REQUIRE(changedProviderInvocation.has_value());
-        auto changedProvider = ToolCallPositionIdentity::create(
+        auto changedProvider = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             1U,
             execution,
             *changedProviderInvocation
@@ -981,31 +995,31 @@ namespace uf::operator_runtime
         REQUIRE(changedProvider.has_value());
         CHECK(first->identity() != changedProvider->identity());
 
-        auto secondParent = ToolCallPositionIdentity::create(
+        auto secondParent = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             2U,
             execution,
             *invocation
         );
         REQUIRE(secondParent.has_value());
-        auto child = ToolCallPositionIdentity::create(
+        auto child = toolCallAt(
             *root,
-            first->asParent(),
+            &*first,
             1U,
             execution,
             *invocation
         );
-        auto movedParent = ToolCallPositionIdentity::create(
+        auto movedParent = toolCallAt(
             *root,
-            secondParent->asParent(),
+            &*secondParent,
             1U,
             execution,
             *invocation
         );
-        auto movedSequence = ToolCallPositionIdentity::create(
+        auto movedSequence = toolCallAt(
             *root,
-            first->asParent(),
+            &*first,
             2U,
             execution,
             *invocation
@@ -1046,9 +1060,9 @@ namespace uf::operator_runtime
             std::move(*frameworkArguments)
         );
         REQUIRE(frameworkInvocation.has_value());
-        auto frameworkCall = ToolCallPositionIdentity::create(
+        auto frameworkCall = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             1U,
             execution,
             *frameworkInvocation
@@ -1067,9 +1081,9 @@ namespace uf::operator_runtime
             std::move(projectArguments)
         );
         REQUIRE(projectInvocation.has_value());
-        auto projectCall = ToolCallPositionIdentity::create(
+        auto projectCall = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             1U,
             execution,
             *projectInvocation
@@ -1079,24 +1093,36 @@ namespace uf::operator_runtime
             projectCall->provider()
         ));
 
-        CHECK_FALSE(
-            ToolCallPositionIdentity::create(
-                *root,
-                std::nullopt,
-                0U,
-                execution,
-                *projectInvocation
-            ).has_value()
-        );
-        CHECK_FALSE(
-            ToolCallPositionIdentity::create(
-                *root,
-                std::nullopt,
-                uint64{std::numeric_limits<uint32>::max()} + 1U,
-                execution,
-                *projectInvocation
-            ).has_value()
-        );
+        // The seam owns the ordinal, so there is no out-of-range ordinal for a
+        // caller to present: a fresh context starts at one and every issue
+        // advances by exactly one, whether or not the calls are alike.
+        auto counted = ToolCallIssuingContext::forRoot(*root, execution);
+        CHECK(counted.issuedChildren() == 0U);
+        auto firstIssued = counted.issue(*projectInvocation);
+        REQUIRE(firstIssued.has_value());
+        CHECK(firstIssued->sequence() == 1U);
+        CHECK(counted.issuedChildren() == 1U);
+        auto secondIssued = counted.issue(*projectInvocation);
+        REQUIRE(secondIssued.has_value());
+        CHECK(secondIssued->sequence() == 2U);
+        CHECK(secondIssued->identity() != firstIssued->identity());
+        CHECK(counted.issuedChildren() == 2U);
+
+        // A handler's context numbers from one again, and its children are
+        // parented on the handler call rather than on the run root. That is
+        // what makes a replayed child cost its parent exactly one increment
+        // regardless of how large its subtree was.
+        auto handlerContext = counted.forHandler(*firstIssued);
+        REQUIRE(handlerContext.has_value());
+        auto handlerChild = handlerContext->issue(*frameworkInvocation);
+        REQUIRE(handlerChild.has_value());
+        CHECK(handlerChild->sequence() == 1U);
+        CHECK(handlerChild->parentIdentity() == firstIssued->identity());
+        CHECK(counted.issuedChildren() == 2U);
+
+        // The run's own context is anchored on the root request itself, so a
+        // call it issues names a real parent coordinate rather than none.
+        CHECK(firstIssued->parentIdentity() == root->identity());
 
         auto foreignPreimage = CanonicalJson::parseExact("{}");
         REQUIRE(foreignPreimage.has_value());
@@ -1106,18 +1132,18 @@ namespace uf::operator_runtime
             std::move(*foreignPreimage)
         );
         REQUIRE(foreignRoot.has_value());
-        auto foreignParent = ToolCallPositionIdentity::create(
+        auto foreignParent = toolCallAt(
             *foreignRoot,
-            std::nullopt,
+            nullptr,
             1U,
             execution,
             *projectInvocation
         );
         REQUIRE(foreignParent.has_value());
         CHECK_FALSE(
-            ToolCallPositionIdentity::create(
+            toolCallAt(
                 *root,
-                foreignParent->asParent(),
+                &*foreignParent,
                 1U,
                 execution,
                 *projectInvocation

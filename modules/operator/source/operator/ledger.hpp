@@ -572,6 +572,11 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto recoverUncertainToolCalls() -> Result<uint64>;
 
+        // delegation is the optional non-owning observation of the grant a
+        // child call stands on, and nullptr for a parentless call. The two
+        // must agree: a parented call without a grant and a parentless call
+        // with one are both refused, so there is no reading in which a child
+        // is admitted on the root's authority.
         [[nodiscard]]
         auto admitToolCall(
             ControllerBinding const& controller,
@@ -581,7 +586,8 @@ namespace uf::operator_runtime
             ToolMutability requiredMutability,
             OperatorPlanAuthority const* planAuthority,
             std::span<ProposedEffect const> effects,
-            std::span<ToolApprovalGrant const> approvals
+            std::span<ToolApprovalGrant const> approvals,
+            ToolDelegationGrant const* delegation
         ) -> Result<ToolCallAdmission>;
 
         // The transaction-neutral canonical mint: the ten ordered checks
@@ -910,7 +916,8 @@ namespace uf::operator_runtime
             ControllerBinding const& controller,
             ControlLease const& lease,
             ToolRootRequestIdentity const& root,
-            ToolCallPositionIdentity const& call
+            ToolCallPositionIdentity const& call,
+            ToolDelegationGrant const* delegation
         ) -> Result<ToolCallAdmission>;
 
         // Mutating admission shares the read-only identity, authority and
@@ -925,8 +932,35 @@ namespace uf::operator_runtime
             ToolCallPositionIdentity const& call,
             OperatorPlanAuthority const& planAuthority,
             std::span<ProposedEffect const> effects,
-            std::span<ToolApprovalGrant const> approvals
+            std::span<ToolApprovalGrant const> approvals,
+            ToolDelegationGrant const* delegation
         ) -> Result<ToolCallAdmission>;
+
+        // The delegation grant one live handler invocation issues its children
+        // on. It is minted only while the parent's durable state is
+        // dispatching -- that is, only while the handler is actually running --
+        // and only for a parent whose descriptor registered a child-effect
+        // declaration. A Tool that declares no child effect can obtain no
+        // grant, so removing that declaration is what makes a nested call fail
+        // rather than merely narrowing it.
+        [[nodiscard]]
+        auto issueToolDelegationGrant(
+            ToolCallPositionIdentity const& parentCall
+        ) -> Result<ToolDelegationGrant>;
+
+        // Closes one issuing context at teardown. Per R4 a restarted script
+        // that terminates leaving recorded calls unconsumed for some context is
+        // divergence, and this is where that is detected: the context knows how
+        // many children it issued, and the ledger knows how many it recorded.
+        //
+        // The context is passed rather than a count so that the number cannot
+        // be restated by the caller: the same object that assigned the indices
+        // is the one that reports them.
+        [[nodiscard]]
+        auto sealToolCallContext(
+            ToolRootRequestIdentity const& root,
+            ToolCallIssuingContext const& context
+        ) -> Status;
 
         // Mints one call-bound approval after re-evaluating the active
         // session's exact effect envelope and PolicyArtifact. The token is

@@ -25,6 +25,11 @@ namespace uf::operator_runtime
     // recorded outcome without authority or provider execution; only the first
     // new call proceeds through admission, durable dispatch and one provider
     // invocation.
+    //
+    // delegation is the optional non-owning observation of the grant a child
+    // call stands on, and nullptr for a call the run's own context issued. It
+    // is a call-scoped borrow: the executor hands it to admission and retains
+    // nothing.
     class ToolRuntimeExecutor final
     {
         OperatorCoordinator& m_coordinator;
@@ -38,6 +43,7 @@ namespace uf::operator_runtime
             ControlLease const& lease,
             ToolRootRequestIdentity const& root,
             ToolCallPositionIdentity const& call,
+            ToolDelegationGrant const* delegation,
             ReadOnlyToolProvider const& provider
         ) -> Result<ToolCallReplay>;
 
@@ -47,6 +53,7 @@ namespace uf::operator_runtime
             ControlLease const& lease,
             ToolRootRequestIdentity const& root,
             ToolCallPositionIdentity const& call,
+            ToolDelegationGrant const* delegation,
             OperatorPlanAuthority const& planAuthority,
             std::span<ProposedEffect const> effects,
             std::span<ToolApprovalGrant const> approvals,

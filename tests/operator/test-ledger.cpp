@@ -9,6 +9,7 @@
 #include <operator/manifest.hpp>
 
 #include "project-fixture.hpp"
+#include "tool-call-fixture.hpp"
 #include "unsafe/operator-database-probe.hpp"
 
 #include <core/error/contracts.hpp>
@@ -41,6 +42,8 @@ namespace uf::operator_runtime
 {
     namespace
     {
+        using test_support::toolCallAt;
+
         // The one plugin every case here registers. It comes from the shared
         // fixture because plan and next_step now answer with real operator
         // protocol documents, and a second spelling of them would be a second
@@ -266,20 +269,225 @@ namespace uf::operator_runtime
             )sql");
         }
 
+        // The exact stored CREATE of one table. The historical identity is the
+        // DDL text, so a restore that rebuilt a table from a hand-copied
+        // statement would drift from the one this generation actually writes;
+        // taking the current text and undoing what this generation changed
+        // cannot.
+        [[nodiscard]]
+        auto storedCreate(
+            test_support::OperatorDatabaseProbe& database,
+            std::string_view table
+        ) -> std::string
+        {
+            auto const rows = database.readRows(
+                "SELECT sql FROM sqlite_schema WHERE type='table' AND name='"
+                + std::string{table} + "'"
+            );
+            REQUIRE(rows.size() == 1U);
+            REQUIRE(rows.front().size() == 1U);
+            return rows.front().front();
+        }
+
+        // The same, with one declared column removed.
+        [[nodiscard]]
+        auto storedCreateWithout(
+            test_support::OperatorDatabaseProbe& database,
+            std::string_view table,
+            std::string_view addedColumn
+        ) -> std::string
+        {
+            auto prior    = storedCreate(database, table);
+            auto const at = prior.find(addedColumn);
+            REQUIRE(at != std::string::npos);
+            prior.erase(at, addedColumn.size());
+            return prior;
+        }
+
+        constexpr auto k_observationReferenceColumn = std::string_view{
+            "observation_reference_hash TEXT CHECK(observation_reference_hash IS NULL "
+            "OR (length(observation_reference_hash)=64 AND "
+            "observation_reference_hash NOT GLOB '*[^0-9a-f]*')),"
+        };
+
+        constexpr auto k_delegationGrantColumn = std::string_view{
+            "delegation_grant_id TEXT REFERENCES tool_delegation_grants(grant_id),"
+        };
+
+        constexpr auto k_priorToolCallPositionColumns = std::string_view{
+            "call_identity, root_identity, parent_call_identity, call_sequence, "
+            "run_identity, framework_release_identity, "
+            "tool_runtime_protocol_identity, environment_identity, provider_kind, "
+            "project_registration_hash, tool_catalog_hash, tool_name, tool_version, "
+            "canonical_args, canonical_args_hash"
+        };
+
+        constexpr auto k_rootPositionedParentColumn = std::string_view{
+            "parent_call_identity TEXT NOT NULL CHECK("
+            "length(parent_call_identity)=64 AND "
+            "parent_call_identity NOT GLOB '*[^0-9a-f]*'),"
+        };
+
+        constexpr auto k_nullableParentColumn = std::string_view{
+            "parent_call_identity TEXT,"
+        };
+
+        constexpr auto k_rootPositionedParentUnique = std::string_view{
+            "UNIQUE(root_identity, parent_call_identity, call_sequence)"
+        };
+
+        constexpr auto k_nullableParentUnique = std::string_view{
+            "UNIQUE(root_identity, parent_call_identity, call_sequence),"
+            "FOREIGN KEY(root_identity, parent_call_identity) REFERENCES "
+            "tool_call_positions(root_identity, call_identity)"
+        };
+
+        // The stored CREATE with the root-positioned parent column put back to
+        // the nullable column, the composite parent foreign key it allowed,
+        // and nothing else changed. Nullability is part of the DDL text, so
+        // every generation before the root run became a real positioned call
+        // reproduces only with this substitution in place.
+        [[nodiscard]]
+        auto withNullableToolCallParent(std::string prior) -> std::string
+        {
+            auto const parentAt = prior.find(k_rootPositionedParentColumn);
+            REQUIRE(parentAt != std::string::npos);
+            prior.replace(
+                parentAt,
+                k_rootPositionedParentColumn.size(),
+                k_nullableParentColumn
+            );
+            auto const uniqueAt = prior.find(k_rootPositionedParentUnique);
+            REQUIRE(uniqueAt != std::string::npos);
+            prior.replace(
+                uniqueAt,
+                k_rootPositionedParentUnique.size(),
+                k_nullableParentUnique
+            );
+            return prior;
+        }
+
+        // Rebuilds tool_call_positions from one historical CREATE statement,
+        // carrying `columns` back and putting every row a run's own context
+        // issued back to the null parent that generation wrote. It is rebuilt
+        // rather than renamed because tool_call_history references it, and a
+        // rename would rewrite that reference into the historical identity
+        // this restore exists to reproduce.
+        auto restoreNullRootedToolCallPositions(
+            test_support::OperatorDatabaseProbe& database,
+            std::string const& prior,
+            std::string const& columns
+        ) -> void
+        {
+            database.execute(
+                "PRAGMA foreign_keys=OFF;"
+                "CREATE TABLE prior_tool_call_positions AS SELECT " + columns
+                + " FROM tool_call_positions;"
+                  "DROP INDEX IF EXISTS one_top_level_tool_call_position;"
+                  "DROP TABLE tool_call_positions;"
+                + prior
+                + ";CREATE UNIQUE INDEX one_top_level_tool_call_position ON "
+                  "tool_call_positions(root_identity, call_sequence) "
+                  "WHERE parent_call_identity IS NULL;"
+                  "INSERT INTO tool_call_positions("
+                + columns + ") SELECT " + columns
+                + " FROM prior_tool_call_positions;"
+                  "UPDATE tool_call_positions SET parent_call_identity=NULL "
+                  "WHERE parent_call_identity=root_identity;"
+                  "DROP TABLE prior_tool_call_positions;"
+                  "PRAGMA foreign_keys=ON;"
+            );
+        }
+
+        // tool_call_positions as it stood before it carried an observation
+        // reference, which is also before a run's own calls were positioned
+        // under their root request.
+        auto restorePriorToolCallPositions(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void
+        {
+            restoreNullRootedToolCallPositions(
+                database,
+                withNullableToolCallParent(
+                    storedCreateWithout(
+                        database,
+                        "tool_call_positions",
+                        k_observationReferenceColumn
+                    )
+                ),
+                std::string{k_priorToolCallPositionColumns}
+            );
+        }
+
+        // The generation immediately before the root run became a real
+        // positioned call: the observation reference is already there, and a
+        // run's own calls are still stored with no parent at all.
+        auto restorePriorNullRootedToolCallPositions(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void
+        {
+            restoreNullRootedToolCallPositions(
+                database,
+                withNullableToolCallParent(
+                    storedCreate(database, "tool_call_positions")
+                ),
+                std::string{k_priorToolCallPositionColumns}
+                    + ", observation_reference_hash"
+            );
+        }
+
+        // The generation immediately before nested calls: no delegation grants,
+        // no delegated admission column, and no observation reference at a call
+        // coordinate.
+        auto restorePriorNestedToolCallSchema(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void
+        {
+            auto const prior = storedCreateWithout(
+                database,
+                "tool_admission_attempts",
+                k_delegationGrantColumn
+            );
+            database.execute(
+                "PRAGMA foreign_keys=OFF;"
+                "ALTER TABLE tool_admission_attempts RENAME TO "
+                "new_tool_admission_attempts;"
+                + prior
+                + ";INSERT INTO tool_admission_attempts SELECT call_identity, "
+                  "attempt_number, root_identity, origin_principal_id, "
+                  "origin_principal_kind, execution_principal_id, "
+                  "execution_principal_kind, session_id, session_epoch, "
+                  "controlled_target_id, project_registration_hash, policy_hash, "
+                  "capability_profile_hash, lease_id, lease_revision, "
+                  "fencing_token, budget_snapshot, budget_snapshot_hash, "
+                  "effect_envelope, effect_envelope_hash, required_approvals, "
+                  "approval_tokens, approval_expires_at_unix_millis "
+                  "FROM new_tool_admission_attempts;"
+                  "DROP TABLE new_tool_admission_attempts;"
+                  "DROP TABLE IF EXISTS tool_delegation_grants;"
+                  "PRAGMA foreign_keys=ON;"
+            );
+            restorePriorToolCallPositions(database);
+        }
+
         auto removeToolRuntimePersistence(
             test_support::OperatorDatabaseProbe& database
         ) -> void
         {
             database.execute("DROP TABLE IF EXISTS tool_approvals");
             database.execute("DROP TABLE IF EXISTS tool_admission_attempts");
+            database.execute("DROP TABLE IF EXISTS tool_delegation_grants");
             database.execute("DROP TABLE IF EXISTS tool_runs");
             database.execute("DROP TABLE IF EXISTS tool_call_history");
+            restorePriorToolCallPositions(database);
         }
 
         auto restorePriorToolAdmissionAuthority(
             test_support::OperatorDatabaseProbe& database
         ) -> void
         {
+            restorePriorToolCallPositions(database);
+            database.execute("DROP TABLE IF EXISTS tool_delegation_grants");
             database.execute(
                 "PRAGMA foreign_keys=OFF;"
                 "DROP TABLE IF EXISTS tool_approvals;"
@@ -337,6 +545,8 @@ namespace uf::operator_runtime
             test_support::OperatorDatabaseProbe& database
         ) -> void
         {
+            restorePriorToolCallPositions(database);
+            database.execute("DROP TABLE IF EXISTS tool_delegation_grants");
             database.execute(
                 "PRAGMA foreign_keys=OFF;"
                 "DROP TABLE tool_approvals;"
@@ -406,7 +616,11 @@ namespace uf::operator_runtime
             test_support::OperatorDatabaseProbe& database
         ) -> void
         {
-            removeToolRuntimePersistence(database);
+            database.execute("DROP TABLE IF EXISTS tool_approvals");
+            database.execute("DROP TABLE IF EXISTS tool_admission_attempts");
+            database.execute("DROP TABLE IF EXISTS tool_delegation_grants");
+            database.execute("DROP TABLE IF EXISTS tool_runs");
+            database.execute("DROP TABLE IF EXISTS tool_call_history");
             database.execute("DROP INDEX IF EXISTS one_top_level_tool_call_position");
             database.execute("DROP TABLE IF EXISTS tool_call_positions");
             database.execute("DROP TABLE IF EXISTS tool_root_requests");
@@ -3541,23 +3755,23 @@ namespace uf::operator_runtime
             .toolRuntimeProtocolIdentity = hashOf("tool-runtime-protocol-1"),
             .environmentIdentity         = hashOf("environment-1"),
         };
-        auto first = ToolCallPositionIdentity::create(
+        auto first = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             1U,
             execution,
             *observe
         );
-        auto changedAtFirstPosition = ToolCallPositionIdentity::create(
+        auto changedAtFirstPosition = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             1U,
             execution,
             *wait
         );
-        auto parent = ToolCallPositionIdentity::create(
+        auto parent = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             2U,
             execution,
             *observe
@@ -3565,9 +3779,9 @@ namespace uf::operator_runtime
         REQUIRE(first.has_value());
         REQUIRE(changedAtFirstPosition.has_value());
         REQUIRE(parent.has_value());
-        auto child = ToolCallPositionIdentity::create(
+        auto child = toolCallAt(
             *root,
-            parent->asParent(),
+            &*parent,
             1U,
             execution,
             *wait
@@ -3616,7 +3830,10 @@ namespace uf::operator_runtime
                 store->persistToolCallPosition(*root, *changedAtFirstPosition);
             REQUIRE_FALSE(nondeterministic.has_value());
             CHECK(nondeterministic.error().message().contains(
-                "different caller-fixed material"
+                "diverged from durable history: tool_name changed"
+            ));
+            CHECK(nondeterministic.error().message().contains(
+                "ordinal 1 under parent coordinate " + root->identity().hex()
             ));
 
             auto missingParent = store->persistToolCallPosition(*root, *child);
@@ -3635,9 +3852,9 @@ namespace uf::operator_runtime
                 std::move(*foreignPreimage)
             );
             REQUIRE(foreignRoot.has_value());
-            auto foreignCall = ToolCallPositionIdentity::create(
+            auto foreignCall = toolCallAt(
                 *foreignRoot,
-                std::nullopt,
+                nullptr,
                 1U,
                 execution,
                 *observe
@@ -3720,9 +3937,9 @@ namespace uf::operator_runtime
             std::move(*arguments)
         );
         REQUIRE(invocation.has_value());
-        auto call = ToolCallPositionIdentity::create(
+        auto call = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             1U,
             ToolExecutionIdentity{
                 .runIdentity                 = hashOf("tamper-run"),
@@ -3754,7 +3971,7 @@ namespace uf::operator_runtime
             auto refused = reopened->persistToolCallPosition(*root, *call);
             REQUIRE_FALSE(refused.has_value());
             CHECK(refused.error().message().contains(
-                "different caller-fixed material"
+                "diverged from durable history: canonical_args changed"
             ));
         }
         {
@@ -3794,9 +4011,9 @@ namespace uf::operator_runtime
             std::move(*arguments)
         );
         REQUIRE(invocation.has_value());
-        auto call = ToolCallPositionIdentity::create(
+        auto call = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             1U,
             ToolExecutionIdentity{
                 .runIdentity                 = hashOf("state-tamper-run"),
@@ -3875,7 +4092,7 @@ namespace uf::operator_runtime
         auto const targetIdentity = exactSchemaIdentity(target);
         CHECK(
             targetIdentity
-            == "sha256:53c56cce2064c47a07bd29529320aac7e7f8f4e8c01a74dc54da936159dd44f8"
+            == "sha256:5c0e9a22691b36600cf861157a8b08385e4ec546a86ad0c29849adc5584014ee"
         );
         CHECK(
             target.readRows(
@@ -3925,9 +4142,9 @@ namespace uf::operator_runtime
             std::move(*arguments)
         );
         REQUIRE(invocation.has_value());
-        auto call = ToolCallPositionIdentity::create(
+        auto call = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             1U,
             ToolExecutionIdentity{
                 .runIdentity                 = hashOf("read-only-run"),
@@ -3938,16 +4155,16 @@ namespace uf::operator_runtime
             *invocation
         );
         REQUIRE(call.has_value());
-        auto nextCall = ToolCallPositionIdentity::create(
+        auto nextCall = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             2U,
             call->executionIdentity(),
             *invocation
         );
-        auto childCall = ToolCallPositionIdentity::create(
+        auto childCall = toolCallAt(
             *root,
-            call->asParent(),
+            &*call,
             1U,
             call->executionIdentity(),
             *invocation
@@ -3965,7 +4182,8 @@ namespace uf::operator_runtime
             prepared.controller,
             prepared.lease,
             *root,
-            *call
+            *call,
+            nullptr
         );
         REQUIRE(admission.has_value());
         CHECK(admission->attemptNumber() == 1U);
@@ -3974,7 +4192,8 @@ namespace uf::operator_runtime
             prepared.controller,
             prepared.lease,
             *root,
-            *call
+            *call,
+            nullptr
         );
         REQUIRE(repeatedAdmission.has_value());
         CHECK(repeatedAdmission->attemptNumber() == 1U);
@@ -3983,7 +4202,8 @@ namespace uf::operator_runtime
             prepared.controller,
             prepared.lease,
             *root,
-            *nextCall
+            *nextCall,
+            nullptr
         );
         REQUIRE_FALSE(refusedNext.has_value());
         CHECK(refusedNext.error().message().contains(
@@ -3993,11 +4213,12 @@ namespace uf::operator_runtime
             prepared.controller,
             prepared.lease,
             *root,
-            *childCall
+            *childCall,
+            nullptr
         );
         REQUIRE_FALSE(refusedChild.has_value());
         CHECK(refusedChild.error().message().contains(
-            "nested delegation grant"
+            "requires a delegation grant for a child call"
         ));
 
         auto dispatch = prepared.store.beginToolCallDispatch(*admission);
@@ -4031,7 +4252,8 @@ namespace uf::operator_runtime
             prepared.controller,
             prepared.lease,
             *root,
-            *nextCall
+            *nextCall,
+            nullptr
         );
         REQUIRE(admittedNext.has_value());
         CHECK(admittedNext->attemptNumber() == 1U);
@@ -4103,9 +4325,9 @@ namespace uf::operator_runtime
             std::move(*arguments)
         );
         REQUIRE(invocation.has_value());
-        auto call = ToolCallPositionIdentity::create(
+        auto call = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             1U,
             ToolExecutionIdentity{
                 .runIdentity                 = hashOf("crash-run"),
@@ -4120,7 +4342,8 @@ namespace uf::operator_runtime
             prepared.controller,
             prepared.lease,
             *root,
-            *call
+            *call,
+            nullptr
         );
         REQUIRE(admission.has_value());
         auto dispatch = prepared.store.beginToolCallDispatch(*admission);
@@ -4135,9 +4358,9 @@ namespace uf::operator_runtime
             std::move(*continuationPreimage)
         );
         REQUIRE(continuationRoot.has_value());
-        auto continuationCall = ToolCallPositionIdentity::create(
+        auto continuationCall = toolCallAt(
             *continuationRoot,
-            std::nullopt,
+            nullptr,
             1U,
             call->executionIdentity(),
             *invocation
@@ -4147,7 +4370,8 @@ namespace uf::operator_runtime
             prepared.controller,
             prepared.lease,
             *continuationRoot,
-            *continuationCall
+            *continuationCall,
+            nullptr
         );
         REQUIRE(priorAdmission.has_value());
         auto manifest = prepared.manifest;
@@ -4197,7 +4421,8 @@ namespace uf::operator_runtime
             *resumed,
             *lease,
             *continuationRoot,
-            *continuationCall
+            *continuationCall,
+            nullptr
         );
         REQUIRE(continuedAdmission.has_value());
         CHECK(continuedAdmission->attemptNumber() == 2U);
@@ -4225,7 +4450,8 @@ namespace uf::operator_runtime
             *resumed,
             *lease,
             *root,
-            *call
+            *call,
+            nullptr
         );
         REQUIRE_FALSE(refusedReadmission.has_value());
         CHECK(refusedReadmission.error().message().contains(
@@ -4259,9 +4485,9 @@ namespace uf::operator_runtime
             .toolRuntimeProtocolIdentity = hashOf("mutating-crash-protocol"),
             .environmentIdentity         = hashOf("mutating-crash-environment"),
         };
-        auto call = ToolCallPositionIdentity::create(
+        auto call = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             1U,
             execution,
             invocation
@@ -4274,7 +4500,8 @@ namespace uf::operator_runtime
             *call,
             prepared.planAuthority,
             effects,
-            {}
+            {},
+            nullptr
         );
         REQUIRE(admission.has_value());
         auto dispatch = prepared.store.beginToolCallDispatch(*admission);
@@ -4315,9 +4542,9 @@ namespace uf::operator_runtime
             std::move(*secondPreimage)
         );
         REQUIRE(secondRoot.has_value());
-        auto secondCall = ToolCallPositionIdentity::create(
+        auto secondCall = toolCallAt(
             *secondRoot,
-            std::nullopt,
+            nullptr,
             1U,
             execution,
             invocation
@@ -4330,7 +4557,8 @@ namespace uf::operator_runtime
             *secondCall,
             prepared.planAuthority,
             effects,
-            {}
+            {},
+            nullptr
         );
         REQUIRE_FALSE(blocked.has_value());
         CHECK(blocked.error().message().contains("state possible"));
@@ -4358,7 +4586,8 @@ namespace uf::operator_runtime
             *secondCall,
             prepared.planAuthority,
             effects,
-            {}
+            {},
+            nullptr
         );
         REQUIRE(unblocked.has_value());
     }
@@ -4409,9 +4638,9 @@ namespace uf::operator_runtime
             .toolRuntimeProtocolIdentity = hashOf("agent-tool-protocol"),
             .environmentIdentity         = hashOf("agent-tool-environment"),
         };
-        auto first = ToolCallPositionIdentity::create(
+        auto first = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             1U,
             execution,
             *invocation
@@ -4426,9 +4655,9 @@ namespace uf::operator_runtime
             std::move(*secondPreimage)
         );
         REQUIRE(secondRoot.has_value());
-        auto second = ToolCallPositionIdentity::create(
+        auto second = toolCallAt(
             *secondRoot,
-            std::nullopt,
+            nullptr,
             1U,
             execution,
             *invocation
@@ -4443,7 +4672,8 @@ namespace uf::operator_runtime
             agent,
             *lease,
             *root,
-            *first
+            *first,
+            nullptr
         );
         REQUIRE(admission.has_value());
         auto after = prepared.store.remainingBudget(agent);
@@ -4456,7 +4686,8 @@ namespace uf::operator_runtime
             agent,
             *lease,
             *root,
-            *first
+            *first,
+            nullptr
         );
         REQUIRE(repeated.has_value());
         CHECK(repeated->attemptNumber() == admission->attemptNumber());
@@ -4476,7 +4707,8 @@ namespace uf::operator_runtime
             agent,
             *replacementLease,
             *secondRoot,
-            *second
+            *second,
+            nullptr
         );
         REQUIRE_FALSE(exhausted.has_value());
         CHECK(exhausted.error().message().contains(
@@ -4501,9 +4733,9 @@ namespace uf::operator_runtime
         REQUIRE(root.has_value());
         auto invocation = toolInvocation(prepared.project, "command-1");
         REQUIRE(invocation.descriptor().mutability == ToolMutability::Mutating);
-        auto call = ToolCallPositionIdentity::create(
+        auto call = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             1U,
             ToolExecutionIdentity{
                 .runIdentity                 = hashOf("mutating-run"),
@@ -4518,7 +4750,8 @@ namespace uf::operator_runtime
             prepared.controller,
             prepared.lease,
             *root,
-            *call
+            *call,
+            nullptr
         );
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().message().contains("mutating descriptor"));
@@ -4565,9 +4798,9 @@ namespace uf::operator_runtime
             std::move(*firstPreimage)
         );
         REQUIRE(firstRoot.has_value());
-        auto firstCall = ToolCallPositionIdentity::create(
+        auto firstCall = toolCallAt(
             *firstRoot,
-            std::nullopt,
+            nullptr,
             1U,
             execution,
             invocation
@@ -4580,7 +4813,8 @@ namespace uf::operator_runtime
             *firstCall,
             prepared.planAuthority,
             effects,
-            {}
+            {},
+            nullptr
         );
         REQUIRE(admitted.has_value());
         auto afterFirst = prepared.store.remainingBudget(agent);
@@ -4596,7 +4830,8 @@ namespace uf::operator_runtime
             *firstCall,
             prepared.planAuthority,
             effects,
-            {}
+            {},
+            nullptr
         );
         REQUIRE(repeated.has_value());
         CHECK(repeated->attemptNumber() == admitted->attemptNumber());
@@ -4636,9 +4871,9 @@ namespace uf::operator_runtime
             std::move(*secondPreimage)
         );
         REQUIRE(secondRoot.has_value());
-        auto secondCall = ToolCallPositionIdentity::create(
+        auto secondCall = toolCallAt(
             *secondRoot,
-            std::nullopt,
+            nullptr,
             1U,
             execution,
             invocation
@@ -4651,7 +4886,8 @@ namespace uf::operator_runtime
             *secondCall,
             prepared.planAuthority,
             effects,
-            {}
+            {},
+            nullptr
         );
         REQUIRE_FALSE(exhausted.has_value());
         CHECK(exhausted.error().message().contains(
@@ -4678,9 +4914,9 @@ namespace uf::operator_runtime
         );
         REQUIRE(root.has_value());
         auto invocation = toolInvocation(prepared.project, "command-1");
-        auto call = ToolCallPositionIdentity::create(
+        auto call = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             1U,
             ToolExecutionIdentity{
                 .runIdentity                 = hashOf("effect-authority-run"),
@@ -4705,7 +4941,8 @@ namespace uf::operator_runtime
             *call,
             prepared.planAuthority,
             effects,
-            {}
+            {},
+            nullptr
         );
         REQUIRE(admitted.has_value());
 
@@ -4718,7 +4955,8 @@ namespace uf::operator_runtime
             *call,
             prepared.planAuthority,
             changedEffects,
-            {}
+            {},
+            nullptr
         );
         REQUIRE_FALSE(changed.has_value());
         CHECK(changed.error().message().contains("durable effect authority"));
@@ -4757,9 +4995,9 @@ namespace uf::operator_runtime
         );
         REQUIRE(root.has_value());
         auto invocation = toolInvocation(prepared.project, "command-1");
-        auto call = ToolCallPositionIdentity::create(
+        auto call = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             1U,
             ToolExecutionIdentity{
                 .runIdentity                 = hashOf("high-risk-run"),
@@ -4791,7 +5029,8 @@ namespace uf::operator_runtime
             *call,
             prepared.planAuthority,
             effects,
-            {}
+            {},
+            nullptr
         );
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().message().contains("requires approval"));
@@ -4907,7 +5146,8 @@ namespace uf::operator_runtime
             *call,
             prepared.planAuthority,
             effects,
-            forged
+            forged,
+            nullptr
         );
         REQUIRE_FALSE(mismatched.has_value());
         CHECK(mismatched.error().message().contains(
@@ -4922,7 +5162,8 @@ namespace uf::operator_runtime
             *call,
             prepared.planAuthority,
             effects,
-            approvals
+            approvals,
+            nullptr
         );
         REQUIRE(admitted.has_value());
         auto repeated = prepared.store.admitMutatingToolCall(
@@ -4932,7 +5173,8 @@ namespace uf::operator_runtime
             *call,
             prepared.planAuthority,
             effects,
-            approvals
+            approvals,
+            nullptr
         );
         REQUIRE(repeated.has_value());
         CHECK(repeated->attemptNumber() == admitted->attemptNumber());
@@ -4955,9 +5197,9 @@ namespace uf::operator_runtime
             std::move(*secondPreimage)
         );
         REQUIRE(secondRoot.has_value());
-        auto secondCall = ToolCallPositionIdentity::create(
+        auto secondCall = toolCallAt(
             *secondRoot,
-            std::nullopt,
+            nullptr,
             1U,
             call->executionIdentity(),
             invocation
@@ -4970,7 +5212,8 @@ namespace uf::operator_runtime
             *secondCall,
             prepared.planAuthority,
             effects,
-            approvals
+            approvals,
+            nullptr
         );
         REQUIRE_FALSE(reused.has_value());
         CHECK(reused.error().message().contains(
@@ -5005,7 +5248,8 @@ namespace uf::operator_runtime
             *secondCall,
             prepared.planAuthority,
             effects,
-            leaseBoundApprovals
+            leaseBoundApprovals,
+            nullptr
         );
         REQUIRE_FALSE(staleLeaseApproval.has_value());
         CHECK(staleLeaseApproval.error().message().contains(
@@ -5039,9 +5283,9 @@ namespace uf::operator_runtime
                 std::move(*arguments)
             );
             REQUIRE(invocation.has_value());
-            auto call = ToolCallPositionIdentity::create(
+            auto call = toolCallAt(
                 *root,
-                std::nullopt,
+                nullptr,
                 1U,
                 ToolExecutionIdentity{
                     .runIdentity = hashOf("authority-migration-run"),
@@ -5059,7 +5303,8 @@ namespace uf::operator_runtime
                 prepared.controller,
                 prepared.lease,
                 *root,
-                *call
+                *call,
+                nullptr
             );
             REQUIRE(admitted.has_value());
         }
@@ -5087,7 +5332,7 @@ namespace uf::operator_runtime
         auto target = test_support::OperatorDatabaseProbe{databasePath};
         CHECK(
             exactSchemaIdentity(target)
-            == "sha256:53c56cce2064c47a07bd29529320aac7e7f8f4e8c01a74dc54da936159dd44f8"
+            == "sha256:5c0e9a22691b36600cf861157a8b08385e4ec546a86ad0c29849adc5584014ee"
         );
         CHECK(
             target.readRows(
@@ -5110,7 +5355,7 @@ namespace uf::operator_runtime
             ) == std::vector<std::vector<std::string>>{
                 {
                     sourceIdentity,
-                    "sha256:53c56cce2064c47a07bd29529320aac7e7f8f4e8c01a74dc54da936159dd44f8",
+                    "sha256:5c0e9a22691b36600cf861157a8b08385e4ec546a86ad0c29849adc5584014ee",
                 },
             }
         );
@@ -5129,9 +5374,9 @@ namespace uf::operator_runtime
         );
         REQUIRE(root.has_value());
         auto invocation = toolInvocation(prepared.project, "command-1");
-        auto call = ToolCallPositionIdentity::create(
+        auto call = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             1U,
             ToolExecutionIdentity{
                 .runIdentity                 = hashOf("approval-expiry-run"),
@@ -5184,7 +5429,8 @@ namespace uf::operator_runtime
             *call,
             prepared.planAuthority,
             effects,
-            approvals
+            approvals,
+            nullptr
         );
         REQUIRE(admitted.has_value());
 
@@ -5196,6 +5442,126 @@ namespace uf::operator_runtime
         CHECK(expired.error().message().contains(
             "approval expired after admission"
         ));
+    }
+
+    TEST_CASE("the immediate-prior nested-call schema migrates call rows exactly")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        {
+            auto prepared = prepareStore(temporary.path());
+            auto preimage = CanonicalJson::parseExact(
+                R"({"objective":"nested-schema-migration"})"
+            );
+            REQUIRE(preimage.has_value());
+            auto root = ToolRootRequestIdentity::create(
+                "controller-1",
+                "nested-schema-migration",
+                std::move(*preimage)
+            );
+            REQUIRE(root.has_value());
+            auto invocation = toolInvocation(prepared.project, "command-1");
+            auto call = toolCallAt(
+                *root,
+                nullptr,
+                1U,
+                ToolExecutionIdentity{
+                    .runIdentity = hashOf("nested-migration-run"),
+                    .frameworkReleaseIdentity =
+                        hashOf("nested-migration-framework"),
+                    .toolRuntimeProtocolIdentity =
+                        hashOf("nested-migration-protocol"),
+                    .environmentIdentity =
+                        hashOf("nested-migration-environment"),
+                },
+                invocation
+            );
+            REQUIRE(call.has_value());
+            auto effects = std::array{
+                test_support::routineToolEffect(prepared.project),
+            };
+            auto admitted = prepared.store.admitMutatingToolCall(
+                prepared.controller,
+                prepared.lease,
+                *root,
+                *call,
+                prepared.planAuthority,
+                effects,
+                {},
+                nullptr
+            );
+            REQUIRE(admitted.has_value());
+        }
+
+        auto positionRows   = std::vector<std::vector<std::string>>{};
+        auto attemptRows    = std::vector<std::vector<std::string>>{};
+        auto sourceIdentity = std::string{};
+        {
+            auto prior   = test_support::OperatorDatabaseProbe{databasePath};
+            positionRows = prior.readRows(
+                "SELECT call_identity, root_identity, call_sequence, "
+                "canonical_args FROM tool_call_positions"
+            );
+            attemptRows = prior.readRows(
+                "SELECT call_identity, attempt_number, origin_principal_id, "
+                "execution_principal_id FROM tool_admission_attempts"
+            );
+            restorePriorNestedToolCallSchema(prior);
+            sourceIdentity = exactSchemaIdentity(prior);
+        }
+        REQUIRE_FALSE(positionRows.empty());
+        REQUIRE_FALSE(attemptRows.empty());
+        CHECK(
+            sourceIdentity
+            == "sha256:53c56cce2064c47a07bd29529320aac7e7f8f4e8c01a74dc54da936159dd44f8"
+        );
+
+        {
+            auto migrated = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(migrated.has_value(), migrated.error().message());
+        }
+        auto target = test_support::OperatorDatabaseProbe{databasePath};
+        CHECK(
+            target.readRows(
+                "SELECT call_identity, root_identity, call_sequence, "
+                "canonical_args FROM tool_call_positions"
+            ) == positionRows
+        );
+        CHECK(
+            target.readRows(
+                "SELECT call_identity, attempt_number, origin_principal_id, "
+                "execution_principal_id FROM tool_admission_attempts"
+            ) == attemptRows
+        );
+
+        // No call recorded before this generation consumed an observation or
+        // stood on a delegation grant, because neither existed: the backfill is
+        // the only value those rows can carry rather than a sentinel standing
+        // in for an unknown one.
+        CHECK(
+            target.readRows(
+                "SELECT count(*) FROM tool_call_positions "
+                "WHERE observation_reference_hash IS NOT NULL"
+            ) == std::vector<std::vector<std::string>>{{"0"}}
+        );
+        CHECK(
+            target.readRows(
+                "SELECT count(*) FROM tool_admission_attempts "
+                "WHERE delegation_grant_id IS NOT NULL"
+            ) == std::vector<std::vector<std::string>>{{"0"}}
+        );
+        CHECK(
+            target.readRows("SELECT count(*) FROM tool_delegation_grants")
+            == std::vector<std::vector<std::string>>{{"0"}}
+        );
+        CHECK(
+            target.readRows(
+                "SELECT source_identity, target_identity FROM "
+                "schema_identity_transitions WHERE source_identity='"
+                + sourceIdentity + "'"
+            ).size() == 1U
+        );
     }
 
     TEST_CASE("the immediate-prior Tool approval schema migrates effect authority")
@@ -5216,9 +5582,9 @@ namespace uf::operator_runtime
             );
             REQUIRE(root.has_value());
             auto invocation = toolInvocation(prepared.project, "command-1");
-            auto call = ToolCallPositionIdentity::create(
+            auto call = toolCallAt(
                 *root,
-                std::nullopt,
+                nullptr,
                 1U,
                 ToolExecutionIdentity{
                     .runIdentity = hashOf("approval-migration-run"),
@@ -5242,7 +5608,8 @@ namespace uf::operator_runtime
                 *call,
                 prepared.planAuthority,
                 effects,
-                {}
+                {},
+                nullptr
             );
             REQUIRE(admitted.has_value());
         }
@@ -5297,6 +5664,129 @@ namespace uf::operator_runtime
         );
     }
 
+    TEST_CASE("null-rooted Tool call positions migrate onto their root request")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        auto preimage           = CanonicalJson::parseExact("{}");
+        REQUIRE(preimage.has_value());
+        auto root = ToolRootRequestIdentity::create(
+            "root-position-principal",
+            "root-position-request",
+            std::move(*preimage)
+        );
+        REQUIRE(root.has_value());
+        auto catalog   = FrameworkToolCatalogOwner::create();
+        auto arguments = CanonicalJson::parseExact("{}");
+        REQUIRE(catalog.has_value());
+        REQUIRE(arguments.has_value());
+        auto invocation = catalog->validate(
+            "framework.screen.observe",
+            std::move(*arguments)
+        );
+        REQUIRE(invocation.has_value());
+        auto call = toolCallAt(
+            *root,
+            nullptr,
+            1U,
+            ToolExecutionIdentity{
+                .runIdentity                 = hashOf("root-position-run"),
+                .frameworkReleaseIdentity    = hashOf("root-position-framework"),
+                .toolRuntimeProtocolIdentity = hashOf("root-position-protocol"),
+                .environmentIdentity         = hashOf("root-position-environment"),
+            },
+            *invocation
+        );
+        REQUIRE(call.has_value());
+        {
+            auto store = OperatorCoordinator::open(production);
+            REQUIRE(store.has_value());
+            REQUIRE(store->persistToolRootRequest(*root).has_value());
+            REQUIRE(store->persistToolCallPosition(*root, *call).has_value());
+        }
+
+        auto identityRows   = std::vector<std::vector<std::string>>{};
+        auto sourceIdentity = std::string{};
+        {
+            auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            identityRows = prior.readRows(
+                "SELECT call_identity, root_identity, call_sequence, "
+                "canonical_args FROM tool_call_positions"
+            );
+            restorePriorNullRootedToolCallPositions(prior);
+            sourceIdentity = exactSchemaIdentity(prior);
+
+            // The generation this reproduces really did store the run's own
+            // call with no parent, which is the reading that goes away.
+            CHECK(
+                prior.readRows(
+                    "SELECT count(*) FROM tool_call_positions "
+                    "WHERE parent_call_identity IS NULL"
+                ) == std::vector<std::vector<std::string>>{{"1"}}
+            );
+        }
+        CHECK(
+            sourceIdentity
+            == "sha256:6caa3b9a5f712571a59242bb9a7c34277e6f9e7624fcf1102f74846f46f7631c"
+        );
+
+        {
+            auto migrated = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(migrated.has_value(), migrated.error().message());
+        }
+        {
+            auto target = test_support::OperatorDatabaseProbe{databasePath};
+            CHECK(
+                exactSchemaIdentity(target)
+                == "sha256:5c0e9a22691b36600cf861157a8b08385e4ec546a86ad0c29849adc5584014ee"
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT call_identity, root_identity, call_sequence, "
+                    "canonical_args FROM tool_call_positions"
+                ) == identityRows
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT count(*) FROM tool_call_positions position "
+                    "JOIN tool_root_requests request "
+                    "ON request.root_identity=position.parent_call_identity"
+                ) == std::vector<std::vector<std::string>>{{"1"}}
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT count(*) FROM sqlite_schema WHERE type='index' "
+                    "AND name='one_top_level_tool_call_position'"
+                ) == std::vector<std::vector<std::string>>{{"0"}}
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT source_identity, target_identity FROM "
+                    "schema_identity_transitions WHERE source_identity='"
+                    + sourceIdentity + "'"
+                ) == std::vector<std::vector<std::string>>{
+                    {
+                        sourceIdentity,
+                        "sha256:5c0e9a22691b36600cf861157a8b08385e4ec546a86ad0c29849"
+                        "adc5584014ee",
+                    },
+                }
+            );
+        }
+
+        // The migrated row is the row this generation would have written, so
+        // the same position rejoins it and replays rather than diverging.
+        auto migrated = OperatorCoordinator::open(production);
+        REQUIRE(migrated.has_value());
+        auto restored = migrated->persistToolCallPosition(*root, *call);
+        REQUIRE_MESSAGE(restored.has_value(), restored.error().message());
+        CHECK(restored->lookup == ToolIdentityLookup::Existing);
+        auto replay = migrated->replayToolCall(*root, *call);
+        REQUIRE(replay.has_value());
+        CHECK(replay->state == ToolCallState::Proposed);
+    }
+
     TEST_CASE("the immediate-prior Tool runtime schema migrates identity rows exactly")
     {
         auto temporary          = TemporaryDirectory{};
@@ -5319,9 +5809,9 @@ namespace uf::operator_runtime
             std::move(*arguments)
         );
         REQUIRE(invocation.has_value());
-        auto call = ToolCallPositionIdentity::create(
+        auto call = toolCallAt(
             *root,
-            std::nullopt,
+            nullptr,
             1U,
             ToolExecutionIdentity{
                 .runIdentity                 = hashOf("migration-run"),
@@ -5362,7 +5852,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:53c56cce2064c47a07bd29529320aac7e7f8f4e8c01a74dc54da936159dd44f8"
+                == "sha256:5c0e9a22691b36600cf861157a8b08385e4ec546a86ad0c29849adc5584014ee"
             );
             CHECK(
                 target.readRows(
@@ -5382,7 +5872,7 @@ namespace uf::operator_runtime
                 == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:53c56cce2064c47a07bd29529320aac7e7f8f4e8c01a74dc54da936159dd44f8",
+                        "sha256:5c0e9a22691b36600cf861157a8b08385e4ec546a86ad0c29849adc5584014ee",
                     },
                 }
             );
