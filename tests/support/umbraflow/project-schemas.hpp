@@ -354,9 +354,12 @@ namespace uf::operator_runtime::test_support
     inline constexpr auto k_observedIdentitySchemas = std::array{k_observedIdentitySchema};
 
     // One tool of this project's catalog, in the catalog document's own
-    // vocabulary. The names are not namespaced, which
-    // schema/umbraflow-operator-v1.schema.json requires of a tool_name; see the
-    // note in project-fixture.hpp.
+    // vocabulary. `name` is the LOCAL half of the Tool name: the catalog's own
+    // name is that local half under the namespace the deployment registers, so
+    // the same source list yields `fixture.alpha.command-1` for one plugin id
+    // and `fixture.control.command-1` for another. It is composed rather than
+    // written out because a Tool's namespace is its owner's, and a list of
+    // fully spelled names could only belong to one owner.
     //
     // Every member varies for one case's sake, so each is supplied explicitly
     // below rather than defaulted: the descriptor is the only bound a plan is
@@ -364,7 +367,7 @@ namespace uf::operator_runtime::test_support
     // would make some case pass for a reason nobody chose.
     struct ToolSource final
     {
-        std::string_view name{};
+        std::string_view localName{};
         ToolMutability   mutability{ToolMutability::Mutating};
         ToolSurface      surface{ToolSurface::Privileged};
         ToolIdempotency  idempotency{ToolIdempotency::NonIdempotent};
@@ -390,7 +393,7 @@ namespace uf::operator_runtime::test_support
 
     inline constexpr auto k_toolSources = std::array{
         ToolSource{
-            .name               = "approval-plan",
+            .localName          = "approval-plan",
             .mutability         = ToolMutability::Mutating,
             .surface            = ToolSurface::Semantic,
             .idempotency        = k_ordinaryIdempotency,
@@ -405,7 +408,7 @@ namespace uf::operator_runtime::test_support
         // the per-tool timeout_policy is what refuses that step and nothing
         // else about the tool differs.
         ToolSource{
-            .name               = "brief-timeout",
+            .localName          = "brief-timeout",
             .mutability         = ToolMutability::Mutating,
             .surface            = ToolSurface::Semantic,
             .idempotency        = k_ordinaryIdempotency,
@@ -420,7 +423,7 @@ namespace uf::operator_runtime::test_support
         // Semantic and read-only, so the only thing that can keep it out of
         // an offered set is required_capabilities.
         ToolSource{
-            .name               = "capability-gated",
+            .localName          = "capability-gated",
             .mutability         = ToolMutability::ReadOnly,
             .surface            = ToolSurface::Semantic,
             .idempotency        = ToolIdempotency::ReadSafe,
@@ -432,7 +435,7 @@ namespace uf::operator_runtime::test_support
             .usedByExample      = false,
         },
         ToolSource{
-            .name               = "command-1",
+            .localName          = "command-1",
             .mutability         = ToolMutability::Mutating,
             .surface            = ToolSurface::Semantic,
             .idempotency        = k_ordinaryIdempotency,
@@ -444,7 +447,7 @@ namespace uf::operator_runtime::test_support
             .usedByExample      = true,
         },
         ToolSource{
-            .name               = "command-2",
+            .localName          = "command-2",
             .mutability         = ToolMutability::Mutating,
             .surface            = ToolSurface::Semantic,
             .idempotency        = k_ordinaryIdempotency,
@@ -456,7 +459,7 @@ namespace uf::operator_runtime::test_support
             .usedByExample      = true,
         },
         ToolSource{
-            .name               = "different-command",
+            .localName          = "different-command",
             .mutability         = ToolMutability::Mutating,
             .surface            = ToolSurface::Semantic,
             .idempotency        = k_ordinaryIdempotency,
@@ -468,7 +471,7 @@ namespace uf::operator_runtime::test_support
             .usedByExample      = true,
         },
         ToolSource{
-            .name               = "mismatched-plan",
+            .localName          = "mismatched-plan",
             .mutability         = ToolMutability::Mutating,
             .surface            = ToolSurface::Semantic,
             .idempotency        = k_ordinaryIdempotency,
@@ -480,7 +483,7 @@ namespace uf::operator_runtime::test_support
             .usedByExample      = true,
         },
         ToolSource{
-            .name               = "observe-1",
+            .localName          = "observe-1",
             .mutability         = ToolMutability::ReadOnly,
             .surface            = ToolSurface::Semantic,
             .idempotency        = ToolIdempotency::ReadSafe,
@@ -493,7 +496,7 @@ namespace uf::operator_runtime::test_support
         },
         // Its own descriptor is the clamp the oversized proposal meets.
         ToolSource{
-            .name               = "oversized-plan",
+            .localName          = "oversized-plan",
             .mutability         = ToolMutability::Mutating,
             .surface            = ToolSurface::Semantic,
             .idempotency        = k_ordinaryIdempotency,
@@ -508,7 +511,7 @@ namespace uf::operator_runtime::test_support
         // may be handed it. Read-only so that the p03 cases never contend
         // for the mutation-chain slot the p01 cases are about.
         ToolSource{
-            .name               = "raw-coordinate-click",
+            .localName          = "raw-coordinate-click",
             .mutability         = ToolMutability::ReadOnly,
             .surface            = ToolSurface::Privileged,
             .idempotency        = ToolIdempotency::ReadSafe,
@@ -520,7 +523,7 @@ namespace uf::operator_runtime::test_support
             .usedByExample      = true,
         },
         ToolSource{
-            .name               = "reordered-effects",
+            .localName          = "reordered-effects",
             .mutability         = ToolMutability::Mutating,
             .surface            = ToolSurface::Semantic,
             .idempotency        = k_ordinaryIdempotency,
@@ -534,7 +537,7 @@ namespace uf::operator_runtime::test_support
         // Admits no step claiming it is safe to redeliver, which is the one
         // claim the plugin's step intent makes.
         ToolSource{
-            .name               = "strict-delivery",
+            .localName          = "strict-delivery",
             .mutability         = ToolMutability::Mutating,
             .surface            = ToolSurface::Semantic,
             .idempotency        = ToolIdempotency::NonIdempotent,
@@ -548,7 +551,7 @@ namespace uf::operator_runtime::test_support
         // Bounds a UI action the plugin never proposes, so the allowed set of
         // its otherwise ordinary plan is what its ui_action_bounds refuses.
         ToolSource{
-            .name               = "stray-action",
+            .localName          = "stray-action",
             .mutability         = ToolMutability::Mutating,
             .surface            = ToolSurface::Semantic,
             .idempotency        = k_ordinaryIdempotency,
@@ -560,7 +563,7 @@ namespace uf::operator_runtime::test_support
             .usedByExample      = false,
         },
         ToolSource{
-            .name               = "two-step-plan",
+            .localName          = "two-step-plan",
             .mutability         = ToolMutability::Mutating,
             .surface            = ToolSurface::Semantic,
             .idempotency        = k_ordinaryIdempotency,
@@ -599,6 +602,19 @@ namespace uf::operator_runtime::test_support
         return schemaHash(bytes).hex();
     }
 
+    // One catalog name of this fixture, spelled the only way a Tool name is
+    // spelled: the local half under the namespace the registrant owns. Every
+    // case that names a fixture tool names it this way, because the same local
+    // half belongs to a different Tool under every plugin id.
+    [[nodiscard]]
+    inline auto fixtureToolName(
+        std::string_view pluginId,
+        std::string_view localName
+    ) -> std::string
+    {
+        return std::string{pluginId} + "." + std::string{localName};
+    }
+
     [[nodiscard]]
     inline auto makeToolCatalogDeclaration(
         std::string_view pluginId,
@@ -620,7 +636,7 @@ namespace uf::operator_runtime::test_support
                 requiredCapabilities.emplace_back(tool.requiredCapability);
             }
             tools.emplace_back(project::DeclaredTool{
-                .name           = std::string{tool.name},
+                .name           = fixtureToolName(pluginId, tool.localName),
                 .argumentSchema = "FixtureArguments",
                 .resultSchema   = "FixtureResult",
                 .descriptor     = ToolDescriptor{

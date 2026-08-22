@@ -31,10 +31,11 @@
       "effect_payload_schemas": [
         "schema/effect/fixture.write-v1.schema.json"
       ],
-      "$comment": "This deployment registers no resource: the member is written empty rather than left out, because an absent member would be read as a declaration gone missing. It observes the one instance its plugin's derive proposes, under the identity schema this array names.",
+      "$comment": "This deployment registers no resource and binds no Tool to a closure entry: both members are written empty rather than left out, because an absent member would be read as a declaration gone missing. Its plugin is the five-function pure module, and its Tools are reached through Operations and plans rather than through a scoped entry. It observes the one instance its plugin's derive proposes, under the identity schema this array names.",
       "observed_instance_identity_schemas": [
         "schema/observed-identity-v1.schema.json"
       ],
+      "tool_bindings": [],
       "resources": []
     },
     {
@@ -63,10 +64,11 @@
       "effect_payload_schemas": [
         "schema/effect/fixture.write-v1.schema.json"
       ],
-      "$comment": "This deployment registers no resource: the member is written empty rather than left out, because an absent member would be read as a declaration gone missing. It observes the one instance its plugin's derive proposes, under the identity schema this array names.",
+      "$comment": "This deployment registers no resource and binds no Tool to a closure entry: both members are written empty rather than left out, because an absent member would be read as a declaration gone missing. Its plugin is the five-function pure module, and its Tools are reached through Operations and plans rather than through a scoped entry. It observes the one instance its plugin's derive proposes, under the identity schema this array names.",
       "observed_instance_identity_schemas": [
         "schema/observed-identity-v1.schema.json"
       ],
+      "tool_bindings": [],
       "resources": []
     }
   ]

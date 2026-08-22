@@ -122,6 +122,17 @@ namespace uf::operator_runtime
             json::Value const& canonicalArguments,
             script::ScopedRunRequest const& request
         ) const -> Result<json::Value>;
+
+        // Whether the answer a bound entry produced is one this Tool's catalog
+        // entry declared it could produce. The dispatcher runs it between the
+        // program's answer and the terminal durable row, so a handler that
+        // breaks its own published contract fails the call rather than
+        // recording an outcome nothing can read.
+        [[nodiscard]]
+        auto validateToolResult(
+            std::string_view toolName,
+            std::string_view exactResultJcs
+        ) const -> Status;
     };
 
     // Startup-only exact registry, one entry per (plugin id, registration
@@ -150,6 +161,11 @@ namespace uf::operator_runtime
         // A statement here that the closure does not honour survives nothing:
         // the program is compiled over the binding table's union, and a closure
         // exporting anything else is refused at admission.
+        //
+        // `validateResults` judges what a bound entry answers with, and is
+        // required for the reason the argument validator is: a generation whose
+        // answers nothing judges is a generation whose result schemas are
+        // decoration.
         [[nodiscard]]
         auto registerProject(
             VerifiedProjectRegistration const& registration,
@@ -158,6 +174,7 @@ namespace uf::operator_runtime
             std::vector<ProjectPluginRegistrar::ModuleBlob> exactModules,
             std::vector<ProjectPluginRegistrar::ResourceBlob> exactResources,
             std::span<std::string const> exportedEntryPoints,
+            ToolResultValidator validateResults,
             script::ToolRuntimeInvoke invokeTool
         ) -> Result<ProjectToolProgramHandle>;
 

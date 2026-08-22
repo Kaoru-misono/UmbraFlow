@@ -360,12 +360,24 @@ namespace uf::operator_runtime
             ToolExecutionIdentity executionIdentity
         ) -> ToolCallIssuingContext;
 
-        // The context one live handler invocation issues its children from.
-        // The handler call must be a position this context issued, so a
-        // handler cannot name another context's position as its own parent.
+        // The context one live handler invocation issues its children from,
+        // anchored on the position of the call that handler implements.
+        //
+        // It takes a durable parent coordinate and nothing else -- not an
+        // ordinal, and not the enclosing context either. A restarted dispatcher
+        // has no enclosing context to hold: the process that held it is the one
+        // that died, and the call it is re-entering is a row it just read. So
+        // the parent is the authority, and the ledger is what refuses a call
+        // arriving under a parent that is not dispatching.
+        //
+        // The execution identity comes from the handler call rather than from a
+        // parameter, because a handler's children run under the exact pinned
+        // environment the handler itself was admitted under; a caller able to
+        // state a different one could move what a child call's identity attests
+        // to without moving the parent's.
         [[nodiscard]]
-        auto forHandler(ToolCallPositionIdentity const& handlerCall) const
-            -> Result<ToolCallIssuingContext>;
+        static auto forHandler(ToolCallPositionIdentity const& handlerCall)
+            -> ToolCallIssuingContext;
 
         [[nodiscard]]
         auto issue(ValidatedToolInvocation const& invocation)
@@ -433,6 +445,16 @@ namespace uf::operator_runtime
         std::function<Result<std::vector<ToolCatalogEntry>>()>;
     using ToolArgumentValidator = std::function<
         Status(std::string_view toolName, std::string_view exactArgsJcs)
+    >;
+
+    // The answer side of the same pair, and a third callback for the same
+    // reason there are two above: a result arrives per call and is judged
+    // against the definition its own descriptor row names. Only the deployment
+    // that carries the pinned tool precondition schema bytes and the catalog
+    // that names a definition inside them can compile one, which is what makes
+    // it a trusted deployment callback rather than anything a caller supplies.
+    using ToolResultValidator = std::function<
+        Status(std::string_view toolName, std::string_view exactResultJcs)
     >;
 
     class ProjectToolCatalogSchemaOwner final

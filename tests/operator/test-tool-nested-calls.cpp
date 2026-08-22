@@ -10,6 +10,7 @@
 
 #include <operator/ledger.hpp>
 #include <operator/snapshot-reference.hpp>
+#include <operator/tool-admission-request.hpp>
 #include <operator/tool-descriptor.hpp>
 #include <operator/tool-invocation.hpp>
 
@@ -29,7 +30,6 @@
 #include <chrono>
 #include <filesystem>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -69,8 +69,8 @@ namespace uf::operator_runtime
         constexpr auto k_semanticInputTool = std::string_view{
             "framework.input.semantic_target"
         };
-        constexpr auto k_parentTool = std::string_view{"nested.parent"};
-        constexpr auto k_readOnlyChildTool = std::string_view{"nested.read"};
+        constexpr auto k_parentTool = std::string_view{"fixture.nested.parent"};
+        constexpr auto k_readOnlyChildTool = std::string_view{"fixture.nested.read"};
         constexpr auto k_boundMillis = uint64{60'000};
 
         // The one effect this suite's tools propose. Naming it in the policy is
@@ -211,11 +211,18 @@ namespace uf::operator_runtime
         auto everyChildDeclaration() -> ChildEffectDeclaration
         {
             return ChildEffectDeclaration{
+                // The last name is another registration's Tool, declared on
+                // purpose: a declaration only ever REQUESTS, so the case that
+                // issues that child must get past the enumerated-name clause to
+                // reach the one it is about, which is that a call minted by
+                // another registration's catalog owner is refused for being
+                // another registration's.
                 .childToolNames = {
                     std::string{k_captureTool},
                     std::string{k_coordinateInputTool},
                     std::string{k_observeTool},
                     std::string{k_readOnlyChildTool},
+                    "fixture.foreign.read",
                 },
                 .maximumChildSurface    = ToolSurface::Privileged,
                 .maximumChildMutability = ToolMutability::Mutating,
@@ -516,26 +523,28 @@ namespace uf::operator_runtime
             ToolRootRequestIdentity const& root,
             ToolCallIssuingContext& runContext,
             ValidatedToolInvocation const& invocation,
-            std::span<ProposedEffect const> effects
+            std::vector<ProposedEffect> const& effects
         ) -> Result<RunningHandler>
         {
             UF_TRY_VALUE(call, runContext.issue(invocation));
             UF_TRY_VALUE(
                 admitted,
-                prepared.store.admitMutatingToolCall(
-                    controller,
-                    lease,
-                    root,
-                    call,
-                    prepared.planAuthority,
-                    effects,
-                    {},
-                    nullptr
+                prepared.store.admitToolCall(
+                    ToolAdmissionRequest{
+                        .controller = controller,
+                        .lease      = lease,
+                        .root       = root,
+                        .call       = call,
+                        .mutation   = ToolAdmissionRequest::Mutation{
+                            .planAuthority = prepared.planAuthority,
+                            .effects       = effects,
+                        },
+                    }
                 )
             );
             UF_TRY(prepared.store.beginToolCallDispatch(admitted));
             UF_TRY_VALUE(grant, prepared.store.issueToolDelegationGrant(call));
-            UF_TRY_VALUE(context, runContext.forHandler(call));
+            auto context = ToolCallIssuingContext::forHandler(call);
             return RunningHandler{
                 std::move(call),
                 std::move(grant),
@@ -559,17 +568,18 @@ namespace uf::operator_runtime
             UF_TRY_VALUE(call, runContext.issue(invocation));
             UF_TRY_VALUE(
                 admitted,
-                prepared.store.admitReadOnlyToolCall(
-                    controller,
-                    lease,
-                    root,
-                    call,
-                    nullptr
+                prepared.store.admitToolCall(
+                    ToolAdmissionRequest{
+                        .controller = controller,
+                        .lease      = lease,
+                        .root       = root,
+                        .call       = call,
+                    }
                 )
             );
             UF_TRY(prepared.store.beginToolCallDispatch(admitted));
             UF_TRY_VALUE(grant, prepared.store.issueToolDelegationGrant(call));
-            UF_TRY_VALUE(context, runContext.forHandler(call));
+            auto context = ToolCallIssuingContext::forHandler(call);
             return RunningHandler{
                 std::move(call),
                 std::move(grant),
@@ -643,7 +653,7 @@ namespace uf::operator_runtime
                 root,
                 executionIdentity()
             );
-            auto const rootEffects = std::array{
+            auto const rootEffects = std::vector{
                 inputEffect(agent.controlledTargetId(), Risk::Medium),
             };
             auto handler = startHandler(
@@ -662,12 +672,14 @@ namespace uf::operator_runtime
                 projectCall(catalog, k_readOnlyChildTool)
             );
             REQUIRE(projectChild.has_value());
-            auto projectChildAdmission = prepared.store.admitReadOnlyToolCall(
-                agent,
-                *lease,
-                root,
-                *projectChild,
-                &handler->grant
+            auto projectChildAdmission = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = agent,
+                    .lease      = *lease,
+                    .root       = root,
+                    .call       = *projectChild,
+                    .delegation = handler->grant,
+                }
             );
             REQUIRE_MESSAGE(projectChildAdmission.has_value(), failureText(projectChildAdmission));
             completeReadOnlyChild(prepared, *projectChildAdmission);
@@ -677,12 +689,14 @@ namespace uf::operator_runtime
                 frameworkInvocation(framework, k_observeTool, "{}")
             );
             REQUIRE(observeChild.has_value());
-            auto observeAdmission = prepared.store.admitReadOnlyToolCall(
-                agent,
-                *lease,
-                root,
-                *observeChild,
-                &handler->grant
+            auto observeAdmission = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = agent,
+                    .lease      = *lease,
+                    .root       = root,
+                    .call       = *observeChild,
+                    .delegation = handler->grant,
+                }
             );
             REQUIRE_MESSAGE(observeAdmission.has_value(), failureText(observeAdmission));
             completeReadOnlyChild(prepared, *observeAdmission);
@@ -698,12 +712,14 @@ namespace uf::operator_runtime
             );
             auto captureChild = handler->context.issue(captureInvocation);
             REQUIRE(captureChild.has_value());
-            auto captureAdmission = prepared.store.admitReadOnlyToolCall(
-                agent,
-                *lease,
-                root,
-                *captureChild,
-                &handler->grant
+            auto captureAdmission = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = agent,
+                    .lease      = *lease,
+                    .root       = root,
+                    .call       = *captureChild,
+                    .delegation = handler->grant,
+                }
             );
             REQUIRE_MESSAGE(captureAdmission.has_value(), failureText(captureAdmission));
             completeReadOnlyChild(prepared, *captureAdmission);
@@ -715,12 +731,13 @@ namespace uf::operator_runtime
             );
             auto directCall = directContext.issue(captureInvocation);
             REQUIRE(directCall.has_value());
-            auto direct = prepared.store.admitReadOnlyToolCall(
-                agent,
-                *lease,
-                directRoot,
-                *directCall,
-                nullptr
+            auto direct = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = agent,
+                    .lease      = *lease,
+                    .root       = directRoot,
+                    .call       = *directCall,
+                }
             );
             REQUIRE_FALSE(direct.has_value());
             CHECK(direct.error().message().contains(
@@ -736,18 +753,21 @@ namespace uf::operator_runtime
             );
             auto inputChild = handler->context.issue(inputInvocation);
             REQUIRE(inputChild.has_value());
-            auto const childEffects = std::array{
+            auto const childEffects = std::vector{
                 inputEffect(agent.controlledTargetId(), Risk::Medium),
             };
-            auto inputAdmission = prepared.store.admitMutatingToolCall(
-                agent,
-                *lease,
-                root,
-                *inputChild,
-                prepared.planAuthority,
-                childEffects,
-                {},
-                &handler->grant
+            auto inputAdmission = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = agent,
+                    .lease      = *lease,
+                    .root       = root,
+                    .call       = *inputChild,
+                    .mutation   = ToolAdmissionRequest::Mutation{
+                        .planAuthority = prepared.planAuthority,
+                        .effects       = childEffects,
+                    },
+                    .delegation = handler->grant,
+                }
             );
             REQUIRE_MESSAGE(inputAdmission.has_value(), failureText(inputAdmission));
 
@@ -794,7 +814,7 @@ namespace uf::operator_runtime
             root,
             executionIdentity()
         );
-        auto const rootEffects = std::array{inputEffect(target, Risk::Medium)};
+        auto const rootEffects = std::vector{inputEffect(target, Risk::Medium)};
         auto handler = startHandler(
             prepared,
             controller,
@@ -815,16 +835,19 @@ namespace uf::operator_runtime
         {
             auto child = handler->context.issue(inputInvocation);
             REQUIRE(child.has_value());
-            auto const widened = std::array{inputEffect(target, Risk::High)};
-            auto refused = prepared.store.admitMutatingToolCall(
-                controller,
-                lease,
-                root,
-                *child,
-                prepared.planAuthority,
-                widened,
-                {},
-                &handler->grant
+            auto const widened = std::vector{inputEffect(target, Risk::High)};
+            auto refused = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = controller,
+                    .lease      = lease,
+                    .root       = root,
+                    .call       = *child,
+                    .mutation   = ToolAdmissionRequest::Mutation{
+                        .planAuthority = prepared.planAuthority,
+                        .effects       = widened,
+                    },
+                    .delegation = handler->grant,
+                }
             );
             REQUIRE_FALSE(refused.has_value());
             CHECK(refused.error().message().contains(
@@ -838,16 +861,19 @@ namespace uf::operator_runtime
             REQUIRE(child.has_value());
             auto elsewhere     = inputEffect(target, Risk::Medium);
             elsewhere.scopeKey = "another-scope";
-            auto const moved = std::array{elsewhere};
-            auto refused = prepared.store.admitMutatingToolCall(
-                controller,
-                lease,
-                root,
-                *child,
-                prepared.planAuthority,
-                moved,
-                {},
-                &handler->grant
+            auto const moved = std::vector{elsewhere};
+            auto refused = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = controller,
+                    .lease      = lease,
+                    .root       = root,
+                    .call       = *child,
+                    .mutation   = ToolAdmissionRequest::Mutation{
+                        .planAuthority = prepared.planAuthority,
+                        .effects       = moved,
+                    },
+                    .delegation = handler->grant,
+                }
             );
             REQUIRE_FALSE(refused.has_value());
             CHECK(refused.error().message().contains(
@@ -861,24 +887,30 @@ namespace uf::operator_runtime
                 "fixture.foreign",
                 test_support::pluginSource("fixture.foreign")
             );
+            // The foreign registration owns its own namespace, so its Tool
+            // cannot be the same name at all: what the case shows is that a
+            // child minted by another registration's catalog owner is refused
+            // for being another registration's, whatever it is called.
             auto foreignCatalog = nestedCatalog(
                 foreign,
                 {ToolCatalogEntry{
-                    .name       = std::string{k_readOnlyChildTool},
+                    .name       = "fixture.foreign.read",
                     .descriptor = readOnlyDescriptor({}),
                 }}
             );
             REQUIRE(foreignCatalog.has_value());
             auto child = handler->context.issue(
-                projectCall(*foreignCatalog, k_readOnlyChildTool)
+                projectCall(*foreignCatalog, "fixture.foreign.read")
             );
             REQUIRE(child.has_value());
-            auto refused = prepared.store.admitReadOnlyToolCall(
-                controller,
-                lease,
-                root,
-                *child,
-                &handler->grant
+            auto refused = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = controller,
+                    .lease      = lease,
+                    .root       = root,
+                    .call       = *child,
+                    .delegation = handler->grant,
+                }
             );
             REQUIRE_FALSE(refused.has_value());
             CHECK(refused.error().message().contains(
@@ -902,12 +934,14 @@ namespace uf::operator_runtime
                 projectCall(catalog, k_readOnlyChildTool)
             );
             REQUIRE(child.has_value());
-            auto refused = prepared.store.admitReadOnlyToolCall(
-                elsewhere,
-                *otherLease,
-                root,
-                *child,
-                &handler->grant
+            auto refused = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = elsewhere,
+                    .lease      = *otherLease,
+                    .root       = root,
+                    .call       = *child,
+                    .delegation = handler->grant,
+                }
             );
             REQUIRE_FALSE(refused.has_value());
             CHECK(refused.error().message().contains(
@@ -921,19 +955,22 @@ namespace uf::operator_runtime
                 projectCall(catalog, k_parentTool)
             );
             REQUIRE(child.has_value());
-            auto refused = prepared.store.admitMutatingToolCall(
-                controller,
-                lease,
-                root,
-                *child,
-                prepared.planAuthority,
-                rootEffects,
-                {},
-                &handler->grant
+            auto refused = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = controller,
+                    .lease      = lease,
+                    .root       = root,
+                    .call       = *child,
+                    .mutation   = ToolAdmissionRequest::Mutation{
+                        .planAuthority = prepared.planAuthority,
+                        .effects       = rootEffects,
+                    },
+                    .delegation = handler->grant,
+                }
             );
             REQUIRE_FALSE(refused.has_value());
             CHECK(refused.error().message().contains(
-                "would re-enter nested.parent"
+                "would re-enter fixture.nested.parent"
             ));
         }
 
@@ -982,12 +1019,14 @@ namespace uf::operator_runtime
                 projectCall(narrow, k_readOnlyChildTool)
             );
             REQUIRE(first.has_value());
-            auto admitted = prepared.store.admitReadOnlyToolCall(
-                controller,
-                lease,
-                narrowRoot,
-                *first,
-                &narrowHandler->grant
+            auto admitted = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = controller,
+                    .lease      = lease,
+                    .root       = narrowRoot,
+                    .call       = *first,
+                    .delegation = narrowHandler->grant,
+                }
             );
             REQUIRE_MESSAGE(admitted.has_value(), failureText(admitted));
             completeReadOnlyChild(prepared, *admitted);
@@ -995,12 +1034,14 @@ namespace uf::operator_runtime
                 projectCall(narrow, k_readOnlyChildTool)
             );
             REQUIRE(second.has_value());
-            auto refused = prepared.store.admitReadOnlyToolCall(
-                controller,
-                lease,
-                narrowRoot,
-                *second,
-                &narrowHandler->grant
+            auto refused = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = controller,
+                    .lease      = lease,
+                    .root       = narrowRoot,
+                    .call       = *second,
+                    .delegation = narrowHandler->grant,
+                }
             );
             REQUIRE_FALSE(refused.has_value());
             CHECK(refused.error().message().contains(
@@ -1014,12 +1055,14 @@ namespace uf::operator_runtime
                 frameworkInvocation(framework, "framework.workflow.wait", R"({"duration_ms":10})")
             );
             REQUIRE(child.has_value());
-            auto refused = prepared.store.admitReadOnlyToolCall(
-                controller,
-                lease,
-                root,
-                *child,
-                &handler->grant
+            auto refused = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = controller,
+                    .lease      = lease,
+                    .root       = root,
+                    .call       = *child,
+                    .delegation = handler->grant,
+                }
             );
             REQUIRE_FALSE(refused.has_value());
             CHECK(refused.error().message().contains(
@@ -1033,12 +1076,14 @@ namespace uf::operator_runtime
                 projectCall(catalog, k_readOnlyChildTool)
             );
             REQUIRE(orphan.has_value());
-            auto refusedGrant = prepared.store.admitReadOnlyToolCall(
-                controller,
-                lease,
-                root,
-                *orphan,
-                &handler->grant
+            auto refusedGrant = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = controller,
+                    .lease      = lease,
+                    .root       = root,
+                    .call       = *orphan,
+                    .delegation = handler->grant,
+                }
             );
             REQUIRE_FALSE(refusedGrant.has_value());
             CHECK(refusedGrant.error().message().contains(
@@ -1049,12 +1094,13 @@ namespace uf::operator_runtime
                 projectCall(catalog, k_readOnlyChildTool)
             );
             REQUIRE(child.has_value());
-            auto refusedChild = prepared.store.admitReadOnlyToolCall(
-                controller,
-                lease,
-                root,
-                *child,
-                nullptr
+            auto refusedChild = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = controller,
+                    .lease      = lease,
+                    .root       = root,
+                    .call       = *child,
+                }
             );
             REQUIRE_FALSE(refusedChild.has_value());
             CHECK(refusedChild.error().message().contains(
@@ -1076,20 +1122,22 @@ namespace uf::operator_runtime
             root,
             executionIdentity()
         );
-        auto const rootEffects = std::array{
+        auto const rootEffects = std::vector{
             inputEffect(controller.controlledTargetId(), Risk::Medium),
         };
         auto call = runContext.issue(projectCall(silent, k_parentTool));
         REQUIRE(call.has_value());
-        auto admitted = prepared.store.admitMutatingToolCall(
-            controller,
-            lease,
-            root,
-            *call,
-            prepared.planAuthority,
-            rootEffects,
-            {},
-            nullptr
+        auto admitted = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = controller,
+                .lease      = lease,
+                .root       = root,
+                .call       = *call,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = rootEffects,
+                },
+            }
         );
         REQUIRE(admitted.has_value());
         REQUIRE(prepared.store.beginToolCallDispatch(*admitted).has_value());
@@ -1123,37 +1171,40 @@ namespace uf::operator_runtime
         );
         auto parent = runContext.issue(projectCall(*catalog, k_parentTool));
         REQUIRE(parent.has_value());
-        auto admitted = prepared.store.admitReadOnlyToolCall(
-            controller,
-            lease,
-            root,
-            *parent,
-            nullptr
+        auto admitted = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = controller,
+                .lease      = lease,
+                .root       = root,
+                .call       = *parent,
+            }
         );
         REQUIRE(admitted.has_value());
         REQUIRE(prepared.store.beginToolCallDispatch(*admitted).has_value());
         auto grant = prepared.store.issueToolDelegationGrant(*parent);
         REQUIRE(grant.has_value());
-        auto handlerContext = runContext.forHandler(*parent);
-        REQUIRE(handlerContext.has_value());
-        auto child = handlerContext->issue(frameworkInvocation(
+        auto handlerContext = ToolCallIssuingContext::forHandler(*parent);
+        auto child = handlerContext.issue(frameworkInvocation(
             framework,
             k_coordinateInputTool,
             R"({"action":"click","x":1,"y":2})"
         ));
         REQUIRE(child.has_value());
-        auto const effects = std::array{
+        auto const effects = std::vector{
             inputEffect(controller.controlledTargetId(), Risk::Medium),
         };
-        auto refused = prepared.store.admitMutatingToolCall(
-            controller,
-            lease,
-            root,
-            *child,
-            prepared.planAuthority,
-            effects,
-            {},
-            &*grant
+        auto refused = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = controller,
+                .lease      = lease,
+                .root       = root,
+                .call       = *child,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+                .delegation = *grant,
+            }
         );
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().message().contains(
@@ -1172,11 +1223,11 @@ namespace uf::operator_runtime
         // child. Distinct names keep this case about depth and never about the
         // recursion rule.
         constexpr auto k_levels = std::array{
-            std::string_view{"nested.level-1"},
-            std::string_view{"nested.level-2"},
-            std::string_view{"nested.level-3"},
-            std::string_view{"nested.level-4"},
-            std::string_view{"nested.level-5"},
+            std::string_view{"fixture.nested.level-1"},
+            std::string_view{"fixture.nested.level-2"},
+            std::string_view{"fixture.nested.level-3"},
+            std::string_view{"fixture.nested.level-4"},
+            std::string_view{"fixture.nested.level-5"},
         };
         auto tools = std::vector<ToolCatalogEntry>{};
         for (auto index = std::size_t{}; index < k_levels.size(); ++index)
@@ -1207,12 +1258,14 @@ namespace uf::operator_runtime
         {
             auto call = context.issue(projectCall(*catalog, k_levels[index]));
             REQUIRE(call.has_value());
-            auto admitted = prepared.store.admitReadOnlyToolCall(
-                controller,
-                lease,
-                root,
-                *call,
-                grant ? &*grant : nullptr
+            auto admitted = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = controller,
+                    .lease      = lease,
+                    .root       = root,
+                    .call       = *call,
+                    .delegation = grant,
+                }
             );
             if (index + 1U == k_levels.size())
             {
@@ -1226,10 +1279,8 @@ namespace uf::operator_runtime
             REQUIRE(prepared.store.beginToolCallDispatch(*admitted).has_value());
             auto issued = prepared.store.issueToolDelegationGrant(*call);
             REQUIRE(issued.has_value());
-            grant     = *std::move(issued);
-            auto next = context.forHandler(*call);
-            REQUIRE(next.has_value());
-            context = *std::move(next);
+            grant   = *std::move(issued);
+            context = ToolCallIssuingContext::forHandler(*call);
         }
     }
 
@@ -1263,7 +1314,7 @@ namespace uf::operator_runtime
             root,
             executionIdentity()
         );
-        auto const rootEffects = std::array{
+        auto const rootEffects = std::vector{
             inputEffect(agent.controlledTargetId(), Risk::Medium),
         };
         auto handler = startHandler(
@@ -1280,12 +1331,14 @@ namespace uf::operator_runtime
             projectCall(catalog, k_readOnlyChildTool)
         );
         REQUIRE(child.has_value());
-        auto refused = prepared.store.admitReadOnlyToolCall(
-            agent,
-            *lease,
-            root,
-            *child,
-            &handler->grant
+        auto refused = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = agent,
+                .lease      = *lease,
+                .root       = root,
+                .call       = *child,
+                .delegation = handler->grant,
+            }
         );
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().message().contains(
@@ -1319,21 +1372,21 @@ namespace uf::operator_runtime
         );
         auto parent = runContext.issue(projectCall(*catalog, k_parentTool));
         REQUIRE(parent.has_value());
-        auto admitted = prepared.store.admitReadOnlyToolCall(
-            controller,
-            lease,
-            root,
-            *parent,
-            nullptr
+        auto admitted = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = controller,
+                .lease      = lease,
+                .root       = root,
+                .call       = *parent,
+            }
         );
         REQUIRE(admitted.has_value());
         auto dispatch = prepared.store.beginToolCallDispatch(*admitted);
         REQUIRE(dispatch.has_value());
         auto grant = prepared.store.issueToolDelegationGrant(*parent);
         REQUIRE(grant.has_value());
-        auto handlerContext = runContext.forHandler(*parent);
-        REQUIRE(handlerContext.has_value());
-        auto child = handlerContext->issue(
+        auto handlerContext = ToolCallIssuingContext::forHandler(*parent);
+        auto child = handlerContext.issue(
             projectCall(*catalog, k_readOnlyChildTool)
         );
         REQUIRE(child.has_value());
@@ -1347,12 +1400,14 @@ namespace uf::operator_runtime
             ToolCallCompletion::confirmed(*result)
         ).has_value());
 
-        auto refused = prepared.store.admitReadOnlyToolCall(
-            controller,
-            lease,
-            root,
-            *child,
-            &*grant
+        auto refused = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = controller,
+                .lease      = lease,
+                .root       = root,
+                .call       = *child,
+                .delegation = *grant,
+            }
         );
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().message().contains(
@@ -1389,12 +1444,13 @@ namespace uf::operator_runtime
                 projectCall(*readCatalog, k_readOnlyChildTool)
             );
             REQUIRE(call.has_value());
-            auto admitted = prepared.store.admitReadOnlyToolCall(
-                controller,
-                lease,
-                root,
-                *call,
-                nullptr
+            auto admitted = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = controller,
+                    .lease      = lease,
+                    .root       = root,
+                    .call       = *call,
+                }
             );
             REQUIRE_MESSAGE(admitted.has_value(), failureText(admitted));
             completeReadOnlyChild(prepared, *admitted);
@@ -1587,7 +1643,7 @@ namespace uf::operator_runtime
             root,
             executionIdentity()
         );
-        auto const rootEffects = std::array{inputEffect(target, Risk::High)};
+        auto const rootEffects = std::vector{inputEffect(target, Risk::High)};
         auto parent = runContext.issue(projectCall(catalog, k_parentTool));
         REQUIRE(parent.has_value());
 
@@ -1614,39 +1670,43 @@ namespace uf::operator_runtime
             AuthorityDecisionId{"nested-approval-decision"}
         );
         REQUIRE_MESSAGE(approval.has_value(), failureText(approval));
-        auto const approvals = std::array{*approval};
-        auto admitted = prepared.store.admitMutatingToolCall(
-            controller,
-            lease,
-            root,
-            *parent,
-            prepared.planAuthority,
-            rootEffects,
-            approvals,
-            nullptr
+        auto const approvals = std::vector{*approval};
+        auto admitted = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = controller,
+                .lease      = lease,
+                .root       = root,
+                .call       = *parent,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = rootEffects,
+                    .approvals     = approvals,
+                },
+            }
         );
         REQUIRE_MESSAGE(admitted.has_value(), failureText(admitted));
         REQUIRE(prepared.store.beginToolCallDispatch(*admitted).has_value());
         auto grant = prepared.store.issueToolDelegationGrant(*parent);
         REQUIRE(grant.has_value());
-        auto handlerContext = runContext.forHandler(*parent);
-        REQUIRE(handlerContext.has_value());
-
-        auto child = handlerContext->issue(frameworkInvocation(
+        auto handlerContext = ToolCallIssuingContext::forHandler(*parent);
+        auto child = handlerContext.issue(frameworkInvocation(
             framework,
             k_coordinateInputTool,
             R"({"action":"click","x":7,"y":7})"
         ));
         REQUIRE(child.has_value());
-        auto refused = prepared.store.admitMutatingToolCall(
-            controller,
-            lease,
-            root,
-            *child,
-            prepared.planAuthority,
-            rootEffects,
-            {},
-            &*grant
+        auto refused = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = controller,
+                .lease      = lease,
+                .root       = root,
+                .call       = *child,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = rootEffects,
+                },
+                .delegation = *grant,
+            }
         );
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().message().contains(
@@ -1708,37 +1768,28 @@ namespace uf::operator_runtime
             projectCall(*catalog, k_readOnlyChildTool)
         );
         REQUIRE(siblingChild.has_value());
-        auto crossed = prepared.store.admitReadOnlyToolCall(
-            controller,
-            lease,
-            siblingRoot,
-            *siblingChild,
-            &first->grant
+        auto crossed = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = controller,
+                .lease      = lease,
+                .root       = siblingRoot,
+                .call       = *siblingChild,
+                .delegation = first->grant,
+            }
         );
         REQUIRE_FALSE(crossed.has_value());
         CHECK(crossed.error().message().contains(
             "names a different parent position"
         ));
 
-        // A handler context is derived from a call this context issued, and
-        // never from one another context did. A grandchild position under the
-        // same root is the nearest such call there is.
-        auto grandchild = first->context.issue(
-            projectCall(*catalog, k_readOnlyChildTool)
-        );
-        REQUIRE(grandchild.has_value());
-        auto foreignHandler = runContext.forHandler(*grandchild);
-        REQUIRE_FALSE(foreignHandler.has_value());
-        CHECK(foreignHandler.error().message().contains(
-            "was not issued by this context"
-        ));
-
-        auto crossedRoot = first->context.forHandler(sibling->call);
-        REQUIRE_FALSE(crossedRoot.has_value());
-        CHECK(crossedRoot.error().message().contains(
-            "belongs to a different root request"
-        ));
-
+        // A context anchored on a call that is not dispatching buys nothing:
+        // the position it would number children under has no grant, and the
+        // ledger is what says so. That is why ToolCallIssuingContext::forHandler
+        // no longer refuses an ancestry it cannot verify -- a restarted
+        // dispatcher holds no enclosing context to verify against, and the two
+        // refusals it used to make were checks on a caller's bookkeeping rather
+        // than on the durable state a child call is admitted from.
+        //
         // A handler that has not begun dispatching cannot delegate, and one
         // that never became durable cannot either.
         auto const pendingRoot = rootFor("nested-grant-scope-pending");
@@ -1755,12 +1806,13 @@ namespace uf::operator_runtime
         CHECK(undurable.error().message().contains(
             "requires a durable parent call"
         ));
-        auto admitted = prepared.store.admitReadOnlyToolCall(
-            controller,
-            lease,
-            pendingRoot,
-            *pending,
-            nullptr
+        auto admitted = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = controller,
+                .lease      = lease,
+                .root       = pendingRoot,
+                .call       = *pending,
+            }
         );
         REQUIRE_MESSAGE(admitted.has_value(), failureText(admitted));
         auto tooEarly = prepared.store.issueToolDelegationGrant(*pending);
@@ -1820,12 +1872,14 @@ namespace uf::operator_runtime
             frameworkInvocation(framework, k_captureTool, "{}")
         );
         REQUIRE(privilegedChild.has_value());
-        auto refusedSurface = prepared.store.admitReadOnlyToolCall(
-            controller,
-            lease,
-            root,
-            *privilegedChild,
-            &handler->grant
+        auto refusedSurface = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = controller,
+                .lease      = lease,
+                .root       = root,
+                .call       = *privilegedChild,
+                .delegation = handler->grant,
+            }
         );
         REQUIRE_FALSE(refusedSurface.has_value());
         CHECK(refusedSurface.error().message().contains(
@@ -1839,16 +1893,19 @@ namespace uf::operator_runtime
             R"("ui_action":"fixture.step"})"
         ));
         REQUIRE(mutatingChild.has_value());
-        auto const effects = std::array{inputEffect(target, Risk::Medium)};
-        auto refusedMutability = prepared.store.admitMutatingToolCall(
-            controller,
-            lease,
-            root,
-            *mutatingChild,
-            prepared.planAuthority,
-            effects,
-            {},
-            &handler->grant
+        auto const effects = std::vector{inputEffect(target, Risk::Medium)};
+        auto refusedMutability = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = controller,
+                .lease      = lease,
+                .root       = root,
+                .call       = *mutatingChild,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+                .delegation = handler->grant,
+            }
         );
         REQUIRE_FALSE(refusedMutability.has_value());
         CHECK(refusedMutability.error().message().contains(
@@ -1876,7 +1933,7 @@ namespace uf::operator_runtime
 
         // The root is admitted at low risk, so the envelope Operator compiled
         // for this tree admits low and nothing above it.
-        auto const rootEffects = std::array{inputEffect(target, Risk::Low)};
+        auto const rootEffects = std::vector{inputEffect(target, Risk::Low)};
         auto handler = startHandler(
             prepared,
             controller,
@@ -1894,16 +1951,19 @@ namespace uf::operator_runtime
             R"({"action":"click","x":5,"y":6})"
         ));
         REQUIRE(child.has_value());
-        auto const raised = std::array{inputEffect(target, Risk::Medium)};
-        auto refused = prepared.store.admitMutatingToolCall(
-            controller,
-            lease,
-            root,
-            *child,
-            prepared.planAuthority,
-            raised,
-            {},
-            &handler->grant
+        auto const raised = std::vector{inputEffect(target, Risk::Medium)};
+        auto refused = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = controller,
+                .lease      = lease,
+                .root       = root,
+                .call       = *child,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = raised,
+                },
+                .delegation = handler->grant,
+            }
         );
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().message().contains(

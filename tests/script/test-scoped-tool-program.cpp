@@ -80,15 +80,9 @@ return {
         {
             std::string toolName{};
             std::string arguments{};
-            uint64      parentPosition{};
+            std::string parentPosition{};
             uint64      childIndex{0};
         };
-
-        // The coordinate a root run is started under. It stands for the
-        // position of the root-positioned call the run implements: a run is
-        // never anchored on nothing, so a case that wants a root run names one
-        // rather than leaving the request's parent unstated.
-        constexpr auto k_rootRunPosition = uint64{1};
 
         [[nodiscard]]
         auto parsed(std::string_view text) -> json::Value
@@ -99,11 +93,27 @@ return {
         }
 
         [[nodiscard]]
-        auto digestOf(std::string_view text) -> std::string
+        auto positionOf(std::string_view text) -> ContentHash
         {
             auto const hash = sha256(std::as_bytes(std::span{text}));
             REQUIRE(hash.has_value());
-            return hash->hex();
+            return *hash;
+        }
+
+        [[nodiscard]]
+        auto digestOf(std::string_view text) -> std::string
+        {
+            return positionOf(text).hex();
+        }
+
+        // The durable position a root run is anchored on. It stands for the
+        // row of the root-positioned call the run implements: a run is never
+        // anchored on nothing, and there is no spelling of "no position" for a
+        // case to reach for.
+        [[nodiscard]]
+        auto rootRunPosition() -> ContentHash
+        {
+            return positionOf("root-run-position");
         }
 
         [[nodiscard]]
@@ -159,7 +169,7 @@ return {
                 log->emplace_back(ToolCallRecord{
                     .toolName       = std::string{toolName},
                     .arguments      = json::canonicalBytes(arguments),
-                    .parentPosition = coordinate.parentPosition,
+                    .parentPosition = coordinate.parentPosition.hex(),
                     .childIndex     = coordinate.childIndex,
                 });
                 return json::Value::ofObject({
@@ -251,7 +261,7 @@ return {
         auto const answer = program.invoke(
             "derive",
             parsed(R"({"note":"kept"})"),
-            ScopedRunRequest{.parentPosition = k_rootRunPosition}
+            ScopedRunRequest{.parentPosition = rootRunPosition()}
         );
         REQUIRE(answer.has_value());
         CHECK(
@@ -262,14 +272,14 @@ return {
         REQUIRE(log->size() == 1U);
         CHECK((*log)[0].toolName == "framework.audit.record");
         CHECK((*log)[0].arguments == R"({"note":"kept"})");
-        CHECK((*log)[0].parentPosition == k_rootRunPosition);
+        CHECK((*log)[0].parentPosition == rootRunPosition().hex());
         CHECK((*log)[0].childIndex == 1U);
 
         auto const unregistered =
             program.invoke(
             "reduce",
             json::Value{},
-            ScopedRunRequest{.parentPosition = k_rootRunPosition}
+            ScopedRunRequest{.parentPosition = rootRunPosition()}
         );
         REQUIRE_FALSE(unregistered.has_value());
         CHECK(
@@ -299,7 +309,7 @@ return {
         auto const root = program.invoke(
             "derive",
             json::Value{},
-            ScopedRunRequest{.parentPosition = k_rootRunPosition}
+            ScopedRunRequest{.parentPosition = rootRunPosition()}
         );
         REQUIRE(root.has_value());
 
@@ -308,7 +318,7 @@ return {
         auto const child = program.invoke(
             "derive",
             json::Value{},
-            ScopedRunRequest{.parentPosition = uint64{7}}
+            ScopedRunRequest{.parentPosition = positionOf("second-run-position")}
         );
         REQUIRE(child.has_value());
 
@@ -322,11 +332,14 @@ return {
         {
             CHECK((*log)[index].toolName == expected[index]);
             CHECK((*log)[index].childIndex == index + 1U);
-            CHECK((*log)[index].parentPosition == k_rootRunPosition);
+            CHECK((*log)[index].parentPosition == rootRunPosition().hex());
 
             CHECK((*log)[index + 3U].toolName == expected[index]);
             CHECK((*log)[index + 3U].childIndex == index + 1U);
-            CHECK((*log)[index + 3U].parentPosition == 7U);
+            CHECK(
+                (*log)[index + 3U].parentPosition
+                == positionOf("second-run-position").hex()
+            );
         }
     }
 
@@ -350,7 +363,7 @@ return {
         auto const answer = program.invoke(
             "derive",
             json::Value{},
-            ScopedRunRequest{.parentPosition = k_rootRunPosition}
+            ScopedRunRequest{.parentPosition = rootRunPosition()}
         );
         REQUIRE_FALSE(answer.has_value());
         CHECK(
@@ -472,7 +485,7 @@ return {
         auto const answer = program.invoke(
             "derive",
             json::Value{},
-            ScopedRunRequest{.parentPosition = k_rootRunPosition}
+            ScopedRunRequest{.parentPosition = rootRunPosition()}
         );
         REQUIRE(answer.has_value());
         CHECK(json::canonicalBytes(*answer) == R"({"chunkArguments":0,"frozen":true})");
@@ -534,7 +547,7 @@ return {
         auto const answer = program.invoke(
             "derive",
             json::Value{},
-            ScopedRunRequest{.parentPosition = k_rootRunPosition}
+            ScopedRunRequest{.parentPosition = rootRunPosition()}
         );
         REQUIRE(answer.has_value());
         auto const bytes = json::canonicalBytes(*answer);
@@ -581,7 +594,7 @@ return {
             "derive",
             json::Value{},
             ScopedRunRequest{
-                .parentPosition = k_rootRunPosition,
+                .parentPosition = rootRunPosition(),
                 .cancellation   = stopSource->get_token(),
             }
         );
@@ -615,7 +628,7 @@ return {
         auto const answer = program.invoke(
             "derive",
             json::Value{},
-            ScopedRunRequest{.parentPosition = k_rootRunPosition}
+            ScopedRunRequest{.parentPosition = rootRunPosition()}
         );
         REQUIRE_FALSE(answer.has_value());
         CHECK(
@@ -664,7 +677,7 @@ return {
         auto const answer = supplied->invoke(
             "derive",
             parsed("{}"),
-            ScopedRunRequest{.parentPosition = k_rootRunPosition}
+            ScopedRunRequest{.parentPosition = rootRunPosition()}
         );
         REQUIRE(answer.has_value());
         CHECK(json::canonicalBytes(*answer) == R"({"pinned":"framework"})");

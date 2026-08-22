@@ -28,8 +28,8 @@ namespace uf::operator_runtime
             R"({"schema":"umbraflow-tool-catalog/v1","tools":["dismiss","sweep"]})"
         };
 
-        constexpr auto k_firstTool  = std::string_view{"chaos.dismiss"};
-        constexpr auto k_secondTool = std::string_view{"chaos.sweep"};
+        constexpr auto k_firstTool  = std::string_view{"chaos.project.dismiss"};
+        constexpr auto k_secondTool = std::string_view{"chaos.project.sweep"};
 
         [[nodiscard]]
         auto hashOf(std::string_view value) -> ContentHash
@@ -281,7 +281,7 @@ namespace uf::operator_runtime
         );
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().message().contains(
-            "chaos.sweep is declared with no binding to a Project entry"
+            "chaos.project.sweep is declared with no binding to a Project entry"
         ));
     }
 
@@ -310,7 +310,7 @@ namespace uf::operator_runtime
         );
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().message().contains(
-            "names chaos.sweep, which this Tool Catalog does not declare"
+            "names chaos.project.sweep, which this Tool Catalog does not declare"
         ));
     }
 
@@ -393,6 +393,50 @@ namespace uf::operator_runtime
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().message().contains(
             "Tool bindings must be unique and JCS-ordered by tool name"
+        ));
+    }
+
+    // The binding carries the same Tool name the catalog declares, in the same
+    // one spelling: namespaced. A registration stating a bare local name binds
+    // a Tool no catalog could ever declare, and it is refused where the
+    // registration is read rather than one document later.
+    TEST_CASE("a registration's Tool binding names a namespaced Tool")
+    {
+        auto claims = ProjectRegistrationClaims{
+            .projectRegistrationFormat          = k_projectRegistrationFormat,
+            .pluginId                           = "chaos.project",
+            .pluginModuleManifestHash           = hashOf("modules"),
+            .pluginEnvironmentHash              = hashOf("environment"),
+            .toolCatalogHash                    = hashOf(k_toolCatalogBytes),
+            .projectStateSchemaHash             = hashOf("state"),
+            .projectObservationSchemaHash       = hashOf("observation"),
+            .projectToolPreconditionSchemaHash  = hashOf("precondition"),
+            .reconcilePayloadSchemaManifestHash = hashOf("reconcile"),
+            .journalEventSchemaManifestHash     = hashOf("journal"),
+            .baselineEventType                  = "chaos.baseline",
+            .projectResources                   = {},
+            .projectToolBindings                = {
+                ProjectToolBinding{
+                    .toolName   = "dismiss",
+                    .entryPoint = "dismiss",
+                },
+            },
+        };
+        auto const exactJcs = registrationJcs(claims);
+        auto owner          = ProjectRegistrationSchemaOwner::create(
+            [exactJcs, claims](std::string_view)
+                -> Result<ProjectRegistrationClaims> { return claims; }
+        );
+        REQUIRE(owner.has_value());
+
+        auto const refused = ProjectRegistration::verifyExact(
+            exactJcs,
+            hashOf(exactJcs),
+            *owner
+        );
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(refused.error().message().contains(
+            "tool binding name is not a canonical namespaced name"
         ));
     }
 }

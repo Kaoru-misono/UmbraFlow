@@ -1,5 +1,6 @@
 #include "ledger.hpp"
 #include "runtime-installation.hpp"
+#include "tool-admission-request.hpp"
 
 #include <core/error/contracts.hpp>
 #include <core/safety/annotations.hpp>
@@ -429,6 +430,115 @@ namespace uf::operator_runtime
             -> PersistedToolProvider
         {
             return std::visit(PersistedToolProviderVisitor{}, provider);
+        }
+
+        // How a call reaches the world at all.
+        //
+        // A call answered by a bound Project entry reaches the world ONLY
+        // through child Tool calls: the scoped program type has no other
+        // capability, so every effect it causes is a durable row of its own.
+        // A call answered by a Framework provider reaches the world directly,
+        // and what that provider did is knowable only from the outcome it
+        // reported.
+        enum class ToolEffectComposition : uint8
+        {
+            RecordedChildren,
+            DirectLeaf,
+        };
+
+        // The closed set of answerers, and the only place the durable
+        // provider_kind vocabulary is joined to what an answerer can do. A
+        // Project descriptor with no binding is refused at load, so
+        // provider_kind='project' IS "answered by a bound scoped entry".
+        struct ToolAnswerer final
+        {
+            std::string_view      providerKind{};
+            ToolEffectComposition composition{ToolEffectComposition::DirectLeaf};
+        };
+
+        constexpr auto k_toolAnswerers = std::array{
+            ToolAnswerer{"framework", ToolEffectComposition::DirectLeaf},
+            ToolAnswerer{"project", ToolEffectComposition::RecordedChildren},
+        };
+
+        [[nodiscard]]
+        auto toolEffectComposition(ToolProviderIdentity const& provider)
+            -> ToolEffectComposition
+        {
+            auto const kind  = persistedToolProvider(provider).kind;
+            auto const found = std::ranges::find(
+                k_toolAnswerers,
+                kind,
+                &ToolAnswerer::providerKind
+            );
+            if (found == k_toolAnswerers.end())
+            {
+                UF_UNREACHABLE_MSG("Unknown Tool provider kind");
+            }
+            return found->composition;
+        }
+
+        // The one rule that decides whether a crash inside a dispatch can have
+        // left an external effect no durable row records, and therefore the one
+        // rule that decides both what a restart classifies uncertain and what a
+        // re-entry refuses.
+        //
+        // Two facts decide it, and neither is sufficient alone. A composed call
+        // re-executes effect-free up to the recorded frontier however mutating
+        // it is, because its whole effect surface is children that already
+        // carry their own classification. A read-only leaf declares no effect
+        // for a delivery to be uncertain about, so re-running its provider
+        // delivers nothing twice. Only a mutating leaf in flight is the
+        // non-replayable atom: the world may or may not have moved and no
+        // record can say.
+        [[nodiscard]]
+        auto toolCallEffectMayBeUnrecorded(
+            ToolEffectComposition composition,
+            ToolMutability mutability
+        ) noexcept -> bool
+        {
+            return composition == ToolEffectComposition::DirectLeaf
+                && mutability == ToolMutability::Mutating;
+        }
+
+        // The same rule as a row filter over tool_call_history joined to
+        // tool_call_positions, GENERATED from the predicate rather than
+        // restated beside it. The (answerer, mutability) pairs are a closed
+        // set, so every pair the predicate calls unrecordable becomes one
+        // disjunct here and the two cannot disagree.
+        [[nodiscard]]
+        auto unrecordedEffectDispatchFilter() -> std::string
+        {
+            constexpr auto mutabilities = std::array{
+                ToolMutability::ReadOnly,
+                ToolMutability::Mutating,
+            };
+            auto filter = std::string{};
+            for (auto const& answerer : k_toolAnswerers)
+            {
+                for (auto const mutability : mutabilities)
+                {
+                    if (
+                        !toolCallEffectMayBeUnrecorded(
+                            answerer.composition,
+                            mutability
+                        )
+                    )
+                    {
+                        continue;
+                    }
+                    if (!filter.empty())
+                    {
+                        filter += " OR ";
+                    }
+                    filter += std::format(
+                        "(history.mutating={} AND position.provider_kind='{}')",
+                        mutability == ToolMutability::Mutating ? 1 : 0,
+                        answerer.providerKind
+                    );
+                }
+            }
+            return "(" + filter + ")";
         }
 
         // The maximum depth of one Tool call tree. Section 3.3 makes nested
@@ -5527,6 +5637,74 @@ namespace uf::operator_runtime
             return ok();
         }
 
+        // What a reconciliation of one uncertain delivery has to hold before
+        // anything is asked of a provider: a live binding, a live lease, and
+        // the durable run's own origin principal, controlled target and
+        // registration, under a session that is still active on the same
+        // registration. It reads only, so it needs no transaction of its own
+        // and can run before the query rather than around it.
+        [[nodiscard]]
+        auto requireReconciliationAuthority(
+            sqlite3* database,
+            ControllerBinding const& controller,
+            ControlLease const& lease,
+            ToolRootRequestIdentity const& root
+        ) -> Status
+        {
+            UF_TRY(requireLiveBinding(database, controller));
+            UF_TRY(requireLiveLease(
+                database,
+                lease,
+                "Tool reconciliation control lease was superseded"
+            ));
+            UF_TRY_VALUE(
+                authorityQuery,
+                prepare(
+                    database,
+                    "SELECT run.origin_principal_id, run.origin_principal_kind, "
+                    "run.controlled_target_id, run.project_registration_hash, "
+                    "session.project_registration_hash FROM tool_runs run "
+                    "JOIN sessions session ON session.session_id=?2 "
+                    "WHERE run.root_identity=?1 AND session.active=1"
+                )
+            );
+            UF_TRY(bindText(
+                database,
+                authorityQuery.get(),
+                1,
+                root.identity().hex()
+            ));
+            UF_TRY(bindText(
+                database,
+                authorityQuery.get(),
+                2,
+                controller.sessionId()
+            ));
+            if (sqlite3_step(authorityQuery.get()) != SQLITE_ROW)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Tool reconciliation requires its durable run and active session"
+                );
+            }
+            auto const exactAuthority =
+                columnText(authorityQuery.get(), 0) == controller.controllerId()
+                && columnText(authorityQuery.get(), 1)
+                    == controllerKindWireName(controller.kind())
+                && columnText(authorityQuery.get(), 2)
+                    == controller.controlledTargetId()
+                && columnText(authorityQuery.get(), 3)
+                    == columnText(authorityQuery.get(), 4);
+            if (!exactAuthority)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Tool reconciliation authority differs from the durable run"
+                );
+            }
+            return ok();
+        }
+
         // The controller's vocabulary mapped onto the machine's. It is a table
         // rather than a chain of comparisons for the reason parseOperationState
         // already is one: the set is closed, and a chain lets a new signal be
@@ -6328,6 +6506,32 @@ namespace uf::operator_runtime
         return resolved;
     }
 
+    // Exactly one shape a restart finds mid-dispatch cannot be accounted for:
+    // the MUTATING LEAF -- a call answered directly by a provider whose
+    // descriptor declares it mutating. That is the one row where the world may
+    // or may not have moved and no durable record can say, so it is classified
+    // uncertain and never dispatched again; only an invoked reconciliation
+    // query can resolve it afterwards.
+    //
+    // Everything else survives as dispatching and is re-entered. A composed
+    // call -- one answered by a bound Project entry -- causes every effect it
+    // causes through child calls that already carry their own durable
+    // classification, so re-running it re-derives the same child coordinates,
+    // meets those rows and executes only the first position beyond history;
+    // that is this section's replay contract rather than a redelivery, and it
+    // holds however mutating the call itself is. A read-only leaf declares no
+    // effect for a delivery to be uncertain about, so re-running its provider
+    // delivers nothing twice. Classifying either uncertain would invent a
+    // barrier nothing can resolve.
+    //
+    // The filter is generated from toolCallEffectMayBeUnrecorded, so the rule a
+    // restart applies and the rule a re-entry refuses on are one rule.
+    //
+    // Every interrupted dispatch loses its capability here whether or not its
+    // state moves: the history revision advances for all of them, so a
+    // ToolCallDispatch minted before this open matches no active dispatch and
+    // its terminal write is refused. A row that survives as dispatching is one
+    // a NEW incarnation may re-enter, not one an old holder may still answer.
     auto OperatorCoordinator::recoverUncertainToolCalls() -> Result<uint64>
     {
         UF_TRY_VALUE(
@@ -6337,6 +6541,19 @@ namespace uf::operator_runtime
             )
         );
         auto* const database = m_impl->database.get();
+        auto const unrecordable =
+            std::string{
+                "SELECT history.call_identity FROM tool_call_history history "
+                "JOIN tool_call_positions position "
+                "ON position.call_identity=history.call_identity "
+                "WHERE history.state='dispatching' AND "
+            }
+            + unrecordedEffectDispatchFilter();
+        auto const updateSql =
+            "UPDATE tool_call_history SET state='possible', revision=revision+1, "
+            "outcome_payload=?1, outcome_payload_hash=?2 "
+            "WHERE call_identity IN("
+            + unrecordable + ")";
         UF_TRY_VALUE(transaction, Transaction::begin(database));
         UF_TRY_VALUE(
             revisionQuery,
@@ -6363,15 +6580,7 @@ namespace uf::operator_runtime
                 "Tool call history revision"
             ));
         }
-        UF_TRY_VALUE(
-            update,
-            prepare(
-                database,
-                "UPDATE tool_call_history SET state='possible', revision=revision+1, "
-                "outcome_payload=?1, outcome_payload_hash=?2 "
-                "WHERE state='dispatching'"
-            )
-        );
+        UF_TRY_VALUE(update, prepare(database, updateSql));
         UF_TRY(bindText(database, update.get(), 1, explanation.bytes()));
         UF_TRY(bindText(
             database,
@@ -6381,6 +6590,18 @@ namespace uf::operator_runtime
         ));
         UF_TRY(expectDone(database, update.get()));
         auto const recovered = static_cast<uint64>(sqlite3_changes(database));
+
+        // The rows left dispatching, after the uncertain ones have moved out of
+        // that state. One statement, run second, so nothing is bumped twice.
+        UF_TRY_VALUE(
+            supersede,
+            prepare(
+                database,
+                "UPDATE tool_call_history SET revision=revision+1 "
+                "WHERE state='dispatching'"
+            )
+        );
+        UF_TRY(expectDone(database, supersede.get()));
         UF_TRY(transaction.commit());
         return recovered;
     }
@@ -9577,22 +9798,33 @@ namespace uf::operator_runtime
     }
 
     auto OperatorCoordinator::admitToolCall(
-        ControllerBinding const& controller,
-        ControlLease const& lease,
-        ToolRootRequestIdentity const& root,
-        ToolCallPositionIdentity const& call,
-        ToolMutability requiredMutability,
-        OperatorPlanAuthority const* planAuthority,
-        std::span<ProposedEffect const> effects,
-        std::span<ToolApprovalGrant const> approvals,
-        ToolDelegationGrant const* delegation
+        ToolAdmissionRequest const& request
     ) -> Result<ToolCallAdmission>
     {
+        // Call-scoped borrows into the request, which outlives this call. They
+        // exist so the request stays the one thing a producer builds while the
+        // body below keeps naming the members it reasons about.
+        auto const& controller = request.controller;
+        auto const& lease      = request.lease;
+        auto const& root       = request.root;
+        auto const& call       = request.call;
+        auto const& mutation   = request.mutation;
+        auto const& delegation = request.delegation;
+
+        auto const requiredMutability = request.requiredMutability();
+
+        auto const effects = mutation.has_value()
+            ? std::span<ProposedEffect const>{mutation->effects}
+            : std::span<ProposedEffect const>{};
+        auto const approvals = mutation.has_value()
+            ? std::span<ToolApprovalGrant const>{mutation->approvals}
+            : std::span<ToolApprovalGrant const>{};
+
         // A call whose parent coordinate is the root request is one the run's
         // own context issued and stands on the run's own authority; every
         // other call is a handler's child and stands on that handler's grant.
-        auto const rootPositioned = call.parentIdentity() == root.identity();
-        if (rootPositioned == (delegation != nullptr))
+        auto const rootPositioned = request.isRootPositioned();
+        if (rootPositioned == delegation.has_value())
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
@@ -9603,7 +9835,7 @@ namespace uf::operator_runtime
             );
         }
         if (
-            delegation != nullptr
+            delegation.has_value()
             && (delegation->rootIdentity() != root.identity()
                 || delegation->parentCallIdentity() != call.parentIdentity())
         )
@@ -9613,33 +9845,18 @@ namespace uf::operator_runtime
                 "Tool delegation grant names a different parent position"
             );
         }
-        if (call.descriptor().mutability != requiredMutability)
+
+        // The catalog decides whether a Tool mutates, so the request cannot
+        // state a mutability of its own; what it can get wrong is bringing a
+        // mutation proposal to a read-only Tool, or bringing none to a mutating
+        // one, and admitting the second would evaluate no policy at all.
+        if ((requiredMutability == ToolMutability::Mutating) != mutation.has_value())
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                requiredMutability == ToolMutability::ReadOnly
-                    ? "Read-only Tool admission refuses a mutating descriptor"
-                    : "Mutating Tool admission requires a mutating descriptor"
-            );
-        }
-        if (
-            requiredMutability == ToolMutability::Mutating
-            && planAuthority == nullptr
-        )
-        {
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "Mutating Tool admission requires an Operator plan authority"
-            );
-        }
-        if (
-            requiredMutability == ToolMutability::ReadOnly
-            && (planAuthority != nullptr || !effects.empty() || !approvals.empty())
-        )
-        {
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "Read-only Tool admission cannot carry mutating effects"
+                requiredMutability == ToolMutability::Mutating
+                    ? "Mutating Tool admission requires a mutation proposal"
+                    : "Read-only Tool admission cannot carry a mutation proposal"
             );
         }
         if (
@@ -9736,7 +9953,7 @@ namespace uf::operator_runtime
         auto executionPrincipalId = controller.controllerId();
         auto executionPrincipalKind =
             std::string{controllerKindWireName(controller.kind())};
-        if (delegation != nullptr)
+        if (delegation.has_value())
         {
             UF_TRY_VALUE(
                 ancestors,
@@ -9958,7 +10175,7 @@ namespace uf::operator_runtime
         // that actor. The child's surface is judged against the parent's
         // child-effect declaration above, and never a second time here.
         if (
-            delegation == nullptr
+            !delegation.has_value()
             && !toolSurfaceAllowed(controller.profile(), call.descriptor().surface)
         )
         {
@@ -9990,9 +10207,9 @@ namespace uf::operator_runtime
         if (requiredMutability == ToolMutability::Mutating)
         {
             if (
-                planAuthority->projectRegistrationHash().hex()
+                mutation->planAuthority.projectRegistrationHash().hex()
                     != projectRegistrationHash
-                || planAuthority->policyHash().hex() != policyHash
+                || mutation->planAuthority.policyHash().hex() != policyHash
             )
             {
                 return fail(
@@ -10003,7 +10220,7 @@ namespace uf::operator_runtime
             UF_TRY_VALUE(
                 evaluated,
                 evaluateToolMutation(
-                    planAuthority->m_policy,
+                    mutation->planAuthority.m_policy,
                     call.descriptor(),
                     call.toolName(),
                     effects,
@@ -10012,7 +10229,7 @@ namespace uf::operator_runtime
             );
             effectEnvelope    = std::move(evaluated.envelope);
             requiredApprovals = std::move(evaluated.requiredApprovals);
-            if (delegation != nullptr)
+            if (delegation.has_value())
             {
                 UF_TRY_VALUE(
                     rootEffects,
@@ -10219,7 +10436,7 @@ namespace uf::operator_runtime
             return databaseFailure(database, "could not read durable Tool run");
         }
 
-        auto const delegationGrantId = delegation != nullptr
+        auto const delegationGrantId = delegation.has_value()
             ? std::optional{delegation->grantId()}
             : std::nullopt;
         UF_TRY_VALUE(
@@ -10731,51 +10948,6 @@ namespace uf::operator_runtime
             nextAttempt,
             nextRevision,
         };
-    }
-
-    auto OperatorCoordinator::admitReadOnlyToolCall(
-        ControllerBinding const& controller,
-        ControlLease const& lease,
-        ToolRootRequestIdentity const& root,
-        ToolCallPositionIdentity const& call,
-        ToolDelegationGrant const* delegation
-    ) -> Result<ToolCallAdmission>
-    {
-        return admitToolCall(
-            controller,
-            lease,
-            root,
-            call,
-            ToolMutability::ReadOnly,
-            nullptr,
-            {},
-            {},
-            delegation
-        );
-    }
-
-    auto OperatorCoordinator::admitMutatingToolCall(
-        ControllerBinding const& controller,
-        ControlLease const& lease,
-        ToolRootRequestIdentity const& root,
-        ToolCallPositionIdentity const& call,
-        OperatorPlanAuthority const& planAuthority,
-        std::span<ProposedEffect const> effects,
-        std::span<ToolApprovalGrant const> approvals,
-        ToolDelegationGrant const* delegation
-    ) -> Result<ToolCallAdmission>
-    {
-        return admitToolCall(
-            controller,
-            lease,
-            root,
-            call,
-            ToolMutability::Mutating,
-            &planAuthority,
-            effects,
-            approvals,
-            delegation
-        );
     }
 
     auto OperatorCoordinator::issueToolDelegationGrant(
@@ -11457,6 +11629,162 @@ namespace uf::operator_runtime
         };
     }
 
+    auto OperatorCoordinator::reenterToolCallDispatch(
+        ControllerBinding const& controller,
+        ControlLease const& lease,
+        ToolRootRequestIdentity const& root,
+        ToolCallPositionIdentity const& call
+    ) -> Result<ToolCallDispatch>
+    {
+        if (
+            toolCallEffectMayBeUnrecorded(
+                toolEffectComposition(call.provider()),
+                call.descriptor().mutability
+            )
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool call " + call.toolName()
+                    + " is a mutating leaf answered directly by a provider, so "
+                      "an interrupted dispatch may have moved the world with no "
+                      "record of it; that row is classified uncertain rather "
+                      "than re-entered"
+            );
+        }
+        if (
+            controller.sessionId() != lease.sessionId
+            || controller.controllerId() != lease.controllerId
+            || controller.controlledTargetId() != lease.controlledTargetId
+            || controller.sessionEpoch() != lease.sessionEpoch
+            || controller.capabilityProfileHash() != lease.capabilityProfileHash
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool dispatch re-entry binding and lease name different authority"
+            );
+        }
+
+        // The coordinate and its stored attributes first, so a re-entry that is
+        // really a divergence is named by the field that diverged rather than
+        // by a missing history row.
+        UF_TRY(persistToolCallPosition(root, call));
+
+        auto* const database = m_impl->database.get();
+        UF_TRY_VALUE(transaction, Transaction::begin(database));
+        UF_TRY(requireLiveBinding(database, controller));
+        UF_TRY(requireLiveLease(
+            database,
+            lease,
+            "Tool dispatch re-entry control lease was superseded"
+        ));
+        UF_TRY_VALUE(
+            historyQuery,
+            prepare(
+                database,
+                "SELECT state, revision, active_admission_attempt "
+                "FROM tool_call_history WHERE call_identity=?1"
+            )
+        );
+        UF_TRY(bindText(database, historyQuery.get(), 1, call.identity().hex()));
+        if (sqlite3_step(historyQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool dispatch re-entry names no durable call history"
+            );
+        }
+        UF_TRY_VALUE(
+            state,
+            parseToolCallState(columnText(historyQuery.get(), 0))
+        );
+        if (state != ToolCallState::Dispatching)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                std::format(
+                    "Tool dispatch re-entry requires a dispatching call; call {} is {}",
+                    call.identity().hex(),
+                    toolCallStateWireName(state)
+                )
+            );
+        }
+        auto const revision = static_cast<uint64>(
+            sqlite3_column_int64(historyQuery.get(), 1)
+        );
+        auto const activeAttempt = static_cast<uint64>(
+            sqlite3_column_int64(historyQuery.get(), 2)
+        );
+
+        UF_TRY_VALUE(
+            attemptQuery,
+            prepare(
+                database,
+                "SELECT origin_principal_id, origin_principal_kind, "
+                "controlled_target_id FROM tool_admission_attempts "
+                "WHERE call_identity=?1 AND attempt_number=?2"
+            )
+        );
+        UF_TRY(bindText(database, attemptQuery.get(), 1, call.identity().hex()));
+        UF_TRY(bindInteger(database, attemptQuery.get(), 2, activeAttempt));
+        if (sqlite3_step(attemptQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "Dispatching Tool call has no active admission row"
+            );
+        }
+        UF_TRY_VALUE(
+            admittedKind,
+            parseControllerKind(columnText(attemptQuery.get(), 1))
+        );
+        if (
+            columnText(attemptQuery.get(), 0) != controller.controllerId()
+            || admittedKind != controller.kind()
+            || columnText(attemptQuery.get(), 2)
+                != controller.controlledTargetId()
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool dispatch re-entry presents a different origin principal "
+                "or controlled target than the admission it re-enters"
+            );
+        }
+        UF_TRY_VALUE(
+            nextRevision,
+            checkedSqlIncrement(revision, "Tool call history revision")
+        );
+        UF_TRY_VALUE(
+            update,
+            prepare(
+                database,
+                "UPDATE tool_call_history SET revision=?2 WHERE call_identity=?1 "
+                "AND state='dispatching' AND revision=?3 "
+                "AND active_admission_attempt=?4"
+            )
+        );
+        UF_TRY(bindText(database, update.get(), 1, call.identity().hex()));
+        UF_TRY(bindInteger(database, update.get(), 2, nextRevision));
+        UF_TRY(bindInteger(database, update.get(), 3, revision));
+        UF_TRY(bindInteger(database, update.get(), 4, activeAttempt));
+        UF_TRY(expectDone(database, update.get()));
+        if (sqlite3_changes(database) != 1)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool dispatch re-entry lost its dispatching-state CAS"
+            );
+        }
+        UF_TRY(transaction.commit());
+        return ToolCallDispatch{
+            call.identity(),
+            activeAttempt,
+            nextRevision,
+        };
+    }
+
     auto OperatorCoordinator::completeToolCallDispatch(
         ToolCallDispatch const& dispatch,
         ToolCallCompletion const& completion
@@ -11507,6 +11835,31 @@ namespace uf::operator_runtime
                 AutomationErrorKind::ActionRejected,
                 "A mutating Tool cannot report terminal failure after dispatch; "
                 "it must report possible"
+            );
+        }
+
+        // The dual refusal, and the reason no read-only call can ever need
+        // reconciling. `possible` and `proven_absent` are both claims about
+        // whether an external effect landed, and a read-only Tool declares
+        // none: there is nothing for either to be about. A read-only provider
+        // that could not answer has failed, and terminal failure is what a
+        // failure is. Without this, a crash-free path could still mint a
+        // read-only uncertainty that the reconciliation transition -- mutating
+        // by construction, because only a mutation can be uncertain -- would
+        // then be unable to resolve.
+        if (
+            !mutating
+            && (terminalState == ToolCallState::Possible
+                || terminalState == ToolCallState::ProvenAbsent)
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                std::format(
+                    "A read-only Tool cannot report {}; it declares no effect "
+                    "for a delivery classification to be about",
+                    toolCallStateWireName(terminalState)
+                )
             );
         }
         auto const evidenceBytes = evidence
@@ -11766,9 +12119,16 @@ namespace uf::operator_runtime
         ControlLease const& lease,
         ToolRootRequestIdentity const& root,
         ToolCallPositionIdentity const& call,
-        ToolCallReconciliation const& reconciliation
+        ToolReconciliationQuery const& query
     ) -> Result<ToolCallReplay>
     {
+        if (!query)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "Tool reconciliation requires a trusted provider query"
+            );
+        }
         if (call.descriptor().mutability != ToolMutability::Mutating)
         {
             return fail(
@@ -11789,9 +12149,37 @@ namespace uf::operator_runtime
                 "Tool reconciliation binding and lease name different authority"
             );
         }
-        UF_TRY(replayToolCall(root, call));
+        UF_TRY_VALUE(uncertain, replayToolCall(root, call));
+        if (uncertain.state != ToolCallState::Possible)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                std::format(
+                    "Only a possible mutating Tool call may be reconciled; call "
+                    "{} is {}",
+                    call.identity().hex(),
+                    toolCallStateWireName(uncertain.state)
+                )
+            );
+        }
+        UF_TRY(requireReconciliationAuthority(
+            m_impl->database.get(),
+            controller,
+            lease,
+            root
+        ));
 
-        auto* const database = m_impl->database.get();
+        // The query runs here, outside any ledger transaction and only after
+        // the row has been proven uncertain and the authority proven live. It
+        // is the whole of the seam: nothing else can turn a possible delivery
+        // into a resolved one, and a startup path cannot reach it, so
+        // proven_absent is never inferred from a process crash. What makes it
+        // durable is its answer: every reconciliation kind carries mandatory
+        // evidence, and that evidence is stored beside the outcome it produced.
+        UF_TRY_VALUE(reconciliation, query(call));
+
+        auto* const database    = m_impl->database.get();
+        auto const terminalState = toolCallStateFor(reconciliation.kind());
         UF_TRY_VALUE(transaction, Transaction::begin(database));
         UF_TRY(requireLiveBinding(database, controller));
         UF_TRY(requireLiveLease(
@@ -11799,113 +12187,9 @@ namespace uf::operator_runtime
             lease,
             "Tool reconciliation control lease was superseded"
         ));
-
-        UF_TRY_VALUE(
-            authorityQuery,
-            prepare(
-                database,
-                "SELECT run.origin_principal_id, run.origin_principal_kind, "
-                "run.controlled_target_id, run.project_registration_hash, "
-                "session.project_registration_hash FROM tool_runs run "
-                "JOIN sessions session ON session.session_id=?2 "
-                "WHERE run.root_identity=?1 AND session.active=1"
-            )
-        );
-        UF_TRY(bindText(database, authorityQuery.get(), 1, root.identity().hex()));
-        UF_TRY(bindText(database, authorityQuery.get(), 2, controller.sessionId()));
-        if (sqlite3_step(authorityQuery.get()) != SQLITE_ROW)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Tool reconciliation requires its durable run and active session"
-            );
-        }
-        auto const exactAuthority =
-            columnText(authorityQuery.get(), 0) == controller.controllerId()
-            && columnText(authorityQuery.get(), 1)
-                == controllerKindWireName(controller.kind())
-            && columnText(authorityQuery.get(), 2)
-                == controller.controlledTargetId()
-            && columnText(authorityQuery.get(), 3)
-                == columnText(authorityQuery.get(), 4);
-        if (!exactAuthority)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Tool reconciliation authority differs from the durable run"
-            );
-        }
-
-        UF_TRY_VALUE(
-            historyQuery,
-            prepare(
-                database,
-                "SELECT state, revision, active_admission_attempt, mutating, "
-                "outcome_payload, outcome_payload_hash, evidence, evidence_hash "
-                "FROM tool_call_history WHERE call_identity=?1"
-            )
-        );
-        UF_TRY(bindText(database, historyQuery.get(), 1, call.identity().hex()));
-        if (sqlite3_step(historyQuery.get()) != SQLITE_ROW)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Tool reconciliation names no durable call history"
-            );
-        }
-        if (sqlite3_column_int(historyQuery.get(), 3) == 0)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Tool reconciliation found read-only durable history"
-            );
-        }
-        UF_TRY_VALUE(
-            state,
-            parseToolCallState(columnText(historyQuery.get(), 0))
-        );
-        auto const revision = static_cast<uint64>(
-            sqlite3_column_int64(historyQuery.get(), 1)
-        );
-        auto const activeAttempt = static_cast<uint64>(
-            sqlite3_column_int64(historyQuery.get(), 2)
-        );
-        auto const terminalState = toolCallStateFor(reconciliation.kind());
-        if (state == terminalState)
-        {
-            auto const exact =
-                columnText(historyQuery.get(), 4)
-                    == reconciliation.payload().bytes()
-                && columnText(historyQuery.get(), 5)
-                    == reconciliation.payload().contentHash().hex()
-                && optionalColumnText(historyQuery.get(), 6)
-                    == std::optional<std::string>{
-                        reconciliation.evidence().bytes(),
-                    }
-                && optionalColumnText(historyQuery.get(), 7)
-                    == std::optional<std::string>{
-                        reconciliation.evidence().contentHash().hex(),
-                    };
-            if (!exact)
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "Terminal Tool reconciliation is immutable"
-                );
-            }
-            UF_TRY(transaction.commit());
-            return replayToolCall(root, call);
-        }
-        if (state != ToolCallState::Possible)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Only a possible mutating Tool call may be reconciled"
-            );
-        }
         UF_TRY_VALUE(
             nextRevision,
-            checkedSqlIncrement(revision, "Tool call history revision")
+            checkedSqlIncrement(uncertain.revision, "Tool call history revision")
         );
         UF_TRY_VALUE(
             update,
@@ -11934,8 +12218,13 @@ namespace uf::operator_runtime
             7,
             reconciliation.evidence().contentHash().hex()
         ));
-        UF_TRY(bindInteger(database, update.get(), 8, revision));
-        UF_TRY(bindInteger(database, update.get(), 9, activeAttempt));
+        UF_TRY(bindInteger(database, update.get(), 8, uncertain.revision));
+        UF_TRY(bindInteger(
+            database,
+            update.get(),
+            9,
+            uncertain.activeAdmissionAttempt
+        ));
         UF_TRY(expectDone(database, update.get()));
         if (sqlite3_changes(database) != 1)
         {

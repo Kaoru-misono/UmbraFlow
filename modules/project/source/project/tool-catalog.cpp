@@ -7,6 +7,7 @@
 
 #include <json/value.hpp>
 
+#include <operator/manifest.hpp>
 #include <operator/tool-descriptor.hpp>
 
 #include <algorithm>
@@ -175,12 +176,69 @@ namespace uf::project
             return rendered;
         }
 
+        // OP:`ChildEffectDeclaration`, rendered whole. Every member is written
+        // even when the tool issues no child call at all: the empty
+        // declaration -- no names, zero calls, and the most restricted ceiling
+        // of each kind -- IS the statement "this tool calls nothing", and
+        // omitting a member would make its absence carry that meaning instead.
         [[nodiscard]]
-        auto renderTool(DeclaredTool const& tool) -> Result<json::Value>
+        auto renderChildEffects(
+            operator_runtime::ChildEffectDeclaration declaration
+        ) -> Result<json::Value>
         {
+            UF_TRY_VALUE(
+                childToolNames,
+                stringValues(std::move(declaration.childToolNames))
+            );
+            return json::Value::ofObject({
+                {"child_tool_names", json::Value::ofArray(std::move(childToolNames))},
+                {
+                    "maximum_child_calls",
+                    json::Value::ofNumber(declaration.maximumChildCalls),
+                },
+                {
+                    "maximum_child_mutability",
+                    json::Value::ofString(std::string{
+                        operator_runtime::toolMutabilityWireName(
+                            declaration.maximumChildMutability
+                        )
+                    }),
+                },
+                {
+                    "maximum_child_risk",
+                    json::Value::ofString(std::string{
+                        operator_runtime::riskWireName(declaration.maximumChildRisk)
+                    }),
+                },
+                {
+                    "maximum_child_surface",
+                    json::Value::ofString(std::string{
+                        operator_runtime::toolSurfaceWireName(
+                            declaration.maximumChildSurface
+                        )
+                    }),
+                },
+            });
+        }
+
+        [[nodiscard]]
+        auto renderTool(
+            DeclaredTool const& tool,
+            std::string_view ownedNamespace
+        ) -> Result<json::Value>
+        {
+            // Ownership at the authoring tier, against the one rule the
+            // Operator applies at catalog admission
+            // (operator_runtime::validateToolNameOwnership). An author who
+            // names a Tool outside the namespace this declaration registers
+            // learns it here, where the name is written, rather than at the
+            // registration that would have refused the artifact.
+            UF_TRY(operator_runtime::validateToolNameOwnership(
+                tool.name,
+                ownedNamespace
+            ));
             if (
-                tool.name.empty()
-                || tool.argumentSchema.empty()
+                tool.argumentSchema.empty()
                 || tool.resultSchema.empty()
                 || tool.descriptor.toolVersion.empty()
             )
@@ -203,6 +261,20 @@ namespace uf::project
                 );
             }
 
+            // The one rule about this declaration a JSON Schema cannot state:
+            // names and the call ceiling are two halves of one permission, and
+            // a document stating one without the other is refused where it is
+            // written rather than years later where the Operator reads it.
+            UF_TRY_CONTEXT(
+                operator_runtime::childEffectDeclarationValid(
+                    tool.descriptor.childEffects
+                ),
+                std::format("generating the Tool Catalog entry for {}", tool.name)
+            );
+            UF_TRY_VALUE(
+                childEffects,
+                renderChildEffects(tool.descriptor.childEffects)
+            );
             UF_TRY_VALUE(effectBounds, renderEffectBounds(tool.descriptor.effectBounds));
             UF_TRY_VALUE(
                 requiredCapabilities,
@@ -223,6 +295,7 @@ namespace uf::project
 
             return json::Value::ofObject({
                 {"argument_schema", json::Value::ofString(tool.argumentSchema)},
+                {"child_effects", std::move(childEffects)},
                 {"effect_bounds", json::Value::ofArray(std::move(effectBounds))},
                 {
                     "idempotency",
@@ -297,8 +370,10 @@ namespace uf::project
         }
 
         [[nodiscard]]
-        auto renderTools(std::vector<DeclaredTool> tools)
-            -> Result<std::vector<json::Value>>
+        auto renderTools(
+            std::vector<DeclaredTool> tools,
+            std::string_view ownedNamespace
+        ) -> Result<std::vector<json::Value>>
         {
             if (tools.empty())
             {
@@ -318,7 +393,7 @@ namespace uf::project
                     ));
                 }
                 previous = tool.name;
-                UF_TRY_VALUE(value, renderTool(tool));
+                UF_TRY_VALUE(value, renderTool(tool, ownedNamespace));
                 rendered.emplace_back(std::move(value));
             }
             return rendered;
@@ -632,6 +707,90 @@ namespace uf::project
         }
 
         [[nodiscard]]
+        auto childEffectsMember(
+            json::Value const& tool,
+            std::string_view where
+        ) -> Result<operator_runtime::ChildEffectDeclaration>
+        {
+            auto const* const p_declaration = tool.find("child_effects");
+            if (p_declaration == nullptr)
+            {
+                return refuse(std::format(
+                    "{} is missing \"child_effects\"",
+                    where
+                ));
+            }
+            if (p_declaration->kind() != json::ValueKind::Object)
+            {
+                return refuse(std::format(
+                    "{} \"child_effects\" is not an object",
+                    where
+                ));
+            }
+            auto constexpr declarationWhere = std::string_view{
+                "a declared Tool Catalog child_effects"
+            };
+            UF_TRY(refuseUnknownMembers(
+                *p_declaration,
+                {
+                    "child_tool_names",
+                    "maximum_child_calls",
+                    "maximum_child_mutability",
+                    "maximum_child_risk",
+                    "maximum_child_surface",
+                },
+                declarationWhere
+            ));
+            UF_TRY_VALUE(
+                childToolNames,
+                stringArrayMember(*p_declaration, "child_tool_names", declarationWhere)
+            );
+            UF_TRY_VALUE(
+                maximumChildCalls,
+                exactCountMember(
+                    *p_declaration,
+                    "maximum_child_calls",
+                    declarationWhere,
+                    k_workflowCountBound
+                )
+            );
+            UF_TRY_VALUE(
+                maximumChildSurface,
+                wireNameMember<operator_runtime::ToolSurface>(
+                    *p_declaration,
+                    "maximum_child_surface",
+                    declarationWhere,
+                    operator_runtime::parseToolSurface
+                )
+            );
+            UF_TRY_VALUE(
+                maximumChildMutability,
+                wireNameMember<operator_runtime::ToolMutability>(
+                    *p_declaration,
+                    "maximum_child_mutability",
+                    declarationWhere,
+                    operator_runtime::parseToolMutability
+                )
+            );
+            UF_TRY_VALUE(
+                maximumChildRisk,
+                wireNameMember<operator_runtime::Risk>(
+                    *p_declaration,
+                    "maximum_child_risk",
+                    declarationWhere,
+                    operator_runtime::parseRisk
+                )
+            );
+            return operator_runtime::ChildEffectDeclaration{
+                .childToolNames         = std::move(childToolNames),
+                .maximumChildSurface    = maximumChildSurface,
+                .maximumChildMutability = maximumChildMutability,
+                .maximumChildRisk       = maximumChildRisk,
+                .maximumChildCalls      = static_cast<uint32>(maximumChildCalls),
+            };
+        }
+
+        [[nodiscard]]
         auto timeoutPolicyMember(
             json::Value const& tool,
             std::string_view where
@@ -773,6 +932,7 @@ namespace uf::project
                 tool,
                 {
                     "argument_schema",
+                    "child_effects",
                     "effect_bounds",
                     "idempotency",
                     "mutability",
@@ -827,6 +987,7 @@ namespace uf::project
                 stringArrayMember(tool, "ui_action_bounds", where)
             );
             UF_TRY_VALUE(effectBounds, effectBoundsMember(tool, where));
+            UF_TRY_VALUE(childEffects, childEffectsMember(tool, where));
             UF_TRY_VALUE(timeout, timeoutPolicyMember(tool, where));
             UF_TRY_VALUE(limits, workflowLimitsMember(tool, where));
             return DeclaredTool{
@@ -838,6 +999,7 @@ namespace uf::project
                     .requiredCapabilities = std::move(requiredCapabilities),
                     .effectBounds         = std::move(effectBounds),
                     .uiActionBounds       = std::move(uiActionBounds),
+                    .childEffects         = std::move(childEffects),
                     .limits               = limits,
                     .timeout              = timeout,
                     .mutability           = mutability,
@@ -870,7 +1032,7 @@ namespace uf::project
             effectPayloadHashes,
             hashValues(declaration.effectPayloadSchemaHashes)
         );
-        UF_TRY_VALUE(tools, renderTools(declaration.tools));
+        UF_TRY_VALUE(tools, renderTools(declaration.tools, declaration.pluginId));
 
         auto members = std::vector<json::Member>{};
         if (!declaration.comment.empty())

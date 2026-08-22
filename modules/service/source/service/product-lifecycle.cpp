@@ -7,6 +7,7 @@
 #include <operator/manifest.hpp>
 #include <operator/policy.hpp>
 #include <operator/project-plugin.hpp>
+#include <operator/tool-admission-request.hpp>
 #include <operator/tool-executor.hpp>
 
 #include <task/platform/confined-file.hpp>
@@ -681,15 +682,17 @@ namespace uf::service
                 "Framework Tool Catalog admitted a Tool with no provider"
             );
         };
-        // No delegation grant: these are the root-positioned calls this run's
-        // own context issues, and a grant exists only for a child call under a
-        // dispatching handler.
-        return executor.invokeReadOnly(
-            m_impl->controller,
-            m_impl->controlLease(),
-            root,
-            call,
-            nullptr,
+        // No delegation grant and no mutation proposal: these are the
+        // root-positioned read-only calls this run's own context issues, a
+        // grant exists only for a child call under a dispatching handler, and
+        // the Framework descriptors reached here are read-only.
+        return executor.invoke(
+            operator_runtime::ToolAdmissionRequest{
+                .controller = m_impl->controller,
+                .lease      = m_impl->controlLease(),
+                .root = std::move(root),
+                .call = std::move(call),
+            },
             provider
         );
     }

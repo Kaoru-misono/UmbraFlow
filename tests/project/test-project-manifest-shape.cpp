@@ -152,6 +152,7 @@ namespace uf::project
             block += R"json("journal_payload_schemas":["schema/journal-0.json"],)json";
             block += R"json("effect_payload_schemas":[],)json";
             block += R"json("observed_instance_identity_schemas":[],)json";
+            block += R"json("tool_bindings":[],)json";
             block += R"json("resources":[]})json";
             return block;
         }

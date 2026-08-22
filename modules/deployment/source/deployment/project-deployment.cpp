@@ -61,6 +61,13 @@ namespace uf::deployment
             "type": "string",
             "pattern": "^[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$"
         },
+        "ToolName": {
+            "$comment": "The one spelling of a Tool name, in every document that carries one: the Tool Catalog's `name`, a plan's `tool_name`, and each entry of a child_effects `child_tool_names`. A Tool name is namespaced -- the namespace is its owner's registered namespace, `framework` for the Framework and a Project's plugin_id for a Project, and the local name is what follows the dot that ends it -- so the dot is required rather than optional: an unnamespaced name has no owner, and there would be nothing for the ownership rule to check. The grammar is the ProjectRegistration's namespaced_name byte for byte (schema/umbraflow-project-registration-v2.schema.json), because a name a catalog declares and a name a binding carries are one name; a catalog admitting a spelling the binding table refuses would declare a Tool no authoring tier could ever bind.",
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 128,
+            "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)+$"
+        },
         "JournalProvenance": {
             "type": "object",
             "additionalProperties": false,
@@ -263,7 +270,7 @@ namespace uf::deployment
         },
         "project_state": {"$ref": "https://umbraflow.dev/schema/project/state"},
         "tool_name": {
-            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
+            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/ToolName"
         },
         "tool_version": {
             "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
@@ -344,10 +351,11 @@ namespace uf::deployment
 })json"};
 
         // OP:`PlanProposal`, from schema/umbraflow-operator-v1.schema.json with
-        // one deliberate difference: tool_name is Identifier rather than
-        // NamespacedIdentifier, and is required instead to name a tool this
-        // project's own Tool Catalog declares -- which is the stronger of the
-        // two statements. See the note in ProjectDeployment::create.
+        // one deliberate difference: tool_name is the ToolName above rather
+        // than that document's NamespacedIdentifier, and is required in
+        // addition to name a tool this project's own Tool Catalog declares --
+        // which is the stronger of the two statements. See the note in
+        // ProjectDeployment::create.
         constexpr auto k_planProposalSchema = std::string_view{R"json({
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://umbraflow.dev/schema/operator/plan-proposal",
@@ -375,7 +383,7 @@ namespace uf::deployment
         },
         "effects": {"type": "array", "items": {"$ref": "#/$defs/EffectEnvelope"}},
         "tool_name": {
-            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
+            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/ToolName"
         },
         "tool_version": {
             "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
@@ -564,6 +572,7 @@ namespace uf::deployment
                 "additionalProperties": false,
                 "required": [
                     "argument_schema",
+                    "child_effects",
                     "effect_bounds",
                     "idempotency",
                     "mutability",
@@ -579,6 +588,48 @@ namespace uf::deployment
                 "properties": {
                     "argument_schema": {
                         "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
+                    },
+                    "child_effects": {
+                        "$comment": "What this tool's own entry may issue while it runs: the exact child Tool names, and the strongest child surface, mutability and effect risk it may delegate, together with how many child calls one invocation may make. Requested, never granted -- admission intersects it with the root envelope, policy, approvals, session authority, lease, fence and remaining budgets. Every member is required and there is no absent form: a tool that issues no child call states the empty declaration -- no names, zero calls, and the most restricted ceiling of each kind -- because an omitted member would be an absence carrying a meaning. A declaration that names a child while admitting no call, or admits calls while naming none, is two halves of one permission contradicting each other and is refused when the catalog owner reads it.",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                            "child_tool_names",
+                            "maximum_child_calls",
+                            "maximum_child_mutability",
+                            "maximum_child_risk",
+                            "maximum_child_surface"
+                        ],
+                        "properties": {
+                            "child_tool_names": {
+                                "$comment": "Each child by the name its own catalog declares it under, this project's tools and the framework's alike. A name absent from this list is refused even where every other bound would admit it, which is what makes delegated authority enumerated rather than inferred. A grant crosses a namespace boundary by construction -- a Framework tool, or a tool of the project that declares it -- so the names here are the same ToolName the catalog's own `name` is and nothing looser: an unnamespaced grant would have to mean `the caller's own namespace`, which is an absence carrying a meaning and would make one tool addressable under two spellings.",
+                                "type": "array",
+                                "uniqueItems": true,
+                                "items": {
+                                    "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/ToolName"
+                                }
+                            },
+                            "maximum_child_calls": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 4294967295
+                            },
+                            "maximum_child_mutability": {
+                                "enum": ["read_only", "mutating"]
+                            },
+                            "maximum_child_risk": {
+                                "enum": [
+                                    "read_only",
+                                    "low",
+                                    "medium",
+                                    "high",
+                                    "critical"
+                                ]
+                            },
+                            "maximum_child_surface": {
+                                "enum": ["semantic", "privileged"]
+                            }
+                        }
                     },
                     "effect_bounds": {
                         "$comment": "The complete set of OP:EffectEnvelope this tool may propose. An empty set is a tool that may propose none, which is the honest declaration for a read_only tool.",
@@ -625,7 +676,8 @@ namespace uf::deployment
                     },
                     "mutability": {"enum": ["read_only", "mutating"]},
                     "name": {
-                        "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
+                        "$comment": "The Tool's name, namespaced under the namespace this catalog's plugin_id registers. The dot is required so that the name has an owner at all; that the owner is this registrant is the catalog owner's own admission rule, which no JSON Schema can state because it compares two members of two documents.",
+                        "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/ToolName"
                     },
                     "required_capabilities": {
                         "type": "array",
@@ -1146,10 +1198,15 @@ namespace uf::deployment
             return static_cast<uint64>(declared);
         }
 
+        // Both definition names, because a call has two documents to judge and
+        // one entry declares both. Keeping only the argument one and looking
+        // the result one up again from the catalog would be a second read of
+        // the same row.
         struct ToolEntry final
         {
             std::string                      name{};
             std::string                      argumentDefinition{};
+            std::string                      resultDefinition{};
             operator_runtime::ToolDescriptor descriptor{};
         };
 
@@ -1217,6 +1274,46 @@ namespace uf::deployment
                     member(policy, "maximum_elapsed_ms").number()
                 ),
                 .onTimeout = *action,
+            };
+        }
+
+        // OP:`ChildEffectDeclaration`, the parent half of child admission. The
+        // schema has already required all five members and bounded each of
+        // them, so this reads rather than judges; the one judgement a schema
+        // cannot make -- that names and the call ceiling agree -- is
+        // childEffectDeclarationValid's, and the Tool Catalog owner runs it
+        // over these exact values when it is built.
+        [[nodiscard]]
+        auto readChildEffects(
+            json::Value const& declaration
+        ) -> operator_runtime::ChildEffectDeclaration
+        {
+            auto const surface = std::ranges::find(
+                k_surfaces,
+                member(declaration, "maximum_child_surface").string(),
+                operator_runtime::toolSurfaceWireName
+            );
+            auto const mutability = std::ranges::find(
+                k_mutabilities,
+                member(declaration, "maximum_child_mutability").string(),
+                operator_runtime::toolMutabilityWireName
+            );
+            auto const risk = std::ranges::find(
+                k_risks,
+                member(declaration, "maximum_child_risk").string(),
+                operator_runtime::riskWireName
+            );
+            UF_CHECK(surface != k_surfaces.end());
+            UF_CHECK(mutability != k_mutabilities.end());
+            UF_CHECK(risk != k_risks.end());
+            return operator_runtime::ChildEffectDeclaration{
+                .childToolNames         = names(member(declaration, "child_tool_names")),
+                .maximumChildSurface    = *surface,
+                .maximumChildMutability = *mutability,
+                .maximumChildRisk       = *risk,
+                .maximumChildCalls      = static_cast<uint32>(
+                    member(declaration, "maximum_child_calls").number()
+                ),
             };
         }
 
@@ -1321,6 +1418,12 @@ namespace uf::deployment
         ) const -> Status;
 
         [[nodiscard]]
+        auto validateToolResult(
+            std::string_view toolName,
+            json::Value const& result
+        ) const -> Status;
+
+        [[nodiscard]]
         auto validateJournalPayload(
             std::string_view eventType,
             json::Value const& payload
@@ -1384,6 +1487,30 @@ namespace uf::deployment
         return adopt(
             toolPrecondition.validateDefinition(p_tool->argumentDefinition, arguments),
             std::format("arguments of {}", toolName)
+        );
+    }
+
+    // The other half of one call's contract, judged against the definition the
+    // same catalog row names. It is a separate reading rather than a direction
+    // parameter on the one above, because the two definitions are two members
+    // of the descriptor and a caller that could pass the direction could ask
+    // for the wrong one.
+    auto ProjectDeployment::State::validateToolResult(
+        std::string_view toolName,
+        json::Value const& result
+    ) const -> Status
+    {
+        auto const* const p_tool = findTool(toolName);
+        if (p_tool == nullptr)
+        {
+            return refuse(std::format(
+                "this project's Tool Catalog declares no tool named {}",
+                toolName
+            ));
+        }
+        return adopt(
+            toolPrecondition.validateDefinition(p_tool->resultDefinition, result),
+            std::format("result of {}", toolName)
         );
     }
 
@@ -2116,6 +2243,7 @@ namespace uf::deployment
             state->tools.emplace_back(ToolEntry{
                 .name               = std::string{member(tool, "name").string()},
                 .argumentDefinition = std::string{definition},
+                .resultDefinition   = std::string{resultDefinition},
                 .descriptor         = operator_runtime::ToolDescriptor{
                     .toolVersion = std::string{member(tool, "version").string()},
                     .requiredCapabilities = names(
@@ -2123,7 +2251,10 @@ namespace uf::deployment
                     ),
                     .effectBounds   = std::move(bounds),
                     .uiActionBounds = names(member(tool, "ui_action_bounds")),
-                    .limits         = operator_runtime::WorkflowLimits{
+                    .childEffects   = readChildEffects(
+                        member(tool, "child_effects")
+                    ),
+                    .limits = operator_runtime::WorkflowLimits{
                         .maximumSteps = static_cast<uint32>(
                             member(declaredLimits, "maximum_steps").number()
                         ),
@@ -2386,6 +2517,19 @@ namespace uf::deployment
         {
             UF_TRY_VALUE(arguments, parseDocument(exactArgsJcs));
             return p_state->validateToolArguments(toolName, arguments);
+        };
+    }
+
+    auto ProjectDeployment::toolResultValidator() const
+        -> operator_runtime::ToolResultValidator
+    {
+        return [p_state = m_state](
+                   std::string_view toolName,
+                   std::string_view exactResultJcs
+               ) -> Status
+        {
+            UF_TRY_VALUE(result, parseDocument(exactResultJcs));
+            return p_state->validateToolResult(toolName, result);
         };
     }
 

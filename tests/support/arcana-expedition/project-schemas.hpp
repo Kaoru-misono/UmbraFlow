@@ -207,19 +207,34 @@ namespace uf::operator_runtime::conformance::expedition
 
     inline constexpr auto k_effectPayloadSchemas = std::array{k_effectPayloadSchema};
 
+    // `localName` is the LOCAL half of a Tool name. The catalog name is that
+    // half under the namespace the deployment registers, so the expedition and
+    // the rival declare four Tools each and share none of the eight names --
+    // which is what a Tool belonging to its registration means.
     struct ToolSource final
     {
-        std::string_view name{};
+        std::string_view localName{};
         std::string_view version{};
         ToolMutability   mutability{ToolMutability::Mutating};
     };
 
     inline constexpr auto k_toolSources = std::array{
-        ToolSource{"expedition.approval", "3", ToolMutability::Mutating},
-        ToolSource{"expedition.move", "3", ToolMutability::Mutating},
-        ToolSource{"expedition.survey", "2", ToolMutability::ReadOnly},
-        ToolSource{"expedition.trade", "3", ToolMutability::Mutating},
+        ToolSource{"approval", "3", ToolMutability::Mutating},
+        ToolSource{"move", "3", ToolMutability::Mutating},
+        ToolSource{"survey", "2", ToolMutability::ReadOnly},
+        ToolSource{"trade", "3", ToolMutability::Mutating},
     };
+
+    // One catalog name of this exemplar, spelled the only way a Tool name is
+    // spelled: the local half under the namespace its registrant owns.
+    [[nodiscard]]
+    inline auto exampleToolName(
+        std::string_view pluginId,
+        std::string_view localName
+    ) -> std::string
+    {
+        return std::string{pluginId} + "." + std::string{localName};
+    }
 
     [[nodiscard]]
     inline auto schemaHash(std::string_view bytes) -> ContentHash
@@ -246,7 +261,7 @@ namespace uf::operator_runtime::conformance::expedition
         for (auto const& tool : k_toolSources)
         {
             tools.emplace_back(project::DeclaredTool{
-                .name           = std::string{tool.name},
+                .name           = exampleToolName(pluginId, tool.localName),
                 .argumentSchema = "MarchArguments",
                 .resultSchema   = "MarchResult",
                 .descriptor     = ToolDescriptor{

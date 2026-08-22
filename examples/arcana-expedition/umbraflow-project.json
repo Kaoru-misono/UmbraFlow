@@ -35,10 +35,11 @@
       "effect_payload_schemas": [
         "schema/effect/expedition.march-v1.schema.json"
       ],
-      "$comment": "The one observed instance this deployment mints is the expedition's target control, admitted by the identity schema it registers here.",
+      "$comment": "The one observed instance this deployment mints is the expedition's target control, admitted by the identity schema it registers here. It binds no Tool to a closure entry: its plugin is the five-function pure module, and the member is written empty rather than left out, on the same terms as every other declaration here.",
       "observed_instance_identity_schemas": [
         "schema/observed-identity-v1.schema.json"
       ],
+      "tool_bindings": [],
       "resources": [
         {"kind": "json", "name": "map", "path": "blob/map.blob"}
       ]
@@ -73,10 +74,11 @@
       "effect_payload_schemas": [
         "schema/effect/expedition.march-v1.schema.json"
       ],
-      "$comment": "The one observed instance this deployment mints is the expedition's target control, admitted by the identity schema it registers here.",
+      "$comment": "The one observed instance this deployment mints is the expedition's target control, admitted by the identity schema it registers here. It binds no Tool to a closure entry: its plugin is the five-function pure module, and the member is written empty rather than left out, on the same terms as every other declaration here.",
       "observed_instance_identity_schemas": [
         "schema/observed-identity-v1.schema.json"
       ],
+      "tool_bindings": [],
       "resources": [
         {"kind": "json", "name": "map", "path": "blob/map.blob"}
       ]

@@ -1,16 +1,16 @@
 {
-  "$comment": "Both roles carry one vocabulary because both deployments carry the same catalog names and the same event types; what separates them is the registration a document is minted under.",
+  "$comment": "The two roles share their event types and differ in every tool name, because a Tool is named inside the namespace its own registration owns while a Journal event type is not; what separates the roles is the registration a document is minted under.",
   "schema": "umbraflow-conformance/v1",
   "probe_frame": "runtime/probe-frame.png",
   "under_test": {
     "deployment": "alpha",
     "vocabulary": {
-      "mutating_tool": "command-1",
-      "other_mutating_tool": "command-2",
-      "read_only_tool": "observe-1",
+      "mutating_tool": "fixture.alpha.command-1",
+      "other_mutating_tool": "fixture.alpha.command-2",
+      "read_only_tool": "fixture.alpha.observe-1",
       "tool_arguments": "{\"value\":1}",
       "refused_tool_arguments": "{\"value\":0}",
-      "absent_tool": "not-in-the-catalogue",
+      "absent_tool": "fixture.alpha.not-in-the-catalogue",
       "baseline_entry": {
         "event_type": "fixture.baseline",
         "payload": "{\"kind\":\"baseline\"}"
@@ -32,7 +32,7 @@
       "confirmed_input": "{\"disposition\":\"confirmed\"}",
       "rejected_input": "{\"disposition\":\"rejected\"}",
       "ambiguous_input": "{\"disposition\":\"ambiguous\"}",
-      "approval_required_plan_tool": "approval-plan",
+      "approval_required_plan_tool": "fixture.alpha.approval-plan",
       "ui_action": {
         "surface": "fixture.surface",
         "ui_target": "fixture.target",
@@ -43,12 +43,12 @@
   "foreign": {
     "deployment": "foreign",
     "vocabulary": {
-      "mutating_tool": "command-1",
-      "other_mutating_tool": "command-2",
-      "read_only_tool": "observe-1",
+      "mutating_tool": "fixture.foreign.command-1",
+      "other_mutating_tool": "fixture.foreign.command-2",
+      "read_only_tool": "fixture.foreign.observe-1",
       "tool_arguments": "{\"value\":1}",
       "refused_tool_arguments": "{\"value\":0}",
-      "absent_tool": "not-in-the-catalogue",
+      "absent_tool": "fixture.foreign.not-in-the-catalogue",
       "baseline_entry": {
         "event_type": "fixture.baseline",
         "payload": "{\"kind\":\"baseline\"}"
@@ -70,7 +70,7 @@
       "confirmed_input": "{\"disposition\":\"confirmed\"}",
       "rejected_input": "{\"disposition\":\"rejected\"}",
       "ambiguous_input": "{\"disposition\":\"ambiguous\"}",
-      "approval_required_plan_tool": "approval-plan",
+      "approval_required_plan_tool": "fixture.foreign.approval-plan",
       "ui_action": {
         "surface": "fixture.surface",
         "ui_target": "fixture.target",

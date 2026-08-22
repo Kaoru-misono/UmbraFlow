@@ -243,14 +243,20 @@ namespace uf::operator_runtime
         auto const scriptRead = prepared.store.submitCommand(
             prepared.controller,
             test_support::command(prepared.snapshot, "request-1"),
-            test_support::toolInvocation(prepared.project, "observe-1")
+            test_support::toolInvocation(
+                prepared.project,
+                prepared.project.toolName("observe-1")
+            )
         );
         REQUIRE(scriptRead.has_value());
 
         auto const scriptWrite = prepared.store.submitCommand(
             prepared.controller,
             test_support::command(prepared.snapshot, "request-2"),
-            test_support::toolInvocation(prepared.project, "command-1")
+            test_support::toolInvocation(
+                prepared.project,
+                prepared.project.toolName("command-1")
+            )
         );
         REQUIRE(scriptWrite.has_value());
 
@@ -287,7 +293,10 @@ namespace uf::operator_runtime
         auto const humanRead = prepared.store.submitCommand(
             human,
             test_support::command(*humanSnapshot, "request-3"),
-            test_support::toolInvocation(prepared.project, "observe-1")
+            test_support::toolInvocation(
+                prepared.project,
+                prepared.project.toolName("observe-1")
+            )
         );
         REQUIRE(humanRead.has_value());
 
@@ -314,7 +323,10 @@ namespace uf::operator_runtime
         auto const humanWrite = prepared.store.submitCommand(
             human,
             test_support::command(*humanSnapshot, "request-4"),
-            test_support::toolInvocation(prepared.project, "command-1")
+            test_support::toolInvocation(
+                prepared.project,
+                prepared.project.toolName("command-1")
+            )
         );
         REQUIRE_FALSE(humanWrite.has_value());
         CHECK(
@@ -406,7 +418,10 @@ namespace uf::operator_runtime
         auto const inFlight = prepared.store.submitCommand(
             prepared.controller,
             test_support::command(prepared.snapshot, "request-1"),
-            test_support::toolInvocation(prepared.project, "command-1")
+            test_support::toolInvocation(
+                prepared.project,
+                prepared.project.toolName("command-1")
+            )
         );
         REQUIRE(inFlight.has_value());
 
@@ -461,13 +476,19 @@ namespace uf::operator_runtime
         CHECK_FALSE(prepared.store.submitCommand(
             prepared.controller,
             test_support::command(prepared.snapshot, "request-2"),
-            test_support::toolInvocation(prepared.project, "observe-1")
+            test_support::toolInvocation(
+                prepared.project,
+                prepared.project.toolName("observe-1")
+            )
         ).has_value());
         auto const fresh = test_support::freshSnapshot(prepared);
         CHECK(prepared.store.submitCommand(
             prepared.controller,
             test_support::command(fresh, "request-3"),
-            test_support::toolInvocation(prepared.project, "observe-1")
+            test_support::toolInvocation(
+                prepared.project,
+                prepared.project.toolName("observe-1")
+            )
         ).has_value());
 
         // The frozen Operation is in NeedsRevalidation: Revalidated is
@@ -530,6 +551,14 @@ namespace uf::operator_runtime
         auto const temporary = test_support::TemporaryDirectory{};
         auto prepared        = test_support::prepareStore(temporary.path());
 
+        // The four catalog names this case reads and submits. A fixture tool's
+        // namespace is its registration's plugin_id, so they are composed from
+        // the project prepareStore registered rather than respelled per site.
+        auto const rawCoordinateTool = prepared.project.toolName("raw-coordinate-click");
+        auto const gatedTool         = prepared.project.toolName("capability-gated");
+        auto const observeTool       = prepared.project.toolName("observe-1");
+        auto const commandTool       = prepared.project.toolName("command-1");
+
         auto const agent = test_support::addController(
             prepared,
             ControllerKind::Agent,
@@ -587,29 +616,29 @@ namespace uf::operator_runtime
             return listed;
         };
         auto const agentNames = names(agentSnapshot->availableTools);
-        CHECK_FALSE(std::ranges::contains(agentNames, "raw-coordinate-click"));
+        CHECK_FALSE(std::ranges::contains(agentNames, rawCoordinateTool));
 
         // The offered set is not empty of everything, so the absence above is
         // this tool's and not the whole catalog's.
-        CHECK(std::ranges::contains(agentNames, "observe-1"));
-        CHECK(std::ranges::contains(agentNames, "command-1"));
+        CHECK(std::ranges::contains(agentNames, observeTool));
+        CHECK(std::ranges::contains(agentNames, commandTool));
 
         // A tool whose required_capabilities this session does not hold is
         // absent for a reason that is not its surface, so the two halves of the
         // derivation are told apart.
-        CHECK_FALSE(std::ranges::contains(agentNames, "capability-gated"));
+        CHECK_FALSE(std::ranges::contains(agentNames, gatedTool));
 
         // The same catalog, the same composition, a controller whose profile
         // is not restricted: the privileged tool is present. Without this the
         // check above would pass over a derivation that offered nothing to
         // anybody.
         auto const humanNames = names(humanSnapshot->availableTools);
-        CHECK(std::ranges::contains(humanNames, "raw-coordinate-click"));
-        CHECK_FALSE(std::ranges::contains(humanNames, "capability-gated"));
+        CHECK(std::ranges::contains(humanNames, rawCoordinateTool));
+        CHECK_FALSE(std::ranges::contains(humanNames, gatedTool));
 
         auto const capabilityGated = test_support::toolInvocation(
             prepared.project,
-            "capability-gated"
+            gatedTool
         );
         REQUIRE(capabilityGated.descriptor().surface == ToolSurface::Semantic);
         REQUIRE(
@@ -623,7 +652,7 @@ namespace uf::operator_runtime
         );
         REQUIRE_MESSAGE(
             !capabilityRefused.has_value(),
-            "submitCommand must refuse capability-gated without authoring"
+            "submitCommand must refuse fixture.control.capability-gated without authoring"
         );
         CHECK_MESSAGE(
             capabilityRefused.error().message().contains("authoring"),
@@ -632,7 +661,7 @@ namespace uf::operator_runtime
 
         auto const privileged = test_support::toolInvocation(
             prepared.project,
-            "raw-coordinate-click"
+            rawCoordinateTool
         );
         REQUIRE(privileged.descriptor().surface == ToolSurface::Privileged);
 
@@ -662,7 +691,7 @@ namespace uf::operator_runtime
         CHECK(prepared.store.submitCommand(
             agent,
             test_support::command(*agentSnapshot, "request-3"),
-            test_support::toolInvocation(prepared.project, "observe-1")
+            test_support::toolInvocation(prepared.project, observeTool)
         ).has_value());
 
         // A descriptor that states no surface is Privileged. The catalog below
@@ -675,7 +704,7 @@ namespace uf::operator_runtime
             {
                 return std::vector<ToolCatalogEntry>{
                     ToolCatalogEntry{
-                        .name       = "observe-1",
+                        .name       = "fixture.control.observe-1",
                         .descriptor = ToolDescriptor{
                             .toolVersion = "1",
                             .mutability  = ToolMutability::ReadOnly,
@@ -687,7 +716,7 @@ namespace uf::operator_runtime
         );
         REQUIRE(unstated.has_value());
         auto const silent = unstated->validate(
-            "observe-1",
+            observeTool,
             test_support::canonical(prepared.project.schemaOwner, "{\"value\":1}")
         );
         REQUIRE(silent.has_value());

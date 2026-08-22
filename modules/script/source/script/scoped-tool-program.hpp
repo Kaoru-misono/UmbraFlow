@@ -24,15 +24,25 @@ namespace uf::script
     // assigned by the C++ seam and neither is reachable from script: a script
     // that could name its own ordinal could alias another call's position and
     // inherit its recorded outcome.
+    //
+    // No in-class initializer for the parent: ContentHash has no default state,
+    // and that is the point. A coordinate names a durable row or it does not
+    // exist.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
     struct ToolCallCoordinate final
     {
-        // The durable coordinate this run's calls are numbered under. It is
-        // never absent: a root run is itself a positioned call, and a handler
-        // run is numbered under the position of the call it implements. The
-        // Operator owns what the value means; this module only carries it
+        // The durable parent position this run's calls are numbered under, by
+        // the identity the Operator recorded that row under. It is never
+        // absent and never a run-local number: a root run is itself a
+        // positioned call, and a handler run is numbered under the position of
+        // the call it implements. One Tool Runtime is shared by every run of a
+        // registration, so this is what tells it WHICH run a call belongs to,
+        // and nothing else it receives could.
+        //
+        // The Operator owns what the value means; this module only carries it
         // through, because a script module that could name a root request
         // identity would be a script module that could mint one.
-        uint64 parentPosition{};
+        ContentHash parentPosition;
 
         // The issuing context's own monotone child index, starting at 1.
         // Per issuing context and never global: a replayed child costs its
@@ -70,14 +80,23 @@ namespace uf::script
     >;
 
     // What one scoped run is started under.
+    //
+    // No in-class initializer for the parent, for ToolCallCoordinate's reason:
+    // a request that could be default-constructed would be a run anchored on
+    // nothing, and "anchored on nothing" is the absent-means-something reading
+    // this type exists to make unspellable. A caller with no durable position
+    // to name has no run to start, and the closure admission compile() performs
+    // is exactly that caller: it builds no request at all.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
     struct ScopedRunRequest final
     {
-        // The durable parent coordinate this run's issuing context is anchored
-        // on. Every Tool call the run makes is numbered under it, and there is
-        // no absent value: the Operator hands a root run the coordinate of the
+        // The durable parent position this run's issuing context is anchored
+        // on, by the identity the Operator recorded that row under. Every Tool
+        // call the run makes is numbered under it, and there is no absent
+        // value: the Operator hands a root run the coordinate of the
         // root-positioned call the run implements, exactly as it hands a
         // handler run the position of its own call.
-        uint64 parentPosition{};
+        ContentHash parentPosition;
 
         // Hard cancellation. Armed on the Luau interrupt as well as handed to
         // every Tool call, because a script can spin in pure computation without
@@ -159,11 +178,10 @@ namespace uf::script
 
         // One run in one fresh VM. Every Tool call it issues is numbered from 1
         // under `request.parentPosition`, and a second invoke() starts a second
-        // issuing context whose numbering starts again at 1.
-        //
-        // The admission run compile() performs is the one caller that names no
-        // real coordinate, and it needs none: its Tool Runtime refuses every
-        // call, so no coordinate it could carry is ever read.
+        // issuing context whose numbering starts again at 1 -- on a re-entry
+        // after a crash exactly as on a first entry, because the recorded
+        // ordinals are re-derived by re-executing rather than resumed from a
+        // stored counter.
         [[nodiscard]]
         auto invoke(
             std::string_view entryPoint,

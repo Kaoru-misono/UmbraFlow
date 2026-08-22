@@ -282,6 +282,10 @@ namespace uf::deployment
                     + document("effect-0.json") + R"json(],)json";
                 block += R"json("observed_instance_identity_schemas":[)json"
                     + document("identity-0.json") + R"json(],)json";
+                // The fixture plugin exports nothing but its identity, so this
+                // deployment binds no Tool. The member is written empty, which
+                // is the one spelling of that statement.
+                block += R"json("tool_bindings":[],)json";
                 block += R"json("resources":[{"kind":"bytes","name":"page-model","path":"blob/)json";
                 block += name;
                 block += R"json(.blob"}]})json";
@@ -293,19 +297,33 @@ namespace uf::deployment
                 return R"json({"schema":"umbraflow-conformance/v1",)json"
                     R"json("probe_frame":"runtime/probe-frame.png",)json"
                     R"json("under_test":{"deployment":"alpha","vocabulary":)json"
-                    + vocabulary()
+                    + vocabulary("fixture.alpha")
                     + R"json(},"foreign":{"deployment":"beta","vocabulary":)json"
-                    + vocabulary() + "}}";
+                    + vocabulary("fixture.beta") + "}}";
             }
 
-            [[nodiscard]] static auto vocabulary() -> std::string
+            // The two roles are two registrations, and a Tool is named inside
+            // the namespace its own registration owns, so the two vocabularies
+            // share no tool name. The names are composed from the plugin id
+            // rather than written out twice, which is also why the role that
+            // owns a name is visible at every call site below.
+            [[nodiscard]]
+            static auto vocabulary(std::string_view pluginId) -> std::string
             {
-                return R"json({"mutating_tool":"command-1",)json"
-                       R"json("other_mutating_tool":"command-2",)json"
-                       R"json("read_only_tool":"observe-1",)json"
-                       R"json("tool_arguments":"{\"value\":1}",)json"
+                auto const tool = [pluginId](std::string_view local)
+                {
+                    return std::string{pluginId} + "." + std::string{local};
+                };
+                return R"json({"mutating_tool":")json" + tool("command-1")
+                       + R"json(",)json"
+                       + R"json("other_mutating_tool":")json" + tool("command-2")
+                       + R"json(",)json"
+                       + R"json("read_only_tool":")json" + tool("observe-1")
+                       + R"json(",)json"
+                       + R"json("tool_arguments":"{\"value\":1}",)json"
                        R"json("refused_tool_arguments":"{\"value\":0}",)json"
-                       R"json("absent_tool":"command-absent",)json"
+                       + R"json("absent_tool":")json" + tool("command-absent")
+                       + R"json(",)json"
                        R"json("baseline_entry":{"event_type":"fixture.baseline",)json"
                        R"json("payload":"{\"marker\":\"baseline\"}"},)json"
                        R"json("progress_entry":{"event_type":"fixture.progress",)json"
@@ -319,8 +337,10 @@ namespace uf::deployment
                        R"json("confirmed_input":"{\"disposition\":\"confirmed\"}",)json"
                        R"json("rejected_input":"{\"disposition\":\"rejected\"}",)json"
                        R"json("ambiguous_input":"{\"disposition\":\"ambiguous\"}",)json"
-                       R"json("approval_required_plan_tool":"approval-plan",)json"
-                       R"json("ui_action":{"surface":"fixture.surface",)json"
+                       + R"json("approval_required_plan_tool":")json"
+                       + tool("approval-plan")
+                       + R"json(",)json"
+                       + R"json("ui_action":{"surface":"fixture.surface",)json"
                        R"json("ui_target":"fixture.target","action":"fixture.press"}})json";
             }
 
@@ -620,13 +640,13 @@ namespace uf::deployment
         CHECK_FALSE(p_alpha->schemaOwner.canonicalize("{\"revision\": 0}").has_value());
         CHECK(p_alpha->toolCatalogSchemaOwner
                   .validate(
-                      "command-1",
+                      "fixture.alpha.command-1",
                       *p_alpha->schemaOwner.canonicalize("{\"value\":1}")
                   )
                   .has_value());
         CHECK_FALSE(p_alpha->toolCatalogSchemaOwner
                         .validate(
-                            "command-absent",
+                            "fixture.alpha.command-absent",
                             *p_alpha->schemaOwner.canonicalize("{\"value\":1}")
                         )
                         .has_value());
@@ -883,8 +903,14 @@ namespace uf::deployment
         // The vocabulary is read as strings and nothing else, and the payload
         // members carry the project's exact bytes rather than a shape this
         // loader chose.
-        CHECK(loaded->underTest.vocabulary.mutatingTool == "command-1");
-        CHECK(loaded->underTest.vocabulary.absentTool == "command-absent");
+        CHECK(
+            loaded->underTest.vocabulary.mutatingTool
+            == "fixture.alpha.command-1"
+        );
+        CHECK(
+            loaded->underTest.vocabulary.absentTool
+            == "fixture.alpha.command-absent"
+        );
         CHECK(loaded->underTest.vocabulary.baselineEntry.payload
               == "{\"marker\":\"baseline\"}");
         CHECK(loaded->underTest.vocabulary.uiAction.uiTarget == "fixture.target");
@@ -1396,52 +1422,55 @@ namespace uf::deployment
             return why(refused);
         };
 
-        // observe-1 is the catalog's ReadOnly row, so this directory would
+        // The alpha catalog's ReadOnly row is observe-1, so this directory would
         // otherwise submit a read-only tool wherever the suite needs an
         // Operation that changes something.
         auto const readOnly = refusing(
-            R"json("mutating_tool":"command-1")json",
-            R"json("mutating_tool":"observe-1")json"
+            R"json("mutating_tool":"fixture.alpha.command-1")json",
+            R"json("mutating_tool":"fixture.alpha.observe-1")json"
         );
         CHECK(readOnly.contains("mutating_tool"));
         CHECK(readOnly.contains("read_only"));
 
         auto const uncarried = refusing(
-            R"json("mutating_tool":"command-1")json",
-            R"json("mutating_tool":"command-absent")json"
+            R"json("mutating_tool":"fixture.alpha.command-1")json",
+            R"json("mutating_tool":"fixture.alpha.command-absent")json"
         );
         CHECK(uncarried.contains("does not carry"));
-        CHECK(uncarried.contains("command-absent"));
+        CHECK(uncarried.contains("fixture.alpha.command-absent"));
 
         auto const carriedAsMutating = refusing(
-            R"json("read_only_tool":"observe-1")json",
-            R"json("read_only_tool":"command-2")json"
+            R"json("read_only_tool":"fixture.alpha.observe-1")json",
+            R"json("read_only_tool":"fixture.alpha.command-2")json"
         );
         CHECK(carriedAsMutating.contains("read_only_tool"));
         CHECK(carriedAsMutating.contains("mutating"));
 
         auto const oneTool = refusing(
-            R"json("other_mutating_tool":"command-2")json",
-            R"json("other_mutating_tool":"command-1")json"
+            R"json("other_mutating_tool":"fixture.alpha.command-2")json",
+            R"json("other_mutating_tool":"fixture.alpha.command-1")json"
         );
         CHECK(oneTool.contains("other_mutating_tool"));
-        CHECK(oneTool.contains("command-1"));
+        CHECK(oneTool.contains("fixture.alpha.command-1"));
 
-        // command-1 is Mutating and carried, so nothing but absent_tool's own
-        // rule -- that the catalog must NOT carry it -- can refuse this one.
+        // The alpha command-1 is Mutating and carried, so nothing but
+        // absent_tool's own rule -- that the catalog must NOT carry it -- can
+        // refuse this one.
         auto const carriedAbsent = refusing(
-            R"json("absent_tool":"command-absent")json",
-            R"json("absent_tool":"command-1")json"
+            R"json("absent_tool":"fixture.alpha.command-absent")json",
+            R"json("absent_tool":"fixture.alpha.command-1")json"
         );
-        CHECK(carriedAbsent.contains("absent_tool names command-1"));
+        CHECK(
+            carriedAbsent.contains("absent_tool names fixture.alpha.command-1")
+        );
         CHECK(carriedAbsent.contains("falsifiable"));
 
         // The foreign role carries a vocabulary of its own, and three suite
         // cases reach it. Without this the cases above would equally describe a
         // loader that checked one role and skipped the other.
         auto const foreign = refusing(
-            R"json("foreign":{"deployment":"beta","vocabulary":{"mutating_tool":"command-1")json",
-            R"json("foreign":{"deployment":"beta","vocabulary":{"mutating_tool":"observe-1")json"
+            R"json("foreign":{"deployment":"beta","vocabulary":{"mutating_tool":"fixture.beta.command-1")json",
+            R"json("foreign":{"deployment":"beta","vocabulary":{"mutating_tool":"fixture.beta.observe-1")json"
         );
         CHECK(foreign.contains("foreign's mutating_tool"));
     }

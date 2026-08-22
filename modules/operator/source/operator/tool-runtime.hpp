@@ -99,11 +99,15 @@ namespace uf::operator_runtime
         TerminallyUnresolved,
     };
 
-    // A Framework-owned conclusion over a previously possible mutating call.
+    // A Framework-owned conclusion over a previously possible mutating call,
+    // and the answer a ToolReconciliationQuery returns.
+    //
     // Evidence is mandatory for every classification: reconciliation is the
     // act of replacing uncertainty with a claim about the target, and without
-    // fresh evidence no such claim has been earned. TerminallyUnresolved ends
-    // this run but intentionally leaves the target-wide mutation barrier set.
+    // fresh evidence no such claim has been earned. It is also what makes the
+    // query durable, because the Coordinator stores it beside the outcome the
+    // answer produced. TerminallyUnresolved ends this run but intentionally
+    // leaves the target-wide mutation barrier set.
     class ToolCallReconciliation final
     {
         ToolCallReconciliationKind m_kind;
@@ -145,6 +149,15 @@ namespace uf::operator_runtime
 
     // An unforgeable handle to one durable admission row. Only the
     // Coordinator can mint it after re-reading live authority.
+    //
+    // It is move-only because it is the one-shot right to cross the dispatch
+    // boundary, and a right two holders each believe they hold is two rights.
+    // The ledger's compare-and-swap does refuse the second beginToolCallDispatch
+    // over one admission, but that check exists for the crashed and fenced-out
+    // incarnations it was written for; leaning on it to make a duplicated
+    // capability harmless would make the capability's meaning a property of a
+    // race rather than of the value. A single holder may still retry: what is
+    // forbidden is handing a second holder an independent copy.
     class ToolCallAdmission final
     {
         friend class OperatorCoordinator;
@@ -160,6 +173,12 @@ namespace uf::operator_runtime
         );
 
     public:
+        ToolCallAdmission(ToolCallAdmission&&) noexcept = default;
+        auto operator=(ToolCallAdmission&&) noexcept -> ToolCallAdmission& = default;
+        ToolCallAdmission(ToolCallAdmission const&) = delete;
+        auto operator=(ToolCallAdmission const&) -> ToolCallAdmission& = delete;
+        ~ToolCallAdmission() = default;
+
         [[nodiscard]] auto callIdentity() const -> ContentHash;
         [[nodiscard]] auto attemptNumber() const noexcept -> uint64;
         [[nodiscard]] auto historyRevision() const noexcept -> uint64;
@@ -167,6 +186,16 @@ namespace uf::operator_runtime
 
     // The token returned only after dispatching is durable. Provider code must
     // hold this token before it executes, then return it with its conclusion.
+    //
+    // This is the capability to execute that `caller independence is
+    // structural` names, and it is move-only for the reason that ruling gives
+    // it a name at all. Holding it is the licence to run provider code, and
+    // provider effects are external: two holders means the provider runs twice,
+    // and the ledger can refuse the second terminal write but can never unmake
+    // the second effect. Completing is deliberately not a consuming operation,
+    // because repeating the exact same completion is how a retry after a
+    // crashed write rejoins; one holder retrying is the case that must work,
+    // and two holders is the case that must not exist.
     class ToolCallDispatch final
     {
         friend class OperatorCoordinator;
@@ -182,6 +211,12 @@ namespace uf::operator_runtime
         );
 
     public:
+        ToolCallDispatch(ToolCallDispatch&&) noexcept = default;
+        auto operator=(ToolCallDispatch&&) noexcept -> ToolCallDispatch& = default;
+        ToolCallDispatch(ToolCallDispatch const&) = delete;
+        auto operator=(ToolCallDispatch const&) -> ToolCallDispatch& = delete;
+        ~ToolCallDispatch() = default;
+
         [[nodiscard]] auto callIdentity() const -> ContentHash;
         [[nodiscard]] auto attemptNumber() const noexcept -> uint64;
         [[nodiscard]] auto historyRevision() const noexcept -> uint64;
@@ -200,6 +235,19 @@ namespace uf::operator_runtime
     // parent may delegate is the parent descriptor's registered child-effect
     // declaration, which the grant row records at issue time; re-stating it
     // here would be a second copy of one catalog statement.
+    //
+    // Unlike ToolCallAdmission and ToolCallDispatch it stays copyable, and the
+    // reason is that it is evidence rather than a capability. Holding one
+    // authorises nothing on its own: every admission that presents a grant
+    // re-reads the durable parent row and refuses one whose parent is no longer
+    // dispatching, exactly as every entry point re-reads the session row behind
+    // a ControllerBinding. It is also a deterministic derivation of the parent
+    // position and that parent's descriptor, so anyone able to name the parent
+    // can mint the identical grant again for as long as the parent is running,
+    // and nobody can use either the original or a copy once it is not. A
+    // duplicate therefore confers nothing the original does not and cannot
+    // outlive the window the original works in, which is what distinguishes it
+    // from a licence to run provider code.
     class ToolDelegationGrant final
     {
         friend class OperatorCoordinator;

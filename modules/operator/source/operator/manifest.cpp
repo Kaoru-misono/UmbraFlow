@@ -152,6 +152,29 @@ namespace uf::operator_runtime
                 );
             }
             UF_TRY(validateDottedName(claims.pluginId, "plugin_id", true));
+
+            // A registrant's plugin_id IS the namespace it owns Tool names in,
+            // so this is where the Framework's ownership of `framework.*` is
+            // enforced: refuse the claim once, here, rather than refusing each
+            // Tool name a registrant inside that namespace would then own
+            // legitimately. A plugin_id is required to carry a namespace, so
+            // the bare word cannot be claimed at all and only the prefix needs
+            // testing.
+            if (
+                claims.pluginId.starts_with(k_frameworkToolNamespace)
+                && claims.pluginId.size() > k_frameworkToolNamespace.size()
+                && claims.pluginId[k_frameworkToolNamespace.size()] == '.'
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "plugin_id {} claims the reserved {} namespace",
+                        claims.pluginId,
+                        k_frameworkToolNamespace
+                    )
+                );
+            }
             UF_TRY(validateDottedName(
                 claims.baselineEventType,
                 "baseline_event_type",
@@ -227,7 +250,7 @@ namespace uf::operator_runtime
             )
             {
                 auto const& binding = claims.projectToolBindings[index];
-                UF_TRY(validateDottedName(binding.toolName, "tool binding name", true));
+                UF_TRY(validateToolName(binding.toolName, "tool binding name"));
                 UF_TRY(validateDottedName(
                     binding.entryPoint,
                     "tool binding entry point",
@@ -250,6 +273,39 @@ namespace uf::operator_runtime
             }
             return ok();
         }
+    }
+
+    auto validateToolName(
+        std::string_view name,
+        std::string_view field
+    ) -> Status
+    {
+        return validateDottedName(name, field, true);
+    }
+
+    auto validateToolNameOwnership(
+        std::string_view name,
+        std::string_view ownedNamespace
+    ) -> Status
+    {
+        UF_TRY(validateToolName(name, "Tool name"));
+        if (
+            !name.starts_with(ownedNamespace)
+            || name.size() <= ownedNamespace.size() + 1U
+            || name[ownedNamespace.size()] != '.'
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "Tool name {} is outside the namespace {} its registrant "
+                    "owns",
+                    name,
+                    ownedNamespace
+                )
+            );
+        }
+        return ok();
     }
 
     ProjectRegistrationSchemaOwner::ProjectRegistrationSchemaOwner(

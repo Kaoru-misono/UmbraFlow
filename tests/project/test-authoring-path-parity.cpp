@@ -38,7 +38,7 @@ namespace uf::project
     namespace
     {
         constexpr auto k_pluginId    = std::string_view{"chaos.project"};
-        constexpr auto k_toolName    = std::string_view{"chaos.dismiss_known_overlay"};
+        constexpr auto k_toolName    = std::string_view{"chaos.project.dismiss_known_overlay"};
         constexpr auto k_uiAction    = std::string_view{"chaos.ui.dismiss_overlay"};
         constexpr auto k_surfaceId   = std::string_view{"chaos.overlay_layer"};
         constexpr auto k_instanceKind = std::string_view{"chaos.overlay"};
@@ -310,7 +310,7 @@ namespace uf::project
         // them against one oneOf.
         constexpr auto k_boundedDeclaration = std::string_view{R"json({
   "schema": "umbraflow-declarative-workflow-tool/v1",
-  "tool_name": "chaos.dismiss_known_overlay",
+  "tool_name": "chaos.project.dismiss_known_overlay",
   "target_argument": "observed_instance_id",
   "allowed_instance_kinds": ["chaos.overlay"],
   "fresh_observation": {
@@ -346,7 +346,7 @@ namespace uf::project
         // The one logical tool the parity cases implement twice.
         constexpr auto k_oneStepDeclaration = std::string_view{R"json({
   "schema": "umbraflow-declarative-workflow-tool/v1",
-  "tool_name": "chaos.dismiss_known_overlay",
+  "tool_name": "chaos.project.dismiss_known_overlay",
   "target_argument": "observed_instance_id",
   "allowed_instance_kinds": ["chaos.overlay"],
   "fresh_observation": {
@@ -387,7 +387,7 @@ namespace uf::project
         // already generates, and a declaration that produced this module would
         // be the generated path again under another name.
         constexpr auto k_handWrittenTwin = std::string_view{R"LUAU(
-local TOOL_NAME = "chaos.dismiss_known_overlay"
+local TOOL_NAME = "chaos.project.dismiss_known_overlay"
 local SURFACE = "chaos.overlay_layer"
 local ACTION = "chaos.ui.dismiss_overlay"
 local ARGUMENT = "observed_instance_id"

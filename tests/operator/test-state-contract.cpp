@@ -546,7 +546,7 @@ namespace uf::operator_runtime
         CHECK_FALSE(prepared.store.submitCommand(
             prepared.controller,
             command(prepared.snapshot, "request-stale"),
-            toolInvocation(prepared.project, "observe-1")
+            toolInvocation(prepared.project, prepared.project.toolName("observe-1"))
         ).has_value());
 
         auto const afterCommit = prepared.store.createSnapshot(
@@ -571,7 +571,7 @@ namespace uf::operator_runtime
         CHECK(prepared.store.submitCommand(
             prepared.controller,
             command(*afterCommit, "request-fresh"),
-            toolInvocation(prepared.project, "observe-1")
+            toolInvocation(prepared.project, prepared.project.toolName("observe-1"))
         ).has_value());
     }
 
@@ -641,7 +641,7 @@ namespace uf::operator_runtime
         CHECK_FALSE(prepared.store.submitCommand(
             prepared.controller,
             forged,
-            toolInvocation(prepared.project, "command-1")
+            toolInvocation(prepared.project, prepared.project.toolName("command-1"))
         ).has_value());
 
         // Not a live Receipt: presenting it does not consume it. One token
@@ -649,12 +649,12 @@ namespace uf::operator_runtime
         REQUIRE(prepared.store.submitCommand(
             prepared.controller,
             command(prepared.snapshot, "request-1"),
-            toolInvocation(prepared.project, "command-1")
+            toolInvocation(prepared.project, prepared.project.toolName("command-1"))
         ).has_value());
         REQUIRE(prepared.store.submitCommand(
             prepared.controller,
             command(prepared.snapshot, "request-2"),
-            toolInvocation(prepared.project, "observe-1")
+            toolInvocation(prepared.project, prepared.project.toolName("observe-1"))
         ).has_value());
 
         // Not a permission either: it is a compare-and-swap reference into the
@@ -666,7 +666,7 @@ namespace uf::operator_runtime
         CHECK_FALSE(prepared.store.submitCommand(
             prepared.controller,
             command(prepared.snapshot, "request-3"),
-            toolInvocation(prepared.project, "observe-1")
+            toolInvocation(prepared.project, prepared.project.toolName("observe-1"))
         ).has_value());
     }
 

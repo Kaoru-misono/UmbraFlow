@@ -22,7 +22,6 @@ namespace uf::operator_runtime
 {
     namespace
     {
-        constexpr auto k_frameworkNamespace = std::string_view{"framework."};
         constexpr auto k_auditTool = std::string_view{
             "framework.audit.record"
         };
@@ -1370,26 +1369,12 @@ namespace uf::operator_runtime
 
     auto ToolCallIssuingContext::forHandler(
         ToolCallPositionIdentity const& handlerCall
-    ) const -> Result<ToolCallIssuingContext>
+    ) -> ToolCallIssuingContext
     {
-        if (handlerCall.rootIdentity() != m_rootIdentity)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "Tool handler context belongs to a different root request"
-            );
-        }
-        if (handlerCall.parentIdentity() != m_parent.identity())
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "Tool handler context was not issued by this context"
-            );
-        }
         return ToolCallIssuingContext{
-            m_rootIdentity,
+            handlerCall.rootIdentity(),
             handlerCall.asParent(),
-            m_executionIdentity,
+            handlerCall.executionIdentity(),
         };
     }
 
@@ -1511,18 +1496,20 @@ namespace uf::operator_runtime
         }
         for (auto const& entry : tools)
         {
-            if (entry.name.empty() || entry.descriptor.toolVersion.empty())
+            // The positive half, and the only half. A Project owns the
+            // namespace it registered -- its plugin_id -- and a descriptor
+            // naming anything outside it is declaring a Tool that is not this
+            // registrant's, whether the namespace is the Framework's or another
+            // Project's. The reserved-prefix refusal this replaced could only
+            // catch the first of those two, and is unreachable behind this one
+            // because a plugin_id inside `framework.` is refused at the
+            // registration (manifest.cpp validateClaims).
+            UF_TRY(validateToolNameOwnership(entry.name, registration.pluginId()));
+            if (entry.descriptor.toolVersion.empty())
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "Tool Catalog descriptor must carry a tool name and version"
-                );
-            }
-            if (entry.name.starts_with(k_frameworkNamespace))
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "Project Tool Catalog cannot claim the reserved framework namespace"
+                    "Tool Catalog descriptor must carry a tool version"
                 );
             }
             UF_TRY_CONTEXT(

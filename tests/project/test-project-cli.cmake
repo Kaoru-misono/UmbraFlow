@@ -86,6 +86,7 @@ file(WRITE "${SOURCE_DIRECTORY}/umbraflow-project.json" [=[{
       "journal_payload_schemas": ["schema/journal-0.json"],
       "effect_payload_schemas": [],
       "observed_instance_identity_schemas": [],
+      "tool_bindings": [],
       "resources": [
         {"kind": "utf8", "name": "facts", "path": "content/facts.txt"}
       ]
@@ -104,7 +105,7 @@ file(WRITE "${DECLARED_CATALOG}" [=[{
   "effect_payload_sha256s": [],
   "tools": [
     {
-      "name": "chaos.dismiss_known_overlay",
+      "name": "chaos.project.dismiss_known_overlay",
       "argument_schema": "observed_instance_id",
       "result_schema": "tool_result",
       "version": "1.0.0",
@@ -114,6 +115,13 @@ file(WRITE "${DECLARED_CATALOG}" [=[{
       "required_capabilities": [],
       "ui_action_bounds": [],
       "effect_bounds": [],
+      "child_effects": {
+        "child_tool_names": [],
+        "maximum_child_calls": 0,
+        "maximum_child_mutability": "read_only",
+        "maximum_child_risk": "read_only",
+        "maximum_child_surface": "semantic"
+      },
       "timeout_policy": {
         "maximum_elapsed_ms": 3000,
         "on_timeout": "stop"
@@ -163,7 +171,7 @@ file(WRITE "${SOURCE_DIRECTORY}/schema/journal-0.json" [=[{
 file(WRITE "${SOURCE_DIRECTORY}/content/facts.txt" "declared facts\n")
 file(WRITE "${DECLARATIVE_PATH}" [=[{
   "schema": "umbraflow-declarative-workflow-tool/v1",
-  "tool_name": "chaos.dismiss_known_overlay",
+  "tool_name": "chaos.project.dismiss_known_overlay",
   "target_argument": "observed_instance_id",
   "allowed_instance_kinds": ["chaos.overlay"],
   "fresh_observation": {
@@ -507,7 +515,7 @@ file(WRITE "${DECLARED_CATALOG}" [=[{
   "effect_payload_sha256s": [],
   "tools": [
     {
-      "name": "chaos.dismiss_known_overlay",
+      "name": "chaos.project.dismiss_known_overlay",
       "argument_schema": "observed_instance_id",
       "result_schema": "tool_result",
       "version": "1.0.0",
@@ -517,6 +525,13 @@ file(WRITE "${DECLARED_CATALOG}" [=[{
       "required_capabilities": [],
       "ui_action_bounds": [],
       "effect_bounds": [],
+      "child_effects": {
+        "child_tool_names": [],
+        "maximum_child_calls": 0,
+        "maximum_child_mutability": "read_only",
+        "maximum_child_risk": "read_only",
+        "maximum_child_surface": "semantic"
+      },
       "timeout_policy": {
         "maximum_elapsed_ms": 3000,
         "on_timeout": "stop"
@@ -707,6 +722,7 @@ file(WRITE "${CUT_SOURCE}/umbraflow-project.json" "{
       \"journal_payload_schemas\": [\"schema/journal-0.json\"],
       \"effect_payload_schemas\": [],
       \"observed_instance_identity_schemas\": [],
+      \"tool_bindings\": [],
       \"resources\": []
     }
   ]
@@ -719,7 +735,7 @@ file(WRITE "${CUT_SOURCE}/schema/catalog.json" [=[{
   "effect_payload_sha256s": [],
   "tools": [
     {
-      "name": "chaos.dismiss_known_overlay",
+      "name": "chaos.dream.dismiss_known_overlay",
       "argument_schema": "observed_instance_id",
       "result_schema": "tool_result",
       "version": "1.0.0",
@@ -729,6 +745,13 @@ file(WRITE "${CUT_SOURCE}/schema/catalog.json" [=[{
       "required_capabilities": [],
       "ui_action_bounds": [],
       "effect_bounds": [],
+      "child_effects": {
+        "child_tool_names": [],
+        "maximum_child_calls": 0,
+        "maximum_child_mutability": "read_only",
+        "maximum_child_risk": "read_only",
+        "maximum_child_surface": "semantic"
+      },
       "timeout_policy": {
         "maximum_elapsed_ms": 3000,
         "on_timeout": "stop"

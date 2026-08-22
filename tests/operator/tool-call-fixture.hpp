@@ -30,16 +30,9 @@ namespace uf::operator_runtime::test_support
     ) -> Result<ToolCallPositionIdentity>
     {
         REQUIRE(ordinal > 0U);
-        auto context = ToolCallIssuingContext::forRoot(root, executionIdentity);
-        if (parent != nullptr)
-        {
-            auto handler = context.forHandler(*parent);
-            if (!handler)
-            {
-                return std::unexpected{std::move(handler).error()};
-            }
-            context = *std::move(handler);
-        }
+        auto context = parent != nullptr
+            ? ToolCallIssuingContext::forHandler(*parent)
+            : ToolCallIssuingContext::forRoot(root, executionIdentity);
         auto position = context.issue(invocation);
         for (auto index = uint32{1}; index < ordinal; ++index)
         {

@@ -191,7 +191,10 @@ namespace uf::operator_runtime
             heldLease   = prepared.lease;
             heldBinding = prepared.controller;
             heldRequest = command(prepared.snapshot, "request-1");
-            heldTool    = toolInvocation(prepared.project, "observe-1");
+            heldTool    = toolInvocation(
+                prepared.project,
+                prepared.project.toolName("observe-1")
+            );
             manifest    = prepared.manifest;
             project     = prepared.project;
             heldPlugin  = prepared.plugin;
@@ -286,7 +289,7 @@ namespace uf::operator_runtime
         auto const proposed = test_support::proposedOperation(
             prepared,
             "request-1",
-            "command-1"
+            prepared.project.toolName("command-1")
         );
         auto const frozen = test_support::freezePlanFor(prepared, proposed);
         REQUIRE(frozen.has_value());
@@ -488,8 +491,14 @@ namespace uf::operator_runtime
         // version and the mutability that decides the mutation chain are read
         // out of the Tool Catalog descriptor: the same argument bytes reach a
         // mutating and a read-only tool, and the caller stated neither.
-        auto const mutating = toolInvocation(prepared.project, "command-1");
-        auto const readOnly = toolInvocation(prepared.project, "observe-1");
+        auto const mutating = toolInvocation(
+            prepared.project,
+            prepared.project.toolName("command-1")
+        );
+        auto const readOnly = toolInvocation(
+            prepared.project,
+            prepared.project.toolName("observe-1")
+        );
         CHECK(mutating.canonicalArgs() == readOnly.canonicalArgs());
         CHECK(mutating.descriptor().mutability == ToolMutability::Mutating);
         CHECK(readOnly.descriptor().mutability == ToolMutability::ReadOnly);
@@ -499,7 +508,7 @@ namespace uf::operator_runtime
         // A tool the catalog does not describe cannot be minted at all, so an
         // effect has no spelling that skips the descriptor.
         CHECK_FALSE(prepared.project.toolCatalogSchemaOwner.validate(
-            "unlisted-command",
+            prepared.project.toolName("unlisted-command"),
             canonical(prepared.project.schemaOwner, "{\"value\":1}")
         ).has_value());
 
@@ -518,7 +527,7 @@ namespace uf::operator_runtime
         CHECK_FALSE(prepared.store.submitCommand(
             prepared.controller,
             command(prepared.snapshot, "request-foreign"),
-            toolInvocation(foreign, "command-1")
+            toolInvocation(foreign, foreign.toolName("command-1"))
         ).has_value());
     }
 
@@ -671,7 +680,7 @@ namespace uf::operator_runtime
         auto const mismatched = test_support::proposedOperation(
             prepared,
             "request-mismatch",
-            "mismatched-plan"
+            prepared.project.toolName("mismatched-plan")
         );
         CHECK_FALSE(test_support::freezePlanFor(prepared, mismatched).has_value());
         REQUIRE(prepared.store.transitionOperation(
@@ -684,7 +693,7 @@ namespace uf::operator_runtime
         auto const proposed = test_support::proposedOperation(
             prepared,
             "request-1",
-            "command-1"
+            prepared.project.toolName("command-1")
         );
         auto const frozen = test_support::freezePlanFor(prepared, proposed);
         REQUIRE(frozen.has_value());
@@ -706,7 +715,7 @@ namespace uf::operator_runtime
         auto const readOnly = test_support::proposedOperation(
             prepared,
             "request-read",
-            "observe-1"
+            prepared.project.toolName("observe-1")
         );
         CHECK_FALSE(test_support::freezePlanFor(prepared, readOnly).has_value());
     }
@@ -722,7 +731,7 @@ namespace uf::operator_runtime
         auto const proposed = test_support::proposedOperation(
             prepared,
             "request-1",
-            "two-step-plan"
+            prepared.project.toolName("two-step-plan")
         );
         auto const frozen = test_support::freezePlanFor(prepared, proposed);
         REQUIRE(frozen.has_value());
@@ -784,7 +793,10 @@ namespace uf::operator_runtime
         CHECK_FALSE(prepared.store.submitCommand(
             prepared.controller,
             test_support::command(prepared.snapshot, "request-2"),
-            test_support::toolInvocation(prepared.project, "command-1")
+            test_support::toolInvocation(
+                prepared.project,
+                prepared.project.toolName("command-1")
+            )
         ).has_value());
     }
 }

@@ -25,6 +25,7 @@
 
 #include <compare>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -557,6 +558,29 @@ namespace uf::operator_runtime
         std::string projectInstanceKey{};
     };
 
+    // The one admission-request value, defined in tool-admission-request.hpp.
+    // That header includes this one for ControlLease and ToolApprovalGrant, so
+    // the edge runs one way and admitToolCall names the request by declaration.
+    struct ToolAdmissionRequest;
+
+    // The trusted idempotent provider query that resolves one uncertain
+    // delivery, and the whole of the seam section 5.3's recovery table names.
+    //
+    // A crash that interrupts a mutating leaf leaves a durable row saying the
+    // dispatch boundary was crossed and nothing saying whether the effect
+    // landed. Only interrogating the world answers that, and only the
+    // Coordinator may ask: it asks over the durable call position it holds,
+    // after the row has been proven uncertain and the authority proven live, so
+    // a querier cannot choose which call an answer is about. The answer's
+    // evidence is mandatory and is stored beside the outcome it produced, which
+    // is what makes the query durable rather than a judgement that evaporates.
+    //
+    // It is a query and not a provider: it performs no effect, it may be asked
+    // again after a crash of its own, and no startup path can reach it -- which
+    // is what keeps `proven_absent` from ever being inferred from a crash.
+    using ToolReconciliationQuery = std::function<
+        Result<ToolCallReconciliation>(ToolCallPositionIdentity const&)>;
+
     // Trusted in-process control plane. This object is never installed in a
     // business VM or exposed through the project-plugin data boundary.
     class OperatorCoordinator final
@@ -571,24 +595,6 @@ namespace uf::operator_runtime
 
         [[nodiscard]]
         auto recoverUncertainToolCalls() -> Result<uint64>;
-
-        // delegation is the optional non-owning observation of the grant a
-        // child call stands on, and nullptr for a parentless call. The two
-        // must agree: a parented call without a grant and a parentless call
-        // with one are both refused, so there is no reading in which a child
-        // is admitted on the root's authority.
-        [[nodiscard]]
-        auto admitToolCall(
-            ControllerBinding const& controller,
-            ControlLease const& lease,
-            ToolRootRequestIdentity const& root,
-            ToolCallPositionIdentity const& call,
-            ToolMutability requiredMutability,
-            OperatorPlanAuthority const* planAuthority,
-            std::span<ProposedEffect const> effects,
-            std::span<ToolApprovalGrant const> approvals,
-            ToolDelegationGrant const* delegation
-        ) -> Result<ToolCallAdmission>;
 
         // The transaction-neutral canonical mint: the ten ordered checks
         // (shape, duplicate and parent-cycle relations, identity closure,
@@ -629,8 +635,11 @@ namespace uf::operator_runtime
         // control_leases row, clears sessions.active, and resolves every
         // dispatch nobody answered for to transport_unknown with its Operation
         // moved to reconciling. A replacement Tool call whose durable dispatch
-        // boundary was crossed without an outcome becomes possible/unknown and
-        // is never handed out for dispatch again.
+        // boundary was crossed without an outcome becomes possible/unknown, and
+        // is never handed out for dispatch again, when and only when it is a
+        // mutating leaf; every other interrupted dispatch survives as
+        // dispatching and is re-entered, because re-executing it cannot deliver
+        // anything a durable row does not already classify.
         //
         // A non-empty schema reaches those restart writes only when its exact
         // stored-DDL identity is current or a migration is registered under
@@ -908,32 +917,33 @@ namespace uf::operator_runtime
             ToolCallPositionIdentity const& call
         ) -> Result<StoredToolCallPosition>;
 
-        // First-generation replacement admission for read-only Tools. Every
-        // authority member is re-read from the live binding, lease and session;
-        // a caller supplies only the already-minted identity values.
+        // The one admission function, and the only door to an admitted call.
+        //
+        // Per `caller independence is structural` every producer -- the Agent
+        // adapter, the human-client adapter, the producer that admits an
+        // actor's start at the top of a run, and one Tool calling another --
+        // reaches authority by building one ToolAdmissionRequest and handing it
+        // here. There is no second entry point and no shape that takes the
+        // members loose, so an adapter cannot assemble its own path: what it can
+        // construct is a request, and a request is not executable.
+        //
+        // Every authority member is re-read from the live binding, lease and
+        // session; the request supplies only already-minted identity values,
+        // what the call proposes, and what it presents. Read-only and mutating
+        // share the identity, authority and budget path, and a mutating call
+        // additionally enforces one active mutation per controlled target: a
+        // possible or terminally-unresolved mutation is a durable target-wide
+        // barrier across roots and actors.
+        //
+        // Which of the two a call is comes from the descriptor inside the
+        // coordinate rather than from the producer, and the request's mutation
+        // must agree with it. So must its delegation grant: a root-positioned
+        // call carrying one and a child call missing one are both refused, and
+        // there is no reading in which a child is admitted on the root's
+        // authority.
         [[nodiscard]]
-        auto admitReadOnlyToolCall(
-            ControllerBinding const& controller,
-            ControlLease const& lease,
-            ToolRootRequestIdentity const& root,
-            ToolCallPositionIdentity const& call,
-            ToolDelegationGrant const* delegation
-        ) -> Result<ToolCallAdmission>;
-
-        // Mutating admission shares the read-only identity, authority and
-        // budget path, then additionally enforces one active mutation per
-        // controlled target. A possible or terminally-unresolved mutation is a
-        // durable target-wide barrier across roots and actors.
-        [[nodiscard]]
-        auto admitMutatingToolCall(
-            ControllerBinding const& controller,
-            ControlLease const& lease,
-            ToolRootRequestIdentity const& root,
-            ToolCallPositionIdentity const& call,
-            OperatorPlanAuthority const& planAuthority,
-            std::span<ProposedEffect const> effects,
-            std::span<ToolApprovalGrant const> approvals,
-            ToolDelegationGrant const* delegation
+        auto admitToolCall(
+            ToolAdmissionRequest const& request
         ) -> Result<ToolCallAdmission>;
 
         // The delegation grant one live handler invocation issues its children
@@ -984,6 +994,45 @@ namespace uf::operator_runtime
             ToolCallAdmission const& admission
         ) -> Result<ToolCallDispatch>;
 
+        // Re-enters a call whose durable row is already dispatching, because
+        // the incarnation that began that dispatch died inside it.
+        //
+        // The one shape refused is the MUTATING LEAF: a call answered directly
+        // by a provider whose descriptor declares it mutating. That is the only
+        // shape where the world may have moved with no durable row saying so,
+        // and no amount of re-execution can find out, so its `dispatching` row
+        // is resolved by classifying it uncertain and asking a reconciliation
+        // query, never by dispatching it twice.
+        //
+        // Nothing else is refused, and neither half of that key is sufficient
+        // alone. A call answered by a bound Project entry reaches the world
+        // only through child Tool calls, each already carrying its own durable
+        // classification, so re-running it re-derives the same child
+        // coordinates, meets the recorded rows and executes only the first
+        // position beyond history -- the replay contract itself, not a
+        // redelivery, and true however mutating the call is. A read-only leaf
+        // declares no effect for a delivery to be uncertain about, so running
+        // its provider again delivers nothing twice.
+        //
+        // The presented binding and lease are the CURRENT ones and are re-read
+        // live, which is what a fence bump is for: the incarnation that lost
+        // the lease cannot re-enter, and the re-entry moves the history
+        // revision so that a dispatch token the loser still holds no longer
+        // matches the active dispatch. The origin principal and controlled
+        // target must still be the ones the active admission attempt recorded;
+        // re-entry re-enters an admission, it never widens one. It is stated
+        // here rather than left to the authority join beginToolCallDispatch
+        // uses, because that join pins the session epoch, lease and fence --
+        // which is exactly what a re-entry after a takeover must be allowed to
+        // move.
+        [[nodiscard]]
+        auto reenterToolCallDispatch(
+            ControllerBinding const& controller,
+            ControlLease const& lease,
+            ToolRootRequestIdentity const& root,
+            ToolCallPositionIdentity const& call
+        ) -> Result<ToolCallDispatch>;
+
         // Records the exact provider conclusion. Repeating the same completion
         // rejoins; changing it after a terminal write is refused.
         [[nodiscard]]
@@ -1000,16 +1049,23 @@ namespace uf::operator_runtime
             ToolCallPositionIdentity const& call
         ) -> Result<ToolCallReplay>;
 
-        // Reclassifies one possible mutating call from fresh Framework
-        // evidence. Confirmed and proven-absent release its target barrier;
-        // terminally-unresolved remains a barrier by design.
+        // Reclassifies one possible mutating call by asking a trusted
+        // idempotent provider query what the world says. Confirmed and
+        // proven-absent release its target barrier; terminally-unresolved
+        // remains a barrier by design.
+        //
+        // Only a `possible` call may be reconciled, and repeating a
+        // reconciliation is refused rather than rejoined: the transition exists
+        // to leave uncertainty, and once it is left there is nothing to
+        // resolve. A caller that wants the outcome again reads it with
+        // replayToolCall.
         [[nodiscard]]
         auto reconcileMutatingToolCall(
             ControllerBinding const& controller,
             ControlLease const& lease,
             ToolRootRequestIdentity const& root,
             ToolCallPositionIdentity const& call,
-            ToolCallReconciliation const& reconciliation
+            ToolReconciliationQuery const& query
         ) -> Result<ToolCallReplay>;
 
         // Records that the world moved under us, which is what out-of-band

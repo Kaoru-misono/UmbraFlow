@@ -118,6 +118,7 @@
         "resources",
         "reconcile_manifest",
         "reconcile_schema",
+        "tool_bindings",
         "tool_catalog",
         "tool_precondition_schema"
       ],
@@ -133,6 +134,13 @@
         "project_observation_schema": {"$ref": "#/$defs/Path"},
         "tool_precondition_schema": {"$ref": "#/$defs/Path"},
         "reconcile_schema": {"$ref": "#/$defs/Path"},
+        "tool_bindings": {
+          "$comment": "Which entry of this deployment's own module closure answers each Tool its Tool Catalog declares. It sits here, beside `plugin` and `tool_catalog`, because a binding is the JOIN of a contract name and a code entry and belongs beside both rather than inside either: putting it in the catalog would make the catalog's exact bytes -- which are hashed and served to callers -- carry dispatcher-only data, and putting it in `plugin` would make a contract name a property of the closure. The loader derives project_tool_bindings from it and from nothing else, sorted by tool name the way it sorts resources, so declaration order here is never consulted. The member is stated even when it is empty, on the same terms as resources: an empty array is the whole statement `this deployment binds no Tool to an entry`, which is what a project shipping no handler declares, and an absent member would be that statement spelled a second way.",
+          "type": "array",
+          "maxItems": 256,
+          "items": {"$ref": "#/$defs/ToolBinding"},
+          "uniqueItems": true
+        },
         "tool_catalog": {"$ref": "#/$defs/Path"},
         "journal_event_schema_manifest": {"$ref": "#/$defs/Path"},
         "reconcile_manifest": {"$ref": "#/$defs/Path"},
@@ -201,6 +209,24 @@
         "$comment": {"type": "string"},
         "name": {"$ref": "#/$defs/ModuleName"},
         "path": {"$ref": "#/$defs/Path"}
+      }
+    },
+    "EntryPoint": {
+      "$comment": "One entry the deployment's module closure exports, by the name the module exports it under. The spelling is the derived registration's own root_name, restated here the way NamespacedName is: an entry name this loader would refuse after deriving a registration is refused where a project author writes it instead.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_-]{0,63}(\\.[a-z][a-z0-9_-]{0,63}){0,15}$"
+    },
+    "ToolBinding": {
+      "$comment": "One row of the join: the Tool, by the name this deployment's Tool Catalog declares it under, and the closure entry that answers a call of it. A handler and an automation entry are one mechanism and there is no discriminator here to tell them apart -- what makes an entry startable at the top of a run is that the actor is admitted to start it, which is an admission fact and not a schema field.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry_point", "tool_name"],
+      "properties": {
+        "$comment": {"type": "string"},
+        "entry_point": {"$ref": "#/$defs/EntryPoint"},
+        "tool_name": {"$ref": "#/$defs/NamespacedName"}
       }
     },
     "ResourceKind": {"enum": ["bytes", "json", "utf8"]},

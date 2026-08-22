@@ -11,6 +11,13 @@ unity_build = false
 # form, and the ProjectPlugin boundary is that value. Naming json::Value in
 # project-plugin.hpp is what keeps the parse from happening a second time
 # further down. json declares `public = core` only, so the edge closes no cycle.
+#
+# script is public because this module's own headers name its types now:
+# project-tool-program.hpp takes a script::ToolRuntimeInvoke and a
+# script::PureDataProgram::Resource, and project-tool-dispatch.hpp hands one run
+# a script::ScopedRunRequest. It compiled while it was private only through the
+# transitive `public = task` -> `public = script` edge, which made a real part of
+# this module's public surface a fact about task's dependency list.
 [dependencies]
-public = core domain json task
-private = trace script operator_sqlite3 schema
+public = core domain json task script
+private = trace operator_sqlite3 schema

@@ -282,7 +282,7 @@ namespace uf::deployment
             envelope += ",\"project_observation\":{\"canonical_opaque_payload\":{},"
                         "\"observed_instances\":[],\"project_tool_preconditions\":[],"
                         "\"schema\":\"umbraflow-project-observation/v1\"},"
-                        "\"project_state\":{\"revision\":0},\"tool_name\":\"command-1\","
+                        "\"project_state\":{\"revision\":0},\"tool_name\":\"fixture.alpha.command-1\","
                         "\"tool_version\":\"1\"}";
             return envelope;
         }
@@ -302,7 +302,7 @@ namespace uf::deployment
             proposal += schemaHex;
             proposal += "\",\"risk\":\"low\",\"scope_key\":\"alpha\","
                         "\"scope_kind\":\"instance\"}],"
-                        "\"tool_name\":\"command-1\",\"tool_version\":\"1\","
+                        "\"tool_name\":\"fixture.alpha.command-1\",\"tool_version\":\"1\","
                         "\"workflow_limits\":{\"maximum_dispatches\":8,"
                         "\"maximum_elapsed_ms\":60000,\"maximum_observations\":16,"
                         "\"maximum_steps\":8,\"maximum_waits\":4}}";
@@ -568,7 +568,7 @@ namespace uf::deployment
             "\"project_observation\":{\"canonical_opaque_payload\":{},"
             "\"observed_instances\":[],\"project_tool_preconditions\":[],"
             "\"schema\":\"umbraflow-project-observation/v1\"},"
-            "\"project_state\":{\"revision\":0},\"tool_name\":\"command-1\","
+            "\"project_state\":{\"revision\":0},\"tool_name\":\"fixture.alpha.command-1\","
             "\"tool_version\":\"1\"}"
         ).has_value());
 
@@ -1807,7 +1807,7 @@ namespace uf::deployment
             substituted(exact, "\"tool_name\":", "\"extra\":1,\"tool_name\":")
         ));
         CHECK_FALSE(judgeProposal(
-            substituted(exact, "\"tool_name\":\"command-1\"", "\"tool_name\":1")
+            substituted(exact, "\"tool_name\":\"fixture.alpha.command-1\"", "\"tool_name\":1")
         ));
         CHECK_FALSE(judgeProposal(
             substituted(exact, "\"risk\":\"low\"", "\"risk\":\"unknown\"")

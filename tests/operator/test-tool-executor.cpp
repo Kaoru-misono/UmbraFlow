@@ -8,12 +8,12 @@
 
 #include <doctest/doctest.h>
 
-#include <array>
 #include <limits>
 #include <optional>
 #include <span>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace uf::operator_runtime
 {
@@ -67,7 +67,10 @@ namespace uf::operator_runtime
             std::string_view runName
         ) -> ToolCallPositionIdentity
         {
-            auto invocation = test_support::toolInvocation(project, "command-1");
+            auto invocation = test_support::toolInvocation(
+                project,
+                project.toolName("command-1")
+            );
             REQUIRE(invocation.descriptor().mutability == ToolMutability::Mutating);
             auto call = toolCallAt(
                 root,
@@ -124,12 +127,13 @@ namespace uf::operator_runtime
         auto providerCalls = uint64{};
         {
             auto executor = ToolRuntimeExecutor{prepared.store};
-            auto replay = executor.invokeReadOnly(
-                prepared.controller,
-                prepared.lease,
-                *root,
-                call,
-                nullptr,
+            auto replay = executor.invoke(
+                ToolAdmissionRequest{
+                    .controller = prepared.controller,
+                    .lease      = prepared.lease,
+                    .root       = *root,
+                    .call       = call,
+                },
                 [&providerCalls, &result](ToolCallPositionIdentity const& presented)
                 {
                     ++providerCalls;
@@ -154,12 +158,13 @@ namespace uf::operator_runtime
             );
             REQUIRE(failureRoot.has_value());
             auto failureCall = frameworkCall(*failureRoot, "executor-failure-run");
-            auto failed = executor.invokeReadOnly(
-                prepared.controller,
-                prepared.lease,
-                *failureRoot,
-                failureCall,
-                nullptr,
+            auto failed = executor.invoke(
+                ToolAdmissionRequest{
+                    .controller = prepared.controller,
+                    .lease      = prepared.lease,
+                    .root       = *failureRoot,
+                    .call       = failureCall,
+                },
                 [](ToolCallPositionIdentity const&) -> Result<ToolCallCompletion>
                 {
                     return fail(
@@ -176,12 +181,13 @@ namespace uf::operator_runtime
                 == R"({"failure_response":"abort","kind":"capture_unavailable","message":"capture provider refused"})"
             );
             auto refusedReplayExecutions = uint64{};
-            auto replayedFailure = executor.invokeReadOnly(
-                prepared.controller,
-                prepared.lease,
-                *failureRoot,
-                failureCall,
-                nullptr,
+            auto replayedFailure = executor.invoke(
+                ToolAdmissionRequest{
+                    .controller = prepared.controller,
+                    .lease      = prepared.lease,
+                    .root       = *failureRoot,
+                    .call       = failureCall,
+                },
                 [&refusedReplayExecutions](ToolCallPositionIdentity const&)
                 {
                     ++refusedReplayExecutions;
@@ -203,12 +209,13 @@ namespace uf::operator_runtime
         );
         REQUIRE(restarted.has_value());
         auto executor = ToolRuntimeExecutor{*restarted};
-        auto replay = executor.invokeReadOnly(
-            prepared.controller,
-            prepared.lease,
-            *root,
-            call,
-            nullptr,
+        auto replay = executor.invoke(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *root,
+                .call       = call,
+            },
             [&providerCalls](ToolCallPositionIdentity const&)
             {
                 ++providerCalls;
@@ -233,12 +240,13 @@ namespace uf::operator_runtime
         );
         REQUIRE(missingRoot.has_value());
         auto missingCall = frameworkCall(*missingRoot, "executor-missing-run");
-        auto refused = executor.invokeReadOnly(
-            prepared.controller,
-            prepared.lease,
-            *missingRoot,
-            missingCall,
-            nullptr,
+        auto refused = executor.invoke(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *missingRoot,
+                .call       = missingCall,
+            },
             {}
         );
         REQUIRE_FALSE(refused.has_value());
@@ -261,20 +269,22 @@ namespace uf::operator_runtime
             prepared.project,
             "mutating-possible-run"
         );
-        auto effects = std::array{
+        auto effects = std::vector{
             test_support::routineToolEffect(prepared.project),
         };
         auto executor      = ToolRuntimeExecutor{prepared.store};
         auto providerCalls = uint64{};
-        auto possible = executor.invokeMutating(
-            prepared.controller,
-            prepared.lease,
-            firstRoot,
-            firstCall,
-            nullptr,
-            prepared.planAuthority,
-            effects,
-            {},
+        auto possible = executor.invoke(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = firstRoot,
+                .call       = firstCall,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+            },
             [&providerCalls](ToolCallPositionIdentity const&)
                 -> Result<ToolCallCompletion>
             {
@@ -301,15 +311,17 @@ namespace uf::operator_runtime
             "mutating-blocked-run"
         );
         auto blockedProviderCalls = uint64{};
-        auto blocked = executor.invokeMutating(
-            prepared.controller,
-            prepared.lease,
-            secondRoot,
-            secondCall,
-            nullptr,
-            prepared.planAuthority,
-            effects,
-            {},
+        auto blocked = executor.invoke(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = secondRoot,
+                .call       = secondCall,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+            },
             [&blockedProviderCalls](ToolCallPositionIdentity const&)
             {
                 ++blockedProviderCalls;
@@ -329,7 +341,10 @@ namespace uf::operator_runtime
                 .idempotencyNamespace = "controller-1",
                 .clientRequestId      = "old-operation-during-tool-barrier",
             },
-            test_support::toolInvocation(prepared.project, "command-1")
+            test_support::toolInvocation(
+                prepared.project,
+                prepared.project.toolName("command-1")
+            )
         );
         REQUIRE_FALSE(oldOperationBlocked.has_value());
         CHECK(oldOperationBlocked.error().message().contains(
@@ -344,12 +359,13 @@ namespace uf::operator_runtime
             R"({"snapshot_ref":"barrier-snapshot"})"
         );
         REQUIRE(observation.has_value());
-        auto observed = executor.invokeReadOnly(
-            prepared.controller,
-            prepared.lease,
-            observeRoot,
-            observeCall,
-            nullptr,
+        auto observed = executor.invoke(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = observeRoot,
+                .call       = observeCall,
+            },
             [&observation](ToolCallPositionIdentity const&)
             {
                 return ToolCallCompletion::confirmed(*observation);
@@ -366,31 +382,115 @@ namespace uf::operator_runtime
         );
         REQUIRE(reconciledResult.has_value());
         REQUIRE(evidence.has_value());
-        auto reconciliation = ToolCallReconciliation::confirmed(
-            *reconciledResult,
-            *evidence
+
+        // A query that answers about a call which is not uncertain is never
+        // asked: the Coordinator proves the row possible before it interrogates
+        // anything, so a querier cannot choose which call an answer is about.
+        auto settledQueries = uint64{};
+        auto refusedSettled = prepared.store.reconcileMutatingToolCall(
+            prepared.controller,
+            prepared.lease,
+            observeRoot,
+            observeCall,
+            [&settledQueries, &reconciledResult, &evidence](
+                ToolCallPositionIdentity const&
+            )
+            {
+                ++settledQueries;
+                return ToolCallReconciliation::confirmed(
+                    *reconciledResult,
+                    *evidence
+                );
+            }
         );
-        auto reconciled = prepared.store.reconcileMutatingToolCall(
+        REQUIRE_FALSE(refusedSettled.has_value());
+        CHECK(refusedSettled.error().message().contains(
+            "requires a mutating call"
+        ));
+        CHECK(settledQueries == 0U);
+
+        // A query that cannot answer resolves nothing, and the row is left
+        // exactly as uncertain as it was.
+        auto failedQuery = prepared.store.reconcileMutatingToolCall(
             prepared.controller,
             prepared.lease,
             firstRoot,
             firstCall,
-            reconciliation
+            [](ToolCallPositionIdentity const&)
+                -> Result<ToolCallReconciliation>
+            {
+                return fail(
+                    AutomationErrorKind::CaptureUnavailable,
+                    "the reconciliation query could not reach the target"
+                );
+            }
+        );
+        REQUIRE_FALSE(failedQuery.has_value());
+        CHECK(failedQuery.error().message().contains("could not reach"));
+        auto stillPossible = prepared.store.replayToolCall(firstRoot, firstCall);
+        REQUIRE(stillPossible.has_value());
+        CHECK(stillPossible->state == ToolCallState::Possible);
+
+        auto queriedCalls = uint64{};
+        auto reconciled   = prepared.store.reconcileMutatingToolCall(
+            prepared.controller,
+            prepared.lease,
+            firstRoot,
+            firstCall,
+            [&queriedCalls, &reconciledResult, &evidence, &firstCall](
+                ToolCallPositionIdentity const& queried
+            )
+            {
+                ++queriedCalls;
+                CHECK(queried.identity() == firstCall.identity());
+                return ToolCallReconciliation::confirmed(
+                    *reconciledResult,
+                    *evidence
+                );
+            }
         );
         REQUIRE(reconciled.has_value());
         REQUIRE(reconciled->evidence.has_value());
         CHECK(reconciled->state == ToolCallState::Confirmed);
         CHECK(reconciled->evidence->bytes() == evidence->bytes());
+        CHECK(queriedCalls == 1U);
 
-        auto unblocked = executor.invokeMutating(
+        // Reconciliation is the transition out of uncertainty, so a second one
+        // has nothing to leave. It is refused rather than rejoined, and the
+        // query is not asked again.
+        auto repeated = prepared.store.reconcileMutatingToolCall(
             prepared.controller,
             prepared.lease,
-            secondRoot,
-            secondCall,
-            nullptr,
-            prepared.planAuthority,
-            effects,
-            {},
+            firstRoot,
+            firstCall,
+            [&queriedCalls, &reconciledResult, &evidence](
+                ToolCallPositionIdentity const&
+            )
+            {
+                ++queriedCalls;
+                return ToolCallReconciliation::confirmed(
+                    *reconciledResult,
+                    *evidence
+                );
+            }
+        );
+        REQUIRE_FALSE(repeated.has_value());
+        CHECK(repeated.error().message().contains(
+            "Only a possible mutating Tool call may be reconciled"
+        ));
+        CHECK(queriedCalls == 1U);
+
+        auto unblocked = executor.invoke(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = secondRoot,
+                .call       = secondCall,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+            },
             [&blockedProviderCalls](ToolCallPositionIdentity const&)
             {
                 ++blockedProviderCalls;
@@ -416,7 +516,7 @@ namespace uf::operator_runtime
         );
         auto effect        = test_support::routineToolEffect(prepared.project);
         effect.risk        = Risk::High;
-        auto effects       = std::array{effect};
+        auto effects       = std::vector{effect};
         auto executor      = ToolRuntimeExecutor{prepared.store};
         auto providerCalls = uint64{};
         auto approver = test_support::addController(
@@ -439,15 +539,17 @@ namespace uf::operator_runtime
             return ToolCallCompletion::confirmed(*result);
         };
 
-        auto refused = executor.invokeMutating(
-            prepared.controller,
-            prepared.lease,
-            root,
-            call,
-            nullptr,
-            prepared.planAuthority,
-            effects,
-            {},
+        auto refused = executor.invoke(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = root,
+                .call       = call,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+            },
             provider
         );
         REQUIRE_FALSE(refused.has_value());
@@ -471,31 +573,36 @@ namespace uf::operator_runtime
             AuthorityDecisionId{"executor-approval-decision"}
         );
         REQUIRE(approval.has_value());
-        auto approvals = std::array{*approval};
-        auto invoked = executor.invokeMutating(
-            prepared.controller,
-            prepared.lease,
-            root,
-            call,
-            nullptr,
-            prepared.planAuthority,
-            effects,
-            approvals,
+        auto approvals = std::vector{*approval};
+        auto invoked = executor.invoke(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = root,
+                .call       = call,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                    .approvals     = approvals,
+                },
+            },
             provider
         );
         REQUIRE(invoked.has_value());
         CHECK(invoked->state == ToolCallState::Confirmed);
         CHECK(providerCalls == 1U);
 
-        auto replayed = executor.invokeMutating(
-            prepared.controller,
-            prepared.lease,
-            root,
-            call,
-            nullptr,
-            prepared.planAuthority,
-            effects,
-            {},
+        auto replayed = executor.invoke(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = root,
+                .call       = call,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+            },
             provider
         );
         REQUIRE(replayed.has_value());
@@ -513,21 +620,23 @@ namespace uf::operator_runtime
             prepared.project,
             "terminally-unresolved-run"
         );
-        auto effects = std::array{
+        auto effects = std::vector{
             test_support::routineToolEffect(prepared.project),
         };
         auto executor = ToolRuntimeExecutor{prepared.store};
         auto error = CanonicalJson::parseExact(R"({"delivery":"unknown"})");
         REQUIRE(error.has_value());
-        auto possible = executor.invokeMutating(
-            prepared.controller,
-            prepared.lease,
-            firstRoot,
-            firstCall,
-            nullptr,
-            prepared.planAuthority,
-            effects,
-            {},
+        auto possible = executor.invoke(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = firstRoot,
+                .call       = firstCall,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+            },
             [&error](ToolCallPositionIdentity const&)
             {
                 return ToolCallCompletion::terminalFailure(*error);
@@ -552,10 +661,13 @@ namespace uf::operator_runtime
             prepared.lease,
             firstRoot,
             firstCall,
-            ToolCallReconciliation::terminallyUnresolved(
-                *explanation,
-                *evidence
-            )
+            [&explanation, &evidence](ToolCallPositionIdentity const&)
+            {
+                return ToolCallReconciliation::terminallyUnresolved(
+                    *explanation,
+                    *evidence
+                );
+            }
         );
         REQUIRE(unresolved.has_value());
         CHECK(unresolved->state == ToolCallState::TerminallyUnresolved);
@@ -566,15 +678,17 @@ namespace uf::operator_runtime
             prepared.project,
             "blocked-after-terminally-unresolved-run"
         );
-        auto blocked = executor.invokeMutating(
-            prepared.controller,
-            prepared.lease,
-            secondRoot,
-            secondCall,
-            nullptr,
-            prepared.planAuthority,
-            effects,
-            {},
+        auto blocked = executor.invoke(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = secondRoot,
+                .call       = secondCall,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+            },
             [](ToolCallPositionIdentity const&)
             {
                 auto result = CanonicalJson::parseExact(R"({"delivered":true})");
@@ -592,7 +706,7 @@ namespace uf::operator_runtime
         auto prepared  = test_support::prepareStore(temporary.path());
         auto invocation = test_support::toolInvocation(
             prepared.project,
-            "command-1"
+            prepared.project.toolName("command-1")
         );
         auto accepted = prepared.store.submitCommand(
             prepared.controller,
@@ -611,20 +725,22 @@ namespace uf::operator_runtime
             prepared.project,
             "tool-beside-legacy-mutation-run"
         );
-        auto effects = std::array{
+        auto effects = std::vector{
             test_support::routineToolEffect(prepared.project),
         };
         auto providerCalls = uint64{};
         auto executor      = ToolRuntimeExecutor{prepared.store};
-        auto blocked = executor.invokeMutating(
-            prepared.controller,
-            prepared.lease,
-            root,
-            call,
-            nullptr,
-            prepared.planAuthority,
-            effects,
-            {},
+        auto blocked = executor.invoke(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = root,
+                .call       = call,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+            },
             [&providerCalls](ToolCallPositionIdentity const&)
             {
                 ++providerCalls;
@@ -638,5 +754,242 @@ namespace uf::operator_runtime
             "non-terminal mutating Operation"
         ));
         CHECK(providerCalls == 0U);
+    }
+
+    TEST_CASE("a trusted query proving absence resolves and releases the target")
+    {
+        auto temporary = test_support::TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+        auto firstRoot = toolRoot("proven-absent-delivery");
+        auto firstCall = mutatingProjectCall(
+            firstRoot,
+            prepared.project,
+            "proven-absent-delivery-run"
+        );
+        auto effects = std::vector{
+            test_support::routineToolEffect(prepared.project),
+        };
+        auto executor = ToolRuntimeExecutor{prepared.store};
+        auto possible = executor.invoke(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = firstRoot,
+                .call       = firstCall,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+            },
+            [](ToolCallPositionIdentity const&) -> Result<ToolCallCompletion>
+            {
+                return fail(
+                    AutomationErrorKind::IoFailure,
+                    "input transport did not prove delivery"
+                );
+            }
+        );
+        auto const possibleWhy = possible.has_value()
+            ? std::string{}
+            : possible.error().message();
+        REQUIRE_MESSAGE(possible.has_value(), possibleWhy);
+        CHECK(possible->state == ToolCallState::Possible);
+
+        auto explanation = CanonicalJson::parseExact(
+            R"({"reason":"the target never received the input"})"
+        );
+        auto evidence = CanonicalJson::parseExact(
+            R"({"snapshot_ref":"unchanged-target-snapshot"})"
+        );
+        REQUIRE(explanation.has_value());
+        REQUIRE(evidence.has_value());
+        auto resolved = prepared.store.reconcileMutatingToolCall(
+            prepared.controller,
+            prepared.lease,
+            firstRoot,
+            firstCall,
+            [&explanation, &evidence](ToolCallPositionIdentity const&)
+            {
+                return ToolCallReconciliation::provenAbsent(
+                    *explanation,
+                    *evidence
+                );
+            }
+        );
+        auto const resolvedWhy = resolved.has_value()
+            ? std::string{}
+            : resolved.error().message();
+        REQUIRE_MESSAGE(resolved.has_value(), resolvedWhy);
+        CHECK(resolved->state == ToolCallState::ProvenAbsent);
+        REQUIRE(resolved->evidence.has_value());
+        CHECK(resolved->evidence->bytes() == evidence->bytes());
+
+        // Proven absence is a resolution, so the target-wide barrier the
+        // uncertainty raised is gone and a new mutating root is admitted.
+        auto secondRoot = toolRoot("mutation-after-proven-absence");
+        auto secondCall = mutatingProjectCall(
+            secondRoot,
+            prepared.project,
+            "mutation-after-proven-absence-run"
+        );
+        auto delivered = executor.invoke(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = secondRoot,
+                .call       = secondCall,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+            },
+            [](ToolCallPositionIdentity const&)
+            {
+                auto result = CanonicalJson::parseExact(R"({"delivered":true})");
+                REQUIRE(result.has_value());
+                return ToolCallCompletion::confirmed(*result);
+            }
+        );
+        auto const deliveredWhy = delivered.has_value()
+            ? std::string{}
+            : delivered.error().message();
+        REQUIRE_MESSAGE(delivered.has_value(), deliveredWhy);
+        CHECK(delivered->state == ToolCallState::Confirmed);
+    }
+
+    TEST_CASE("a mutating provider may prove absence without ever being uncertain")
+    {
+        auto temporary = test_support::TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+        auto root      = toolRoot("provider-proven-absent");
+        auto call      = mutatingProjectCall(
+            root,
+            prepared.project,
+            "provider-proven-absent-run"
+        );
+        auto effects = std::vector{
+            test_support::routineToolEffect(prepared.project),
+        };
+        auto explanation = CanonicalJson::parseExact(
+            R"({"reason":"the transport refused before the target saw anything"})"
+        );
+        auto evidence = CanonicalJson::parseExact(
+            R"({"transport":"refused-before-send"})"
+        );
+        REQUIRE(explanation.has_value());
+        REQUIRE(evidence.has_value());
+        auto executor = ToolRuntimeExecutor{prepared.store};
+        auto absent   = executor.invoke(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = root,
+                .call       = call,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+            },
+            [&explanation, &evidence](ToolCallPositionIdentity const&)
+            {
+                return ToolCallCompletion::provenAbsent(*explanation, *evidence);
+            }
+        );
+        auto const absentWhy = absent.has_value()
+            ? std::string{}
+            : absent.error().message();
+        REQUIRE_MESSAGE(absent.has_value(), absentWhy);
+        CHECK(absent->state == ToolCallState::ProvenAbsent);
+        REQUIRE(absent->evidence.has_value());
+        CHECK(absent->evidence->bytes() == evidence->bytes());
+
+        // Nothing is frozen: a provider that proved its effect never landed
+        // left no uncertainty behind.
+        auto secondRoot = toolRoot("mutation-after-provider-absence");
+        auto secondCall = mutatingProjectCall(
+            secondRoot,
+            prepared.project,
+            "mutation-after-provider-absence-run"
+        );
+        auto delivered = executor.invoke(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = secondRoot,
+                .call       = secondCall,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+            },
+            [](ToolCallPositionIdentity const&)
+            {
+                auto result = CanonicalJson::parseExact(R"({"delivered":true})");
+                REQUIRE(result.has_value());
+                return ToolCallCompletion::confirmed(*result);
+            }
+        );
+        REQUIRE(delivered.has_value());
+        CHECK(delivered->state == ToolCallState::Confirmed);
+    }
+
+    TEST_CASE("a read-only Tool cannot report a delivery classification")
+    {
+        auto temporary = test_support::TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+        auto explanation = CanonicalJson::parseExact(
+            R"({"reason":"the capture may or may not have happened"})"
+        );
+        auto evidence = CanonicalJson::parseExact(R"({"frame":"unknown"})");
+        REQUIRE(explanation.has_value());
+        REQUIRE(evidence.has_value());
+        auto executor = ToolRuntimeExecutor{prepared.store};
+
+        SUBCASE("possible is refused")
+        {
+            auto root = toolRoot("read-only-possible");
+            auto call = frameworkCall(root, "read-only-possible-run");
+            auto refused = executor.invoke(
+                ToolAdmissionRequest{
+                    .controller = prepared.controller,
+                    .lease      = prepared.lease,
+                    .root       = root,
+                    .call       = call,
+                },
+                [&explanation](ToolCallPositionIdentity const&)
+                {
+                    return ToolCallCompletion::possible(*explanation);
+                }
+            );
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(refused.error().message().contains(
+                "A read-only Tool cannot report possible"
+            ));
+        }
+
+        SUBCASE("proven absence is refused")
+        {
+            auto root = toolRoot("read-only-proven-absent");
+            auto call = frameworkCall(root, "read-only-proven-absent-run");
+            auto refused = executor.invoke(
+                ToolAdmissionRequest{
+                    .controller = prepared.controller,
+                    .lease      = prepared.lease,
+                    .root       = root,
+                    .call       = call,
+                },
+                [&explanation, &evidence](ToolCallPositionIdentity const&)
+                {
+                    return ToolCallCompletion::provenAbsent(
+                        *explanation,
+                        *evidence
+                    );
+                }
+            );
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(refused.error().message().contains(
+                "A read-only Tool cannot report proven_absent"
+            ));
+        }
     }
 }

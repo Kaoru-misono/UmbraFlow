@@ -31,8 +31,20 @@ local function proposal(tool, effects, steps, dispatches)
     }
 end
 
+-- A Tool's namespace is its registration's, so the same three plans belong to
+-- two disjoint sets of names: the expedition answers for `arcana.expedition.*`
+-- and the rival for `arcana.rival.*`. The plans are composed per namespace
+-- rather than written out twice, and each deployment's entry module picks the
+-- set its own plugin_id owns.
+local function plans_for(namespace)
+    return {
+        [namespace .. ".move"] = proposal(namespace .. ".move", ordinary, 8, 8),
+        [namespace .. ".trade"] = proposal(namespace .. ".trade", ordinary, 8, 8),
+        [namespace .. ".approval"] = proposal(namespace .. ".approval", risky, 8, 8),
+    }
+end
+
 return {
-    ["expedition.move"] = proposal("expedition.move", ordinary, 8, 8),
-    ["expedition.trade"] = proposal("expedition.trade", ordinary, 8, 8),
-    ["expedition.approval"] = proposal("expedition.approval", risky, 8, 8),
+    ["arcana.expedition"] = plans_for("arcana.expedition"),
+    ["arcana.rival"] = plans_for("arcana.rival"),
 }

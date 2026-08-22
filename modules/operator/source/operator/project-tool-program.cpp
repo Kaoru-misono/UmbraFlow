@@ -108,8 +108,10 @@ namespace uf::operator_runtime
             // Sorted by name, which is the order @umbraflow/tools requires and
             // refuses by name if it does not get. Uniqueness needs no check
             // here and must not grow one: the Project catalog owner already
-            // refuses a repeated name and refuses the reserved `framework.`
-            // namespace outright, so no pair of these entries can collide.
+            // refuses a repeated name, and every name it admits is inside the
+            // namespace its own plugin_id owns -- which a registration inside
+            // `framework.` is refused from claiming -- so no Project entry can
+            // collide with a Framework one.
             std::ranges::sort(entries, {}, &ToolCatalogEntry::name);
 
             auto rows = std::vector<json::Value>{};
@@ -158,6 +160,7 @@ namespace uf::operator_runtime
         ProjectToolCatalogSchemaOwner catalog;
         ProjectToolBindingTable       bindings;
         script::ScopedToolProgram     program;
+        ToolResultValidator           validateResults;
         ContentHash                   frameworkToolCatalogHash;
         ContentHash                   environmentIdentity;
     };
@@ -219,6 +222,18 @@ namespace uf::operator_runtime
         );
     }
 
+    auto ProjectToolProgramHandle::validateToolResult(
+        std::string_view toolName,
+        std::string_view exactResultJcs
+    ) const -> Status
+    {
+        UF_TRY(m_state->bindings.entryPointFor(toolName));
+        return withContext(
+            m_state->validateResults(toolName, exactResultJcs),
+            "validating the answer of the Project Tool " + std::string{toolName}
+        );
+    }
+
     auto ProjectToolProgramRegistrar::registerProject(
         VerifiedProjectRegistration const& registration,
         ProjectToolCatalogSchemaOwner catalog,
@@ -226,9 +241,16 @@ namespace uf::operator_runtime
         std::vector<ProjectPluginRegistrar::ModuleBlob> exactModules,
         std::vector<ProjectPluginRegistrar::ResourceBlob> exactResources,
         std::span<std::string const> exportedEntryPoints,
+        ToolResultValidator validateResults,
         script::ToolRuntimeInvoke invokeTool
     ) -> Result<ProjectToolProgramHandle>
     {
+        if (!validateResults)
+        {
+            return refuse(
+                "Project Tool program requires a result schema validator"
+            );
+        }
         UF_TRY_VALUE(pureEnvironmentHash, currentProjectPluginEnvironmentHash());
         if (pureEnvironmentHash != registration.pluginEnvironmentHash())
         {
@@ -311,6 +333,7 @@ namespace uf::operator_runtime
                 .catalog                  = std::move(catalog),
                 .bindings                 = std::move(bindings),
                 .program                  = std::move(program),
+                .validateResults          = std::move(validateResults),
                 .frameworkToolCatalogHash = frameworkCatalog.toolCatalogHash(),
                 .environmentIdentity      = environmentIdentity,
             }

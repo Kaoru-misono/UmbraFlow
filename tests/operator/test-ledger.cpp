@@ -7,6 +7,7 @@
 
 #include <operator/ledger.hpp>
 #include <operator/manifest.hpp>
+#include <operator/tool-admission-request.hpp>
 
 #include "project-fixture.hpp"
 #include "tool-call-fixture.hpp"
@@ -28,7 +29,6 @@
 #include <iterator>
 #include <limits>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -1447,7 +1447,11 @@ namespace uf::operator_runtime
             OperatorPlanAuthority const& authority
         ) -> Result<PlannedStep>
         {
-            auto const proposed = proposedOperation(prepared, "request-1", "command-1");
+            auto const proposed = proposedOperation(
+                prepared,
+                "request-1",
+                prepared.project.toolName("command-1")
+            );
             auto const frozen   = prepared.store.freezePlan(
                 proposed.operationId,
                 proposed.revision,
@@ -1872,8 +1876,8 @@ namespace uf::operator_runtime
             project.schemaOwner,
             "{\"canonical_args\":{\"value\":1},\"project_observation\":"
                 + prepared.snapshot.observation.payload().canonicalBytes()
-                + ",\"project_state\":{\"revision\":0},\"tool_name\":\"command-1\","
-                  "\"tool_version\":\"1\"}"
+                + ",\"project_state\":{\"revision\":0},\"tool_name\":"
+                  "\"fixture.alpha.command-1\",\"tool_version\":\"1\"}"
         ));
         REQUIRE(proposal.has_value());
         // The stored final observation, exactly as mintNextStep hands it to the
@@ -1889,7 +1893,7 @@ namespace uf::operator_runtime
 
         auto const claims = deployment::readPlanProposal(*proposal);
         REQUIRE(claims.has_value());
-        CHECK(claims->toolName == "command-1");
+        CHECK(claims->toolName == project.toolName("command-1"));
         CHECK(claims->toolVersion == "1");
         CHECK(claims->canonicalArgs == "{\"value\":1}");
         REQUIRE(claims->allowedUiActions.size() == 1U);
@@ -2477,7 +2481,7 @@ namespace uf::operator_runtime
         auto const operation = test_support::createReadyOperation(
             prepared,
             "request-stale-instance",
-            "command-1"
+            prepared.project.toolName("command-1")
         );
         auto const stale = prepared.store.resolveObservedInstance(
             prepared.lease,
@@ -3366,7 +3370,7 @@ namespace uf::operator_runtime
         auto operation = prepared.store.submitCommand(
             *otherController,
             command(*otherSnapshot, "request-other", "controller-other"),
-            toolInvocation(foreignProject, "command-1")
+            toolInvocation(foreignProject, foreignProject.toolName("command-1"))
         );
         REQUIRE(operation.has_value());
         auto frozen = prepared.store.freezePlan(
@@ -3409,12 +3413,12 @@ namespace uf::operator_runtime
 
         auto catalog = catalogAcceptingAnyArguments(
             prepared,
-            "observe-1",
-            "observe-1"
+            prepared.project.toolName("observe-1"),
+            prepared.project.toolName("observe-1")
         );
         REQUIRE(catalog.has_value());
         auto invocation = catalog->validate(
-            "observe-1",
+            prepared.project.toolName("observe-1"),
             canonical(
                 prepared.project.schemaOwner,
                 "{\"observed_instance_id\":\"" + otherId + "\",\"value\":1}"
@@ -3451,12 +3455,12 @@ namespace uf::operator_runtime
 
         auto catalog = catalogAcceptingAnyArguments(
             prepared,
-            "command-9",
-            "command-1"
+            prepared.project.toolName("command-9"),
+            prepared.project.toolName("command-1")
         );
         REQUIRE(catalog.has_value());
         auto invocation = catalog->validate(
-            "command-9",
+            prepared.project.toolName("command-9"),
             canonical(
                 prepared.project.schemaOwner,
                 "{\"observed_instance_id\":\"" + otherId + "\",\"value\":1}"
@@ -3528,7 +3532,7 @@ namespace uf::operator_runtime
             auto const operation = createReadyOperation(
                 prepared,
                 "request-target-a",
-                "command-1"
+                prepared.project.toolName("command-1")
             );
             auto const reserved = prepared.store.reserveDispatch(
                 operation.operationId,
@@ -3561,7 +3565,7 @@ namespace uf::operator_runtime
             auto const operation = createReadyOperation(
                 prepared,
                 "request-target-b",
-                "command-1"
+                prepared.project.toolName("command-1")
             );
             auto const reserved = prepared.store.reserveDispatch(
                 operation.operationId,
@@ -4064,7 +4068,7 @@ namespace uf::operator_runtime
             operationId = proposedOperation(
                 prepared,
                 "tool-identity-migration-request",
-                "command-1"
+                prepared.project.toolName("command-1")
             ).operationId;
         }
 
@@ -4178,43 +4182,47 @@ namespace uf::operator_runtime
         CHECK(proposed->state == ToolCallState::Proposed);
         CHECK(proposed->revision == 1U);
 
-        auto admission = prepared.store.admitReadOnlyToolCall(
-            prepared.controller,
-            prepared.lease,
-            *root,
-            *call,
-            nullptr
+        auto admission = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *root,
+                .call       = *call,
+            }
         );
         REQUIRE(admission.has_value());
         CHECK(admission->attemptNumber() == 1U);
         CHECK(admission->historyRevision() == 2U);
-        auto repeatedAdmission = prepared.store.admitReadOnlyToolCall(
-            prepared.controller,
-            prepared.lease,
-            *root,
-            *call,
-            nullptr
+        auto repeatedAdmission = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *root,
+                .call       = *call,
+            }
         );
         REQUIRE(repeatedAdmission.has_value());
         CHECK(repeatedAdmission->attemptNumber() == 1U);
         CHECK(repeatedAdmission->historyRevision() == 2U);
-        auto refusedNext = prepared.store.admitReadOnlyToolCall(
-            prepared.controller,
-            prepared.lease,
-            *root,
-            *nextCall,
-            nullptr
+        auto refusedNext = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *root,
+                .call       = *nextCall,
+            }
         );
         REQUIRE_FALSE(refusedNext.has_value());
         CHECK(refusedNext.error().message().contains(
             "no deterministic terminal outcome"
         ));
-        auto refusedChild = prepared.store.admitReadOnlyToolCall(
-            prepared.controller,
-            prepared.lease,
-            *root,
-            *childCall,
-            nullptr
+        auto refusedChild = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *root,
+                .call       = *childCall,
+            }
         );
         REQUIRE_FALSE(refusedChild.has_value());
         CHECK(refusedChild.error().message().contains(
@@ -4248,12 +4256,13 @@ namespace uf::operator_runtime
         CHECK(completed->lookup == ToolOutcomeLookup::Created);
         CHECK(completed->state == ToolCallState::Confirmed);
         CHECK(completed->revision == 4U);
-        auto admittedNext = prepared.store.admitReadOnlyToolCall(
-            prepared.controller,
-            prepared.lease,
-            *root,
-            *nextCall,
-            nullptr
+        auto admittedNext = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *root,
+                .call       = *nextCall,
+            }
         );
         REQUIRE(admittedNext.has_value());
         CHECK(admittedNext->attemptNumber() == 1U);
@@ -4302,7 +4311,13 @@ namespace uf::operator_runtime
         CHECK(replayAfterRestart->payload->bytes() == result->bytes());
     }
 
-    TEST_CASE("restart classifies an unanswered Tool dispatch possible and never redispatches")
+    // A read-only Framework call is a LEAF -- provider code answers it -- but
+    // it declares no effect, so an interrupted dispatch of one delivered
+    // nothing and there is nothing for a restart to be uncertain about. It
+    // survives as dispatching and is re-entered. What the restart does take
+    // away is the capability: the history revision moves, so the token the dead
+    // incarnation still holds answers nothing.
+    TEST_CASE("restart supersedes an unanswered read-only dispatch without declaring it uncertain")
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
@@ -4338,12 +4353,13 @@ namespace uf::operator_runtime
             *invocation
         );
         REQUIRE(call.has_value());
-        auto admission = prepared.store.admitReadOnlyToolCall(
-            prepared.controller,
-            prepared.lease,
-            *root,
-            *call,
-            nullptr
+        auto admission = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *root,
+                .call       = *call,
+            }
         );
         REQUIRE(admission.has_value());
         auto dispatch = prepared.store.beginToolCallDispatch(*admission);
@@ -4366,12 +4382,13 @@ namespace uf::operator_runtime
             *invocation
         );
         REQUIRE(continuationCall.has_value());
-        auto priorAdmission = prepared.store.admitReadOnlyToolCall(
-            prepared.controller,
-            prepared.lease,
-            *continuationRoot,
-            *continuationCall,
-            nullptr
+        auto priorAdmission = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *continuationRoot,
+                .call       = *continuationCall,
+            }
         );
         REQUIRE(priorAdmission.has_value());
         auto manifest = prepared.manifest;
@@ -4385,12 +4402,8 @@ namespace uf::operator_runtime
         REQUIRE(restarted.has_value());
         auto replay = restarted->replayToolCall(*root, *call);
         REQUIRE(replay.has_value());
-        REQUIRE(replay->payload.has_value());
-        CHECK(replay->state == ToolCallState::Possible);
-        CHECK(
-            replay->payload->bytes()
-            == R"({"reason":"operator_restart_after_dispatch_started"})"
-        );
+        CHECK(replay->state == ToolCallState::Dispatching);
+        CHECK_FALSE(replay->payload.has_value());
         CHECK(replay->revision == 4U);
 
         auto lateResult = CanonicalJson::parseExact(R"({"late":true})");
@@ -4417,12 +4430,13 @@ namespace uf::operator_runtime
         REQUIRE(resumed.has_value());
         auto lease = restarted->acquireLease(*resumed);
         REQUIRE(lease.has_value());
-        auto continuedAdmission = restarted->admitReadOnlyToolCall(
-            *resumed,
-            *lease,
-            *continuationRoot,
-            *continuationCall,
-            nullptr
+        auto continuedAdmission = restarted->admitToolCall(
+            ToolAdmissionRequest{
+                .controller = *resumed,
+                .lease      = *lease,
+                .root       = *continuationRoot,
+                .call       = *continuationCall,
+            }
         );
         REQUIRE(continuedAdmission.has_value());
         CHECK(continuedAdmission->attemptNumber() == 2U);
@@ -4446,21 +4460,47 @@ namespace uf::operator_runtime
             *continuedDispatch,
             ToolCallCompletion::confirmed(*continuedResult)
         ).has_value());
-        auto refusedReadmission = restarted->admitReadOnlyToolCall(
-            *resumed,
-            *lease,
-            *root,
-            *call,
-            nullptr
+        auto refusedReadmission = restarted->admitToolCall(
+            ToolAdmissionRequest{
+                .controller = *resumed,
+                .lease      = *lease,
+                .root       = *root,
+                .call       = *call,
+            }
         );
         REQUIRE_FALSE(refusedReadmission.has_value());
         CHECK(refusedReadmission.error().message().contains(
             "cannot enter admission"
         ));
+
+        // Re-admission is refused because re-entry is the door: the new
+        // incarnation continues the dispatch the dead one began, and its answer
+        // is the call's first and only recorded outcome.
+        auto reentered = restarted->reenterToolCallDispatch(
+            *resumed,
+            *lease,
+            *root,
+            *call
+        );
+        REQUIRE_MESSAGE(reentered.has_value(), reentered.error().message());
+        auto observedFrame = CanonicalJson::parseExact(
+            R"({"frame_id":"frame-after-restart"})"
+        );
+        REQUIRE(observedFrame.has_value());
+        auto answered = restarted->completeToolCallDispatch(
+            *reentered,
+            ToolCallCompletion::confirmed(*observedFrame)
+        );
+        REQUIRE_MESSAGE(answered.has_value(), answered.error().message());
+        CHECK(answered->state == ToolCallState::Confirmed);
     }
 
+    // A mutating Project Tool is COMPOSED: a bound handler answers it, and
+    // every effect it has is a child call carrying its own classification. Its
+    // interrupted dispatch is therefore replayable, and the target-wide barrier
+    // it holds is released by re-entry rather than by reconciliation.
     TEST_CASE(
-        "restart makes an unanswered mutating Tool a target-wide barrier until reconciliation"
+        "restart keeps an unanswered mutating handler dispatching and barring its target"
     )
     {
         auto temporary = TemporaryDirectory{};
@@ -4475,8 +4515,11 @@ namespace uf::operator_runtime
             std::move(*preimage)
         );
         REQUIRE(root.has_value());
-        auto invocation = toolInvocation(prepared.project, "command-1");
-        auto effects = std::array{
+        auto invocation = toolInvocation(
+            prepared.project,
+            prepared.project.toolName("command-1")
+        );
+        auto effects = std::vector{
             test_support::routineToolEffect(prepared.project),
         };
         auto const execution = ToolExecutionIdentity{
@@ -4493,15 +4536,17 @@ namespace uf::operator_runtime
             invocation
         );
         REQUIRE(call.has_value());
-        auto admission = prepared.store.admitMutatingToolCall(
-            prepared.controller,
-            prepared.lease,
-            *root,
-            *call,
-            prepared.planAuthority,
-            effects,
-            {},
-            nullptr
+        auto admission = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *root,
+                .call       = *call,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+            }
         );
         REQUIRE(admission.has_value());
         auto dispatch = prepared.store.beginToolCallDispatch(*admission);
@@ -4517,7 +4562,8 @@ namespace uf::operator_runtime
         REQUIRE(restarted.has_value());
         auto replay = restarted->replayToolCall(*root, *call);
         REQUIRE(replay.has_value());
-        CHECK(replay->state == ToolCallState::Possible);
+        CHECK(replay->state == ToolCallState::Dispatching);
+        CHECK_FALSE(replay->payload.has_value());
 
         auto resumed = restarted->resumeSession(
             SessionResume{
@@ -4550,44 +4596,79 @@ namespace uf::operator_runtime
             invocation
         );
         REQUIRE(secondCall.has_value());
-        auto blocked = restarted->admitMutatingToolCall(
-            *resumed,
-            *lease,
-            *secondRoot,
-            *secondCall,
-            prepared.planAuthority,
-            effects,
-            {},
-            nullptr
+        auto blocked = restarted->admitToolCall(
+            ToolAdmissionRequest{
+                .controller = *resumed,
+                .lease      = *lease,
+                .root       = *secondRoot,
+                .call       = *secondCall,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+            }
         );
         REQUIRE_FALSE(blocked.has_value());
-        CHECK(blocked.error().message().contains("state possible"));
+        CHECK(blocked.error().message().contains("state dispatching"));
 
-        auto result = CanonicalJson::parseExact(R"({"delivered":true})");
+        // Nothing may reconcile it, because nothing about it is uncertain: it
+        // is a dispatch waiting to be continued, not a delivery nobody can
+        // classify.
+        auto explanation = CanonicalJson::parseExact(
+            R"({"reason":"a query has no business here"})"
+        );
         auto evidence = CanonicalJson::parseExact(
             R"({"snapshot_ref":"post-restart-evidence"})"
         );
-        REQUIRE(result.has_value());
+        REQUIRE(explanation.has_value());
         REQUIRE(evidence.has_value());
-        auto reconciled = restarted->reconcileMutatingToolCall(
+        auto queried  = uint32{0};
+        auto refused = restarted->reconcileMutatingToolCall(
             *resumed,
             *lease,
             *root,
             *call,
-            ToolCallReconciliation::confirmed(*result, *evidence)
+            [&queried, &explanation, &evidence](ToolCallPositionIdentity const&)
+            {
+                ++queried;
+                return ToolCallReconciliation::confirmed(*explanation, *evidence);
+            }
         );
-        REQUIRE(reconciled.has_value());
-        CHECK(reconciled->state == ToolCallState::Confirmed);
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(refused.error().message().contains(
+            "Only a possible mutating Tool call may be reconciled"
+        ));
+        CHECK(queried == 0U);
 
-        auto unblocked = restarted->admitMutatingToolCall(
+        // Re-entry is the door, and the terminal row it writes releases the
+        // barrier.
+        auto reentered = restarted->reenterToolCallDispatch(
             *resumed,
             *lease,
-            *secondRoot,
-            *secondCall,
-            prepared.planAuthority,
-            effects,
-            {},
-            nullptr
+            *root,
+            *call
+        );
+        REQUIRE_MESSAGE(reentered.has_value(), reentered.error().message());
+        auto result = CanonicalJson::parseExact(R"({"delivered":true})");
+        REQUIRE(result.has_value());
+        auto answered = restarted->completeToolCallDispatch(
+            *reentered,
+            ToolCallCompletion::confirmed(*result)
+        );
+        REQUIRE_MESSAGE(answered.has_value(), answered.error().message());
+        CHECK(answered->state == ToolCallState::Confirmed);
+
+        auto unblocked = restarted->admitToolCall(
+            ToolAdmissionRequest{
+                .controller = *resumed,
+                .lease      = *lease,
+                .root       = *secondRoot,
+                .call       = *secondCall,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+            }
         );
         REQUIRE(unblocked.has_value());
     }
@@ -4668,12 +4749,13 @@ namespace uf::operator_runtime
         auto before = prepared.store.remainingBudget(agent);
         REQUIRE(before.has_value());
         CHECK(before->toolCalls == 1U);
-        auto admission = prepared.store.admitReadOnlyToolCall(
-            agent,
-            *lease,
-            *root,
-            *first,
-            nullptr
+        auto admission = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = agent,
+                .lease      = *lease,
+                .root       = *root,
+                .call       = *first,
+            }
         );
         REQUIRE(admission.has_value());
         auto after = prepared.store.remainingBudget(agent);
@@ -4682,12 +4764,13 @@ namespace uf::operator_runtime
         CHECK(after->observations == 0U);
         CHECK(after->mutations == 1U);
 
-        auto repeated = prepared.store.admitReadOnlyToolCall(
-            agent,
-            *lease,
-            *root,
-            *first,
-            nullptr
+        auto repeated = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = agent,
+                .lease      = *lease,
+                .root       = *root,
+                .call       = *first,
+            }
         );
         REQUIRE(repeated.has_value());
         CHECK(repeated->attemptNumber() == admission->attemptNumber());
@@ -4703,12 +4786,13 @@ namespace uf::operator_runtime
 
         auto replacementLease = prepared.store.acquireLease(agent);
         REQUIRE(replacementLease.has_value());
-        auto exhausted = prepared.store.admitReadOnlyToolCall(
-            agent,
-            *replacementLease,
-            *secondRoot,
-            *second,
-            nullptr
+        auto exhausted = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = agent,
+                .lease      = *replacementLease,
+                .root       = *secondRoot,
+                .call       = *second,
+            }
         );
         REQUIRE_FALSE(exhausted.has_value());
         CHECK(exhausted.error().message().contains(
@@ -4719,7 +4803,13 @@ namespace uf::operator_runtime
         CHECK(secondReplay->state == ToolCallState::Proposed);
     }
 
-    TEST_CASE("read-only Tool admission refuses a mutating Project descriptor")
+    // The descriptor inside the coordinate is the only statement of whether a
+    // Tool mutates, so a request cannot disagree with it -- it can only fail to
+    // carry what that answer requires. Both directions are refused: admitting a
+    // mutating Tool with no mutation proposal would evaluate no policy at all,
+    // and a read-only Tool carrying one would evaluate policy over effects no
+    // catalog entry declares.
+    TEST_CASE("Tool admission requires the mutation the descriptor implies")
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
@@ -4731,7 +4821,10 @@ namespace uf::operator_runtime
             std::move(*preimage)
         );
         REQUIRE(root.has_value());
-        auto invocation = toolInvocation(prepared.project, "command-1");
+        auto invocation = toolInvocation(
+            prepared.project,
+            prepared.project.toolName("command-1")
+        );
         REQUIRE(invocation.descriptor().mutability == ToolMutability::Mutating);
         auto call = toolCallAt(
             *root,
@@ -4746,15 +4839,56 @@ namespace uf::operator_runtime
             invocation
         );
         REQUIRE(call.has_value());
-        auto refused = prepared.store.admitReadOnlyToolCall(
-            prepared.controller,
-            prepared.lease,
-            *root,
-            *call,
-            nullptr
+        auto refusedBare = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *root,
+                .call       = *call,
+            }
         );
-        REQUIRE_FALSE(refused.has_value());
-        CHECK(refused.error().message().contains("mutating descriptor"));
+        REQUIRE_FALSE(refusedBare.has_value());
+        CHECK(refusedBare.error().message().contains(
+            "requires a mutation proposal"
+        ));
+
+        auto catalog   = FrameworkToolCatalogOwner::create();
+        auto arguments = CanonicalJson::parseExact("{}");
+        REQUIRE(catalog.has_value());
+        REQUIRE(arguments.has_value());
+        auto observe = catalog->validate(
+            "framework.screen.observe",
+            std::move(*arguments)
+        );
+        REQUIRE(observe.has_value());
+        REQUIRE(observe->descriptor().mutability == ToolMutability::ReadOnly);
+        auto readOnlyCall = toolCallAt(
+            *root,
+            nullptr,
+            2U,
+            call->executionIdentity(),
+            *observe
+        );
+        REQUIRE(readOnlyCall.has_value());
+        auto const effects = std::vector{
+            test_support::routineToolEffect(prepared.project),
+        };
+        auto refusedProposal = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *root,
+                .call       = *readOnlyCall,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+            }
+        );
+        REQUIRE_FALSE(refusedProposal.has_value());
+        CHECK(refusedProposal.error().message().contains(
+            "cannot carry a mutation proposal"
+        ));
     }
 
     TEST_CASE("mutating Tool admission charges Agent tool and mutation budgets once")
@@ -4778,8 +4912,11 @@ namespace uf::operator_runtime
         );
         auto lease = prepared.store.acquireLease(agent);
         REQUIRE(lease.has_value());
-        auto invocation = toolInvocation(prepared.project, "command-1");
-        auto effects = std::array{
+        auto invocation = toolInvocation(
+            prepared.project,
+            prepared.project.toolName("command-1")
+        );
+        auto effects = std::vector{
             test_support::routineToolEffect(prepared.project),
         };
         auto const execution = ToolExecutionIdentity{
@@ -4806,15 +4943,17 @@ namespace uf::operator_runtime
             invocation
         );
         REQUIRE(firstCall.has_value());
-        auto admitted = prepared.store.admitMutatingToolCall(
-            agent,
-            *lease,
-            *firstRoot,
-            *firstCall,
-            prepared.planAuthority,
-            effects,
-            {},
-            nullptr
+        auto admitted = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = agent,
+                .lease      = *lease,
+                .root       = *firstRoot,
+                .call       = *firstCall,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+            }
         );
         REQUIRE(admitted.has_value());
         auto afterFirst = prepared.store.remainingBudget(agent);
@@ -4823,15 +4962,17 @@ namespace uf::operator_runtime
         CHECK(afterFirst->mutations == 0U);
         CHECK(afterFirst->observations == 2U);
 
-        auto repeated = prepared.store.admitMutatingToolCall(
-            agent,
-            *lease,
-            *firstRoot,
-            *firstCall,
-            prepared.planAuthority,
-            effects,
-            {},
-            nullptr
+        auto repeated = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = agent,
+                .lease      = *lease,
+                .root       = *firstRoot,
+                .call       = *firstCall,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+            }
         );
         REQUIRE(repeated.has_value());
         CHECK(repeated->attemptNumber() == admitted->attemptNumber());
@@ -4879,15 +5020,17 @@ namespace uf::operator_runtime
             invocation
         );
         REQUIRE(secondCall.has_value());
-        auto exhausted = prepared.store.admitMutatingToolCall(
-            agent,
-            *lease,
-            *secondRoot,
-            *secondCall,
-            prepared.planAuthority,
-            effects,
-            {},
-            nullptr
+        auto exhausted = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = agent,
+                .lease      = *lease,
+                .root       = *secondRoot,
+                .call       = *secondCall,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+            }
         );
         REQUIRE_FALSE(exhausted.has_value());
         CHECK(exhausted.error().message().contains(
@@ -4913,7 +5056,10 @@ namespace uf::operator_runtime
             std::move(*preimage)
         );
         REQUIRE(root.has_value());
-        auto invocation = toolInvocation(prepared.project, "command-1");
+        auto invocation = toolInvocation(
+            prepared.project,
+            prepared.project.toolName("command-1")
+        );
         auto call = toolCallAt(
             *root,
             nullptr,
@@ -4927,36 +5073,40 @@ namespace uf::operator_runtime
             invocation
         );
         REQUIRE(call.has_value());
-        auto effects = std::array{
+        auto effects = std::vector{
             test_support::routineToolEffect(prepared.project),
         };
         auto expected = deriveEffectiveEffectEnvelope(
             std::vector<ProposedEffect>{effects.begin(), effects.end()}
         );
         REQUIRE(expected.has_value());
-        auto admitted = prepared.store.admitMutatingToolCall(
-            prepared.controller,
-            prepared.lease,
-            *root,
-            *call,
-            prepared.planAuthority,
-            effects,
-            {},
-            nullptr
+        auto admitted = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *root,
+                .call       = *call,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+            }
         );
         REQUIRE(admitted.has_value());
 
         auto changedEffects = effects;
         changedEffects.front().scopeKey = "another-fixture-instance";
-        auto changed = prepared.store.admitMutatingToolCall(
-            prepared.controller,
-            prepared.lease,
-            *root,
-            *call,
-            prepared.planAuthority,
-            changedEffects,
-            {},
-            nullptr
+        auto changed = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *root,
+                .call       = *call,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = changedEffects,
+                },
+            }
         );
         REQUIRE_FALSE(changed.has_value());
         CHECK(changed.error().message().contains("durable effect authority"));
@@ -4994,7 +5144,10 @@ namespace uf::operator_runtime
             std::move(*preimage)
         );
         REQUIRE(root.has_value());
-        auto invocation = toolInvocation(prepared.project, "command-1");
+        auto invocation = toolInvocation(
+            prepared.project,
+            prepared.project.toolName("command-1")
+        );
         auto call = toolCallAt(
             *root,
             nullptr,
@@ -5010,7 +5163,7 @@ namespace uf::operator_runtime
         REQUIRE(call.has_value());
         auto effect  = test_support::routineToolEffect(prepared.project);
         effect.risk  = Risk::High;
-        auto effects = std::array{effect};
+        auto effects = std::vector{effect};
         auto approver = test_support::addController(
             prepared,
             ControllerKind::Human,
@@ -5022,15 +5175,17 @@ namespace uf::operator_runtime
             "human-approver",
             {"approve"}
         );
-        auto refused = prepared.store.admitMutatingToolCall(
-            prepared.controller,
-            prepared.lease,
-            *root,
-            *call,
-            prepared.planAuthority,
-            effects,
-            {},
-            nullptr
+        auto refused = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *root,
+                .call       = *call,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                },
+            }
         );
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().message().contains("requires approval"));
@@ -5133,48 +5288,57 @@ namespace uf::operator_runtime
             ? std::string{}
             : approval.error().message();
         REQUIRE_MESSAGE(approval.has_value(), approvalWhy);
-        auto forged = std::array{
+        auto forged = std::vector{
             ToolApprovalGrant{
                 .token = approval->token,
                 .authorityDecisionId = AuthorityDecisionId{"another-decision"},
             },
         };
-        auto mismatched = prepared.store.admitMutatingToolCall(
-            prepared.controller,
-            prepared.lease,
-            *root,
-            *call,
-            prepared.planAuthority,
-            effects,
-            forged,
-            nullptr
+        auto mismatched = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *root,
+                .call       = *call,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                    .approvals     = forged,
+                },
+            }
         );
         REQUIRE_FALSE(mismatched.has_value());
         CHECK(mismatched.error().message().contains(
             "stale, expired, mismatched, or already consumed"
         ));
 
-        auto approvals = std::array{*approval};
-        auto admitted = prepared.store.admitMutatingToolCall(
-            prepared.controller,
-            prepared.lease,
-            *root,
-            *call,
-            prepared.planAuthority,
-            effects,
-            approvals,
-            nullptr
+        auto approvals = std::vector{*approval};
+        auto admitted = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *root,
+                .call       = *call,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                    .approvals     = approvals,
+                },
+            }
         );
         REQUIRE(admitted.has_value());
-        auto repeated = prepared.store.admitMutatingToolCall(
-            prepared.controller,
-            prepared.lease,
-            *root,
-            *call,
-            prepared.planAuthority,
-            effects,
-            approvals,
-            nullptr
+        auto repeated = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *root,
+                .call       = *call,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                    .approvals     = approvals,
+                },
+            }
         );
         REQUIRE(repeated.has_value());
         CHECK(repeated->attemptNumber() == admitted->attemptNumber());
@@ -5205,15 +5369,18 @@ namespace uf::operator_runtime
             invocation
         );
         REQUIRE(secondCall.has_value());
-        auto reused = prepared.store.admitMutatingToolCall(
-            prepared.controller,
-            prepared.lease,
-            *secondRoot,
-            *secondCall,
-            prepared.planAuthority,
-            effects,
-            approvals,
-            nullptr
+        auto reused = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *secondRoot,
+                .call       = *secondCall,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                    .approvals     = approvals,
+                },
+            }
         );
         REQUIRE_FALSE(reused.has_value());
         CHECK(reused.error().message().contains(
@@ -5240,16 +5407,19 @@ namespace uf::operator_runtime
         REQUIRE(prepared.store.releaseLease(prepared.lease).has_value());
         auto replacementLease = prepared.store.acquireLease(prepared.controller);
         REQUIRE(replacementLease.has_value());
-        auto leaseBoundApprovals = std::array{*leaseBoundApproval};
-        auto staleLeaseApproval = prepared.store.admitMutatingToolCall(
-            prepared.controller,
-            *replacementLease,
-            *secondRoot,
-            *secondCall,
-            prepared.planAuthority,
-            effects,
-            leaseBoundApprovals,
-            nullptr
+        auto leaseBoundApprovals = std::vector{*leaseBoundApproval};
+        auto staleLeaseApproval = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = *replacementLease,
+                .root       = *secondRoot,
+                .call       = *secondCall,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                    .approvals     = leaseBoundApprovals,
+                },
+            }
         );
         REQUIRE_FALSE(staleLeaseApproval.has_value());
         CHECK(staleLeaseApproval.error().message().contains(
@@ -5299,12 +5469,13 @@ namespace uf::operator_runtime
                 *invocation
             );
             REQUIRE(call.has_value());
-            auto admitted = prepared.store.admitReadOnlyToolCall(
-                prepared.controller,
-                prepared.lease,
-                *root,
-                *call,
-                nullptr
+            auto admitted = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = prepared.controller,
+                    .lease      = prepared.lease,
+                    .root       = *root,
+                    .call       = *call,
+                }
             );
             REQUIRE(admitted.has_value());
         }
@@ -5373,7 +5544,10 @@ namespace uf::operator_runtime
             std::move(*preimage)
         );
         REQUIRE(root.has_value());
-        auto invocation = toolInvocation(prepared.project, "command-1");
+        auto invocation = toolInvocation(
+            prepared.project,
+            prepared.project.toolName("command-1")
+        );
         auto call = toolCallAt(
             *root,
             nullptr,
@@ -5389,7 +5563,7 @@ namespace uf::operator_runtime
         REQUIRE(call.has_value());
         auto effect  = test_support::routineToolEffect(prepared.project);
         effect.risk  = Risk::High;
-        auto effects = std::array{effect};
+        auto effects = std::vector{effect};
         auto approver = test_support::addController(
             prepared,
             ControllerKind::Human,
@@ -5421,16 +5595,19 @@ namespace uf::operator_runtime
             AuthorityDecisionId{"expiry-decision"}
         );
         REQUIRE(approval.has_value());
-        auto approvals = std::array{*approval};
-        auto admitted = prepared.store.admitMutatingToolCall(
-            prepared.controller,
-            prepared.lease,
-            *root,
-            *call,
-            prepared.planAuthority,
-            effects,
-            approvals,
-            nullptr
+        auto approvals = std::vector{*approval};
+        auto admitted = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *root,
+                .call       = *call,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = prepared.planAuthority,
+                    .effects       = effects,
+                    .approvals     = approvals,
+                },
+            }
         );
         REQUIRE(admitted.has_value());
 
@@ -5461,7 +5638,10 @@ namespace uf::operator_runtime
                 std::move(*preimage)
             );
             REQUIRE(root.has_value());
-            auto invocation = toolInvocation(prepared.project, "command-1");
+            auto invocation = toolInvocation(
+                prepared.project,
+                prepared.project.toolName("command-1")
+            );
             auto call = toolCallAt(
                 *root,
                 nullptr,
@@ -5478,18 +5658,20 @@ namespace uf::operator_runtime
                 invocation
             );
             REQUIRE(call.has_value());
-            auto effects = std::array{
+            auto effects = std::vector{
                 test_support::routineToolEffect(prepared.project),
             };
-            auto admitted = prepared.store.admitMutatingToolCall(
-                prepared.controller,
-                prepared.lease,
-                *root,
-                *call,
-                prepared.planAuthority,
-                effects,
-                {},
-                nullptr
+            auto admitted = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = prepared.controller,
+                    .lease      = prepared.lease,
+                    .root       = *root,
+                    .call       = *call,
+                    .mutation   = ToolAdmissionRequest::Mutation{
+                        .planAuthority = prepared.planAuthority,
+                        .effects       = effects,
+                    },
+                }
             );
             REQUIRE(admitted.has_value());
         }
@@ -5581,7 +5763,10 @@ namespace uf::operator_runtime
                 std::move(*preimage)
             );
             REQUIRE(root.has_value());
-            auto invocation = toolInvocation(prepared.project, "command-1");
+            auto invocation = toolInvocation(
+                prepared.project,
+                prepared.project.toolName("command-1")
+            );
             auto call = toolCallAt(
                 *root,
                 nullptr,
@@ -5598,18 +5783,20 @@ namespace uf::operator_runtime
                 invocation
             );
             REQUIRE(call.has_value());
-            auto effects = std::array{
+            auto effects = std::vector{
                 test_support::routineToolEffect(prepared.project),
             };
-            auto admitted = prepared.store.admitMutatingToolCall(
-                prepared.controller,
-                prepared.lease,
-                *root,
-                *call,
-                prepared.planAuthority,
-                effects,
-                {},
-                nullptr
+            auto admitted = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = prepared.controller,
+                    .lease      = prepared.lease,
+                    .root       = *root,
+                    .call       = *call,
+                    .mutation   = ToolAdmissionRequest::Mutation{
+                        .planAuthority = prepared.planAuthority,
+                        .effects       = effects,
+                    },
+                }
             );
             REQUIRE(admitted.has_value());
         }
@@ -5895,7 +6082,7 @@ namespace uf::operator_runtime
         auto const operation = createReadyOperation(
             prepared,
             "request-format-2-recovery",
-            "command-1"
+            prepared.project.toolName("command-1")
         );
         auto host = deliveringHost(prepared);
         auto const reserved = prepared.store.reserveDispatch(
@@ -6437,7 +6624,7 @@ namespace uf::operator_runtime
             auto const operation = proposedOperation(
                 prepared,
                 "migration-request",
-                "command-1"
+                prepared.project.toolName("command-1")
             );
             operationId         = operation.operationId;
             artifactRootHash    = prepared.runtimeArtifactRootHash;
@@ -6556,7 +6743,7 @@ namespace uf::operator_runtime
             {
                 operationId,
                 "migration-request",
-                "command-1",
+                "fixture.alpha.command-1",
                 "proposed",
             },
         };
@@ -6630,7 +6817,7 @@ namespace uf::operator_runtime
         auto const operation = proposedOperation(
             prepared,
             "upgrade-mutation",
-            "command-1"
+            prepared.project.toolName("command-1")
         );
         auto const pin = additionalSessionPin(
             prepared,
@@ -6693,7 +6880,7 @@ namespace uf::operator_runtime
         auto const operation = createReadyOperation(
             prepared,
             "upgrade-dispatch",
-            "command-1"
+            prepared.project.toolName("command-1")
         );
         auto host           = deliveringHost(prepared);
         auto const dispatch = prepared.store.reserveDispatch(
@@ -7582,7 +7769,7 @@ namespace uf::operator_runtime
         auto first = prepared.store.submitCommand(
             prepared.controller,
             request,
-            toolInvocation(prepared.project, "command-1")
+            toolInvocation(prepared.project, prepared.project.toolName("command-1"))
         );
         REQUIRE(first.has_value());
         CHECK(first->operation.lookup == CommandLookup::Created);
@@ -7590,7 +7777,7 @@ namespace uf::operator_runtime
         auto const repeated = prepared.store.submitCommand(
             prepared.controller,
             request,
-            toolInvocation(prepared.project, "command-1")
+            toolInvocation(prepared.project, prepared.project.toolName("command-1"))
         );
         REQUIRE(repeated.has_value());
         CHECK(repeated->operation.lookup == CommandLookup::Existing);
@@ -7605,12 +7792,12 @@ namespace uf::operator_runtime
         CHECK_FALSE(prepared.store.submitCommand(
             prepared.controller,
             request,
-            toolInvocation(prepared.project, "different-command")
+            toolInvocation(prepared.project, prepared.project.toolName("different-command"))
         ).has_value());
         CHECK_FALSE(prepared.store.submitCommand(
             prepared.controller,
             command(prepared.snapshot, "request-2", "controller-1"),
-            toolInvocation(prepared.project, "command-2")
+            toolInvocation(prepared.project, prepared.project.toolName("command-2"))
         ).has_value());
 
         // A read-only tool takes no mutation chain, so it is admitted while the
@@ -7618,7 +7805,7 @@ namespace uf::operator_runtime
         CHECK(prepared.store.submitCommand(
             prepared.controller,
             command(prepared.snapshot, "request-3", "controller-1"),
-            toolInvocation(prepared.project, "observe-1")
+            toolInvocation(prepared.project, prepared.project.toolName("observe-1"))
         ).has_value());
 
         auto const cancelled = prepared.store.transitionOperation(
@@ -7631,7 +7818,7 @@ namespace uf::operator_runtime
         CHECK(prepared.store.submitCommand(
             prepared.controller,
             command(prepared.snapshot, "request-2", "controller-1"),
-            toolInvocation(prepared.project, "command-2")
+            toolInvocation(prepared.project, prepared.project.toolName("command-2"))
         ).has_value());
     }
 
@@ -7639,7 +7826,11 @@ namespace uf::operator_runtime
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
-        auto const proposed = proposedOperation(prepared, "request-1", "command-1");
+        auto const proposed = proposedOperation(
+            prepared,
+            "request-1",
+            prepared.project.toolName("command-1")
+        );
         auto const frozen   = freezePlanFor(prepared, proposed);
         REQUIRE(frozen.has_value());
         auto const step = mintStepFor(prepared, frozen->operation);
@@ -7749,7 +7940,7 @@ namespace uf::operator_runtime
         auto const operation = createReadyOperation(
             prepared,
             "request-1",
-            "command-1"
+            prepared.project.toolName("command-1")
         );
         auto host           = deliveringHost(prepared);
         auto const reserved = prepared.store.reserveDispatch(
@@ -7793,7 +7984,7 @@ namespace uf::operator_runtime
             auto const operation = createReadyOperation(
                 prepared,
                 "request-timeout",
-                "command-1"
+                prepared.project.toolName("command-1")
             );
             operationId = operation.operationId;
             auto host   = deliveringHost(prepared);
@@ -7889,7 +8080,7 @@ namespace uf::operator_runtime
             auto const operation = createReadyOperation(
                 prepared,
                 "request-crash",
-                "command-1"
+                prepared.project.toolName("command-1")
             );
             auto host           = deliveringHost(prepared);
             auto const reserved = prepared.store.reserveDispatch(
@@ -7976,7 +8167,7 @@ namespace uf::operator_runtime
             auto const operation = createReadyOperation(
                 prepared,
                 "request-1",
-                "command-1"
+                prepared.project.toolName("command-1")
             );
             auto host           = deliveringHost(prepared);
             auto const reserved = prepared.store.reserveDispatch(
@@ -8164,7 +8355,7 @@ namespace uf::operator_runtime
             auto const operation = createReadyOperation(
                 prepared,
                 "request-restart-action",
-                "command-1"
+                prepared.project.toolName("command-1")
             );
             auto host = deliveringHost(prepared);
             auto const reserved = prepared.store.reserveDispatch(
@@ -8364,7 +8555,7 @@ namespace uf::operator_runtime
             auto const operation = createReadyOperation(
                 prepared,
                 "request-1",
-                "command-1"
+                prepared.project.toolName("command-1")
             );
             auto host           = deliveringHost(prepared);
             auto const dispatch = prepared.store.reserveDispatch(
@@ -8495,7 +8686,11 @@ namespace uf::operator_runtime
                "\"prior_project_state\":null}"
         );
 
-        auto const operation = reconcilingOperation(prepared, "request-1", "command-1");
+        auto const operation = reconcilingOperation(
+            prepared,
+            "request-1",
+            prepared.project.toolName("command-1")
+        );
         REQUIRE(prepared.store.commitReconciliation(
             prepared.plugin,
             confirmedCommit(prepared, operation, 0U, "event-1", "{\"value\":1}")
@@ -8520,7 +8715,7 @@ namespace uf::operator_runtime
         auto const operation = reconcilingOperation(
             prepared,
             "request-1",
-            "command-1"
+            prepared.project.toolName("command-1")
         );
         REQUIRE(prepared.store.commitReconciliation(
             prepared.plugin,
@@ -8537,7 +8732,7 @@ namespace uf::operator_runtime
             prepared.store.submitCommand(
                 prepared.controller,
                 command(prepared.snapshot, "request-stale-snapshot", "controller-1"),
-                toolInvocation(prepared.project, "command-2")
+                toolInvocation(prepared.project, prepared.project.toolName("command-2"))
             ).has_value(),
             "both project-state clauses together must reject the stale snapshot"
         );
@@ -8547,7 +8742,11 @@ namespace uf::operator_runtime
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path(), rejectedReducePluginSource());
-        auto const operation = reconcilingOperation(prepared, "request-1", "command-1");
+        auto const operation = reconcilingOperation(
+            prepared,
+            "request-1",
+            prepared.project.toolName("command-1")
+        );
 
         // The reducer runs inside the transaction, so this fails after the
         // Journal insert would already have been prepared.
@@ -8573,7 +8772,11 @@ namespace uf::operator_runtime
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
-        auto const operation = reconcilingOperation(prepared, "request-1", "command-1");
+        auto const operation = reconcilingOperation(
+            prepared,
+            "request-1",
+            prepared.project.toolName("command-1")
+        );
 
         for (auto const document : {
                  std::string_view{"{\"disposition\":\"rejected\"}"},
@@ -8610,7 +8813,11 @@ namespace uf::operator_runtime
 
         // The awaiting state is reached by freezing a plan whose derived risk
         // requires an approval; no caller can ask for it.
-        auto const proposed = proposedOperation(prepared, "request-1", "approval-plan");
+        auto const proposed = proposedOperation(
+            prepared,
+            "request-1",
+            prepared.project.toolName("approval-plan")
+        );
         auto const frozen   = freezePlanFor(prepared, proposed);
         REQUIRE(frozen.has_value());
         REQUIRE_FALSE(frozen->requiredApprovals.empty());
@@ -8701,7 +8908,11 @@ namespace uf::operator_runtime
         );
         REQUIRE(foreignAuthority.has_value());
 
-        auto const proposed = proposedOperation(prepared, "request-1", "command-1");
+        auto const proposed = proposedOperation(
+            prepared,
+            "request-1",
+            prepared.project.toolName("command-1")
+        );
         CHECK_FALSE(prepared.store.freezePlan(
             proposed.operationId,
             proposed.revision,
@@ -8857,11 +9068,16 @@ namespace uf::operator_runtime
         // beside it, so the case reads the catalog rather than a constant: a
         // catalog that raised the tool's ceiling would raise this expectation
         // with it, which is what makes tool_catalog_hash the single authority.
-        auto const declared =
-            prepared.project.toolCatalogSchemaOwner.describe("oversized-plan");
+        auto const declared = prepared.project.toolCatalogSchemaOwner.describe(
+            prepared.project.toolName("oversized-plan")
+        );
         REQUIRE(declared.has_value());
 
-        auto const proposed = proposedOperation(prepared, "request-1", "oversized-plan");
+        auto const proposed = proposedOperation(
+            prepared,
+            "request-1",
+            prepared.project.toolName("oversized-plan")
+        );
         auto const frozen   = freezePlanFor(prepared, proposed);
         REQUIRE(frozen.has_value());
 
@@ -8883,7 +9099,11 @@ namespace uf::operator_runtime
         // The plugin answers next_step with the identical document every time,
         // so the two steps differ in nothing except the position they were
         // minted at.
-        auto const proposed = proposedOperation(prepared, "request-1", "command-1");
+        auto const proposed = proposedOperation(
+            prepared,
+            "request-1",
+            prepared.project.toolName("command-1")
+        );
         auto const frozen   = freezePlanFor(prepared, proposed);
         REQUIRE(frozen.has_value());
         auto const first = mintStepFor(prepared, frozen->operation);
@@ -8918,7 +9138,11 @@ namespace uf::operator_runtime
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
 
-        auto const proposed = proposedOperation(prepared, "request-1", "command-1");
+        auto const proposed = proposedOperation(
+            prepared,
+            "request-1",
+            prepared.project.toolName("command-1")
+        );
         auto const frozen   = freezePlanFor(prepared, proposed);
         REQUIRE(frozen.has_value());
         auto const first = mintStepFor(prepared, frozen->operation);
@@ -8934,7 +9158,11 @@ namespace uf::operator_runtime
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
 
-        auto const proposed = proposedOperation(prepared, "request-1", "command-1");
+        auto const proposed = proposedOperation(
+            prepared,
+            "request-1",
+            prepared.project.toolName("command-1")
+        );
         auto const frozen   = freezePlanFor(prepared, proposed);
         REQUIRE(frozen.has_value());
         CHECK_FALSE(freezePlanFor(prepared, frozen->operation).has_value());
@@ -8961,7 +9189,11 @@ namespace uf::operator_runtime
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
 
-        auto const readOnly = proposedOperation(prepared, "request-1", "observe-1");
+        auto const readOnly = proposedOperation(
+            prepared,
+            "request-1",
+            prepared.project.toolName("observe-1")
+        );
         CHECK_FALSE(freezePlanFor(prepared, readOnly).has_value());
     }
 
@@ -8970,7 +9202,11 @@ namespace uf::operator_runtime
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
 
-        auto const first = proposedOperation(prepared, "request-1", "command-1");
+        auto const first = proposedOperation(
+            prepared,
+            "request-1",
+            prepared.project.toolName("command-1")
+        );
         auto const one   = freezePlanFor(prepared, first);
         REQUIRE(one.has_value());
 
@@ -8983,7 +9219,11 @@ namespace uf::operator_runtime
             OperationSignal::Cancelled
         ).has_value());
 
-        auto const second = proposedOperation(prepared, "request-2", "reordered-effects");
+        auto const second = proposedOperation(
+            prepared,
+            "request-2",
+            prepared.project.toolName("reordered-effects")
+        );
         auto const other  = freezePlanFor(prepared, second);
         REQUIRE(other.has_value());
 
@@ -8999,7 +9239,11 @@ namespace uf::operator_runtime
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
 
-        auto const proposed = proposedOperation(prepared, "request-1", "command-1");
+        auto const proposed = proposedOperation(
+            prepared,
+            "request-1",
+            prepared.project.toolName("command-1")
+        );
         auto const frozen   = freezePlanFor(prepared, proposed);
         REQUIRE(frozen.has_value());
         auto const step = mintStepFor(prepared, frozen->operation);
@@ -9029,7 +9273,11 @@ namespace uf::operator_runtime
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
 
-        auto const proposed = proposedOperation(prepared, "request-1", "approval-plan");
+        auto const proposed = proposedOperation(
+            prepared,
+            "request-1",
+            prepared.project.toolName("approval-plan")
+        );
         auto const frozen   = freezePlanFor(prepared, proposed);
         REQUIRE(frozen.has_value());
 

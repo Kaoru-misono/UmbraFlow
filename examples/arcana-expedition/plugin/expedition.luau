@@ -1,4 +1,4 @@
-local plans = require("./plans")
+local plans = require("./plans")["arcana.expedition"]
 local reduce = require("./state/reducer")
 local map = resource.readJson("map")
 local verdicts = {

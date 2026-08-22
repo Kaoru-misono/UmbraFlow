@@ -101,7 +101,7 @@ namespace uf::operator_runtime
         auto ready     = createReadyOperation(
             prepared,
             "request-production-owner",
-            "command-1"
+            prepared.project.toolName("command-1")
         );
         auto owner     = OperatorTaskHost::create(
             std::move(prepared.store),
@@ -173,7 +173,7 @@ namespace uf::operator_runtime
         auto ready     = createReadyOperation(
             prepared,
             "request-target-1",
-            "command-1"
+            prepared.project.toolName("command-1")
         );
         auto targetTwo = bindSecondTarget(prepared);
 

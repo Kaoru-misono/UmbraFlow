@@ -301,6 +301,14 @@ namespace uf::project
                     })}),
                 },
                 {
+                    // A scaffold binds no Tool to a closure entry: it ships
+                    // the pure five-function shape, and the empty array is the
+                    // whole statement of that. It is written out rather than
+                    // left out on the same terms as effect_payload_schemas.
+                    "tool_bindings",
+                    json::Value::ofArray({}),
+                },
+                {
                     "tool_catalog",
                     json::Value::ofString(
                         "schemas/" + spec.pluginId
@@ -366,6 +374,32 @@ namespace uf::project
                         {
                             "argument_schema",
                             json::Value::ofString("observed_instance_id"),
+                        },
+                        {
+                            // The empty declaration, written out. A scaffold
+                            // tool calls nothing, and this is how a tool says
+                            // so: no names, no calls, and the most restricted
+                            // ceiling of each kind.
+                            "child_effects",
+                            json::Value::ofObject({
+                                {"child_tool_names", json::Value::ofArray({})},
+                                {
+                                    "maximum_child_calls",
+                                    json::Value::ofNumber(0),
+                                },
+                                {
+                                    "maximum_child_mutability",
+                                    json::Value::ofString("read_only"),
+                                },
+                                {
+                                    "maximum_child_risk",
+                                    json::Value::ofString("read_only"),
+                                },
+                                {
+                                    "maximum_child_surface",
+                                    json::Value::ofString("semantic"),
+                                },
+                            }),
                         },
                         {
                             "effect_bounds",

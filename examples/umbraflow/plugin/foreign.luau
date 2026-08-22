@@ -28,18 +28,22 @@ local function proposal(tool_name, effects, steps, dispatches)
         },
     }
 end
+-- Every Tool this deployment declares is named inside the namespace its
+-- plugin_id registers, so the plans are keyed by the same full names the Tool
+-- Catalog carries rather than by a bare local half no catalog could declare.
+local ns = "fixture.foreign"
 local proposals = {
-    ["command-1"] = proposal("command-1", ordinary, 8, 8),
-    ["command-2"] = proposal("command-2", ordinary, 8, 8),
-    ["different-command"] = proposal("different-command", ordinary, 8, 8),
+    [ns .. ".command-1"] = proposal(ns .. ".command-1", ordinary, 8, 8),
+    [ns .. ".command-2"] = proposal(ns .. ".command-2", ordinary, 8, 8),
+    [ns .. ".different-command"] = proposal(ns .. ".different-command", ordinary, 8, 8),
     -- The proposal names the tool the Operation was NOT created for.
-    ["mismatched-plan"] = proposal("command-1", ordinary, 8, 8),
-    ["oversized-plan"] = proposal("oversized-plan", ordinary, 4096, 4096),
-    ["two-step-plan"] = proposal("two-step-plan", ordinary, 2, 2),
-    ["approval-plan"] = proposal("approval-plan", risky, 8, 8),
-    ["reordered-effects"] = proposal("reordered-effects", reordered, 8, 8),
-    ["observe-1"] = proposal("observe-1", ordinary, 8, 8),
-    ["raw-coordinate-click"] = proposal("raw-coordinate-click", ordinary, 8, 8),
+    [ns .. ".mismatched-plan"] = proposal(ns .. ".command-1", ordinary, 8, 8),
+    [ns .. ".oversized-plan"] = proposal(ns .. ".oversized-plan", ordinary, 4096, 4096),
+    [ns .. ".two-step-plan"] = proposal(ns .. ".two-step-plan", ordinary, 2, 2),
+    [ns .. ".approval-plan"] = proposal(ns .. ".approval-plan", risky, 8, 8),
+    [ns .. ".reordered-effects"] = proposal(ns .. ".reordered-effects", reordered, 8, 8),
+    [ns .. ".observe-1"] = proposal(ns .. ".observe-1", ordinary, 8, 8),
+    [ns .. ".raw-coordinate-click"] = proposal(ns .. ".raw-coordinate-click", ordinary, 8, 8),
 }
 return {
     plugin_id = "fixture.foreign",

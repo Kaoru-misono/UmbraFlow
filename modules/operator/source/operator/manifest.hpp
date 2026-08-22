@@ -27,6 +27,34 @@ namespace uf::operator_runtime
     // judged the document.
     inline constexpr auto k_projectRegistrationFormat = uint64{4U};
 
+    // The namespace the Framework owns. Every Framework Tool is named inside
+    // it, and no other registrant may claim it: a ProjectRegistration whose
+    // plugin_id fell inside this namespace would own Tool names the Framework
+    // catalog already owns, so validateClaims refuses the claim where a
+    // registrant's namespace is stated rather than once per Tool name.
+    inline constexpr auto k_frameworkToolNamespace = std::string_view{"framework"};
+
+    // The one spelling of a Tool name, wherever one is written: a namespaced
+    // dotted name whose namespace is its owner's registered namespace and whose
+    // local name is what follows the dot that ends it. A Tool Catalog `name`, a
+    // ProjectRegistration `tool_name`, and every child Tool name a
+    // ChildEffectDeclaration grants are this one type; a document admitting any
+    // other spelling would declare a Tool no authoring tier could bind.
+    [[nodiscard]]
+    auto validateToolName(std::string_view name, std::string_view field) -> Status;
+
+    // Whether this Tool name is one the registrant owning `ownedNamespace` may
+    // declare. Ownership is the whole of the rule: Framework owns `framework`,
+    // a Project owns its registered namespace -- its plugin_id -- and a name
+    // outside the owner's namespace is somebody else's Tool. There is no
+    // negative half beside this: a namespace a registrant does not own is
+    // refused here whether it belongs to the Framework or to another Project.
+    [[nodiscard]]
+    auto validateToolNameOwnership(
+        std::string_view name,
+        std::string_view ownedNamespace
+    ) -> Status;
+
     enum class ProjectResourceKind : uint8
     {
         Json,

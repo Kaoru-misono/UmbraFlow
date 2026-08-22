@@ -195,6 +195,16 @@ namespace uf::operator_runtime::test_support
         // because the property under test is that the Operator decides those
         // bytes and no caller can.
         std::shared_ptr<deployment::ProjectDocumentInputLog> documentInputLog;
+
+        // One of this project's catalog names, from the local half a case
+        // knows it by. A fixture tool's namespace is this registration's
+        // plugin_id, so a case that spelled the full name itself would be
+        // writing down which registration it prepared.
+        [[nodiscard]]
+        auto toolName(std::string_view localName) const -> std::string
+        {
+            return fixtureToolName(registration.pluginId(), localName);
+        }
     };
 
     // The one conforming JR:`JournalProvenance` this fixture project mints, and
@@ -407,18 +417,49 @@ namespace uf::operator_runtime::test_support
         return *std::move(schemas);
     }
 
+    // The Tool binding table a fixture project declares, rendered as the
+    // registration's own member. It renders what it is given and sorts nothing:
+    // makeProject below puts the rows in the one order validateClaims accepts,
+    // and the claims it hands out must carry that same order, so the sort
+    // happens once where both readings are minted.
+    [[nodiscard]]
+    inline auto toolBindingsJcs(
+        std::span<ProjectToolBinding const> bindings
+    ) -> std::string
+    {
+        auto rendered = std::string{"["};
+        for (auto index = std::size_t{0}; index < bindings.size(); ++index)
+        {
+            rendered += index == 0U ? "" : ",";
+            rendered += std::format(
+                R"({{"entry_point":"{}","tool_name":"{}"}})",
+                bindings[index].entryPoint,
+                bindings[index].toolName
+            );
+        }
+        rendered += "]";
+        return rendered;
+    }
+
     // `observationSchema` and `preconditionSchema` default to the exemplar's;
     // a case that pins a laxer one -- e.g. a project whose derive output is
     // refused only by the proposal reader, or whose tool arguments admit the
     // observed_instance_id the submitCommand gate resolves -- states it
     // explicitly. Every hash and every validator must see the same bytes.
+    //
+    // `toolBindings` is the fixture project's own join of contract to code. An
+    // empty table is the whole statement "this project binds no Tool to an
+    // entry", which is what a fixture whose plugin only answers the five pure
+    // functions declares; a case that needs a Project Tool program states the
+    // rows here rather than hand-building a registration beside this one.
     [[nodiscard]]
     inline auto makeProject(
         std::string pluginId,
         std::string_view pluginBytes,
         std::string_view observationSchema = k_projectObservationSchema,
         std::string_view preconditionSchema = k_toolPreconditionSchema,
-        std::optional<ContentHash> environmentOverride = std::nullopt
+        std::optional<ContentHash> environmentOverride = std::nullopt,
+        std::vector<ProjectToolBinding> toolBindings = {}
     ) -> ProjectFixture
     {
         auto const bundle = DeploymentBundle{pluginId};
@@ -453,6 +494,7 @@ namespace uf::operator_runtime::test_support
         auto const preconditionSchemaHash = hashOf(preconditionSchema);
         auto const reconcileSchemaHash    = hashOf(bundle.reconcileManifest());
         auto const journalSchemaHash      = hashOf(bundle.journalEventManifest());
+        std::ranges::sort(toolBindings, {}, &ProjectToolBinding::toolName);
         auto const exactJcs = std::format(
             "{{\"baseline_event_type\":\"fixture.baseline\","
             "\"journal_event_schema_manifest_hash\":\"{}\","
@@ -463,7 +505,7 @@ namespace uf::operator_runtime::test_support
             "\"project_registration_format\":{},"
             "\"project_resources\":[],"
             "\"project_state_schema_hash\":\"{}\","
-            "\"project_tool_bindings\":[],"
+            "\"project_tool_bindings\":{},"
             "\"project_tool_precondition_schema_hash\":\"{}\","
             "\"reconcile_payload_schema_manifest_hash\":\"{}\","
             "\"tool_catalog_hash\":\"{}\"}}",
@@ -475,6 +517,7 @@ namespace uf::operator_runtime::test_support
             observationSchemaHash.hex(),
             k_projectRegistrationFormat,
             stateSchemaHash.hex(),
+            toolBindingsJcs(toolBindings),
             preconditionSchemaHash.hex(),
             reconcileSchemaHash.hex(),
             toolCatalogHash.hex()
@@ -492,6 +535,7 @@ namespace uf::operator_runtime::test_support
             .journalEventSchemaManifestHash       = journalSchemaHash,
             .baselineEventType                    = "fixture.baseline",
             .observedInstanceIdentitySchemaHashes = {hashOf(k_observedIdentitySchema)},
+            .projectToolBindings                  = toolBindings,
         };
         auto owner = ProjectRegistrationSchemaOwner::create(
             // Init-captures rather than [exactJcs, claims]: both locals are
@@ -654,7 +698,7 @@ namespace uf::operator_runtime::test_support
     [[nodiscard]]
     inline auto routineToolEffect(
         ProjectFixture const& project,
-        std::string toolName = "command-1"
+        std::string toolName
     ) -> ProposedEffect
     {
         auto invocation = toolInvocation(project, std::move(toolName));
@@ -668,6 +712,16 @@ namespace uf::operator_runtime::test_support
             .payloadSchemaHash = bound.payloadSchemaHash,
             .opaqueProjectPayload = R"({"value":1})",
         };
+    }
+
+    // The same effect from the ordinary mutating tool, for the many cases that
+    // are about the effect rather than about which tool proposed it. It is an
+    // overload rather than a default argument because the name is composed from
+    // this very project's namespace, which a default argument cannot see.
+    [[nodiscard]]
+    inline auto routineToolEffect(ProjectFixture const& project) -> ProposedEffect
+    {
+        return routineToolEffect(project, project.toolName("command-1"));
     }
 
     [[nodiscard]]
@@ -1110,10 +1164,13 @@ identity = ["fixture.panel.anchor"]
         // returned module: a pure data module may export plugin_id and its
         // declared entry points and nothing else.
         auto source = std::string{"local proposals = {\n"};
+        // Both names are the LOCAL half of a Tool name; pluginSource spells
+        // each under the namespace this plugin's own registration owns, so one
+        // table serves every fixture plugin id.
         struct ProposalCase final
         {
-            std::string_view invokedTool{};
-            std::string_view proposedTool{};
+            std::string_view invokedLocalName{};
+            std::string_view proposedLocalName{};
             std::string_view effects{};
             std::string_view limits{};
         };
@@ -1177,10 +1234,10 @@ identity = ["fixture.panel.anchor"]
         for (auto const& proposal : cases)
         {
             source += "        [\"";
-            source += proposal.invokedTool;
+            source += fixtureToolName(pluginId, proposal.invokedLocalName);
             source += "\"] = ";
             source += fixturePlanProposal(
-                proposal.proposedTool,
+                fixtureToolName(pluginId, proposal.proposedLocalName),
                 proposal.effects,
                 proposal.limits
             );
@@ -1739,7 +1796,7 @@ identity = ["fixture.panel.anchor"]
         auto const ready     = createReadyOperation(
             prepared,
             std::move(clientRequestId),
-            "command-1"
+            prepared.project.toolName("command-1")
         );
         auto host           = deliveringHost(prepared);
         auto const dispatch = prepared.store.reserveDispatch(

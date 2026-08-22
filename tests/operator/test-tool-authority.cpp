@@ -142,19 +142,20 @@ namespace uf::operator_runtime
             TimeoutAction action
         ) -> Result<ProjectToolCatalogSchemaOwner>
         {
+            auto const name = prepared.project.toolName("command-1");
             UF_TRY_VALUE(
                 descriptor,
-                prepared.project.toolCatalogSchemaOwner.describe("command-1")
+                prepared.project.toolCatalogSchemaOwner.describe(name)
             );
             descriptor.timeout.onTimeout = action;
             return ProjectToolCatalogSchemaOwner::create(
                 prepared.project.registration,
                 prepared.project.toolCatalogBytes,
-                [descriptor]() -> Result<std::vector<ToolCatalogEntry>>
+                [descriptor, name]() -> Result<std::vector<ToolCatalogEntry>>
                 {
                     return std::vector<ToolCatalogEntry>{
                         ToolCatalogEntry{
-                            .name       = "command-1",
+                            .name       = name,
                             .descriptor = descriptor,
                         },
                     };
@@ -210,18 +211,19 @@ namespace uf::operator_runtime
             test_support::PreparedStore const& prepared
         ) -> Result<ProjectToolCatalogSchemaOwner>
         {
+            auto const name = prepared.project.toolName("command-1");
             UF_TRY_VALUE(
                 descriptor,
-                prepared.project.toolCatalogSchemaOwner.describe("command-1")
+                prepared.project.toolCatalogSchemaOwner.describe(name)
             );
             return ProjectToolCatalogSchemaOwner::create(
                 prepared.project.registration,
                 prepared.project.toolCatalogBytes,
-                [descriptor]() -> Result<std::vector<ToolCatalogEntry>>
+                [descriptor, name]() -> Result<std::vector<ToolCatalogEntry>>
                 {
                     return std::vector<ToolCatalogEntry>{
                         ToolCatalogEntry{
-                            .name       = "command-1",
+                            .name       = name,
                             .descriptor = descriptor,
                         },
                     };
@@ -350,7 +352,7 @@ namespace uf::operator_runtime
         ) -> StoredOperation
         {
             auto const invocation = catalog.validate(
-                "command-1",
+                prepared.project.toolName("command-1"),
                 test_support::canonical(
                     prepared.project.schemaOwner,
                     std::move(args)
@@ -607,39 +609,72 @@ namespace uf::operator_runtime
         );
     }
 
-    TEST_CASE("Project Tool Catalog cannot claim the Framework namespace")
+    TEST_CASE("Project Tool Catalog declares only its own namespace")
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
         auto descriptor = prepared.project.toolCatalogSchemaOwner.describe(
-            "command-1"
+            prepared.project.toolName("command-1")
         );
         REQUIRE(descriptor.has_value());
 
-        auto const refused = ProjectToolCatalogSchemaOwner::create(
-            prepared.project.registration,
-            prepared.project.toolCatalogBytes,
-            [descriptor = std::move(*descriptor)]()
-                -> Result<std::vector<ToolCatalogEntry>>
-            {
-                return std::vector<ToolCatalogEntry>{
-                    ToolCatalogEntry{
-                        .name       = "framework.screen.observe",
-                        .descriptor = descriptor,
-                    },
-                };
+        // The three ways a declared name can be one this registrant does not
+        // own: the Framework's namespace, another Project's, and no namespace
+        // at all. The first two are refused by the ownership rule, which names
+        // the namespace the registration does own; the third never reaches it,
+        // because an undotted name is not a Tool name to begin with. This
+        // registration owns `fixture.control`, so that is the namespace the
+        // first two refusals name.
+        struct UnownedName final
+        {
+            std::string_view name{};
+            std::string_view refusal{};
+        };
+        constexpr auto k_unowned = std::array{
+            UnownedName{
+                "framework.screen.observe",
+                "Tool name framework.screen.observe is outside the namespace "
+                "fixture.control its registrant owns",
             },
-            [](std::string_view, std::string_view) -> Status { return ok(); }
-        );
-        REQUIRE_FALSE(refused.has_value());
-        CHECK(refused.error().message().contains("reserved framework namespace"));
+            UnownedName{
+                "fixture.other.command-1",
+                "Tool name fixture.other.command-1 is outside the namespace "
+                "fixture.control its registrant owns",
+            },
+            UnownedName{
+                "command-1",
+                "Tool name is not a canonical namespaced name",
+            },
+        };
+
+        for (auto const& unownedCase : k_unowned)
+        {
+            CAPTURE(unownedCase.name);
+            auto const refused = ProjectToolCatalogSchemaOwner::create(
+                prepared.project.registration,
+                prepared.project.toolCatalogBytes,
+                [descriptor = *descriptor, name = std::string{unownedCase.name}]()
+                    -> Result<std::vector<ToolCatalogEntry>>
+                {
+                    return std::vector<ToolCatalogEntry>{
+                        ToolCatalogEntry{
+                            .name       = name,
+                            .descriptor = descriptor,
+                        },
+                    };
+                },
+                [](std::string_view, std::string_view) -> Status { return ok(); }
+            );
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(refused.error().message().contains(unownedCase.refusal));
+        }
 
         auto arguments = test_support::canonical(
             prepared.project.schemaOwner,
             R"({"value":1})"
         );
         auto invocation = prepared.project.toolCatalogSchemaOwner.validate(
-            "command-1",
+            prepared.project.toolName("command-1"),
             std::move(arguments)
         );
         REQUIRE(invocation.has_value());
@@ -784,7 +819,7 @@ namespace uf::operator_runtime
             R"({"value":1})"
         );
         auto invocation = prepared.project.toolCatalogSchemaOwner.validate(
-            "command-1",
+            prepared.project.toolName("command-1"),
             std::move(arguments)
         );
         REQUIRE(invocation.has_value());
@@ -896,7 +931,7 @@ namespace uf::operator_runtime
         );
         auto changedArgumentInvocation =
             prepared.project.toolCatalogSchemaOwner.validate(
-                "command-1",
+                prepared.project.toolName("command-1"),
                 std::move(changedArguments)
             );
         REQUIRE(changedArgumentInvocation.has_value());
@@ -916,7 +951,7 @@ namespace uf::operator_runtime
         );
         auto changedNameInvocation =
             prepared.project.toolCatalogSchemaOwner.validate(
-                "command-2",
+                prepared.project.toolName("command-2"),
                 std::move(changedNameArguments)
             );
         REQUIRE(changedNameInvocation.has_value());
@@ -930,20 +965,21 @@ namespace uf::operator_runtime
         REQUIRE(changedName.has_value());
         CHECK(first->identity() != changedName->identity());
 
+        auto const changedVersionName = prepared.project.toolName("command-1");
         auto descriptor = prepared.project.toolCatalogSchemaOwner.describe(
-            "command-1"
+            changedVersionName
         );
         REQUIRE(descriptor.has_value());
         descriptor->toolVersion = "changed-version";
         auto changedVersionOwner = ProjectToolCatalogSchemaOwner::create(
             prepared.project.registration,
             prepared.project.toolCatalogBytes,
-            [descriptor = std::move(*descriptor)]()
+            [descriptor = std::move(*descriptor), name = changedVersionName]()
                 -> Result<std::vector<ToolCatalogEntry>>
             {
                 return std::vector<ToolCatalogEntry>{
                     ToolCatalogEntry{
-                        .name       = "command-1",
+                        .name       = name,
                         .descriptor = descriptor,
                     },
                 };
@@ -956,7 +992,7 @@ namespace uf::operator_runtime
             R"({"value":1})"
         );
         auto changedVersionInvocation = changedVersionOwner->validate(
-            "command-1",
+            changedVersionName,
             std::move(changedVersionArguments)
         );
         REQUIRE(changedVersionInvocation.has_value());
@@ -981,7 +1017,7 @@ namespace uf::operator_runtime
         );
         auto changedProviderInvocation =
             secondPrepared.project.toolCatalogSchemaOwner.validate(
-                "command-1",
+                secondPrepared.project.toolName("command-1"),
                 std::move(changedProviderArguments)
             );
         REQUIRE(changedProviderInvocation.has_value());
@@ -1077,7 +1113,7 @@ namespace uf::operator_runtime
             R"({"value":1})"
         );
         auto projectInvocation = prepared.project.toolCatalogSchemaOwner.validate(
-            "command-1",
+            prepared.project.toolName("command-1"),
             std::move(projectArguments)
         );
         REQUIRE(projectInvocation.has_value());
@@ -1112,9 +1148,8 @@ namespace uf::operator_runtime
         // parented on the handler call rather than on the run root. That is
         // what makes a replayed child cost its parent exactly one increment
         // regardless of how large its subtree was.
-        auto handlerContext = counted.forHandler(*firstIssued);
-        REQUIRE(handlerContext.has_value());
-        auto handlerChild = handlerContext->issue(*frameworkInvocation);
+        auto handlerContext = ToolCallIssuingContext::forHandler(*firstIssued);
+        auto handlerChild   = handlerContext.issue(*frameworkInvocation);
         REQUIRE(handlerChild.has_value());
         CHECK(handlerChild->sequence() == 1U);
         CHECK(handlerChild->parentIdentity() == firstIssued->identity());
@@ -1140,15 +1175,30 @@ namespace uf::operator_runtime
             *projectInvocation
         );
         REQUIRE(foreignParent.has_value());
-        CHECK_FALSE(
-            toolCallAt(
-                *root,
-                &*foreignParent,
-                1U,
-                execution,
-                *projectInvocation
-            ).has_value()
+
+        // A handler context takes its root from the call it implements, so a
+        // position issued under a foreign parent belongs to that foreign root
+        // no matter which root the caller had in hand. The caller cannot claim
+        // otherwise, and the ledger is what refuses the claim: a position is
+        // persisted under the root its own parent chain names.
+        auto foreignChild = toolCallAt(
+            *root,
+            &*foreignParent,
+            1U,
+            execution,
+            *projectInvocation
         );
+        REQUIRE(foreignChild.has_value());
+        CHECK(foreignChild->rootIdentity() == foreignRoot->identity());
+
+        auto const misfiled = prepared.store.persistToolCallPosition(
+            *root,
+            *foreignChild
+        );
+        REQUIRE_FALSE(misfiled.has_value());
+        CHECK(misfiled.error().message().contains(
+            "belongs to a different root request"
+        ));
     }
 
     TEST_CASE("a plan is bounded by its own tool's descriptor")
@@ -1156,8 +1206,9 @@ namespace uf::operator_runtime
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
 
-        auto const declared =
-            prepared.project.toolCatalogSchemaOwner.describe("command-1");
+        auto const declared = prepared.project.toolCatalogSchemaOwner.describe(
+            prepared.project.toolName("command-1")
+        );
         REQUIRE(declared.has_value());
 
         // The bound the plugin's ordinary proposal sits inside: one effect
@@ -1168,8 +1219,12 @@ namespace uf::operator_runtime
         CHECK(declared->effectBounds.front().maximumRisk == Risk::High);
         CHECK(declared->uiActionBounds == std::vector<std::string>{"fixture.step"});
 
-        auto const proposed = proposedOperation(prepared, "request-1", "command-1");
-        auto const frozen   = freezePlanFor(prepared, proposed);
+        auto const proposed = proposedOperation(
+            prepared,
+            "request-1",
+            prepared.project.toolName("command-1")
+        );
+        auto const frozen = freezePlanFor(prepared, proposed);
         REQUIRE(frozen.has_value());
         CHECK(frozen->limits.maximumSteps == declared->limits.maximumSteps);
     }
@@ -1182,8 +1237,9 @@ namespace uf::operator_runtime
         // The descriptor of the tool the Operation names, with one clause of
         // the bound moved and nothing else. Each rewrite makes exactly one of
         // effectWithinBounds' three refusals the reason.
-        auto const declared =
-            prepared.project.toolCatalogSchemaOwner.describe("command-1");
+        auto const declared = prepared.project.toolCatalogSchemaOwner.describe(
+            prepared.project.toolName("command-1")
+        );
         REQUIRE(declared.has_value());
         auto const effect = ProposedEffect{
             .namespacedType = "fixture.write",
@@ -1220,8 +1276,9 @@ namespace uf::operator_runtime
         // Every plan this plugin proposes allows the same step key. stray-action
         // bounds a different one, so its own descriptor is the only thing that
         // differs between the refusal below and the freeze after it.
-        auto const stray =
-            prepared.project.toolCatalogSchemaOwner.describe("stray-action");
+        auto const stray = prepared.project.toolCatalogSchemaOwner.describe(
+            prepared.project.toolName("stray-action")
+        );
         REQUIRE(stray.has_value());
         CHECK(
             stray->uiActionBounds
@@ -1230,8 +1287,12 @@ namespace uf::operator_runtime
             }
         );
 
-        auto const proposed = proposedOperation(prepared, "request-1", "stray-action");
-        auto const refused  = freezePlanFor(prepared, proposed);
+        auto const proposed = proposedOperation(
+            prepared,
+            "request-1",
+            prepared.project.toolName("stray-action")
+        );
+        auto const refused = freezePlanFor(prepared, proposed);
         REQUIRE_FALSE(refused.has_value());
         CHECK(
             automationErrorKind(refused.error()) == AutomationErrorKind::ActionRejected
@@ -1246,16 +1307,21 @@ namespace uf::operator_runtime
         // The plugin answers next_step with one document naming delivery_safe.
         // strict-delivery declares it cannot be redelivered, so that same
         // document is refused for it and accepted for command-1.
-        auto const strict =
-            prepared.project.toolCatalogSchemaOwner.describe("strict-delivery");
+        auto const strict = prepared.project.toolCatalogSchemaOwner.describe(
+            prepared.project.toolName("strict-delivery")
+        );
         REQUIRE(strict.has_value());
         CHECK(strict->idempotency == ToolIdempotency::NonIdempotent);
         CHECK_FALSE(
             deliveryClassWithin(DeliveryClass::DeliverySafe, strict->idempotency)
         );
 
-        auto const proposed = proposedOperation(prepared, "request-1", "strict-delivery");
-        auto const frozen   = freezePlanFor(prepared, proposed);
+        auto const proposed = proposedOperation(
+            prepared,
+            "request-1",
+            prepared.project.toolName("strict-delivery")
+        );
+        auto const frozen = freezePlanFor(prepared, proposed);
         REQUIRE(frozen.has_value());
         CHECK_FALSE(mintStepFor(prepared, frozen->operation).has_value());
     }
@@ -1265,13 +1331,18 @@ namespace uf::operator_runtime
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
 
-        auto const brief =
-            prepared.project.toolCatalogSchemaOwner.describe("brief-timeout");
+        auto const brief = prepared.project.toolCatalogSchemaOwner.describe(
+            prepared.project.toolName("brief-timeout")
+        );
         REQUIRE(brief.has_value());
         CHECK(brief->timeout.maximumElapsedMillis == 1'000U);
 
-        auto const proposed = proposedOperation(prepared, "request-1", "brief-timeout");
-        auto const frozen   = freezePlanFor(prepared, proposed);
+        auto const proposed = proposedOperation(
+            prepared,
+            "request-1",
+            prepared.project.toolName("brief-timeout")
+        );
+        auto const frozen = freezePlanFor(prepared, proposed);
         REQUIRE(frozen.has_value());
         CHECK_FALSE(mintStepFor(prepared, frozen->operation).has_value());
     }
@@ -1311,8 +1382,12 @@ namespace uf::operator_runtime
             );
             REQUIRE(differentAuthority.has_value());
 
-            auto const proposed = proposedOperation(prepared, "request-1", "command-1");
-            auto const frozen   = prepared.store.freezePlan(
+            auto const proposed = proposedOperation(
+                prepared,
+                "request-1",
+                prepared.project.toolName("command-1")
+            );
+            auto const frozen = prepared.store.freezePlan(
                 proposed.operationId,
                 proposed.revision,
                 prepared.lease,
@@ -1514,7 +1589,11 @@ namespace uf::operator_runtime
         auto routineStore = prepareStore(routineRoot.path());
         auto const routine = freezePlanFor(
             routineStore,
-            proposedOperation(routineStore, "request-1", "command-1")
+            proposedOperation(
+                routineStore,
+                "request-1",
+                routineStore.project.toolName("command-1")
+            )
         );
         REQUIRE(routine.has_value());
         CHECK(routine->risk == Risk::Medium);
@@ -1525,7 +1604,11 @@ namespace uf::operator_runtime
         auto elevatedStore = prepareStore(elevatedRoot.path());
         auto const elevated = freezePlanFor(
             elevatedStore,
-            proposedOperation(elevatedStore, "request-1", "approval-plan")
+            proposedOperation(
+                elevatedStore,
+                "request-1",
+                elevatedStore.project.toolName("approval-plan")
+            )
         );
         REQUIRE(elevated.has_value());
         CHECK(elevated->risk == Risk::High);
@@ -1547,8 +1630,12 @@ namespace uf::operator_runtime
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
 
-        auto const proposed = proposedOperation(prepared, "request-1", "approval-plan");
-        auto const frozen   = freezePlanFor(prepared, proposed);
+        auto const proposed = proposedOperation(
+            prepared,
+            "request-1",
+            prepared.project.toolName("approval-plan")
+        );
+        auto const frozen = freezePlanFor(prepared, proposed);
         REQUIRE(frozen.has_value());
         REQUIRE(mintStepFor(prepared, frozen->operation).has_value());
 
@@ -1591,8 +1678,12 @@ namespace uf::operator_runtime
         auto const authority = authorityUnder(prepared, elsewhere);
         REQUIRE(authority.has_value());
 
-        auto const proposed = proposedOperation(prepared, "request-1", "command-1");
-        auto const refused  = prepared.store.freezePlan(
+        auto const proposed = proposedOperation(
+            prepared,
+            "request-1",
+            prepared.project.toolName("command-1")
+        );
+        auto const refused = prepared.store.freezePlan(
             proposed.operationId,
             proposed.revision,
             prepared.lease,
@@ -1625,7 +1716,11 @@ namespace uf::operator_runtime
         auto const authority = authorityUnder(prepared, foreign);
         REQUIRE(authority.has_value());
 
-        auto const proposed = proposedOperation(prepared, "request-1", "command-1");
+        auto const proposed = proposedOperation(
+            prepared,
+            "request-1",
+            prepared.project.toolName("command-1")
+        );
         CHECK_FALSE(prepared.store.freezePlan(
             proposed.operationId,
             proposed.revision,

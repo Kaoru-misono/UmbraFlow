@@ -207,6 +207,17 @@ namespace uf::deployment
         auto toolArgumentValidator() const
             -> operator_runtime::ToolArgumentValidator;
 
+        // The answer side of the same descriptor row, judged against the
+        // definition its result_schema names. Symmetric with the arguments
+        // above and separate from them for the reason those two callbacks are
+        // separate from the catalog reader: what one call answers cannot be
+        // read once at startup, and only the deployment that carries both the
+        // pinned precondition schema bytes and the catalog that names a
+        // definition inside them can compile one.
+        [[nodiscard]]
+        auto toolResultValidator() const
+            -> operator_runtime::ToolResultValidator;
+
         [[nodiscard]]
         auto reconcileDispositionReader() const
             -> operator_runtime::ReconcileDispositionReader;

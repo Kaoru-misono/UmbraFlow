@@ -111,6 +111,13 @@ namespace uf::deployment
                 "payload": {"$ref": "#/$defs/Document"}
             }
         },
+        "ToolName": {
+            "$comment": "A Tool name, in the one spelling every document carrying one uses: namespaced under the namespace its registration owns. A vocabulary names Tools this project's own catalog declares, and a catalog can declare no other shape, so admitting a looser spelling here would only defer the refusal to the carried-tool cross-check the loader runs next.",
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 128,
+            "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)+$"
+        },
         "Vocabulary": {
             "type": "object",
             "additionalProperties": false,
@@ -135,12 +142,12 @@ namespace uf::deployment
             ],
             "properties": {
                 "$comment": {"type": "string"},
-                "mutating_tool": {"type": "string", "minLength": 1},
-                "other_mutating_tool": {"type": "string", "minLength": 1},
-                "read_only_tool": {"type": "string", "minLength": 1},
+                "mutating_tool": {"$ref": "#/$defs/ToolName"},
+                "other_mutating_tool": {"$ref": "#/$defs/ToolName"},
+                "read_only_tool": {"$ref": "#/$defs/ToolName"},
                 "tool_arguments": {"$ref": "#/$defs/Document"},
                 "refused_tool_arguments": {"$ref": "#/$defs/Document"},
-                "absent_tool": {"type": "string", "minLength": 1},
+                "absent_tool": {"$ref": "#/$defs/ToolName"},
                 "baseline_entry": {"$ref": "#/$defs/JournalDocument"},
                 "progress_entry": {"$ref": "#/$defs/JournalDocument"},
                 "confirmed_entry": {"$ref": "#/$defs/JournalDocument"},
@@ -150,7 +157,7 @@ namespace uf::deployment
                 "confirmed_input": {"$ref": "#/$defs/Document"},
                 "rejected_input": {"$ref": "#/$defs/Document"},
                 "ambiguous_input": {"$ref": "#/$defs/Document"},
-                "approval_required_plan_tool": {"type": "string", "minLength": 1},
+                "approval_required_plan_tool": {"$ref": "#/$defs/ToolName"},
                 "ui_action": {
                     "type": "object",
                     "additionalProperties": false,
@@ -437,7 +444,8 @@ namespace uf::deployment
         [[nodiscard]]
         auto registrationJcs(
             DerivedRegistration const& derived,
-            std::span<operator_runtime::ProjectResource const> projectResources
+            std::span<operator_runtime::ProjectResource const> projectResources,
+            std::span<operator_runtime::ProjectToolBinding const> toolBindings
         ) -> std::string
         {
             auto const hash = [](ContentHash const& value)
@@ -475,11 +483,18 @@ namespace uf::deployment
                 identityHashes.emplace_back(hash(identityHash));
             }
 
-            // The Tool binding table. No project declares a handler entry yet,
-            // so every registration this loader derives states the empty table
-            // -- which is the whole statement "this registration binds no Tool
-            // to an entry" and not an absence a reader fills in.
+            // The Tool binding table, as the deployment block declared it and
+            // in the order readToolBindings put it in. Rendered even when it is
+            // empty, which is the whole statement "this registration binds no
+            // Tool to an entry" and not an absence a reader fills in.
             auto bindings = std::vector<json::Value>{};
+            for (auto const& binding : toolBindings)
+            {
+                bindings.emplace_back(json::Value::ofObject({
+                    {"entry_point", json::Value::ofString(binding.entryPoint)},
+                    {"tool_name", json::Value::ofString(binding.toolName)},
+                }));
+            }
 
             return json::canonicalBytes(json::Value::ofObject({
                 {"baseline_event_type",
@@ -865,6 +880,50 @@ namespace uf::deployment
                 .effectPayloadSchemas            = std::move(effectPayloads),
                 .observedInstanceIdentitySchemas = std::move(identitySchemas),
             };
+        }
+
+        // The join this deployment declares, as the registration states it. The
+        // block names a Tool and the closure entry that answers it; every
+        // digest around them is derived, and this is derived too in the one
+        // sense that matters -- the author's order is discarded and the
+        // canonical one is computed here, exactly as it is for resources.
+        //
+        // Nothing here asks whether the catalog declares the named Tool or
+        // whether the closure exports the named entry. Those are the two halves
+        // ProjectToolBindingTable::bind refuses a disagreement between, at the
+        // moment both are in hand, and a second reading of either question here
+        // would be a second authority over it.
+        [[nodiscard]]
+        auto readToolBindings(json::Value const& block)
+            -> Result<std::vector<operator_runtime::ProjectToolBinding>>
+        {
+            auto bindings = std::vector<operator_runtime::ProjectToolBinding>{};
+            for (auto const& declared : member(block, "tool_bindings").items())
+            {
+                bindings.emplace_back(operator_runtime::ProjectToolBinding{
+                    .toolName   = text(declared, "tool_name"),
+                    .entryPoint = text(declared, "entry_point"),
+                });
+            }
+            std::ranges::sort(
+                bindings,
+                [](std::string_view left, std::string_view right)
+                {
+                    return jsonMemberNameLess(left, right);
+                },
+                &operator_runtime::ProjectToolBinding::toolName
+            );
+            for (auto index = std::size_t{1}; index < bindings.size(); ++index)
+            {
+                if (bindings[index - 1U].toolName == bindings[index].toolName)
+                {
+                    return refuse(std::format(
+                        "a deployment binds the Tool {} twice",
+                        bindings[index].toolName
+                    ));
+                }
+            }
+            return bindings;
         }
 
         [[nodiscard]]
@@ -1392,6 +1451,7 @@ namespace uf::deployment
             UF_TRY_VALUE(files, readDeploymentFiles(root, block));
             UF_TRY_VALUE(resources, readProjectResources(root, block));
             UF_TRY_VALUE(resourceClaims, projectResourceClaimsOf(resources));
+            UF_TRY_VALUE(toolBindings, readToolBindings(block));
 
             auto const journalViews    = views(files.journalPayloadSchemas);
             auto const effectViews     = views(files.effectPayloadSchemas);
@@ -1474,7 +1534,8 @@ namespace uf::deployment
                 .observedInstanceIdentitySchemaHashes = std::move(identityHashes),
             };
 
-            auto const canonicalJcs = registrationJcs(derived, resourceClaims);
+            auto const canonicalJcs =
+                registrationJcs(derived, resourceClaims, toolBindings);
             UF_TRY_VALUE(computed, hashOf(canonicalJcs));
 
             // The one comparison on this chain between two values produced at

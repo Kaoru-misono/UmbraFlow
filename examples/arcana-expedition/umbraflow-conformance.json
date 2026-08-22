@@ -5,12 +5,12 @@
   "under_test": {
     "deployment": "expedition",
     "vocabulary": {
-      "mutating_tool": "expedition.move",
-      "other_mutating_tool": "expedition.trade",
-      "read_only_tool": "expedition.survey",
+      "mutating_tool": "arcana.expedition.move",
+      "other_mutating_tool": "arcana.expedition.trade",
+      "read_only_tool": "arcana.expedition.survey",
       "tool_arguments": "{\"steps\":2}",
       "refused_tool_arguments": "{\"steps\":9}",
-      "absent_tool": "expedition.smuggle",
+      "absent_tool": "arcana.expedition.smuggle",
       "baseline_entry": {
         "event_type": "expedition.founded",
         "payload": "{\"camp\":\"north\"}"
@@ -32,7 +32,7 @@
       "confirmed_input": "{\"observed\":\"arrived\"}",
       "rejected_input": "{\"observed\":\"blocked\"}",
       "ambiguous_input": "{\"observed\":\"nothing\"}",
-      "approval_required_plan_tool": "expedition.approval",
+      "approval_required_plan_tool": "arcana.expedition.approval",
       "ui_action": {
         "surface": "expedition.surface",
         "ui_target": "expedition.target",
@@ -43,12 +43,12 @@
   "foreign": {
     "deployment": "rival",
     "vocabulary": {
-      "mutating_tool": "expedition.move",
-      "other_mutating_tool": "expedition.trade",
-      "read_only_tool": "expedition.survey",
+      "mutating_tool": "arcana.rival.move",
+      "other_mutating_tool": "arcana.rival.trade",
+      "read_only_tool": "arcana.rival.survey",
       "tool_arguments": "{\"steps\":2}",
       "refused_tool_arguments": "{\"steps\":9}",
-      "absent_tool": "expedition.smuggle",
+      "absent_tool": "arcana.rival.smuggle",
       "baseline_entry": {
         "event_type": "expedition.founded",
         "payload": "{\"camp\":\"north\"}"
@@ -70,7 +70,7 @@
       "confirmed_input": "{\"observed\":\"arrived\"}",
       "rejected_input": "{\"observed\":\"blocked\"}",
       "ambiguous_input": "{\"observed\":\"nothing\"}",
-      "approval_required_plan_tool": "expedition.approval",
+      "approval_required_plan_tool": "arcana.rival.approval",
       "ui_action": {
         "surface": "expedition.surface",
         "ui_target": "expedition.target",

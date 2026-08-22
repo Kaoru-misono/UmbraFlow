@@ -310,6 +310,40 @@ namespace uf::operator_runtime
             );
         }
 
+        // A registrant's plugin_id is the namespace it owns Tool names in, so
+        // the Framework's ownership of `framework.*` is enforced on the claim
+        // rather than once per Tool name. Without this the positive ownership
+        // rule at catalog admission would happily let a project calling itself
+        // `framework.anything` own names inside the Framework's namespace.
+        SUBCASE("plugin id cannot claim the Framework namespace")
+        {
+            auto claims     = claimsFor(hashOf("plugin"));
+            claims.pluginId = "framework.impostor";
+            auto const exactJcs = registrationJcs(claims);
+            auto owner = exactOwner(exactJcs, std::move(claims));
+            auto const refused =
+                ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner);
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(refused.error().message().contains(
+                "claims the reserved framework namespace"
+            ));
+        }
+
+        // The prefix is a namespace boundary and not a spelling: a plugin id
+        // that merely begins with the same letters owns its own namespace and
+        // is admitted.
+        SUBCASE("plugin id beside the Framework namespace is admitted")
+        {
+            auto claims     = claimsFor(hashOf("plugin"));
+            claims.pluginId = "frameworks.impostor";
+            auto const exactJcs = registrationJcs(claims);
+            auto owner = exactOwner(exactJcs, std::move(claims));
+            CHECK(
+                ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner)
+                    .has_value()
+            );
+        }
+
         SUBCASE("baseline event type is namespaced")
         {
             auto claims              = claimsFor(hashOf("plugin"));

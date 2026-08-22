@@ -40,8 +40,8 @@ namespace uf::operator_runtime
     namespace
     {
         constexpr auto k_pluginId    = std::string_view{"chaos.project"};
-        constexpr auto k_dismissTool = std::string_view{"chaos.dismiss"};
-        constexpr auto k_sweepTool   = std::string_view{"chaos.sweep"};
+        constexpr auto k_dismissTool = std::string_view{"chaos.project.dismiss"};
+        constexpr auto k_sweepTool   = std::string_view{"chaos.project.sweep"};
 
         // The catalog bytes are opaque on purpose: the owner proves they hash
         // to what the registration pinned, and the descriptors it answers with
@@ -51,10 +51,6 @@ namespace uf::operator_runtime
             R"({"schema":"umbraflow-tool-catalog/v1","tools":["dismiss","sweep"]})"
         };
 
-        // The coordinate a run is anchored on. It stands for the position of
-        // the durable call the run implements; a run is never anchored on
-        // nothing.
-        constexpr auto k_runPosition = uint64{7};
 
         // Two entries, one closure. `dismiss` reaches the Tool Runtime through
         // the scoped facade, which is only loadable if the loader baked the
@@ -71,7 +67,7 @@ return {
     sweep = function(_input)
         return {
             catalog_hash = tools.catalog_hash,
-            knows_sibling = tools.knows("chaos.dismiss"),
+            knows_sibling = tools.knows("chaos.project.dismiss"),
             knows_framework = tools.knows("framework.audit.record"),
         }
     end,
@@ -93,7 +89,7 @@ return {
         {
             std::string toolName{};
             std::string arguments{};
-            uint64      parentPosition{};
+            std::string parentPosition{};
             uint64      childIndex{0};
         };
 
@@ -103,6 +99,27 @@ return {
             auto const result = sha256(std::as_bytes(std::span{value}));
             REQUIRE(result.has_value());
             return *result;
+        }
+
+        // The durable position a run is anchored on. It stands for the row of
+        // the call the run implements; a run is never anchored on nothing, and
+        // there is no spelling of "no position" to reach for.
+        [[nodiscard]]
+        auto runPosition() -> ContentHash
+        {
+            return hashOf("run-position");
+        }
+
+        // These cases are about the join, not about result schemas, so the
+        // validator accepts. The case that proves a refused answer is a refused
+        // call belongs to the dispatcher.
+        [[nodiscard]]
+        auto acceptingResults() -> ToolResultValidator
+        {
+            return [](std::string_view, std::string_view) -> Status
+            {
+                return ok();
+            };
         }
 
         // Answers in the exact shape @umbraflow/tools admits, derived from the
@@ -122,7 +139,7 @@ return {
                 log->emplace_back(ScopedCall{
                     .toolName       = std::string{toolName},
                     .arguments      = json::canonicalBytes(arguments),
-                    .parentPosition = coordinate.parentPosition,
+                    .parentPosition = coordinate.parentPosition.hex(),
                     .childIndex     = coordinate.childIndex,
                 });
                 return json::Value::ofObject({
@@ -383,6 +400,7 @@ return {
             moduleBlobs(k_projectSource),
             {},
             exported,
+            acceptingResults(),
             recordingRuntime(log)
         );
         REQUIRE(loaded.has_value());
@@ -410,19 +428,19 @@ return {
         auto const dismissed = loaded->invokeBoundTool(
             k_dismissTool,
             json::Value::ofObject({{"note", json::Value::ofString("kept")}}),
-            script::ScopedRunRequest{.parentPosition = k_runPosition}
+            script::ScopedRunRequest{.parentPosition = runPosition()}
         );
         REQUIRE(dismissed.has_value());
         auto const swept = loaded->invokeBoundTool(
             k_sweepTool,
             json::Value::ofObject({}),
-            script::ScopedRunRequest{.parentPosition = k_runPosition}
+            script::ScopedRunRequest{.parentPosition = runPosition()}
         );
         REQUIRE(swept.has_value());
 
         REQUIRE(log->size() == 1U);
         CHECK((*log)[0].toolName == "framework.audit.record");
-        CHECK((*log)[0].parentPosition == k_runPosition);
+        CHECK((*log)[0].parentPosition == runPosition().hex());
         CHECK((*log)[0].childIndex == 1U);
 
         // Only the binding table names an entry, so a Tool it never bound is a
@@ -430,7 +448,7 @@ return {
         auto const unknown = loaded->invokeBoundTool(
             "chaos.unknown",
             json::Value::ofObject({}),
-            script::ScopedRunRequest{.parentPosition = k_runPosition}
+            script::ScopedRunRequest{.parentPosition = runPosition()}
         );
         REQUIRE_FALSE(unknown.has_value());
         CHECK(unknown.error().message().contains("binds no Tool named"));
@@ -451,6 +469,7 @@ return {
             moduleBlobs(k_projectSource),
             {},
             exported,
+            acceptingResults(),
             recordingRuntime(log)
         );
         REQUIRE_FALSE(again.has_value());
@@ -473,6 +492,7 @@ return {
             moduleBlobs(k_projectSource),
             {},
             exported,
+            acceptingResults(),
             recordingRuntime(std::make_shared<std::vector<ScopedCall>>())
         );
         REQUIRE_FALSE(refused.has_value());
@@ -506,11 +526,12 @@ return {
             moduleBlobs(k_projectSource),
             {},
             exported,
+            acceptingResults(),
             recordingRuntime(std::make_shared<std::vector<ScopedCall>>())
         );
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().message().contains(
-            "chaos.sweep is declared with no binding to a Project entry"
+            "chaos.project.sweep is declared with no binding to a Project entry"
         ));
     }
 
@@ -534,11 +555,12 @@ return {
             moduleBlobs(k_projectSource),
             {},
             exported,
+            acceptingResults(),
             recordingRuntime(std::make_shared<std::vector<ScopedCall>>())
         );
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().message().contains(
-            "names chaos.sweep, which this Tool Catalog does not declare"
+            "names chaos.project.sweep, which this Tool Catalog does not declare"
         ));
     }
 
@@ -566,6 +588,7 @@ return {
                 moduleBlobs(k_dismissOnlySource),
                 {},
                 exported,
+                acceptingResults(),
                 recordingRuntime(log)
             );
             REQUIRE_FALSE(refused.has_value());
@@ -606,6 +629,7 @@ return {
                 moduleBlobs(k_projectSource),
                 {},
                 exported,
+                acceptingResults(),
                 recordingRuntime(log)
             );
             REQUIRE_FALSE(refused.has_value());
@@ -630,6 +654,7 @@ return {
             moduleBlobs(k_projectSource),
             {},
             exported,
+            acceptingResults(),
             recordingRuntime(std::make_shared<std::vector<ScopedCall>>())
         );
         REQUIRE(loaded.has_value());
@@ -677,6 +702,7 @@ return {
             moduleBlobs(k_projectSource),
             {},
             exported,
+            acceptingResults(),
             recordingRuntime(std::make_shared<std::vector<ScopedCall>>())
         );
         REQUIRE(loaded.has_value());
@@ -684,7 +710,7 @@ return {
         auto const swept = loaded->invokeBoundTool(
             k_sweepTool,
             json::Value::ofObject({}),
-            script::ScopedRunRequest{.parentPosition = k_runPosition}
+            script::ScopedRunRequest{.parentPosition = runPosition()}
         );
         REQUIRE(swept.has_value());
 
@@ -714,6 +740,7 @@ return {
             moduleBlobs(k_dismissOnlySource),
             {},
             exported,
+            acceptingResults(),
             recordingRuntime(std::make_shared<std::vector<ScopedCall>>())
         );
         REQUIRE_FALSE(refused.has_value());
@@ -748,6 +775,7 @@ return {
                 moduleBlobs(k_dismissOnlySource),
                 {},
                 exported,
+                acceptingResults(),
                 recordingRuntime(std::make_shared<std::vector<ScopedCall>>())
             );
             REQUIRE_FALSE(refused.has_value());
@@ -796,11 +824,38 @@ return {
                 moduleBlobs(k_projectSource),
                 {},
                 exported,
+                acceptingResults(),
                 recordingRuntime(std::make_shared<std::vector<ScopedCall>>())
             );
             REQUIRE_FALSE(refused.has_value());
             CHECK(refused.error().message().contains(
                 "environment does not match the verified registration"
+            ));
+        }
+
+        SUBCASE("a program whose answers nothing would judge")
+        {
+            auto const registration = registrationOver(k_projectSource, bindings);
+            auto const catalog      = catalogOver(registration, bothTools());
+            auto const exported     = std::array{
+                std::string{"dismiss"},
+                std::string{"sweep"},
+            };
+
+            auto registrar     = ProjectToolProgramRegistrar{};
+            auto const refused = registrar.registerProject(
+                registration,
+                catalog,
+                "main",
+                moduleBlobs(k_projectSource),
+                {},
+                exported,
+                ToolResultValidator{},
+                recordingRuntime(std::make_shared<std::vector<ScopedCall>>())
+            );
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(refused.error().message().contains(
+                "requires a result schema validator"
             ));
         }
 
@@ -821,6 +876,7 @@ return {
                 moduleBlobs(k_projectSource),
                 {},
                 exported,
+                acceptingResults(),
                 script::ToolRuntimeInvoke{}
             );
             REQUIRE_FALSE(refused.has_value());

@@ -50,21 +50,39 @@ namespace uf::task
             std::string_view{"workflow"},
         };
 
-        // The pinned Tool catalog the resource carries, as a projection of the
-        // exact member names the Operator renders into tool_catalog_hash. Only
-        // the members the scoped modules actually read are populated: the
-        // catalog is advisory data for discovery and early refusal, and the
-        // Operator judges name, arguments and authority again on every call.
+        // The pinned Tool catalog the resource carries. It is the exact
+        // projection ProjectToolProgramRegistrar bakes into the scoped resource
+        // -- argument_contract, child_effects, name and tool_version on every
+        // entry, in JCS member order, sorted by name -- rather than a subset
+        // shaped to what these cases happen to read. The projection has an
+        // owner now, so a fixture that carried a different shape would be
+        // asserting against a document the production loader never produces.
+        //
+        // The values are this suite's own: what the resource says is advisory
+        // discovery data, and the Operator judges name, arguments and authority
+        // again on every call.
         constexpr auto k_catalogTools = std::string_view{
-            R"([{"child_effects":{"maximum_child_calls":0},"name":"framework.audit.record"})"
-            R"(,{"child_effects":{"maximum_child_calls":0},"name":"framework.screen.capture"})"
-            R"(,{"child_effects":{"maximum_child_calls":0},"name":"framework.screen.observe"})"
-            R"(,{"child_effects":{"maximum_child_calls":0},"name":"framework.workflow.reconcile"})"
-            R"(,{"child_effects":{"maximum_child_calls":0},"name":"framework.workflow.status"})"
+            R"([{"argument_contract":{"maximum_duration_ms":5000})"
+            R"(,"child_effects":{"maximum_child_calls":0})"
+            R"(,"name":"framework.audit.record","tool_version":"1"})"
+            R"(,{"argument_contract":{"maximum_duration_ms":5000})"
+            R"(,"child_effects":{"maximum_child_calls":0})"
+            R"(,"name":"framework.screen.capture","tool_version":"1"})"
+            R"(,{"argument_contract":{"maximum_duration_ms":5000})"
+            R"(,"child_effects":{"maximum_child_calls":0})"
+            R"(,"name":"framework.screen.observe","tool_version":"1"})"
+            R"(,{"argument_contract":{"maximum_duration_ms":5000})"
+            R"(,"child_effects":{"maximum_child_calls":0})"
+            R"(,"name":"framework.workflow.reconcile","tool_version":"1"})"
+            R"(,{"argument_contract":{"maximum_duration_ms":5000})"
+            R"(,"child_effects":{"maximum_child_calls":0})"
+            R"(,"name":"framework.workflow.status","tool_version":"1"})"
             R"(,{"argument_contract":{"maximum_duration_ms":60000})"
             R"(,"child_effects":{"maximum_child_calls":0})"
-            R"(,"name":"framework.workflow.wait"})"
-            R"(,{"child_effects":{"maximum_child_calls":4},"name":"project.flow.run"}])"
+            R"(,"name":"framework.workflow.wait","tool_version":"1"})"
+            R"(,{"argument_contract":{"maximum_duration_ms":30000})"
+            R"(,"child_effects":{"maximum_child_calls":4})"
+            R"(,"name":"project.flow.run","tool_version":"2"}])"
         };
 
         [[nodiscard]]
@@ -106,9 +124,19 @@ namespace uf::task
         {
             std::string toolName{};
             std::string arguments{};
-            uint64      parentPosition{};
+            std::string parentPosition{};
             uint64      childIndex{0};
         };
+
+        // The durable position a scoped run is anchored on. A run is never
+        // anchored on nothing, so a case names the row its calls hang from.
+        [[nodiscard]]
+        auto positionOf(std::string_view text) -> ContentHash
+        {
+            auto const hash = sha256(std::as_bytes(std::span{text}));
+            REQUIRE(hash.has_value());
+            return *hash;
+        }
 
         // A Tool Runtime that answers in the exact shape the scoped facades
         // read: the tool the seam ran, the recorded position, the delivery
@@ -128,7 +156,7 @@ namespace uf::task
                 log->emplace_back(ScopedCall{
                     .toolName       = std::string{toolName},
                     .arguments      = json::canonicalBytes(arguments),
-                    .parentPosition = coordinate.parentPosition,
+                    .parentPosition = coordinate.parentPosition.hex(),
                     .childIndex     = coordinate.childIndex,
                 });
 
@@ -530,7 +558,7 @@ return {
         auto const answer = program->invoke(
             "derive",
             parsed("{}"),
-            script::ScopedRunRequest{.parentPosition = uint64{1}}
+            script::ScopedRunRequest{.parentPosition = positionOf("root-run")}
         );
         REQUIRE(answer.has_value());
         auto const bytes = json::canonicalBytes(*answer);
@@ -553,7 +581,7 @@ return {
             INFO("call: ", issued[index]);
             CHECK((*log)[index].toolName == issued[index]);
             CHECK((*log)[index].childIndex == index + 1U);
-            CHECK((*log)[index].parentPosition == 1U);
+            CHECK((*log)[index].parentPosition == positionOf("root-run").hex());
         }
 
         // The facades own the argument shapes, including the empty JSON OBJECT
@@ -662,7 +690,7 @@ return {
         auto const answer = program->invoke(
             "derive",
             parsed("{}"),
-            script::ScopedRunRequest{.parentPosition = uint64{11}}
+            script::ScopedRunRequest{.parentPosition = positionOf("handler-run")}
         );
         REQUIRE(answer.has_value());
         CHECK(json::canonicalBytes(*answer) == R"({"recorded":true})");
@@ -670,7 +698,9 @@ return {
         REQUIRE(log->size() == 2U);
         for (auto index = std::size_t{}; index < log->size(); ++index)
         {
-            CHECK((*log)[index].parentPosition == 11U);
+            CHECK(
+                (*log)[index].parentPosition == positionOf("handler-run").hex()
+            );
             CHECK((*log)[index].childIndex == index + 1U);
         }
 
@@ -703,7 +733,11 @@ return {
         );
         REQUIRE(refusing.has_value());
         auto const torn =
-            refusing->invoke("derive", parsed("{}"), script::ScopedRunRequest{});
+            refusing->invoke(
+                "derive",
+                parsed("{}"),
+                script::ScopedRunRequest{.parentPosition = positionOf("torn-run")}
+            );
         REQUIRE_FALSE(torn.has_value());
         CHECK(
             std::string{torn.error().message()}.find(

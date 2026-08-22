@@ -53,110 +53,6 @@ namespace uf::operator_runtime
             UF_TRY_VALUE(payload, providerErrorPayload(error));
             return ToolCallCompletion::possible(std::move(payload));
         }
-
-        [[nodiscard]]
-        auto invokeTool(
-            OperatorCoordinator& coordinator,
-            ControllerBinding const& controller,
-            ControlLease const& lease,
-            ToolRootRequestIdentity const& root,
-            ToolCallPositionIdentity const& call,
-            ToolDelegationGrant const* delegation,
-            ReadOnlyToolProvider const& provider,
-            ToolMutability requiredMutability,
-            OperatorPlanAuthority const* planAuthority,
-            std::span<ProposedEffect const> effects,
-            std::span<ToolApprovalGrant const> approvals
-        ) -> Result<ToolCallReplay>
-        {
-            if (!provider)
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "Tool invocation requires a provider"
-                );
-            }
-            if (
-                requiredMutability == ToolMutability::Mutating
-                && planAuthority == nullptr
-            )
-            {
-                return fail(
-                    AutomationErrorKind::InternalInvariant,
-                    "Mutating Tool executor requires plan authority"
-                );
-            }
-
-            UF_TRY(coordinator.persistToolRootRequest(root));
-            UF_TRY(coordinator.persistToolCallPosition(root, call));
-            UF_TRY_VALUE(replay, coordinator.replayToolCall(root, call));
-            switch (replay.state)
-            {
-            case ToolCallState::Confirmed:
-            case ToolCallState::ProvenAbsent:
-            case ToolCallState::Possible:
-            case ToolCallState::Rejected:
-            case ToolCallState::TerminalFailure:
-            case ToolCallState::TerminallyUnresolved:
-                return replay;
-            case ToolCallState::Dispatching:
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "Tool call is already dispatching"
-                );
-            case ToolCallState::Proposed:
-            case ToolCallState::Admitted:
-                break;
-            }
-
-            auto admission = requiredMutability == ToolMutability::ReadOnly
-                ? coordinator.admitReadOnlyToolCall(
-                      controller,
-                      lease,
-                      root,
-                      call,
-                      delegation
-                  )
-                : coordinator.admitMutatingToolCall(
-                      controller,
-                      lease,
-                      root,
-                      call,
-                      *planAuthority,
-                      effects,
-                      approvals,
-                      delegation
-                  );
-            UF_TRY_VALUE(admitted, std::move(admission));
-            UF_TRY_VALUE(dispatch, coordinator.beginToolCallDispatch(admitted));
-            auto provided = provider(call);
-            auto classified = [&provided, requiredMutability]()
-                -> Result<ToolCallCompletion>
-            {
-                if (provided)
-                {
-                    auto completion = std::move(*provided);
-                    if (
-                        requiredMutability == ToolMutability::Mutating
-                        && completion.kind()
-                            == ToolCallCompletionKind::TerminalFailure
-                    )
-                    {
-                        return ToolCallCompletion::possible(
-                            completion.payload(),
-                            completion.evidence()
-                        );
-                    }
-                    return completion;
-                }
-                return requiredMutability == ToolMutability::Mutating
-                    ? providerPossibleCompletion(provided.error())
-                    : providerFailureCompletion(provided.error());
-            }();
-            UF_TRY_VALUE(completion, std::move(classified));
-            UF_TRY(coordinator.completeToolCallDispatch(dispatch, completion));
-            return coordinator.replayToolCall(root, call);
-        }
     }
 
     ToolRuntimeExecutor::ToolRuntimeExecutor(
@@ -166,54 +62,87 @@ namespace uf::operator_runtime
     {
     }
 
-    auto ToolRuntimeExecutor::invokeReadOnly(
-        ControllerBinding const& controller,
-        ControlLease const& lease,
-        ToolRootRequestIdentity const& root,
-        ToolCallPositionIdentity const& call,
-        ToolDelegationGrant const* delegation,
-        ReadOnlyToolProvider const& provider
+    auto ToolRuntimeExecutor::invoke(
+        ToolAdmissionRequest const& request,
+        ToolProvider const& provider
     ) -> Result<ToolCallReplay>
     {
-        return invokeTool(
-            m_coordinator,
-            controller,
-            lease,
-            root,
-            call,
-            delegation,
-            provider,
-            ToolMutability::ReadOnly,
-            nullptr,
-            {},
-            {}
-        );
-    }
+        if (!provider)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "Tool invocation requires a provider"
+            );
+        }
 
-    auto ToolRuntimeExecutor::invokeMutating(
-        ControllerBinding const& controller,
-        ControlLease const& lease,
-        ToolRootRequestIdentity const& root,
-        ToolCallPositionIdentity const& call,
-        ToolDelegationGrant const* delegation,
-        OperatorPlanAuthority const& planAuthority,
-        std::span<ProposedEffect const> effects,
-        std::span<ToolApprovalGrant const> approvals,
-        MutatingToolProvider const& provider
-    ) -> Result<ToolCallReplay>
-    {
-        return invokeTool(
-            m_coordinator,
-            controller,
-            lease,
-            root,
-            call,
-            delegation,
-            provider,
-            ToolMutability::Mutating,
-            &planAuthority,
-            effects,
-            approvals
-        );
+        auto const& root = request.root;
+        auto const& call = request.call;
+        auto const requiredMutability = request.requiredMutability();
+
+        UF_TRY(m_coordinator.persistToolRootRequest(root));
+        UF_TRY(m_coordinator.persistToolCallPosition(root, call));
+        UF_TRY_VALUE(replay, m_coordinator.replayToolCall(root, call));
+        switch (replay.state)
+        {
+        case ToolCallState::Confirmed:
+        case ToolCallState::ProvenAbsent:
+        case ToolCallState::Possible:
+        case ToolCallState::Rejected:
+        case ToolCallState::TerminalFailure:
+        case ToolCallState::TerminallyUnresolved:
+            return replay;
+        case ToolCallState::Dispatching:
+        case ToolCallState::Proposed:
+        case ToolCallState::Admitted:
+            break;
+        }
+
+        // A dispatching row is an incarnation that died inside its own
+        // dispatch. Re-entry is the ledger's decision, not this seam's: it
+        // refuses only a mutating leaf, whose interrupted provider may have
+        // moved the world with no record of it, and admits everything whose
+        // re-execution cannot deliver anything a durable row does not already
+        // classify. Everything else enters admission for the first or the next
+        // time.
+        auto dispatched = replay.state == ToolCallState::Dispatching
+            ? m_coordinator.reenterToolCallDispatch(
+                  request.controller,
+                  request.lease,
+                  root,
+                  call
+              )
+            : [this, &request]() -> Result<ToolCallDispatch>
+              {
+                  UF_TRY_VALUE(admitted, m_coordinator.admitToolCall(request));
+                  return m_coordinator.beginToolCallDispatch(admitted);
+              }();
+        UF_TRY_VALUE(dispatch, std::move(dispatched));
+        auto provided = provider(call);
+        auto classified = [&provided, requiredMutability]()
+            -> Result<ToolCallCompletion>
+        {
+            if (provided)
+            {
+                auto completion = std::move(*provided);
+                if (
+                    requiredMutability == ToolMutability::Mutating
+                    && completion.kind()
+                        == ToolCallCompletionKind::TerminalFailure
+                )
+                {
+                    return ToolCallCompletion::possible(
+                        completion.payload(),
+                        completion.evidence()
+                    );
+                }
+                return completion;
+            }
+            return requiredMutability == ToolMutability::Mutating
+                ? providerPossibleCompletion(provided.error())
+                : providerFailureCompletion(provided.error());
+        }();
+        UF_TRY_VALUE(completion, std::move(classified));
+        UF_TRY(m_coordinator.completeToolCallDispatch(dispatch, completion));
+        return m_coordinator.replayToolCall(root, call);
     }
 }

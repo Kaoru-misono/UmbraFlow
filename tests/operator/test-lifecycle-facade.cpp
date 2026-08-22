@@ -41,7 +41,7 @@ namespace uf::service
                 auto const ready = createReadyOperation(
                     prepared,
                     "lifecycle-restart",
-                    "command-1"
+                    prepared.project.toolName("command-1")
                 );
                 auto const reserved = prepared.store.reserveDispatch(
                     ready.operationId,
@@ -220,16 +220,17 @@ namespace uf::service
         REQUIRE(snapshot.has_value());
         REQUIRE_FALSE(snapshot->availableTools.empty());
 
+        auto const privilegedName = prepared.project.toolName("raw-coordinate-click");
         auto const privileged = prepared.project.toolCatalogSchemaOwner.describe(
-            "raw-coordinate-click"
+            privilegedName
         );
         REQUIRE(privileged.has_value());
         CHECK_MESSAGE(
             std::ranges::none_of(
                 snapshot->availableTools,
-                [](operator_runtime::OfferedTool const& tool)
+                [&privilegedName](operator_runtime::OfferedTool const& tool)
                 {
-                    return tool.name == "raw-coordinate-click";
+                    return tool.name == privilegedName;
                 }
             ),
             "the facade tool list must come from U8's session-aware offer side"

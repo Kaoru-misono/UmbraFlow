@@ -107,7 +107,8 @@ namespace uf::script
         class ScopedToolRun final
         {
             ToolRuntimeInvoke const& m_invokeTool;
-            uint64          m_parentPosition;
+
+            ContentHash     m_parentPosition;
             std::stop_token m_cancellation;
             uint64          m_childIndex{0};
 
@@ -273,23 +274,77 @@ namespace uf::script
             };
         }
 
-        // A closure graph is admitted with a Tool Runtime that refuses every
-        // call. Admission proves the graph loads and its resources materialize;
-        // a Tool call issued while a module is still loading has no issuing
-        // context to be numbered under, so it is a refusal rather than a call.
-        [[nodiscard]]
-        auto admissionToolRuntime() -> ToolRuntimeInvoke
+        // The capability table a closure graph is ADMITTED under.
+        //
+        // Admission proves the graph loads and its resources materialize. It is
+        // not a run: no durable call is dispatching, so there is no position to
+        // number a call under and no issuing context to number it in. That is
+        // why this is a second primitive rather than a Tool Runtime that says
+        // no. A call here cannot be refused on a run's behalf because there is
+        // no run, and a request naming a placeholder position would be exactly
+        // the "absent parent" reading ScopedRunRequest is shaped to forbid.
+        //
+        // The refusal is terminal for the same reason every Tool Runtime
+        // refusal is: it is a fact about the program rather than a value, so no
+        // pcall in a loading module can convert it into control flow.
+        auto admissionInvokePrimitive(lua_State* state) -> int
         {
-            return [](
-                       std::string_view toolName,
-                       json::Value const&,
-                       ToolCallCoordinate const&,
-                       std::stop_token
-                   ) -> Result<json::Value> {
-                return detail::refuse(
-                    "a scoped tool program may not call a Tool while it is admitted: "
-                    + std::string{toolName}
+            auto requested = std::string{"an unnamed tool"};
+            if (lua_type(state, 1) == LUA_TSTRING)
+            {
+                std::size_t nameLength = 0;
+                char const* p_name     = lua_tolstring(state, 1, &nameLength);
+                if (p_name != nullptr)
+                {
+                    requested = std::string{p_name, nameLength};
+                }
+            }
+
+            // SAFETY: the single upvalue is installed only by
+            // pushAdmissionCapabilityTable, and the ProgramEnvironment it names
+            // belongs to the admitClosure frame that owns the VM making this
+            // call, so it strictly outlives every callback the VM can make.
+            auto* p_environment = static_cast<detail::ProgramEnvironment*>(
+                lua_tolightuserdata(state, lua_upvalueindex(1))
+            );
+            if (p_environment == nullptr)
+            {
+                luaL_error(
+                    state,
+                    "the Tool Runtime primitive has an invalid host context"
                 );
+            }
+            auto const refusal = detail::refuse(
+                "a scoped tool program may not call a Tool while it is admitted: "
+                + requested
+            );
+            detail::recordTerminalFailure(*p_environment, refusal.error());
+            return lua_break(state);
+        }
+
+        auto pushAdmissionCapabilityTable(
+            lua_State* state,
+            detail::ProgramEnvironment& environment
+        ) -> void
+        {
+            lua_createtable(state, 0, 1);
+            lua_pushlightuserdata(state, &environment);
+            lua_pushcclosure(state, &admissionInvokePrimitive, "tools.invoke", 1);
+            auto const field = std::string{k_capabilityInvokeField};
+            lua_rawsetfield(state, -2, field.c_str());
+        }
+
+        [[nodiscard]]
+        auto admissionCapabilityInstaller() -> detail::CapabilityInstaller
+        {
+            // Synchronous and non-escaping, and it closes over nothing at all:
+            // an admission has no run state to close over.
+            return [](
+                       lua_State* state,
+                       detail::ProgramEnvironment& environment
+                   ) -> Status {
+                pushAdmissionCapabilityTable(state, environment);
+                return ok();
             };
         }
 
@@ -375,17 +430,15 @@ namespace uf::script
             )
         );
 
-        auto const admissionRuntime = admissionToolRuntime();
-        auto admissionRun = ScopedToolRun{
-            admissionRuntime,
-            ScopedRunRequest{},
+        auto admissionVm = detail::QuotaBoundVm{
             k_defaultMaxRuntime,
+            std::stop_token{},
         };
         UF_TRY(
             detail::admitClosure(
-                admissionRun.vm(),
+                admissionVm,
                 closure,
-                capabilityInstaller(admissionRun)
+                admissionCapabilityInstaller()
             )
         );
 

@@ -175,7 +175,7 @@ namespace uf::operator_runtime
         auto const operation = test_support::createReadyOperation(
             prepared,
             "request-1",
-            "command-1"
+            prepared.project.toolName("command-1")
         );
 
         // A takeover with nothing in flight moves the fence and nothing else,
@@ -424,12 +424,12 @@ namespace uf::operator_runtime
         auto const first = test_support::proposedOperation(
             prepared,
             "request-1",
-            "observe-1"
+            prepared.project.toolName("observe-1")
         );
         auto const second = test_support::proposedOperation(
             prepared,
             "request-2",
-            "raw-coordinate-click"
+            prepared.project.toolName("raw-coordinate-click")
         );
 
         auto const human = test_support::addController(
@@ -467,7 +467,10 @@ namespace uf::operator_runtime
         REQUIRE(prepared.store.submitCommand(
             elsewhere,
             test_support::command(*elsewhereSnapshot, "request-elsewhere"),
-            test_support::toolInvocation(prepared.project, "observe-1")
+            test_support::toolInvocation(
+                prepared.project,
+                prepared.project.toolName("observe-1")
+            )
         ).has_value());
 
         auto const read = prepared.store.subscribe(agent, base, 16U);
@@ -571,7 +574,7 @@ namespace uf::operator_runtime
         auto const readOperation = test_support::proposedOperation(
             eventStore,
             "request-state-event",
-            "observe-1"
+            eventStore.project.toolName("observe-1")
         );
         auto const confirmed = eventStore.store.transitionOperation(
             readOperation.operationId,
@@ -783,6 +786,12 @@ namespace uf::operator_runtime
             );
         };
 
+        // The two catalog names this case submits. A fixture tool's namespace
+        // is its registration's plugin_id, so they are composed from the
+        // project prepareStore registered rather than respelled per call.
+        auto const observeTool = prepared.project.toolName("observe-1");
+        auto const commandTool = prepared.project.toolName("command-1");
+
         // ACTION. One accepted command, and the second is refused by the
         // column's own CHECK rather than by a comparison beside it.
         auto const callsBudget = AgentBudget{
@@ -804,8 +813,8 @@ namespace uf::operator_runtime
         auto const callsLease    = leaseFor(calls);
         auto const callsSnapshot = snapshotFor(callsLease);
         REQUIRE(callsSnapshot.has_value());
-        REQUIRE(submit(calls, *callsSnapshot, "request-1", "observe-1").has_value());
-        auto const spent = submit(calls, *callsSnapshot, "request-2", "observe-1");
+        REQUIRE(submit(calls, *callsSnapshot, "request-1", observeTool).has_value());
+        auto const spent = submit(calls, *callsSnapshot, "request-2", observeTool);
         REQUIRE_FALSE(spent.has_value());
         CHECK(automationErrorKind(spent.error()) == AutomationErrorKind::ActionRejected);
         auto const callsRemaining = prepared.store.remainingBudget(calls);
@@ -817,7 +826,7 @@ namespace uf::operator_runtime
         // replay of an accepted request still answers, and costs nothing,
         // because the counter records what the ledger accepted and this was
         // charged when it was accepted.
-        auto const replay = submit(calls, *callsSnapshot, "request-1", "observe-1");
+        auto const replay = submit(calls, *callsSnapshot, "request-1", observeTool);
         REQUIRE(replay.has_value());
         CHECK(replay->operation.lookup == CommandLookup::Existing);
 
@@ -858,7 +867,7 @@ namespace uf::operator_runtime
             mutations,
             *mutationsSnapshot,
             "request-1",
-            "command-1"
+            commandTool
         );
         REQUIRE_FALSE(refusedMutation.has_value());
         CHECK(
@@ -866,7 +875,7 @@ namespace uf::operator_runtime
             == AutomationErrorKind::ActionRejected
         );
         REQUIRE(
-            submit(mutations, *mutationsSnapshot, "request-2", "observe-1").has_value()
+            submit(mutations, *mutationsSnapshot, "request-2", observeTool).has_value()
         );
 
         // OBSERVATION. Charged by createSnapshot, in the same transaction and
@@ -922,7 +931,7 @@ namespace uf::operator_runtime
             auto const lease    = leaseFor(binding);
             auto const snapshot = snapshotFor(lease);
             REQUIRE(snapshot.has_value());
-            auto const operation = submit(binding, *snapshot, "request-1", "command-1");
+            auto const operation = submit(binding, *snapshot, "request-1", commandTool);
             REQUIRE(operation.has_value());
             struct RiskAttempt final
             {
@@ -987,13 +996,13 @@ namespace uf::operator_runtime
         auto const timedLease    = leaseFor(timed);
         auto const timedSnapshot = snapshotFor(timedLease);
         REQUIRE(timedSnapshot.has_value());
-        auto const timedOperation = submit(timed, *timedSnapshot, "request-1", "command-1");
+        auto const timedOperation = submit(timed, *timedSnapshot, "request-1", commandTool);
         REQUIRE(timedOperation.has_value());
         std::this_thread::sleep_for(std::chrono::milliseconds{1'200});
         auto const lateSnapshot = snapshotFor(timedLease);
         REQUIRE_FALSE(lateSnapshot.has_value());
         CHECK(automationErrorKind(lateSnapshot.error()) == AutomationErrorKind::Timeout);
-        auto const lateSubmit = submit(timed, *timedSnapshot, "request-2", "observe-1");
+        auto const lateSubmit = submit(timed, *timedSnapshot, "request-2", observeTool);
         REQUIRE_FALSE(lateSubmit.has_value());
         CHECK(automationErrorKind(lateSubmit.error()) == AutomationErrorKind::Timeout);
         auto const latePlan = prepared.store.freezePlan(
@@ -1041,25 +1050,25 @@ namespace uf::operator_runtime
         // Each of these carries a FRESH client_request_id, which is what makes
         // the run a run at all: the fingerprint excludes the request id, so a
         // new one produces the identical command and buys no progress.
-        REQUIRE(submit(stuck, *stuckSnapshot, "request-1", "observe-1").has_value());
+        REQUIRE(submit(stuck, *stuckSnapshot, "request-1", observeTool).has_value());
         CHECK(repetitionsOf(stuck) == 0U);
-        REQUIRE(submit(stuck, *stuckSnapshot, "request-2", "observe-1").has_value());
+        REQUIRE(submit(stuck, *stuckSnapshot, "request-2", observeTool).has_value());
         CHECK(repetitionsOf(stuck) == 1U);
-        REQUIRE(submit(stuck, *stuckSnapshot, "request-3", "observe-1").has_value());
+        REQUIRE(submit(stuck, *stuckSnapshot, "request-3", observeTool).has_value());
         CHECK(repetitionsOf(stuck) == 2U);
-        REQUIRE(submit(stuck, *stuckSnapshot, "request-4", "observe-1").has_value());
+        REQUIRE(submit(stuck, *stuckSnapshot, "request-4", observeTool).has_value());
         CHECK(repetitionsOf(stuck) == 3U);
-        auto const looped = submit(stuck, *stuckSnapshot, "request-5", "observe-1");
+        auto const looped = submit(stuck, *stuckSnapshot, "request-5", observeTool);
         REQUIRE_FALSE(looped.has_value());
         CHECK(automationErrorKind(looped.error()) == AutomationErrorKind::ActionRejected);
         CHECK(repetitionsOf(stuck) == 3U);
 
         // A different command against the same world is progress.
-        REQUIRE(submit(stuck, *stuckSnapshot, "request-6", "command-1").has_value());
+        REQUIRE(submit(stuck, *stuckSnapshot, "request-6", commandTool).has_value());
         CHECK(repetitionsOf(stuck) == 0U);
-        REQUIRE(submit(stuck, *stuckSnapshot, "request-7", "observe-1").has_value());
+        REQUIRE(submit(stuck, *stuckSnapshot, "request-7", observeTool).has_value());
         CHECK(repetitionsOf(stuck) == 0U);
-        REQUIRE(submit(stuck, *stuckSnapshot, "request-8", "observe-1").has_value());
+        REQUIRE(submit(stuck, *stuckSnapshot, "request-8", observeTool).has_value());
         CHECK(repetitionsOf(stuck) == 1U);
 
         // The same command against a different world is progress too. A second
@@ -1080,9 +1089,9 @@ namespace uf::operator_runtime
         );
         REQUIRE(moved.has_value());
         REQUIRE(moved->decisionBasisHash != stuckSnapshot->decisionBasisHash);
-        REQUIRE(submit(stuck, *moved, "request-9", "observe-1").has_value());
+        REQUIRE(submit(stuck, *moved, "request-9", observeTool).has_value());
         CHECK(repetitionsOf(stuck) == 0U);
-        REQUIRE(submit(stuck, *moved, "request-10", "observe-1").has_value());
+        REQUIRE(submit(stuck, *moved, "request-10", observeTool).has_value());
         CHECK(repetitionsOf(stuck) == 1U);
     }
 
@@ -1127,7 +1136,10 @@ namespace uf::operator_runtime
             REQUIRE(prepared.store.submitCommand(
                 agent,
                 test_support::command(*snapshot, "request-1"),
-                test_support::toolInvocation(prepared.project, "observe-1")
+                test_support::toolInvocation(
+                    prepared.project,
+                    prepared.project.toolName("observe-1")
+                )
             ).has_value());
             auto const remaining = prepared.store.remainingBudget(agent);
             REQUIRE(remaining.has_value());
