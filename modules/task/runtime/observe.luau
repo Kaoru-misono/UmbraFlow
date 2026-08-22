@@ -3,8 +3,10 @@
 -- it has no input-delivery operation.
 
 local native = ...
-local model = model
-local evidence = evidence
+local model = require("@umbraflow/internal/model")
+local evidence = require("@umbraflow/internal/evidence")
+local project = require("@umbraflow/internal/project")
+local resolution = require("@umbraflow/internal/resolution")
 
 local observe = {}
 

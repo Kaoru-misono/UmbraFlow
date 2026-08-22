@@ -166,17 +166,30 @@ local function shortestDigits(magnitude: number): (string, number)
     for precision = 0, 16 do
         local formatted = string.format("%." .. tostring(precision) .. "e", magnitude)
         if tonumber(formatted) == magnitude then
-            -- `%e` always yields `d.ddd e sign digits`, or `d e sign digits` at
-            -- precision 0.  A Lua pattern cannot spell "an optional group", so
-            -- one character class covers both spellings instead.
-            local mantissa, exponent = string.match(formatted, "^(%d[%d%.]*)[eE]([-+]%d+)$")
+            -- `%e` always yields `d<point>ddd e sign digits`, or `d e sign
+            -- digits` at precision 0.  A Lua pattern cannot spell "an optional
+            -- group", so one character class covers both spellings instead.
+            --
+            -- That `<point>` is NOT necessarily a full stop.  `string.format`
+            -- delegates to the host C runtime's snprintf, whose decimal
+            -- separator is LC_NUMERIC's, so the same call answers `1,5e+00`
+            -- under a German or Turkish locale.  The mantissa is therefore
+            -- matched as "everything before the exponent marker" and reduced to
+            -- its digits below, which is what keeps one value's canonical bytes
+            -- the same on every host.  `tonumber` reads the separator back
+            -- through strtod, which reads the same locale, so the round-trip
+            -- test above stays self-consistent under all of them.  Matching the
+            -- separator instead would not be a cosmetic difference: the whole
+            -- loop would fall through and every non-integer number would be
+            -- refused as "could not be formatted as a decimal" on that host.
+            local mantissa, exponent = string.match(formatted, "^(%d[^eE]*)[eE]([-+]%d+)$")
             if mantissa == nil or exponent == nil then
                 reject("a number", "could not be formatted as a decimal")
             end
             -- No trailing zero can survive here: if the last digit were 0, the
             -- previous precision would have produced the same value in one digit
             -- fewer and the loop would already have stopped.
-            local digits = string.gsub(mantissa :: string, "%.", "")
+            local digits = string.gsub(mantissa :: string, "%D", "")
             return digits, (tonumber(exponent) :: number) + 1
         end
     end
@@ -336,6 +349,46 @@ function jcs.encode(value: any): string
         error(result, 2)
     end
     return result
+end
+
+-- Canonical equality: whether `left` and `right` have the same RFC 8785
+-- canonical form.  That is the definition, and this is a comparison of the two
+-- canonical encodings rather than a structural walk, deliberately.
+--
+-- A structural comparator would have to re-decide every rule `jcs.encode`
+-- already owns -- that -0 and 0 are one value, that 1 and 1.0 are one value,
+-- that member order is UTF-16 code-unit order over names, that an empty table
+-- is the empty array -- and this file's opening note says why a second spelling
+-- of those rules is worse than useless: it cannot fail a test, it merely
+-- produces an answer that disagrees.  Encoding both sides makes agreement with
+-- `jcs.encode` a property of construction instead of a property somebody has to
+-- keep true.
+--
+-- The cost is honest and stated: two full canonical encodings are materialized,
+-- so this is O(size of both values) in time and memory with no early exit on
+-- the first differing member.  For a pure SDK helper over Project-owned JSON
+-- values -- which `@umbraflow/json` already bounds at 1 MiB encoded and 100000
+-- values -- that ceiling is the same one any canonicalizing or hashing use of
+-- these values already pays, and it buys a comparator that cannot drift from
+-- the bytes a content hash would certify.
+--
+-- Every refusal `jcs.encode` makes is a refusal here too, at the caller's
+-- frame, naming which side was unencodable.  A value with no canonical form has
+-- no canonical equality either, so this raises rather than answering `false`:
+-- `false` would claim the two values differ when the truth is that one of them
+-- cannot be spoken.  For the same reason there is no `rawequal` fast path --
+-- one table compared against itself would then answer `true` without ever
+-- discovering that it holds a cycle, a NaN, or mixed array and object keys.
+function jcs.equals(left: any, right: any): boolean
+    local encodedLeft, leftResult = pcall(encodeValue, left, "the left value", {})
+    if not encodedLeft then
+        error(leftResult, 2)
+    end
+    local encodedRight, rightResult = pcall(encodeValue, right, "the right value", {})
+    if not encodedRight then
+        error(rightResult, 2)
+    end
+    return leftResult == rightResult
 end
 
 return table.freeze(jcs)

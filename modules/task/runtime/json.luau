@@ -3,10 +3,7 @@
 -- Runtime behavior is pure Luau: it reaches only release-owned Framework
 -- modules and never delegates parsing or encoding to the host.
 
-local jcsModule = jcs
-if jcsModule == nil then
-    jcsModule = require("@umbraflow/jcs")
-end
+local jcsModule = require("@umbraflow/jcs")
 local builtinUtf8 = utf8
 local json = {}
 
@@ -330,7 +327,64 @@ function json.parse(source: any): any
                 digit = string.byte(text, index)
             until digit == nil or digit < 0x30 or digit > 0x39
         end
-        local value = tonumber(string.sub(text, start, index - 1))
+        -- `tonumber` delegates to the host C runtime's strtod, whose decimal
+        -- separator is LC_NUMERIC's: under a German or Turkish locale
+        -- `tonumber("1.5")` stops at the full stop and answers 1, silently.
+        -- The literal is therefore re-spelled with no separator at all -- every
+        -- significant digit as one integer, with the exponent shifted down by
+        -- the number of fraction digits -- which denotes the same rational
+        -- number and is read identically under every locale.  strtod is
+        -- correctly rounded, so the double it returns for `15e-1` is the same
+        -- one it returns for `1.5`.
+        --
+        -- The grammar above has already admitted the literal, so the match
+        -- cannot fail on anything that reaches here; it is still checked,
+        -- because a silent `nil` would become a wrong number rather than a
+        -- refusal.
+        -- `tonumber` delegates to the host C runtime's strtod, whose decimal
+        -- separator is LC_NUMERIC's, and Luau requires strtod to consume the
+        -- whole string: under a German or Turkish locale `tonumber("1.5")`
+        -- stops at the full stop and answers nil, so a well-formed JSON
+        -- document becomes unparseable on that host and the refusal blames the
+        -- finite range rather than the locale.
+        --
+        -- The literal is therefore re-spelled with no separator at all -- every
+        -- significant digit as one integer, with the exponent shifted down by
+        -- the number of fraction digits -- which denotes the same rational
+        -- number and is read identically under every locale.  strtod is
+        -- correctly rounded, so the double it returns for `15e-1` is the same
+        -- one it returns for `1.5`.
+        --
+        -- The grammar above has already admitted the literal, so the match
+        -- cannot fail on anything that reaches here; it is still checked,
+        -- because a silent `nil` would become a wrong number rather than a
+        -- refusal.
+        local literal = string.sub(text, start, index - 1)
+        local sign, whole, fraction, exponentText =
+            string.match(literal, "^(%-?)(%d+)%.?(%d*)[eE]?([-+]?%d*)$")
+        if sign == nil then failAt("number is not a JSON literal") end
+        local exponent = if exponentText == "" then 0 else tonumber(exponentText)
+        if exponent == nil then failAt("number is outside the finite JSON range") end
+        -- A literal may spell an exponent no double can hold, and `tostring`
+        -- would then render it in exponential form and produce a second
+        -- exponent marker.  Saturating first keeps the re-spelling a plain
+        -- integer while leaving the outcome the same: everything above the
+        -- bound overflows to an infinity the check below refuses, and
+        -- everything below it underflows to zero, which is what the literal
+        -- denotes.
+        local shift = (exponent :: number) - #(fraction :: string)
+        if shift > 100000 then
+            shift = 100000
+        elseif shift < -100000 then
+            shift = -100000
+        end
+        local value = tonumber(
+            (sign :: string)
+                .. (whole :: string)
+                .. (fraction :: string)
+                .. "e"
+                .. string.format("%d", shift)
+        )
         if value == nil or value ~= value or value == math.huge or value == -math.huge then
             failAt("number is outside the finite JSON range")
         end

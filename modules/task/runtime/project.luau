@@ -2,7 +2,7 @@
 -- The only RuntimeModel v3 TOML parser and Host artifact binding boundary.
 
 local native = ...
-local model = model
+local model = require("@umbraflow/internal/model")
 
 local project = {}
 project.schema = "umbraflow-runtime/v3"

@@ -38,13 +38,14 @@ namespace uf::task
         [[nodiscard]]
         auto authoringTraceRootHash(
             std::string_view projectId,
-            GenerationId generation
+            GenerationId generation,
+            std::string_view frameworkBundleDigest
         ) -> Result<ContentHash>
         {
             auto const manifest = std::format(
                 "protocol=annotation-trace/v1\nproject={}\nframework={}\nluau={}\ngeneration={}",
                 projectId,
-                frameworkBundleHash(),
+                frameworkBundleDigest,
                 luauRuntimeVersion(),
                 generation.value()
             );
@@ -63,8 +64,10 @@ namespace uf::task
         // id its queue line carried, which reaches the trace through the chunk
         // name in a raised error rather than through this line.
         [[nodiscard]]
-        auto explorationRunStartedEvent(std::string const& projectId)
-            -> trace::TraceEventSpec
+        auto explorationRunStartedEvent(
+            std::string const& projectId,
+            std::string_view frameworkBundleDigest
+        ) -> trace::TraceEventSpec
         {
             return trace::TraceEventSpec{
                 .eventType = "run.started",
@@ -79,7 +82,7 @@ namespace uf::task
                     .references = {
                         trace::TraceReference{
                             .type = "framework_bundle",
-                            .id   = std::string{frameworkBundleHash()},
+                            .id   = std::string{frameworkBundleDigest},
                         },
                     },
                 },
@@ -144,9 +147,20 @@ namespace uf::task
     ) -> Result<std::unique_ptr<ExplorationSession>>
     {
         UF_TRY_VALUE(traceSink, trace::FileTraceSink::createNew(config.tracePath));
+
+        // One digest for both lines below. It is derived rather than baked --
+        // frameworkBundleHash() hashes the embedded sources together with the
+        // reserved alias, dependency depth and declaration tier each module
+        // carries in framework-bundle.cpp -- so it can fail in principle and is
+        // taken once, before anything is written.
+        UF_TRY_VALUE(frameworkBundleDigest, frameworkBundleHash());
         UF_TRY_VALUE(
             sessionManifestHash,
-            authoringTraceRootHash(spec.projectId, generationId)
+            authoringTraceRootHash(
+                spec.projectId,
+                generationId,
+                frameworkBundleDigest
+            )
         );
         UF_TRY_VALUE(
             builtRecorder,
@@ -168,7 +182,9 @@ namespace uf::task
         );
 
         UF_TRY(
-            recorder->emit(explorationRunStartedEvent(spec.projectId))
+            recorder->emit(
+                explorationRunStartedEvent(spec.projectId, frameworkBundleDigest)
+            )
         );
 
         // No run.resources_validated line. That event records the closure of uf

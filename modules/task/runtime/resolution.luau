@@ -1,8 +1,8 @@
 --!strict
 -- Two-stage, same-cycle RuntimeModel v3 resolver.
 
-local model = model
-local evidence = evidence
+local model = require("@umbraflow/internal/model")
+local evidence = require("@umbraflow/internal/evidence")
 
 local resolution = {}
 

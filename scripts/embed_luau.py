@@ -41,10 +41,6 @@ MODULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 # why a .luau file of any size embeds and why no per-file cap belongs here.
 MAXIMUM_CHUNK_BYTES = 2000
 
-# Separator between a module name and its bytes in the bundle-hash preimage.
-# NUL cannot occur in either, so the concatenation is unambiguous.
-NAME_SEPARATOR = b"\x00"
-
 
 @dataclass(frozen=True)
 class LuauSource:
@@ -111,16 +107,6 @@ def collect_sources(source_dir: Path) -> list[LuauSource]:
     return sources
 
 
-def bundle_digest(sources: list[LuauSource]) -> str:
-    """SHA-256 over name || 0x00 || bytes for every source, in bundle order."""
-    accumulator = hashlib.sha256()
-    for source in sources:
-        accumulator.update(source.name.encode("utf-8"))
-        accumulator.update(NAME_SEPARATOR)
-        accumulator.update(source.data)
-    return accumulator.hexdigest()
-
-
 def escape_byte(value: int) -> str:
     if value == 0x22:
         return '\\"'
@@ -174,10 +160,12 @@ def render(sources: list[LuauSource], version: str, label: str) -> str:
     append("// and the standard mandates translating a CRLF pair inside a raw literal to a")
     append("// single LF. Either would silently change the bytes the recorded hash certifies.")
     append("//")
-    append("// Bundle hash recipe, recomputable by hand: concatenate, for each entry below in")
-    append("// order, the module name in UTF-8, one 0x00 separator byte, then the exact bytes")
-    append("// of that module's .luau file; the bundle hash is the SHA-256 of that byte")
-    append("// string, in lowercase hex.")
+    append("// The bundle identity is NOT emitted here. Its recipe covers each module's")
+    append("// reserved resolver alias, dependency depth and declaration tier as well as its")
+    append("// bytes, and all three of those live in C++ tables this generator cannot read")
+    append("// (docs/standards/luau.md). frameworkBundleHash() in")
+    append("// modules/task/source/task/framework-bundle.cpp states and computes the recipe;")
+    append("// what this file contributes to it is the entry order, the names and the bytes.")
     append("")
     append("#include <task/framework-bundle.hpp>")
     append("")
@@ -190,9 +178,6 @@ def render(sources: list[LuauSource], version: str, label: str) -> str:
     append("    namespace")
     append("    {")
     append(f'        constexpr auto k_frameworkVersion = std::string_view{{"{version}"}};')
-    append(
-        f'        constexpr auto k_bundleHash       = std::string_view{{"{bundle_digest(sources)}"}};'
-    )
 
     for index, source in enumerate(sources):
         append("")
@@ -217,11 +202,6 @@ def render(sources: list[LuauSource], version: str, label: str) -> str:
     append("    auto frameworkBundleEntries() noexcept -> std::span<FrameworkBundleEntry const>")
     append("    {")
     append("        return std::span<FrameworkBundleEntry const>{k_entries};")
-    append("    }")
-    append("")
-    append("    auto frameworkBundleHash() noexcept -> std::string_view")
-    append("    {")
-    append("        return k_bundleHash;")
     append("    }")
     append("")
     append("    auto frameworkVersion() noexcept -> std::string_view")

@@ -2,9 +2,9 @@
 -- release-hashed Unicode 15.0 data module. No host locale is consulted.
 --!strict
 
-local builtinUtf8 = utf8
 local unicode = require("@umbraflow/utf8")
 local data = require("@umbraflow/internal/unicode-text-data")
+local builtinUtf8 = utf8
 local text = {}
 
 text.unicode_version = data.unicode_version

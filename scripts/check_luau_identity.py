@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that the pure-VM identity pins the repository's exact Luau gitlink."""
+"""Verify that the program-runtime identity pins the repository's exact Luau gitlink."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 LUAU_GITLINK = "modules/script/external/luau"
-IDENTITY_SOURCE = REPOSITORY_ROOT / "modules/script/source/script/ffi/pure-data-program.cpp"
+IDENTITY_SOURCE = REPOSITORY_ROOT / "modules/script/source/script/ffi/program-runtime.hpp"
 IDENTITY_PATTERN = re.compile(
     r"k_luauImplementation\s*=\s*std::string_view\s*\{\s*"
     r'"luau-[^"]+\+([0-9a-f]{40})"\s*\}'
@@ -52,7 +52,7 @@ def main() -> int:
     failures: list[str] = []
     if identity_revision != gitlink_revision:
         failures.append(
-            "pure VM identity revision "
+            "program runtime identity revision "
             f"{identity_revision} != gitlink revision {gitlink_revision}"
         )
     if checkout_revision != gitlink_revision:

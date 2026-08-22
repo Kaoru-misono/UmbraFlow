@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""Generate pinned Unicode data modules from Python's UCD.
+"""Generate pinned Unicode data modules and test vectors from Python's UCD.
 
 Python owns only offline data derivation. Hand-maintained Luau modules own every
 runtime algorithm; Framework execution never imports Python or host Unicode
 tables. Regeneration deliberately refuses a different UCD version so an SDK
 Unicode upgrade must be an explicit identity-moving change.
+
+Three files are generated. Two are the runtime data modules the SDK loads. The
+third is the normalization conformance corpus under ``tests/task/``, derived
+from the same pinned UCD by the same refusal, so the suite that drives it needs
+no network at test time.
 
 The derived category data is distributed with the Unicode License v3 notice in
 ``modules/task/runtime/UNICODE-LICENSE.txt``.
@@ -23,6 +28,28 @@ UTF8_DATA_OUTPUT = Path("modules/task/runtime/unicode-utf8-data.luau")
 UTF8_DATA_OUTPUT_SHA256 = "c68e79be9cfa2c6ef9679c41ff30fedee7e4230dcafe1d918496d9b1b4796033"
 TEXT_DATA_OUTPUT = Path("modules/task/runtime/unicode-text-data.luau")
 TEXT_DATA_OUTPUT_SHA256 = "e7a2fbc53ec58081b78fa0c4ce56ac20f10a745d9ba3124f10d38e117282cfa4"
+
+# The normalization conformance corpus. It is a TEST input rather than a runtime
+# one, so it is deliberately not under modules/task/runtime/: everything there is
+# embedded into the shipped Framework bundle by scripts/embed_luau.py.
+CONFORMANCE_OUTPUT = Path("tests/task/unicode-normalization-vectors.generated.hpp")
+CONFORMANCE_OUTPUT_SHA256 = "9cc65d337241faffb2ce415c19b48a621674fba4025416d94fa24dd24d33fc48"
+
+# One C++ string literal holds at most this many bytes of the corpus. MSVC caps
+# a single literal at 16383 bytes (C2026) and adjacent-literal concatenation does
+# not count toward it, so the chunk size only trades literal count against
+# literal length.
+CONFORMANCE_CHUNK_BYTES = 2000
+
+# Deterministic samples for the parts of the corpus that are combinations rather
+# than single characters. Every one of these is a stride or a count over data
+# sorted by code point, so the corpus is a function of the pinned UCD alone.
+CANONICAL_ORDER_STARTER_COUNT = 24
+CANONICAL_ORDER_MARK_COUNT = 12
+TRIVIAL_SAMPLE_STRIDE = 1021
+HANGUL_LEADING_SAMPLE = (0, 9, 18)
+HANGUL_VOWEL_SAMPLE = (0, 10, 20)
+HANGUL_TRAILING_SAMPLE = (0, 1, 27)
 
 MAJOR_CATEGORY_NAMES = {
     "C": "other",
@@ -204,6 +231,204 @@ return table.freeze(data)
     )
 
 
+def normalization_forms(source: str) -> tuple[str, str, str, str]:
+    return (
+        unicodedata.normalize("NFC", source),
+        unicodedata.normalize("NFD", source),
+        unicodedata.normalize("NFKC", source),
+        unicodedata.normalize("NFKD", source),
+    )
+
+
+def conformance_row(source: str) -> str:
+    """One NormalizationTest.txt-shaped line: c1;c2;c3;c4;c5."""
+    fields = (source, *normalization_forms(source))
+    return ";".join(
+        " ".join(f"{ord(character):04X}" for character in field) for field in fields
+    )
+
+
+def is_scalar(codepoint: int) -> bool:
+    return not 0xD800 <= codepoint <= 0xDFFF
+
+
+def per_character_sources() -> list[str]:
+    """Every character whose normalization is not itself, in code point order.
+
+    This is the corpus NormalizationTest.txt calls Part 1, derived rather than
+    copied: a character belongs here exactly when one of its four forms differs
+    from it.
+    """
+    return [
+        chr(codepoint)
+        for codepoint in range(0x110000)
+        if is_scalar(codepoint)
+        and any(form != chr(codepoint) for form in normalization_forms(chr(codepoint)))
+    ]
+
+
+def canonical_order_sources() -> list[str]:
+    """Starter-plus-two-marks combinations, the Part 2 shape.
+
+    Both the starters and the marks are read out of the pinned UCD rather than
+    listed here: the starters are the first N code points that begin a canonical
+    composition, and the marks are an even stride through the combining
+    characters, which is what spreads them across combining classes. Emitting
+    each unordered mark pair in BOTH orders is the point of the corpus -- the two
+    orderings must produce the same canonical order.
+    """
+    starters = sorted({starter for starter, _combining, _composite in composition_maps()})
+    starters = starters[:CANONICAL_ORDER_STARTER_COUNT]
+
+    combining = [codepoint for codepoint, _value in combining_classes()]
+    if not combining:
+        return []
+    stride = max(1, len(combining) // CANONICAL_ORDER_MARK_COUNT)
+    marks = combining[::stride][:CANONICAL_ORDER_MARK_COUNT]
+
+    sources: list[str] = []
+    for starter in starters:
+        for first in marks:
+            for second in marks:
+                if unicodedata.combining(chr(first)) == unicodedata.combining(
+                    chr(second)
+                ):
+                    continue
+                sources.append(chr(starter) + chr(first) + chr(second))
+    return sources
+
+
+def trivial_sample_sources(covered: set[int]) -> list[str]:
+    """A stride sample of characters whose four forms are all themselves.
+
+    NormalizationTest.txt states this as invariant c5 over every character it
+    does not list. Running it over all 1.1 million would dominate the suite for
+    the least information, so a prime stride samples it instead; the stride is
+    fixed, so the sample is the same on every machine.
+    """
+    return [
+        chr(codepoint)
+        for codepoint in range(0, 0x110000, TRIVIAL_SAMPLE_STRIDE)
+        if is_scalar(codepoint) and codepoint not in covered
+    ]
+
+
+def hangul_sources() -> list[str]:
+    """Jamo sequences and the syllables they compose to.
+
+    Hangul composition and decomposition are arithmetic rather than table
+    lookups in UAX #15, so they are the one part of the algorithm the
+    per-character corpus above exercises only from the syllable side.
+    """
+    leading_base = 0x1100
+    vowel_base = 0x1161
+    trailing_base = 0x11A7
+    syllable_base = 0xAC00
+    trailing_count = 28
+    vowel_count = 21
+
+    sources: list[str] = []
+    for leading in HANGUL_LEADING_SAMPLE:
+        for vowel in HANGUL_VOWEL_SAMPLE:
+            for trailing in HANGUL_TRAILING_SAMPLE:
+                jamo = chr(leading_base + leading) + chr(vowel_base + vowel)
+                syllable = syllable_base + (
+                    leading * vowel_count + vowel
+                ) * trailing_count
+                if trailing != 0:
+                    jamo += chr(trailing_base + trailing)
+                    syllable += trailing
+                sources.append(jamo)
+                sources.append(chr(syllable))
+    return sources
+
+
+def conformance_corpus() -> list[str]:
+    per_character = per_character_sources()
+    covered = {ord(source) for source in per_character if len(source) == 1}
+    return [
+        *(conformance_row(source) for source in per_character),
+        *(conformance_row(source) for source in canonical_order_sources()),
+        *(conformance_row(source) for source in trivial_sample_sources(covered)),
+        *(conformance_row(source) for source in hangul_sources()),
+    ]
+
+
+def conformance_literals(corpus: str) -> str:
+    data = corpus.encode("ascii")
+    pieces: list[str] = []
+    offset = 0
+    while offset < len(data):
+        piece = data[offset : offset + CONFORMANCE_CHUNK_BYTES]
+        # Never split a line across two literals: the concatenation is the same
+        # either way, but a reader diffing this file wants whole rows.
+        boundary = piece.rfind(b"\n")
+        if boundary != -1 and offset + len(piece) < len(data):
+            piece = piece[: boundary + 1]
+        pieces.append(piece.decode("ascii").replace("\n", "\\n"))
+        offset += len(piece)
+    return "\n".join(f'    "{piece}"' for piece in pieces)
+
+
+def render_conformance() -> str:
+    if unicodedata.unidata_version != PINNED_UNICODE_VERSION:
+        raise SystemExit(
+            "generate_unicode_luau.py requires Python UCD "
+            f"{PINNED_UNICODE_VERSION}, got {unicodedata.unidata_version}"
+        )
+
+    rows = conformance_corpus()
+    corpus = "".join(f"{row}\n" for row in rows)
+    return f'''// GENERATED by scripts/generate_unicode_luau.py; do not edit.
+//
+// Unicode {PINNED_UNICODE_VERSION} normalization conformance vectors, in the exact five-field
+// layout of the UCD\'s own NormalizationTest.txt: one row per line, written
+// `c1;c2;c3;c4;c5`, where the fields are the source and its NFC, NFD, NFKC and
+// NFKD forms, and each field is one or more space-separated uppercase hex code
+// points. tests/task/test-unicode-normalization-conformance.cpp asserts the five
+// invariants that file states over these rows.
+//
+// PROVENANCE, and what this is not. These are NOT the UCD\'s own
+// NormalizationTest.txt. That file is not vendored in this repository and is not
+// shipped with CPython, so it is not available offline, and a suite that
+// downloaded it at test time would not be reproducible. What IS available
+// offline is the input every other pinned Unicode table here is already derived
+// from: CPython\'s `unicodedata`, refused by this generator unless its UCD is
+// exactly {PINNED_UNICODE_VERSION}. Its normalizer is an independent C implementation of
+// UAX #15 that shares no code with the hand-maintained Luau algorithm these rows
+// drive, so it is an oracle and not a second copy of the subject.
+//
+// The corpus is derived, never authored. It is, in order: every character whose
+// normalization is not itself (the Part 1 shape); starter-plus-two-marks
+// combinations built from the pinned composition and combining-class tables,
+// each mark pair in both orders (the Part 2 shape); a fixed prime stride through
+// the characters whose four forms are all themselves (invariant c5); and Hangul
+// jamo sequences with the syllables they compose to.
+
+#pragma once
+
+#include <cstddef>
+#include <string_view>
+
+namespace uf::task::testing
+{{
+    // The UCD release these rows were derived from. The suite compares it with
+    // `text.unicode_version`, so vectors from one Unicode version can never be
+    // run against a table pinned to another.
+    constexpr auto k_unicodeNormalizationVectorVersion =
+        std::string_view{{"{PINNED_UNICODE_VERSION}"}};
+
+    // How many rows the corpus holds. Published so the suite can refuse a corpus
+    // that silently shrank rather than reporting a pass over what is left.
+    constexpr auto k_unicodeNormalizationVectorCount = std::size_t{{{len(rows)}U}};
+
+    constexpr auto k_unicodeNormalizationVectors = std::string_view{{
+{conformance_literals(corpus)}
+    }};
+}}
+'''
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -222,6 +447,7 @@ def main() -> int:
     outputs = (
         (UTF8_DATA_OUTPUT, UTF8_DATA_OUTPUT_SHA256, render_utf8_data),
         (TEXT_DATA_OUTPUT, TEXT_DATA_OUTPUT_SHA256, render_text_data),
+        (CONFORMANCE_OUTPUT, CONFORMANCE_OUTPUT_SHA256, render_conformance),
     )
     if arguments.check:
         for relative, pinned_digest, renderer in outputs:
@@ -247,7 +473,7 @@ def main() -> int:
                     )
                     return 1
         print(
-            f"Unicode Luau check OK ({len(outputs)} modules, UCD "
+            f"Unicode Luau check OK ({len(outputs)} generated files, UCD "
             f"{PINNED_UNICODE_VERSION})."
         )
         return 0

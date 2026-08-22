@@ -38,18 +38,64 @@ namespace uf::task
     [[nodiscard]]
     auto frameworkBundleEntries() noexcept -> std::span<FrameworkBundleEntry const>;
 
-    // Lowercase hex SHA-256 over the whole bundle. Recipe: concatenate, for each
-    // entry of frameworkBundleEntries() in order, the module name in UTF-8, one
-    // 0x00 separator byte, then that module's source bytes, and take the SHA-256
-    // of that byte string. NUL occurs in neither a module name nor a source, so
-    // the concatenation is unambiguous.
+    // Lowercase hex SHA-256 over the whole embedded Luau release: every module's
+    // bytes AND the linkage the release declares for it.
+    //
+    // Recipe, recomputable by hand. For each entry of frameworkBundleEntries(),
+    // in that span's order, append these ten items in this order -- five
+    // fields, each followed by its own terminator:
+    //
+    //   1. the module's publication name (the .luau file stem) in UTF-8;
+    //   2. one 0x00 byte;
+    //   3. the module's declaration tier, one of the ASCII tokens `pure`,
+    //      `internal-pure`, `trusted`, `scoped`, or `undeclared` when no table
+    //      in framework-bundle.cpp declares the module;
+    //   4. one 0x00 byte;
+    //   5. the module's reserved resolver alias in UTF-8, empty when the tier is
+    //      `undeclared`;
+    //   6. one 0x00 byte;
+    //   7. the module's declared dependency depth as unpadded ASCII decimal
+    //      with no sign;
+    //   8. one 0x00 byte;
+    //   9. the module's source bytes exactly as they are on disk;
+    //  10. one 0x00 byte.
+    //
+    // The bundle hash is the SHA-256 of that concatenation, in lowercase hex.
+    // Every field is NUL-terminated rather than NUL-separated: a source may be
+    // empty, and with separators alone the boundary between one entry's source
+    // and the next entry's name would not be recoverable from the byte string.
+    //
+    // Three of those fields are not the module's bytes, and they are the point.
+    // A reserved alias, a dependency depth, and the table a module is declared
+    // in are all release linkage that lives in C++ rather than in the .luau file
+    // -- docs/standards/luau.md fixes that -- so a bundle that hashed sources
+    // alone could ship a renamed alias, a reordered depth, or a trusted-only
+    // module newly exposed to every Project VM under an unmoved digest.
+    //
+    // This is deliberately NOT a second spelling of `plugin_environment_hash`.
+    // That digest is registration identity: it covers the closure a Project
+    // executes in -- the pure SDK tier's names, source hashes, visibility and
+    // depths, plus the release-owned limit and contract literals -- and refuses
+    // a registration whose derived identity differs. It says nothing about the
+    // modules a Project can never resolve. This digest is release-build
+    // identity: it covers all four tiers of the embedded bundle, including the
+    // trusted-only authoring and runtime modules and the four scoped facades,
+    // neither of which enters any registration-level digest today. A change to
+    // `explore.luau`, or to the alias of `@umbraflow/internal/observe`, moves
+    // this and moves nothing else in the tree.
     //
     // It stamps a trace so one run is attributable to an exact framework build,
     // and catches a bundle that went accidentally stale. It is NOT a security
     // property and must not be described as one: the digest is compiled into the
-    // same binary as the bytes it certifies.
+    // same binary as the bytes it certifies, so anything able to change those
+    // bytes is equally able to change the digest that certifies them.
+    //
+    // It returns a fresh string rather than a static view because the digest is
+    // computed here, from the bundle beside the declaration tables, rather than
+    // baked into the generated translation unit: the tables the recipe reads are
+    // C++ and the generator cannot see them.
     [[nodiscard]]
-    auto frameworkBundleHash() noexcept -> std::string_view;
+    auto frameworkBundleHash() -> Result<std::string>;
 
     // The framework's semantic version, declared as [embed].luau_version in
     // modules/task/manifest.txt and stamped into the bundle at build time.
@@ -71,6 +117,28 @@ namespace uf::task
     [[nodiscard]]
     auto pureFrameworkScriptModules()
         -> Result<std::vector<script::FrameworkModule>>;
+
+    // The Framework closure a script::ScopedToolProgram admits: the whole pure
+    // SDK plus the four scoped facades under their reserved names. The scoped
+    // four are project-visible because ScopedToolProgram refuses a catalog whose
+    // modules a Project module cannot resolve -- a scoped facade nothing can
+    // require is a native seam with no caller.
+    //
+    // Deliberately NOT a superset that any other environment may take: this list
+    // is the only place the four are admitted, and pureFrameworkScriptModules()
+    // and frameworkScriptModules() both exclude them, so a reducer's require
+    // fails in the resolver naming the module and no trusted Engine VM ever runs
+    // their source.
+    [[nodiscard]]
+    auto scopedFrameworkScriptModules()
+        -> Result<std::vector<script::FrameworkModule>>;
+
+    // The read-only JSON resource name `@umbraflow/tools` reads the run's pinned
+    // Tool catalog from. Published so the host that bakes those bytes and the
+    // module that reads them cannot drift; a bundle test binds it to the exact
+    // spelling inside the embedded module source.
+    [[nodiscard]]
+    auto scopedToolCatalogResourceName() noexcept -> std::string_view;
 
     // Business execution is closed until OperatorSession exists, so this list is
     // deliberately empty. Loading trusted modules into a VM does not make their
