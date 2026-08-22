@@ -2,6 +2,7 @@
 
 #include "manifest.hpp"
 #include "project-plugin.hpp"
+#include "tool-invocation.hpp"
 
 #include <script/pure-data-program.hpp>
 #include <script/scoped-tool-program.hpp>
@@ -13,6 +14,7 @@
 
 #include <domain/content-hash.hpp>
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -40,6 +42,11 @@ namespace uf::operator_runtime
     // compiled it. Neither proof can stand in for the other: the first catches
     // a document whose declared contract and stated code disagree, the second
     // catches stated code the shipped bytes do not honour.
+    //
+    // It is also proof of the catalog join, on the same terms the one-closure
+    // Tool program registrar proves it: every Tool the pinned catalog declares
+    // is bound to an entry, and every binding names a Tool that catalog
+    // declares.
     class ProjectGenerationHandle final
     {
         class State;
@@ -70,18 +77,40 @@ namespace uf::operator_runtime
         [[nodiscard]] auto reducerModuleManifestHash() const -> ContentHash;
         [[nodiscard]] auto toolModuleManifestHash() const -> ContentHash;
 
-        // The scoped environment the tool closure was compiled under. It is
-        // exposed because a durable row must record which code answered a
-        // call, and it is not derivable from the generation alone.
+        // The Framework catalog this generation's scoped facades were pinned
+        // to, and the scoped environment the tool closure was compiled under.
+        // Both are exposed because a durable row must record which code
+        // answered a call, and neither is derivable from the generation alone.
+        [[nodiscard]] auto frameworkToolCatalogHash() const -> ContentHash;
         [[nodiscard]] auto environmentIdentity() const -> ContentHash;
 
-        // Run the generation's fold, in one fresh pure VM. It stops at the
-        // program's own answer: no schema owner judges the value here, because
-        // the document authorities a reduced baseline is validated against
-        // belong above this seam.
+        // The join this generation was admitted on, and the declaration
+        // authority behind it. The table is what the tool closure was compiled
+        // over; the catalog is handed out whole rather than projected, because
+        // the bounds one call is admitted under are read from it per call and
+        // never from anything the compiler saw.
         [[nodiscard]]
-        auto reduce(json::Value const& immutableInput) const
-            -> Result<json::Value>;
+        auto bindingTable() const noexcept UF_LIFETIME_BOUND
+            -> ProjectToolBindingTable const&;
+
+        [[nodiscard]]
+        auto catalog() const noexcept UF_LIFETIME_BOUND
+            -> ProjectToolCatalogSchemaOwner const&;
+
+        // Mints canonical bytes through this generation's pinned schema owner.
+        // Trusted Operator code needs it because it assembles the reduce
+        // envelope itself rather than accepting one from a caller; it grants no
+        // authority beyond proving the bytes are exact JCS.
+        [[nodiscard]]
+        auto canonicalize(std::string exactJcs) const -> Result<CanonicalJson>;
+
+        // Run the generation's fold, in one fresh pure VM, and hand the answer
+        // to the ProjectState authority this generation pinned. The stamped
+        // document is the only reduced baseline a durable row may be written
+        // from: a raw value would be a fold nothing judged, and a baseline is
+        // the state every later revision is derived from.
+        [[nodiscard]]
+        auto reduce(CanonicalJson const& input) const -> Result<ValidatedDocument>;
 
         // Run the entry this generation bound to `toolName`, in one fresh
         // scoped VM, with the run's issuing coordinate carried in `request`. A
@@ -93,6 +122,62 @@ namespace uf::operator_runtime
             json::Value const& canonicalArguments,
             script::ScopedRunRequest const& request
         ) const -> Result<json::Value>;
+
+        // Whether the answer a bound entry produced is one this Tool's catalog
+        // entry declared it could produce. It sits beside invokeBoundTool
+        // rather than inside it for the reason the one-closure program keeps
+        // them apart: the dispatcher runs it between the program's answer and
+        // the terminal durable row, and this seam writes no row.
+        [[nodiscard]]
+        auto validateToolResult(
+            std::string_view toolName,
+            std::string_view exactResultJcs
+        ) const -> Status;
+    };
+
+    // The fold a loaded Project registration performs, in the one spelling the
+    // durable seams take it in.
+    //
+    // It exists because provisioning genuinely has to CALL the reducer and not
+    // merely name it: a ProjectInstance row carries the reduction of its
+    // complete Journal prefix, and that prefix is assembled by the Operator, so
+    // no caller can be trusted to hand the answer in ready-made. What
+    // provisioning must NOT take is the whole loaded plugin -- four of that
+    // type's five entries die with the five-function contract, and a seam that
+    // named it would have to be rewritten when they went.
+    //
+    // So this is the fold and its provenance and nothing else: which
+    // registration root answered, how a caller's exact envelope bytes become
+    // canonical, and the fold itself. Both loaded generations project into it
+    // implicitly, which is what keeps provisioning free of any question about
+    // which document generation a project was deployed as.
+    class ProjectBaselineReducer final
+    {
+        // The two calls together, rather than a fold that canonicalizes its own
+        // input: the envelope is minted by the caller through the SAME schema
+        // owner that judges the answer, so the bytes offered to the fold are
+        // already proved exact by the authority that will stamp its result.
+        using Canonicalizer = std::function<Result<CanonicalJson>(std::string)>;
+        using Fold = std::function<Result<ValidatedDocument>(CanonicalJson const&)>;
+
+        ContentHash   m_projectRegistrationHash;
+        Canonicalizer m_canonicalize;
+        Fold          m_fold;
+
+    public:
+        // Both projections are implicit for the reason ProjectIdentity's are:
+        // naming the narrowing would say only which loader the caller happens
+        // to hold, which is the fact these seams must not depend on.
+        ProjectBaselineReducer(ProjectPluginHandle const& plugin);
+        ProjectBaselineReducer(ProjectGenerationHandle const& generation);
+
+        [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;
+
+        [[nodiscard]]
+        auto canonicalize(std::string exactJcs) const -> Result<CanonicalJson>;
+
+        [[nodiscard]]
+        auto reduce(CanonicalJson const& input) const -> Result<ValidatedDocument>;
     };
 
     // Startup-only exact registry, one entry per (plugin id, registration
@@ -111,8 +196,8 @@ namespace uf::operator_runtime
         // project registered.
         struct ClosureModules final
         {
-            std::string                                     entryModule{};
-            std::vector<ProjectPluginRegistrar::ModuleBlob> modules{};
+            std::string                    entryModule{};
+            std::vector<ProjectModuleBlob> modules{};
         };
 
     private:
@@ -122,22 +207,33 @@ namespace uf::operator_runtime
         > m_generations{};
 
     public:
-        // `invokeTool` is the one native seam the compiled tool closure reaches
-        // the Tool Runtime through. It is bound once, at compile time, and must
-        // therefore carry no run state: every run-scoped value travels in the
-        // ScopedRunRequest of the invoke that is executing.
+        // `catalog` must be the owner built over the exact Tool Catalog bytes
+        // this generation pinned, `schemaOwner` the owner built over the exact
+        // document schemas it pinned, and `invokeTool` is the one native seam
+        // the compiled tool closure reaches the Tool Runtime through. The seam
+        // is bound once, at compile time, and must therefore carry no run
+        // state: every run-scoped value travels in the ScopedRunRequest of the
+        // invoke that is executing.
         //
         // Neither closure's declared export set is derived here, and neither is
         // observed by running the module. The generation states both; this
         // function joins each statement against what the contract says it
         // should be, and hands the statement itself to the bridge as the set to
         // admit the closure against.
+        //
+        // `validateResults` judges what a bound entry answers with, and is
+        // required for the reason the argument validator inside the catalog is:
+        // a generation whose answers nothing judges is a generation whose
+        // result schemas are decoration.
         [[nodiscard]]
         auto registerGeneration(
             VerifiedProjectGeneration const& generation,
+            ProjectToolCatalogSchemaOwner catalog,
+            ProjectSchemaOwner schemaOwner,
             ClosureModules reducerClosure,
             ClosureModules toolClosure,
-            std::vector<ProjectPluginRegistrar::ResourceBlob> exactResources,
+            std::vector<ProjectResourceBlob> exactResources,
+            ToolResultValidator validateResults,
             script::ToolRuntimeInvoke invokeTool
         ) -> Result<ProjectGenerationHandle>;
 

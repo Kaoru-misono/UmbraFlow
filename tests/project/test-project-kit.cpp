@@ -784,10 +784,10 @@ namespace uf::project
         REQUIRE(environmentHash.has_value());
         CHECK(record.find("plugin_environment_hash")->string() == environmentHash->hex());
         auto const modules = std::array{
-            operator_runtime::ProjectPluginRegistrar::ModuleBlob{
+            operator_runtime::ProjectModuleBlob{
                 .name = "main", .source = "return require(\"./support\")\n"
             },
-            operator_runtime::ProjectPluginRegistrar::ModuleBlob{
+            operator_runtime::ProjectModuleBlob{
                 .name = "support", .source = "return {}\n"
             },
         };

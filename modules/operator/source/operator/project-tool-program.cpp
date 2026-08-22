@@ -82,62 +82,8 @@ namespace uf::operator_runtime
             return entries;
         }
 
-        // The run's pinned Tool catalog, as the read-only Framework resource
-        // @umbraflow/tools reads its discovery table from. It is a resource
-        // rather than a native call because discovery must cost no Tool-call
-        // budget and must be identical on replay: these bytes are fixed at
-        // program construction, so a description cannot move under a running
-        // script.
-        //
-        // It carries BOTH catalogs, because both are callable from a scoped
-        // run: the Framework's Tools are how a handler reaches the world, and
-        // the Project's own are how one Tool composes another.
         [[nodiscard]]
-        auto pinnedToolCatalogResource(
-            FrameworkToolCatalogOwner const& frameworkCatalog,
-            ProjectToolCatalogSchemaOwner const& projectCatalog
-        ) -> Result<script::PureDataProgram::Resource>
-        {
-            UF_TRY_VALUE(entries, catalogEntries(frameworkCatalog));
-            UF_TRY_VALUE(projectEntries, catalogEntries(projectCatalog));
-            for (auto& entry : projectEntries)
-            {
-                entries.emplace_back(std::move(entry));
-            }
-
-            // Sorted by name, which is the order @umbraflow/tools requires and
-            // refuses by name if it does not get. Uniqueness needs no check
-            // here and must not grow one: the Project catalog owner already
-            // refuses a repeated name, and every name it admits is inside the
-            // namespace its own plugin_id owns -- which a registration inside
-            // `framework.` is refused from claiming -- so no Project entry can
-            // collide with a Framework one.
-            std::ranges::sort(entries, {}, &ToolCatalogEntry::name);
-
-            auto rows = std::vector<json::Value>{};
-            rows.reserve(entries.size());
-            for (auto const& entry : entries)
-            {
-                rows.emplace_back(discoveryEntry(entry));
-            }
-            auto tools               = json::Value::ofArray(std::move(rows));
-            auto const exactToolBytes = json::canonicalBytes(tools);
-            UF_TRY_VALUE(
-                catalogHash,
-                sha256(std::as_bytes(std::span{exactToolBytes}))
-            );
-            return script::PureDataProgram::Resource{
-                .kind = script::PureDataProgram::ResourceKind::Json,
-                .name = std::string{task::scopedToolCatalogResourceName()},
-                .bytes = json::canonicalBytes(json::Value::ofObject({
-                    {"catalog_hash", json::Value::ofString(catalogHash.hex())},
-                    {"tools", std::move(tools)},
-                })),
-            };
-        }
-
-        [[nodiscard]]
-        auto scriptModules(std::vector<ProjectPluginRegistrar::ModuleBlob> blobs)
+        auto scriptModules(std::vector<ProjectModuleBlob> blobs)
             -> std::vector<script::PureDataProgram::Module>
         {
             auto modules = std::vector<script::PureDataProgram::Module>{};
@@ -152,6 +98,51 @@ namespace uf::operator_runtime
             return modules;
         }
     } // namespace
+
+    [[nodiscard]]
+    auto pinnedToolCatalogResource(
+        FrameworkToolCatalogOwner const& frameworkCatalog,
+        ProjectToolCatalogSchemaOwner const& projectCatalog
+    ) -> Result<script::PureDataProgram::Resource>
+    {
+
+        UF_TRY_VALUE(entries, catalogEntries(frameworkCatalog));
+        UF_TRY_VALUE(projectEntries, catalogEntries(projectCatalog));
+        for (auto& entry : projectEntries)
+        {
+            entries.emplace_back(std::move(entry));
+        }
+
+        // Sorted by name, which is the order @umbraflow/tools requires and
+        // refuses by name if it does not get. Uniqueness needs no check
+        // here and must not grow one: the Project catalog owner already
+        // refuses a repeated name, and every name it admits is inside the
+        // namespace its own plugin_id owns -- which a registration inside
+        // `framework.` is refused from claiming -- so no Project entry can
+        // collide with a Framework one.
+        std::ranges::sort(entries, {}, &ToolCatalogEntry::name);
+
+        auto rows = std::vector<json::Value>{};
+        rows.reserve(entries.size());
+        for (auto const& entry : entries)
+        {
+            rows.emplace_back(discoveryEntry(entry));
+        }
+        auto tools               = json::Value::ofArray(std::move(rows));
+        auto const exactToolBytes = json::canonicalBytes(tools);
+        UF_TRY_VALUE(
+            catalogHash,
+            sha256(std::as_bytes(std::span{exactToolBytes}))
+        );
+        return script::PureDataProgram::Resource{
+            .kind = script::PureDataProgram::ResourceKind::Json,
+            .name = std::string{task::scopedToolCatalogResourceName()},
+            .bytes = json::canonicalBytes(json::Value::ofObject({
+                {"catalog_hash", json::Value::ofString(catalogHash.hex())},
+                {"tools", std::move(tools)},
+            })),
+        };
+    }
 
     class ProjectToolProgramHandle::State final
     {
@@ -238,8 +229,8 @@ namespace uf::operator_runtime
         VerifiedProjectRegistration const& registration,
         ProjectToolCatalogSchemaOwner catalog,
         std::string entryModule,
-        std::vector<ProjectPluginRegistrar::ModuleBlob> exactModules,
-        std::vector<ProjectPluginRegistrar::ResourceBlob> exactResources,
+        std::vector<ProjectModuleBlob> exactModules,
+        std::vector<ProjectResourceBlob> exactResources,
         std::span<std::string const> exportedEntryPoints,
         ToolResultValidator validateResults,
         script::ToolRuntimeInvoke invokeTool

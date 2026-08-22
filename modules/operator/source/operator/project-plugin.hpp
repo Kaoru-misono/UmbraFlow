@@ -150,6 +150,7 @@ namespace uf::operator_runtime
         class State;
 
         friend class ProjectPluginHandle;
+        friend class ProjectGenerationHandle;
 
         std::shared_ptr<State const> m_state;
 
@@ -184,9 +185,13 @@ namespace uf::operator_runtime
         auto operator=(ProjectSchemaOwner&&) noexcept -> ProjectSchemaOwner& = default;
         ~ProjectSchemaOwner() = default;
 
+        // `project` is the registration identity: the root this owner stamps
+        // its documents with, and the three schema digests the exact bytes
+        // must satisfy. Both generations of the registration document state
+        // all four, so one owner judges the documents of either.
         [[nodiscard]]
         static auto create(
-            VerifiedProjectRegistration const& registration,
+            ProjectIdentity const& project,
             ProjectDocumentSchemaBytes const& exactSchemas,
             CanonicalJsonValidator validateCanonicalJson,
             ProjectDocumentValidator validateDocument
@@ -268,26 +273,34 @@ namespace uf::operator_runtime
         auto reduce(CanonicalJson const& input) const -> Result<ValidatedDocument>;
     };
 
+    // One authored module of a Project closure, and one blob of the resource
+    // closure a registration pinned, as they are handed to a loader.
+    //
+    // They live at namespace scope rather than inside a registrar because they
+    // are the vocabulary of the loader layer and not of one loader: the
+    // one-closure registrar, the two-closure generation registrar, the Tool
+    // program registrar, the manifest derivation and the deployment that reads
+    // the bytes off disk all name them. Nesting them in the registrar that
+    // happened to be written first would have made every other consumer spell
+    // a superseded type's name to say "a module".
+    struct ProjectModuleBlob final
+    {
+        std::string name{};
+        std::string source{};
+    };
+
+    struct ProjectResourceBlob final
+    {
+        ProjectResourceKind kind{ProjectResourceKind::Json};
+        std::string         name{};
+        std::string         bytes{};
+    };
+
     // Startup-only exact registry. Registration accepts only an already verified
     // registration, the exact module and resource closures pinned by it, and a
     // schema owner bound to the same root.
     class ProjectPluginRegistrar final
     {
-    public:
-        struct ModuleBlob final
-        {
-            std::string name{};
-            std::string source{};
-        };
-
-        struct ResourceBlob final
-        {
-            ProjectResourceKind kind{ProjectResourceKind::Json};
-            std::string         name{};
-            std::string         bytes{};
-        };
-
-    private:
         std::map<std::pair<std::string, ContentHash>, ProjectPluginHandle> m_plugins{};
 
     public:
@@ -295,8 +308,8 @@ namespace uf::operator_runtime
         auto registerPlugin(
             VerifiedProjectRegistration const& registration,
             std::string entryModule,
-            std::vector<ModuleBlob> exactModules,
-            std::vector<ResourceBlob> exactResources,
+            std::vector<ProjectModuleBlob> exactModules,
+            std::vector<ProjectResourceBlob> exactResources,
             ProjectSchemaOwner schemaOwner
         ) -> Result<ProjectPluginHandle>;
 
@@ -311,12 +324,12 @@ namespace uf::operator_runtime
     [[nodiscard]]
     auto derivePluginModuleManifestHash(
         std::string_view entryModule,
-        std::span<ProjectPluginRegistrar::ModuleBlob const> modules
+        std::span<ProjectModuleBlob const> modules
     ) -> Result<ContentHash>;
 
     [[nodiscard]]
     auto validateProjectResourceClosure(
-        std::span<ProjectPluginRegistrar::ResourceBlob const> resources
+        std::span<ProjectResourceBlob const> resources
     ) -> Status;
 
     // The exact Project resource closure a registration pinned, held to that
@@ -337,7 +350,7 @@ namespace uf::operator_runtime
     [[nodiscard]]
     auto verifyProjectResourceClosure(
         std::span<ProjectResource const> pinnedResources,
-        std::vector<ProjectPluginRegistrar::ResourceBlob> exactResources
+        std::vector<ProjectResourceBlob> exactResources
     ) -> Result<std::vector<script::PureDataProgram::Resource>>;
 
     [[nodiscard]]

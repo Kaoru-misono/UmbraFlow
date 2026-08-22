@@ -43,6 +43,26 @@ namespace uf::operator_runtime
 
     [[nodiscard]] auto currentScopedToolEnvironmentHash() -> Result<ContentHash>;
 
+    // The run's pinned Tool catalog, as the read-only Framework resource
+    // @umbraflow/tools reads its discovery table from. It is a resource rather
+    // than a native call because discovery must cost no Tool-call budget and
+    // must be identical on replay: these bytes are fixed at program
+    // construction, so a description cannot move under a running script.
+    //
+    // It carries BOTH catalogs, because both are callable from a scoped run:
+    // the Framework's Tools are how a handler reaches the world, and the
+    // Project's own are how one Tool composes another.
+    //
+    // It is a free function of the two catalogs rather than a step inside one
+    // loader because both loaders of a scoped closure need exactly these bytes.
+    // A second copy would be a second discovery table, and a scoped run has
+    // one.
+    [[nodiscard]]
+    auto pinnedToolCatalogResource(
+        FrameworkToolCatalogOwner const& frameworkCatalog,
+        ProjectToolCatalogSchemaOwner const& projectCatalog
+    ) -> Result<script::PureDataProgram::Resource>;
+
     // One Project registration generation, joined once and compiled once.
     //
     // ONE program per generation, never one per bound entry. The registration
@@ -171,8 +191,8 @@ namespace uf::operator_runtime
             VerifiedProjectRegistration const& registration,
             ProjectToolCatalogSchemaOwner catalog,
             std::string entryModule,
-            std::vector<ProjectPluginRegistrar::ModuleBlob> exactModules,
-            std::vector<ProjectPluginRegistrar::ResourceBlob> exactResources,
+            std::vector<ProjectModuleBlob> exactModules,
+            std::vector<ProjectResourceBlob> exactResources,
             std::span<std::string const> exportedEntryPoints,
             ToolResultValidator validateResults,
             script::ToolRuntimeInvoke invokeTool

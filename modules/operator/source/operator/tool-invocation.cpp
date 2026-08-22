@@ -1458,7 +1458,7 @@ namespace uf::operator_runtime
     }
 
     auto ProjectToolCatalogSchemaOwner::create(
-        VerifiedProjectRegistration const& registration,
+        ProjectIdentity const& project,
         std::string_view exactToolCatalogBytes,
         ToolCatalogReader const& readCatalog,
         ToolArgumentValidator validateArguments
@@ -1475,7 +1475,7 @@ namespace uf::operator_runtime
             catalogHash,
             sha256(std::as_bytes(std::span{exactToolCatalogBytes}))
         );
-        if (catalogHash != registration.toolCatalogHash())
+        if (catalogHash != project.toolCatalogHash())
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
@@ -1487,13 +1487,10 @@ namespace uf::operator_runtime
             readCatalog(),
             "reading the Tool Catalog's declared tools"
         );
-        if (tools.empty())
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "Tool Catalog declares no tool at all"
-            );
-        }
+        // A catalog that declares nothing is a value and not an absence: a
+        // Project that binds no Tool states an empty catalog exactly as it
+        // states an empty entry set and an empty binding union, and refusing
+        // it here would leave such a Project with no legal document at all.
         for (auto const& entry : tools)
         {
             // The positive half, and the only half. A Project owns the
@@ -1504,7 +1501,7 @@ namespace uf::operator_runtime
             // catch the first of those two, and is unreachable behind this one
             // because a plugin_id inside `framework.` is refused at the
             // registration (manifest.cpp validateClaims).
-            UF_TRY(validateToolNameOwnership(entry.name, registration.pluginId()));
+            UF_TRY(validateToolNameOwnership(entry.name, project.pluginId()));
             if (entry.descriptor.toolVersion.empty())
             {
                 return fail(
@@ -1531,7 +1528,7 @@ namespace uf::operator_runtime
             );
         }
         return ProjectToolCatalogSchemaOwner{
-            registration.hash(),
+            project.hash(),
             catalogHash,
             std::move(tools),
             std::move(validateArguments),
@@ -1610,12 +1607,12 @@ namespace uf::operator_runtime
     }
 
     auto ProjectToolBindingTable::bind(
-        VerifiedProjectRegistration const& registration,
+        ProjectIdentity const& project,
         ProjectToolCatalogSchemaOwner const& catalog,
         std::span<std::string const> exportedEntryPoints
     ) -> Result<ProjectToolBindingTable>
     {
-        if (catalog.projectRegistrationHash() != registration.hash())
+        if (catalog.projectRegistrationHash() != project.hash())
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
@@ -1624,7 +1621,7 @@ namespace uf::operator_runtime
             );
         }
 
-        auto const& bindings = registration.projectToolBindings();
+        auto const& bindings = project.projectToolBindings();
         auto const names     = catalog.toolNames();
         for (auto const& binding : bindings)
         {
@@ -1662,7 +1659,7 @@ namespace uf::operator_runtime
                 );
             }
         }
-        return ProjectToolBindingTable{registration.hash(), bindings};
+        return ProjectToolBindingTable{project.hash(), bindings};
     }
 
     auto ProjectToolBindingTable::projectRegistrationHash() const -> ContentHash

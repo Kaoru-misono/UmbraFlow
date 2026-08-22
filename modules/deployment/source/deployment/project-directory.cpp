@@ -711,7 +711,7 @@ namespace uf::deployment
         struct DeploymentFiles final
         {
             std::string pluginEntryModule{};
-            std::vector<operator_runtime::ProjectPluginRegistrar::ModuleBlob>
+            std::vector<operator_runtime::ProjectModuleBlob>
                 pluginModules{};
             std::string projectState{};
             std::string projectObservation{};
@@ -732,11 +732,11 @@ namespace uf::deployment
             json::Value const& block
         ) -> Result<std::pair<
             std::string,
-            std::vector<operator_runtime::ProjectPluginRegistrar::ModuleBlob>
+            std::vector<operator_runtime::ProjectModuleBlob>
         >>
         {
             auto const& plugin = member(block, "plugin");
-            auto modules = std::vector<operator_runtime::ProjectPluginRegistrar::ModuleBlob>{};
+            auto modules = std::vector<operator_runtime::ProjectModuleBlob>{};
             auto paths   = std::vector<std::string>{};
             auto const& declaredModules = member(plugin, "modules").items();
             if (declaredModules.size() > script::PureDataProgram::k_maximumModuleCount)
@@ -765,7 +765,7 @@ namespace uf::deployment
                     return refuse("a deployment's plugin module closure exceeds its byte ceiling");
                 }
                 totalBytes += source.size();
-                modules.emplace_back(operator_runtime::ProjectPluginRegistrar::ModuleBlob{
+                modules.emplace_back(operator_runtime::ProjectModuleBlob{
                     .name   = text(declared, "name"),
                     .source = std::move(source),
                 });
@@ -930,10 +930,10 @@ namespace uf::deployment
         auto readProjectResources(
             task_platform::ConfinedRoot const& root,
             json::Value const& block
-        ) -> Result<std::vector<operator_runtime::ProjectPluginRegistrar::ResourceBlob>>
+        ) -> Result<std::vector<operator_runtime::ProjectResourceBlob>>
         {
             auto blobs =
-                std::vector<operator_runtime::ProjectPluginRegistrar::ResourceBlob>{};
+                std::vector<operator_runtime::ProjectResourceBlob>{};
             auto paths = std::vector<std::string>{};
             auto const& declaredResources = member(block, "resources").items();
             if (declaredResources.size() > script::PureDataProgram::k_maximumResourceCount)
@@ -963,7 +963,7 @@ namespace uf::deployment
                 }
                 totalBytes += bytes.size();
                 blobs.emplace_back(
-                    operator_runtime::ProjectPluginRegistrar::ResourceBlob{
+                    operator_runtime::ProjectResourceBlob{
                         .kind  = resourceKindOf(text(declared, "kind")),
                         .name  = text(declared, "name"),
                         .bytes = std::move(bytes),
@@ -981,7 +981,7 @@ namespace uf::deployment
                 {
                     return jsonMemberNameLess(left, right);
                 },
-                &operator_runtime::ProjectPluginRegistrar::ResourceBlob::name
+                &operator_runtime::ProjectResourceBlob::name
             );
             for (auto index = std::size_t{1}; index < blobs.size(); ++index)
             {
@@ -1004,7 +1004,7 @@ namespace uf::deployment
 
         [[nodiscard]]
         auto projectResourceClaimsOf(
-            std::span<operator_runtime::ProjectPluginRegistrar::ResourceBlob const>
+            std::span<operator_runtime::ProjectResourceBlob const>
                 blobs
         ) -> Result<std::vector<operator_runtime::ProjectResource>>
         {

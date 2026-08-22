@@ -123,9 +123,9 @@ namespace uf::deployment
         // registerPlugin's exact module/resource closure, as bytes. Paths have
         // already been confined and do not survive into runtime identity.
         std::string pluginEntryModule{};
-        std::vector<operator_runtime::ProjectPluginRegistrar::ModuleBlob>
+        std::vector<operator_runtime::ProjectModuleBlob>
             pluginModules{};
-        std::vector<operator_runtime::ProjectPluginRegistrar::ResourceBlob>
+        std::vector<operator_runtime::ProjectResourceBlob>
             projectResources{};
     };
 

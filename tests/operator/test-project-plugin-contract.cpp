@@ -107,9 +107,9 @@ return {
             std::string bytes,
             ProjectResourceKind kind = ProjectResourceKind::Json
         )
-            -> ProjectPluginRegistrar::ResourceBlob
+            -> ProjectResourceBlob
         {
-            return ProjectPluginRegistrar::ResourceBlob{
+            return ProjectResourceBlob{
                 .kind  = kind,
                 .name  = std::move(name),
                 .bytes = std::move(bytes),
@@ -206,7 +206,7 @@ return {
             -> RegistrationFixture
         {
             auto const modules = std::array{
-                ProjectPluginRegistrar::ModuleBlob{
+                ProjectModuleBlob{
                     .name   = "main",
                     .source = std::string{pluginBytes},
                 },
@@ -291,7 +291,7 @@ return {
             auto registerPlugin(
                 VerifiedProjectRegistration const& registration,
                 std::string source,
-                std::vector<ProjectPluginRegistrar::ResourceBlob> resources,
+                std::vector<ProjectResourceBlob> resources,
                 ProjectSchemaOwner schemaOwner
             ) -> Result<ProjectPluginHandle>
             {
@@ -299,7 +299,7 @@ return {
                     registration,
                     "main",
                     {
-                        ProjectPluginRegistrar::ModuleBlob{
+                        ProjectModuleBlob{
                             .name   = "main",
                             .source = std::move(source),
                         },
@@ -934,7 +934,7 @@ return {
                                                    artifactRoot("initial", k_countBlob),
                                                    artifactRoot("runtime", k_safeBlob),
                                                });
-            auto blobs = std::vector<ProjectPluginRegistrar::ResourceBlob>{
+            auto blobs = std::vector<ProjectResourceBlob>{
                 artifactBlob("runtime", std::string{k_safeBlob}),
                 artifactBlob("initial", std::string{k_countBlob}),
             };
@@ -1059,7 +1059,7 @@ return {
              })
         {
             auto const modules = std::array{
-                ProjectPluginRegistrar::ModuleBlob{
+                ProjectModuleBlob{
                     .name   = invalidName,
                     .source = "return {}\n",
                 },
@@ -1075,7 +1075,7 @@ return {
         SUBCASE("artifact root count is bounded")
         {
             auto roots = std::vector<ProjectResource>{};
-            auto blobs = std::vector<ProjectPluginRegistrar::ResourceBlob>{};
+            auto blobs = std::vector<ProjectResourceBlob>{};
             for (auto index = std::size_t{0}; index < 65U; ++index)
             {
                 auto const name =
@@ -1120,7 +1120,7 @@ return {
             auto const bytes =
                 "\"" + std::string(std::size_t{4U} * 1024U * 1024U - 2U, 'x') + "\"";
             auto roots = std::vector<ProjectResource>{};
-            auto blobs = std::vector<ProjectPluginRegistrar::ResourceBlob>{};
+            auto blobs = std::vector<ProjectResourceBlob>{};
             for (auto index = std::size_t{0}; index < 5U; ++index)
             {
                 auto const name = std::string{"root-"} + std::to_string(index);
@@ -1205,7 +1205,7 @@ return {
         {
             auto const oversizedSource = std::string(256U * 1024U + 1U, 'x');
             auto const modules = std::array{
-                ProjectPluginRegistrar::ModuleBlob{
+                ProjectModuleBlob{
                     .name   = "main",
                     .source = oversizedSource,
                 },

@@ -29,7 +29,7 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
-        auto scriptModules(std::vector<ProjectPluginRegistrar::ModuleBlob> blobs)
+        auto scriptModules(std::vector<ProjectModuleBlob> blobs)
             -> std::vector<script::PureDataProgram::Module>
         {
             auto modules = std::vector<script::PureDataProgram::Module>{};
@@ -161,10 +161,15 @@ namespace uf::operator_runtime
     class ProjectGenerationHandle::State final
     {
     public:
-        VerifiedProjectGeneration generation;
-        script::PureDataProgram   reducer;
-        script::ScopedToolProgram toolProgram;
-        ContentHash               environmentIdentity;
+        VerifiedProjectGeneration     generation;
+        ProjectToolCatalogSchemaOwner catalog;
+        ProjectToolBindingTable       bindings;
+        ProjectSchemaOwner            schemaOwner;
+        script::PureDataProgram       reducer;
+        script::ScopedToolProgram     toolProgram;
+        ToolResultValidator           validateResults;
+        ContentHash                   frameworkToolCatalogHash;
+        ContentHash                   environmentIdentity;
     };
 
     ProjectGenerationHandle::ProjectGenerationHandle(
@@ -194,18 +199,62 @@ namespace uf::operator_runtime
         return m_state->generation.toolClosure().moduleManifestHash;
     }
 
+    auto ProjectGenerationHandle::frameworkToolCatalogHash() const -> ContentHash
+    {
+        return m_state->frameworkToolCatalogHash;
+    }
+
     auto ProjectGenerationHandle::environmentIdentity() const -> ContentHash
     {
         return m_state->environmentIdentity;
     }
 
-    auto ProjectGenerationHandle::reduce(
-        json::Value const& immutableInput
-    ) const -> Result<json::Value>
+    auto ProjectGenerationHandle::bindingTable() const noexcept
+        -> ProjectToolBindingTable const&
     {
-        return withContext(
-            m_state->reducer.invoke(k_reducerEntryPoint, immutableInput),
+        return m_state->bindings;
+    }
+
+    auto ProjectGenerationHandle::catalog() const noexcept
+        -> ProjectToolCatalogSchemaOwner const&
+    {
+        return m_state->catalog;
+    }
+
+    auto ProjectGenerationHandle::canonicalize(std::string exactJcs) const
+        -> Result<CanonicalJson>
+    {
+        return m_state->schemaOwner.canonicalize(std::move(exactJcs));
+    }
+
+    auto ProjectGenerationHandle::reduce(
+        CanonicalJson const& input
+    ) const -> Result<ValidatedDocument>
+    {
+        // Validation is repeated at the call boundary for the reason the
+        // one-closure handle repeats it: a CanonicalJson carries no schema
+        // authority, so the value the fold runs on must be the one this
+        // owner produced rather than one a caller cached.
+        UF_TRY_VALUE(
+            validatedInput,
+            m_state->schemaOwner.validate(
+                ProjectPluginFunction::Reduce,
+                ProjectDocumentDirection::Input,
+                input
+            )
+        );
+        UF_TRY_VALUE_CONTEXT(
+            folded,
+            m_state->reducer.invoke(k_reducerEntryPoint, validatedInput),
             "running the reducer of this Project registration generation"
+        );
+        UF_TRY_VALUE(
+            canonicalFold,
+            m_state->schemaOwner.canonicalizeValue(std::move(folded))
+        );
+        return m_state->schemaOwner.validateOutput(
+            ProjectPluginFunction::Reduce,
+            std::move(canonicalFold)
         );
     }
 
@@ -215,22 +264,10 @@ namespace uf::operator_runtime
         script::ScopedRunRequest const& request
     ) const -> Result<json::Value>
     {
-        auto const& bindings = m_state->generation.projectToolBindings();
-        auto const  bound    = std::ranges::find(
-            bindings,
-            toolName,
-            &ProjectToolBinding::toolName
-        );
-        if (bound == bindings.end())
-        {
-            return refuse(
-                "this Project generation binds no Tool named "
-                + std::string{toolName}
-            );
-        }
+        UF_TRY_VALUE(entryPoint, m_state->bindings.entryPointFor(toolName));
         return withContext(
             m_state->toolProgram.invoke(
-                bound->entryPoint,
+                entryPoint,
                 canonicalArguments,
                 request
             ),
@@ -238,14 +275,97 @@ namespace uf::operator_runtime
         );
     }
 
+    auto ProjectGenerationHandle::validateToolResult(
+        std::string_view toolName,
+        std::string_view exactResultJcs
+    ) const -> Status
+    {
+        UF_TRY(m_state->bindings.entryPointFor(toolName));
+        return withContext(
+            m_state->validateResults(toolName, exactResultJcs),
+            "validating the answer of the Project Tool " + std::string{toolName}
+        );
+    }
+
+    ProjectBaselineReducer::ProjectBaselineReducer(
+        ProjectPluginHandle const& plugin
+    )
+        : m_projectRegistrationHash{plugin.projectRegistrationHash()}
+        , m_canonicalize{
+              [plugin](std::string exactJcs) -> Result<CanonicalJson>
+              {
+                  return plugin.canonicalize(std::move(exactJcs));
+              }
+          }
+        , m_fold{
+              [plugin](CanonicalJson const& input) -> Result<ValidatedDocument>
+              {
+                  return plugin.reduce(input);
+              }
+          }
+    {
+    }
+
+    ProjectBaselineReducer::ProjectBaselineReducer(
+        ProjectGenerationHandle const& generation
+    )
+        : m_projectRegistrationHash{generation.projectRegistrationHash()}
+        , m_canonicalize{
+              [generation](std::string exactJcs) -> Result<CanonicalJson>
+              {
+                  return generation.canonicalize(std::move(exactJcs));
+              }
+          }
+        , m_fold{
+              [generation](CanonicalJson const& input) -> Result<ValidatedDocument>
+              {
+                  return generation.reduce(input);
+              }
+          }
+    {
+    }
+
+    auto ProjectBaselineReducer::projectRegistrationHash() const -> ContentHash
+    {
+        return m_projectRegistrationHash;
+    }
+
+    auto ProjectBaselineReducer::canonicalize(std::string exactJcs) const
+        -> Result<CanonicalJson>
+    {
+        return m_canonicalize(std::move(exactJcs));
+    }
+
+    auto ProjectBaselineReducer::reduce(
+        CanonicalJson const& input
+    ) const -> Result<ValidatedDocument>
+    {
+        return m_fold(input);
+    }
+
     auto ProjectGenerationRegistrar::registerGeneration(
         VerifiedProjectGeneration const& generation,
+        ProjectToolCatalogSchemaOwner catalog,
+        ProjectSchemaOwner schemaOwner,
         ClosureModules reducerClosure,
         ClosureModules toolClosure,
-        std::vector<ProjectPluginRegistrar::ResourceBlob> exactResources,
+        std::vector<ProjectResourceBlob> exactResources,
+        ToolResultValidator validateResults,
         script::ToolRuntimeInvoke invokeTool
     ) -> Result<ProjectGenerationHandle>
     {
+        if (!validateResults)
+        {
+            return refuse(
+                "a Project generation requires a result schema validator"
+            );
+        }
+        if (schemaOwner.projectRegistrationHash() != generation.hash())
+        {
+            return refuse(
+                "the schema owner answers for another Project registration"
+            );
+        }
         UF_TRY_VALUE(pureEnvironmentHash, currentProjectPluginEnvironmentHash());
         if (pureEnvironmentHash != generation.pluginEnvironmentHash())
         {
@@ -298,6 +418,21 @@ namespace uf::operator_runtime
             generation.projectToolBindings()
         ));
 
+        // The other join, against the authority that DECLARES the Tools. The
+        // one above holds the binding table to the code; this holds it to the
+        // contract, and neither can stand in for the other: a declaration and
+        // a catalog are two documents, and a Tool declared with no binding is
+        // invisible to the first check while a binding for a Tool no catalog
+        // declares is invisible to it too.
+        UF_TRY_VALUE(
+            bindings,
+            ProjectToolBindingTable::bind(
+                generation,
+                catalog,
+                generation.toolClosure().exportedEntryPoints
+            )
+        );
+
         UF_TRY_VALUE(
             reducerResources,
             verifyProjectResourceClosure(
@@ -309,7 +444,15 @@ namespace uf::operator_runtime
 
         UF_TRY_VALUE(pureFrameworkModules, task::pureFrameworkScriptModules());
         UF_TRY_VALUE(scopedFrameworkModules, task::scopedFrameworkScriptModules());
+        UF_TRY_VALUE(frameworkCatalog, FrameworkToolCatalogOwner::create());
+        UF_TRY_VALUE(
+            catalogResource,
+            pinnedToolCatalogResource(frameworkCatalog, catalog)
+        );
         UF_TRY_VALUE(environmentIdentity, currentScopedToolEnvironmentHash());
+
+        auto frameworkResources = std::vector<script::PureDataProgram::Resource>{};
+        frameworkResources.emplace_back(std::move(catalogResource));
 
         auto const reducerEntries = entryPointViews(
             generation.reducerClosure().exportedEntryPoints
@@ -339,7 +482,7 @@ namespace uf::operator_runtime
                 toolEntries,
                 std::move(toolResources),
                 scopedFrameworkModules,
-                {},
+                std::move(frameworkResources),
                 std::move(invokeTool)
             ),
             "compiling the tool closure of this registration generation"
@@ -347,10 +490,15 @@ namespace uf::operator_runtime
 
         auto state = std::make_shared<ProjectGenerationHandle::State>(
             ProjectGenerationHandle::State{
-                .generation          = generation,
-                .reducer             = std::move(reducer),
-                .toolProgram         = std::move(toolProgram),
-                .environmentIdentity = environmentIdentity,
+                .generation               = generation,
+                .catalog                  = std::move(catalog),
+                .bindings                 = std::move(bindings),
+                .schemaOwner              = std::move(schemaOwner),
+                .reducer                  = std::move(reducer),
+                .toolProgram              = std::move(toolProgram),
+                .validateResults          = std::move(validateResults),
+                .frameworkToolCatalogHash = frameworkCatalog.toolCatalogHash(),
+                .environmentIdentity      = environmentIdentity,
             }
         );
         auto handle = ProjectGenerationHandle{

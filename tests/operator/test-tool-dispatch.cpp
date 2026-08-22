@@ -162,10 +162,10 @@ return {
 )LUAU"};
 
         [[nodiscard]]
-        auto moduleBlobs() -> std::vector<ProjectPluginRegistrar::ModuleBlob>
+        auto moduleBlobs() -> std::vector<ProjectModuleBlob>
         {
-            auto blobs = std::vector<ProjectPluginRegistrar::ModuleBlob>{};
-            blobs.emplace_back(ProjectPluginRegistrar::ModuleBlob{
+            auto blobs = std::vector<ProjectModuleBlob>{};
+            blobs.emplace_back(ProjectModuleBlob{
                 .name   = "main",
                 .source = std::string{k_projectSource},
             });

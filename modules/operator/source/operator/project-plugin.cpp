@@ -86,7 +86,7 @@ namespace uf::operator_runtime
 
     auto verifyProjectResourceClosure(
         std::span<ProjectResource const> pinnedResources,
-        std::vector<ProjectPluginRegistrar::ResourceBlob> exactBlobs
+        std::vector<ProjectResourceBlob> exactBlobs
     ) -> Result<std::vector<script::PureDataProgram::Resource>>
     {
         UF_TRY(validateProjectResourceClosure(exactBlobs));
@@ -296,7 +296,7 @@ namespace uf::operator_runtime
     }
 
     auto ProjectSchemaOwner::create(
-        VerifiedProjectRegistration const& registration,
+        ProjectIdentity const& project,
         ProjectDocumentSchemaBytes const& exactSchemas,
         CanonicalJsonValidator validateCanonicalJson,
         ProjectDocumentValidator validateDocument
@@ -308,14 +308,14 @@ namespace uf::operator_runtime
             return refuse("ProjectSchemaOwner requires canonical and document validators");
         }
         auto const pinned = std::array{
-            std::pair{exactSchemas.projectState, registration.projectStateSchemaHash()},
+            std::pair{exactSchemas.projectState, project.projectStateSchemaHash()},
             std::pair{
                 exactSchemas.projectObservation,
-                registration.projectObservationSchemaHash(),
+                project.projectObservationSchemaHash(),
             },
             std::pair{
                 exactSchemas.toolPrecondition,
-                registration.projectToolPreconditionSchemaHash(),
+                project.projectToolPreconditionSchemaHash(),
             },
         };
         for (auto const& [bytes, expected] : pinned)
@@ -330,7 +330,7 @@ namespace uf::operator_runtime
             }
         }
         auto state = std::make_shared<State>(State{
-            .projectRegistrationHash = registration.hash(),
+            .projectRegistrationHash = project.hash(),
             .validateCanonicalJson   = std::move(validateCanonicalJson),
             .validateDocument        = std::move(validateDocument),
         });
@@ -511,8 +511,8 @@ namespace uf::operator_runtime
     auto ProjectPluginRegistrar::registerPlugin(
         VerifiedProjectRegistration const& registration,
         std::string entryModule,
-        std::vector<ModuleBlob> exactModules,
-        std::vector<ResourceBlob> exactResources,
+        std::vector<ProjectModuleBlob> exactModules,
+        std::vector<ProjectResourceBlob> exactResources,
         ProjectSchemaOwner schemaOwner
     )
         -> Result<ProjectPluginHandle>
@@ -610,7 +610,7 @@ namespace uf::operator_runtime
 
     auto derivePluginModuleManifestHash(
         std::string_view entryModule,
-        std::span<ProjectPluginRegistrar::ModuleBlob const> modules
+        std::span<ProjectModuleBlob const> modules
     ) -> Result<ContentHash>
     {
         auto admittedModules = std::vector<script::PureDataProgram::Module>{};
@@ -666,7 +666,7 @@ namespace uf::operator_runtime
     }
 
     auto validateProjectResourceClosure(
-        std::span<ProjectPluginRegistrar::ResourceBlob const> resources
+        std::span<ProjectResourceBlob const> resources
     ) -> Status
     {
         auto admittedResources = std::vector<script::PureDataProgram::Resource>{};

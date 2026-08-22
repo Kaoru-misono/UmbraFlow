@@ -476,9 +476,15 @@ namespace uf::operator_runtime
         // without them an owner is bound to a registration whose
         // tool_catalog_hash it never has to satisfy, and any validator at all
         // could answer for that catalog.
+        //
+        // `project` is the registration identity and not a registration
+        // document. Three facts are all this owner reads -- the root it answers
+        // for, the namespace whose Tools it may declare, and the catalog digest
+        // it must satisfy -- and all three are stated by both generations of
+        // the registration document, so one owner serves both.
         [[nodiscard]]
         static auto create(
-            VerifiedProjectRegistration const& registration,
+            ProjectIdentity const& project,
             std::string_view exactToolCatalogBytes,
             ToolCatalogReader const& readCatalog,
             ToolArgumentValidator validateArguments
@@ -553,9 +559,14 @@ namespace uf::operator_runtime
         // The catalog must be the one this registration pinned, and
         // exportedEntryPoints is a call-scoped borrow of the entries the
         // Project closure exports. Nothing here retains either.
+        //
+        // `project` is the registration identity, for the reason create()
+        // above takes one: the join reads the root and the binding table, both
+        // of which every generation of the registration document states, so
+        // the join outlives the document type that first carried it.
         [[nodiscard]]
         static auto bind(
-            VerifiedProjectRegistration const& registration,
+            ProjectIdentity const& project,
             ProjectToolCatalogSchemaOwner const& catalog,
             std::span<std::string const> exportedEntryPoints
         ) -> Result<ProjectToolBindingTable>;

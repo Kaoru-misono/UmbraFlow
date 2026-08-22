@@ -687,6 +687,97 @@ namespace uf::operator_runtime
         };
     }
 
+    ProjectIdentity::ProjectIdentity(
+        VerifiedProjectRegistration const& registration
+    )
+        : m_projectRegistrationHash{registration.m_rootHash}
+        , m_pluginId{registration.m_claims.pluginId}
+        , m_canonicalJcs{registration.m_canonicalJcs}
+        , m_moduleIdentityHash{registration.m_claims.pluginModuleManifestHash}
+        , m_toolCatalogHash{registration.m_claims.toolCatalogHash}
+        , m_projectStateSchemaHash{registration.m_claims.projectStateSchemaHash}
+        , m_projectObservationSchemaHash{
+              registration.m_claims.projectObservationSchemaHash
+          }
+        , m_projectToolPreconditionSchemaHash{
+              registration.m_claims.projectToolPreconditionSchemaHash
+          }
+        , m_baselineEventType{registration.m_claims.baselineEventType}
+        , m_projectToolBindings{registration.m_claims.projectToolBindings}
+    {
+    }
+
+    ProjectIdentity::ProjectIdentity(VerifiedProjectGeneration const& generation)
+        : m_projectRegistrationHash{generation.m_rootHash}
+        , m_pluginId{generation.m_claims.pluginId}
+        , m_canonicalJcs{generation.m_canonicalJcs}
+        , m_moduleIdentityHash{
+              generation.m_claims.reducerClosure.moduleManifestHash
+          }
+        , m_toolCatalogHash{generation.m_claims.toolCatalogHash}
+        , m_projectStateSchemaHash{generation.m_claims.projectStateSchemaHash}
+        , m_projectObservationSchemaHash{
+              generation.m_claims.projectObservationSchemaHash
+          }
+        , m_projectToolPreconditionSchemaHash{
+              generation.m_claims.projectToolPreconditionSchemaHash
+          }
+        , m_baselineEventType{generation.m_claims.baselineEventType}
+        , m_projectToolBindings{generation.m_claims.projectToolBindings}
+    {
+    }
+
+    auto ProjectIdentity::hash() const -> ContentHash
+    {
+        return m_projectRegistrationHash;
+    }
+
+    auto ProjectIdentity::pluginId() const -> std::string
+    {
+        return m_pluginId;
+    }
+
+    auto ProjectIdentity::canonicalJcs() const noexcept -> std::string const&
+    {
+        return m_canonicalJcs;
+    }
+
+    auto ProjectIdentity::moduleIdentityHash() const -> ContentHash
+    {
+        return m_moduleIdentityHash;
+    }
+
+    auto ProjectIdentity::toolCatalogHash() const -> ContentHash
+    {
+        return m_toolCatalogHash;
+    }
+
+    auto ProjectIdentity::projectStateSchemaHash() const -> ContentHash
+    {
+        return m_projectStateSchemaHash;
+    }
+
+    auto ProjectIdentity::projectObservationSchemaHash() const -> ContentHash
+    {
+        return m_projectObservationSchemaHash;
+    }
+
+    auto ProjectIdentity::projectToolPreconditionSchemaHash() const -> ContentHash
+    {
+        return m_projectToolPreconditionSchemaHash;
+    }
+
+    auto ProjectIdentity::baselineEventType() const -> std::string
+    {
+        return m_baselineEventType;
+    }
+
+    auto ProjectIdentity::projectToolBindings() const noexcept
+        -> std::vector<ProjectToolBinding> const&
+    {
+        return m_projectToolBindings;
+    }
+
     SessionManifest::SessionManifest(
         SessionManifestSpec spec,
         std::string canonicalBytes,

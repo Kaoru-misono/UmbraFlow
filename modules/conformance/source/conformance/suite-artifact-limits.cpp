@@ -48,7 +48,7 @@ namespace uf::operator_runtime::conformance
         auto const& underTest = deploymentFor(project, ProjectRole::UnderTest);
         auto blobs            = underTest.projectResources;
         blobs.emplace_back(
-            ProjectPluginRegistrar::ResourceBlob{
+            ProjectResourceBlob{
                 .kind  = ProjectResourceKind::Bytes,
                 .name  = "oversized",
                 .bytes = oversized,

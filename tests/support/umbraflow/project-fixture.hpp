@@ -474,8 +474,8 @@ namespace uf::operator_runtime::test_support
             REQUIRE(deployed.has_value());
         }
 
-        auto const modules = std::vector<ProjectPluginRegistrar::ModuleBlob>{
-            ProjectPluginRegistrar::ModuleBlob{
+        auto const modules = std::vector<ProjectModuleBlob>{
+            ProjectModuleBlob{
                 .name   = "main",
                 .source = std::string{pluginBytes},
             },
@@ -735,7 +735,7 @@ namespace uf::operator_runtime::test_support
             project.registration,
             "main",
             {
-                ProjectPluginRegistrar::ModuleBlob{
+                ProjectModuleBlob{
                     .name   = "main",
                     .source = std::string{pluginBytes},
                 },

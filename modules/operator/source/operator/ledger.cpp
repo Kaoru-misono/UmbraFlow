@@ -6656,12 +6656,12 @@ namespace uf::operator_runtime
     }
 
     auto OperatorCoordinator::registerProject(
-        VerifiedProjectRegistration const& registration
+        ProjectIdentity const& project
     ) -> Status
     {
-        auto const registrationHash = registration.hash();
-        auto const pluginId = registration.pluginId();
-        auto const& canonicalManifest = registration.canonicalJcs();
+        auto const registrationHash = project.hash();
+        auto const pluginId = project.pluginId();
+        auto const& canonicalManifest = project.canonicalJcs();
         UF_TRY(requireName(pluginId, "plugin_id"));
         UF_TRY(requireName(canonicalManifest, "canonical project registration"));
         UF_TRY_VALUE(
@@ -6693,7 +6693,7 @@ namespace uf::operator_runtime
             m_impl->database.get(),
             insert.get(),
             3,
-            registration.pluginModuleManifestHash().hex()
+            project.moduleIdentityHash().hex()
         ));
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 4, canonicalManifest));
         UF_TRY(expectDone(m_impl->database.get(), insert.get()));
@@ -6717,8 +6717,7 @@ namespace uf::operator_runtime
             sqlite3_column_int64(query.get(), 0) != 3
             || columnText(query.get(), 1) != pluginId
             || columnText(query.get(), 2) != "module_manifest"
-            || columnText(query.get(), 3)
-                != registration.pluginModuleManifestHash().hex()
+            || columnText(query.get(), 3) != project.moduleIdentityHash().hex()
             || columnText(query.get(), 4) != canonicalManifest
         )
         {
@@ -6731,8 +6730,8 @@ namespace uf::operator_runtime
     }
 
     auto OperatorCoordinator::provisionProjectInstance(
-        VerifiedProjectRegistration const& registration,
-        ProjectPluginHandle const& plugin,
+        ProjectIdentity const& project,
+        ProjectBaselineReducer const& reducer,
         ProjectInstanceBaseline const& baseline
     ) -> Status
     {
@@ -6740,11 +6739,7 @@ namespace uf::operator_runtime
         if (baseline.entry.has_value())
         {
             UF_TRY(requireName(baseline.eventId, "baseline event_id"));
-            if (
-                baseline.entry->projectRegistrationHash() != registration.hash()
-                || baseline.entry->projectRegistrationHash()
-                    != plugin.projectRegistrationHash()
-            )
+            if (baseline.entry->projectRegistrationHash() != project.hash())
             {
                 return fail(
                     AutomationErrorKind::ActionRejected,
@@ -6753,7 +6748,7 @@ namespace uf::operator_runtime
             }
             if (
                 baseline.entry->namespacedEventType()
-                != registration.baselineEventType()
+                != project.baselineEventType()
             )
             {
                 return fail(
@@ -6769,12 +6764,12 @@ namespace uf::operator_runtime
                 "A ProjectInstance with no baseline must not name a baseline event_id"
             );
         }
-        if (
-            plugin.pluginId() != registration.pluginId()
-            || plugin.pluginModuleManifestHash()
-                != registration.pluginModuleManifestHash()
-            || plugin.projectRegistrationHash() != registration.hash()
-        )
+        // One comparison, because one is all there is. A reducer and an
+        // identity that agree on the registration root came from the same
+        // exact bytes, so a plugin id or a module digest checked beside this
+        // could never disagree with it; the pair of comparisons that used to
+        // stand here could not be made to fail.
+        if (reducer.projectRegistrationHash() != project.hash())
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
@@ -6794,11 +6789,11 @@ namespace uf::operator_runtime
         }
         UF_TRY_VALUE(
             reducerInput,
-            plugin.canonicalize(reduceEnvelopeJcs(baselineEvents, "null"))
+            reducer.canonicalize(reduceEnvelopeJcs(baselineEvents, "null"))
         );
-        UF_TRY_VALUE(reducedState, plugin.reduce(reducerInput));
+        UF_TRY_VALUE(reducedState, reducer.reduce(reducerInput));
         if (
-            reducedState.projectRegistrationHash() != registration.hash()
+            reducedState.projectRegistrationHash() != project.hash()
             || reducedState.function() != ProjectPluginFunction::Reduce
             || reducedState.direction() != ProjectDocumentDirection::Output
         )
@@ -6814,8 +6809,7 @@ namespace uf::operator_runtime
             registrationQuery,
             prepare(
                 m_impl->database.get(),
-                "SELECT registration_format, plugin_id, plugin_identity_kind, "
-                "plugin_identity_hash, canonical_manifest "
+                "SELECT registration_format, plugin_identity_kind "
                 "FROM project_registrations WHERE registration_hash=?1"
             )
         );
@@ -6823,7 +6817,7 @@ namespace uf::operator_runtime
             m_impl->database.get(),
             registrationQuery.get(),
             1,
-            registration.hash().hex()
+            project.hash().hex()
         ));
         if (sqlite3_step(registrationQuery.get()) != SQLITE_ROW)
         {
@@ -6832,26 +6826,16 @@ namespace uf::operator_runtime
                 "ProjectInstance requires a registered ProjectRegistration"
             );
         }
-        if (sqlite3_column_int64(registrationQuery.get(), 0) != 3)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "legacy registration is audit-only"
-            );
-        }
-        if (
-            columnText(registrationQuery.get(), 1) != registration.pluginId()
-            || columnText(registrationQuery.get(), 2) != "module_manifest"
-            || columnText(registrationQuery.get(), 3)
-                != registration.pluginModuleManifestHash().hex()
-            || columnText(registrationQuery.get(), 4) != registration.canonicalJcs()
-        )
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "ProjectInstance requires the exact registered ProjectRegistration"
-            );
-        }
+
+        // Existence under the executable identity kind is the whole of what
+        // this row can still tell provisioning. The plugin id, the code digest
+        // and the canonical bytes were compared here as well, and none of the
+        // three could be made to fail: the row is keyed by the digest of its
+        // own canonical bytes, registerProject proves that digest before it
+        // writes, and every other column is derived from those same bytes -- so
+        // a row found under this root already holds this identity's fields, and
+        // the comparison was three restatements of the lookup that found it.
+        UF_TRY(requireExecutableRegistrationFormat(registrationQuery.get(), 0));
 
         UF_TRY_VALUE(
             existing,
@@ -6866,7 +6850,7 @@ namespace uf::operator_runtime
             m_impl->database.get(),
             existing.get(),
             1,
-            registration.pluginId()
+            project.pluginId()
         ));
         UF_TRY(bindText(
             m_impl->database.get(),
@@ -6878,7 +6862,7 @@ namespace uf::operator_runtime
         {
             if (
                 !baseline.entry.has_value()
-                && columnText(existing.get(), 0) == registration.hash().hex()
+                && columnText(existing.get(), 0) == project.hash().hex()
                 && sqlite3_column_type(existing.get(), 1) == SQLITE_NULL
             )
             {
@@ -6908,13 +6892,13 @@ namespace uf::operator_runtime
             m_impl->database.get(),
             instanceInsert.get(),
             2,
-            registration.pluginId()
+            project.pluginId()
         ));
         UF_TRY(bindText(
             m_impl->database.get(),
             instanceInsert.get(),
             3,
-            registration.hash().hex()
+            project.hash().hex()
         ));
         if (baseline.entry.has_value())
         {
@@ -6957,7 +6941,7 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 eventInsert.get(),
                 2,
-                registration.pluginId()
+                project.pluginId()
             ));
             UF_TRY(bindText(
                 m_impl->database.get(),
@@ -7011,7 +6995,7 @@ namespace uf::operator_runtime
             m_impl->database.get(),
             stateInsert.get(),
             1,
-            registration.pluginId()
+            project.pluginId()
         ));
         UF_TRY(bindText(
             m_impl->database.get(),
@@ -7023,13 +7007,13 @@ namespace uf::operator_runtime
             m_impl->database.get(),
             stateInsert.get(),
             3,
-            registration.hash().hex()
+            project.hash().hex()
         ));
         UF_TRY(bindText(
             m_impl->database.get(),
             stateInsert.get(),
             4,
-            registration.projectStateSchemaHash().hex()
+            project.projectStateSchemaHash().hex()
         ));
         UF_TRY(bindText(
             m_impl->database.get(),

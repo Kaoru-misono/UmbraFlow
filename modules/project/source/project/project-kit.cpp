@@ -1597,7 +1597,7 @@ namespace uf::project
                 }
                 std::ranges::sort(normalizedModules, {}, &ProjectModuleSpec::name);
                 auto modulePaths = std::set<std::string>{};
-                auto moduleBlobs = std::vector<operator_runtime::ProjectPluginRegistrar::ModuleBlob>{};
+                auto moduleBlobs = std::vector<operator_runtime::ProjectModuleBlob>{};
                 auto moduleRows  = std::vector<json::Value>{};
                 moduleBlobs.reserve(normalizedModules.size());
                 moduleRows.reserve(normalizedModules.size());
@@ -1678,7 +1678,7 @@ namespace uf::project
                         {"size", json::Value::ofNumber(static_cast<double>(bytes.size()))},
                     }));
                     moduleBlobs.emplace_back(
-                        operator_runtime::ProjectPluginRegistrar::ModuleBlob{
+                        operator_runtime::ProjectModuleBlob{
                             .name   = module.name,
                             .source = bytes,
                         }
@@ -1717,7 +1717,7 @@ namespace uf::project
                 auto resourcePaths = std::set<std::string>{};
                 auto resourceNames = std::set<std::string>{};
                 auto resourceBlobs = std::vector<
-                    operator_runtime::ProjectPluginRegistrar::ResourceBlob
+                    operator_runtime::ProjectResourceBlob
                 >{};
                 resourceBlobs.reserve(normalizedResources.size());
                 for (auto const& resource : normalizedResources)
@@ -1750,7 +1750,7 @@ namespace uf::project
                         readText(sourceDirectory / resource.sourceInput, "project resource source")
                     );
                     resourceBlobs.emplace_back(
-                        operator_runtime::ProjectPluginRegistrar::ResourceBlob{
+                        operator_runtime::ProjectResourceBlob{
                             .kind  = resource.kind,
                             .name  = resource.name,
                             .bytes = std::move(bytes),

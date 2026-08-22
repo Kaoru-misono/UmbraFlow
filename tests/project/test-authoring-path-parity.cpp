@@ -783,7 +783,7 @@ return {
             -> Result<AdmissionInputs>
         {
             auto const modules = std::array{
-                operator_runtime::ProjectPluginRegistrar::ModuleBlob{
+                operator_runtime::ProjectModuleBlob{
                     .name   = "main",
                     .source = std::string{pinnedPluginBytes},
                 },
@@ -903,7 +903,7 @@ return {
                 inputs.registration,
                 "main",
                 {
-                    operator_runtime::ProjectPluginRegistrar::ModuleBlob{
+                    operator_runtime::ProjectModuleBlob{
                         .name   = "main",
                         .source = std::string{exactPluginBytes},
                     },
@@ -1421,7 +1421,7 @@ return {
                 inputs->registration,
                 "main",
                 {
-                    operator_runtime::ProjectPluginRegistrar::ModuleBlob{
+                    operator_runtime::ProjectModuleBlob{
                         .name   = "main",
                         .source = std::string{k_handWrittenTwin},
                     },

@@ -6,6 +6,7 @@
 #include "journal-entry.hpp"
 #include "manifest.hpp"
 #include "operation.hpp"
+#include "project-generation.hpp"
 #include "project-observation.hpp"
 #include "project-plugin.hpp"
 #include "reconcile-outcome.hpp"
@@ -759,13 +760,19 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto reclaimUnreferencedRuntimeArtifacts() -> Result<ReclaimedRuntimeArtifacts>;
 
+        // Both doors take the registration identity rather than a registration
+        // document, and provisioning takes the fold rather than the loaded
+        // plugin that happens to carry it. Nothing durable here is a fact about
+        // which generation of the registration document a project was deployed
+        // as, so nothing here names one; the flip that replaces that document
+        // therefore leaves this pair untouched.
         [[nodiscard]]
-        auto registerProject(VerifiedProjectRegistration const& registration) -> Status;
+        auto registerProject(ProjectIdentity const& project) -> Status;
 
         [[nodiscard]]
         auto provisionProjectInstance(
-            VerifiedProjectRegistration const& registration,
-            ProjectPluginHandle const& plugin,
+            ProjectIdentity const& project,
+            ProjectBaselineReducer const& reducer,
             ProjectInstanceBaseline const& baseline
         ) -> Status;
 

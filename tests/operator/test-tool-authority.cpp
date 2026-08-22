@@ -272,7 +272,7 @@ namespace uf::operator_runtime
                 prepared.project.registration,
                 "main",
                 {
-                    ProjectPluginRegistrar::ModuleBlob{
+                    ProjectModuleBlob{
                         .name   = "main",
                         .source = test_support::pluginSource("fixture.control"),
                     },
@@ -1799,7 +1799,7 @@ namespace uf::operator_runtime
             project.registration,
             "main",
             {
-                ProjectPluginRegistrar::ModuleBlob{
+                ProjectModuleBlob{
                     .name   = "main",
                     .source = source,
                 },
@@ -1815,7 +1815,7 @@ namespace uf::operator_runtime
 
     TEST_CASE("module manifest identity covers bytes names and entry but not authored order")
     {
-        using Module = ProjectPluginRegistrar::ModuleBlob;
+        using Module = ProjectModuleBlob;
         auto const authored = std::vector<Module>{
             Module{.name = "main", .source = "return require('./worker')"},
             Module{.name = "worker", .source = "return 1"},

@@ -213,10 +213,10 @@ return {
 
         [[nodiscard]]
         auto moduleBlobs(std::string_view source)
-            -> std::vector<ProjectPluginRegistrar::ModuleBlob>
+            -> std::vector<ProjectModuleBlob>
         {
-            auto blobs = std::vector<ProjectPluginRegistrar::ModuleBlob>{};
-            blobs.emplace_back(ProjectPluginRegistrar::ModuleBlob{
+            auto blobs = std::vector<ProjectModuleBlob>{};
+            blobs.emplace_back(ProjectModuleBlob{
                 .name   = "main",
                 .source = std::string{source},
             });
