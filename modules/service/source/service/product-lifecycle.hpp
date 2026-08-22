@@ -78,7 +78,13 @@ namespace uf::service
         task::UiObservationSnapshot      ui;
     };
 
-    // The trusted adapter input for one top-level Framework read-only Tool.
+    // The trusted adapter input for one top-level Framework Tool, read-only or
+    // mutating. There is one request type and one seam for both, for the reason
+    // ToolAdmissionRequest gives: the two differ in what the request carries --
+    // a mutation proposal or none -- and never in which function was called.
+    // The mutability itself is read off the descriptor the Framework Tool
+    // Catalog holds, so an adapter cannot state one the catalog disagrees with.
+    //
     // Caller namespace is deliberately absent: ProductLifecycle derives it
     // from the authenticated controller binding, so an adapter cannot attach a
     // request key to another principal's durable root. The remaining identity
@@ -97,7 +103,7 @@ namespace uf::service
     // and every later call under the same root is stamped with what the
     // context holds.
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
-    struct FrameworkReadOnlyToolCall final
+    struct FrameworkToolCall final
     {
         std::string                             requestKey{};
         std::string                             exactRootRequestPreimageJcs{};
@@ -124,6 +130,37 @@ namespace uf::service
 
         explicit ProductLifecycle(std::unique_ptr<Impl> implementation);
 
+        // The Framework provider surface. One function per Tool the Framework
+        // answers, all reached from one dispatch below, and every one of them
+        // handed nothing but the immutable call position the Coordinator
+        // already crossed the durable dispatch boundary for.
+        [[nodiscard]]
+        auto answerFrameworkTool(
+            operator_runtime::ToolCallPositionIdentity const& call,
+            task::TaskContext& context
+        ) -> Result<operator_runtime::ToolCallCompletion>;
+
+        [[nodiscard]]
+        auto answerObserveTool(
+            operator_runtime::ToolCallPositionIdentity const& call,
+            task::TaskContext& context
+        ) -> Result<operator_runtime::ToolCallCompletion>;
+
+        [[nodiscard]]
+        auto answerStatusTool()
+            -> Result<operator_runtime::ToolCallCompletion>;
+
+        // Section 6's input-authority boundary. It resolves the observation the
+        // call was issued against -- spending it, once -- against this run's own
+        // controlled target, Project registration, RuntimeArtifact, Host
+        // generation and issuing coordinate, never against anything the
+        // arguments state, and judges the named snapshot-local semantic target
+        // and UI action on the observation's own bounds before delivery.
+        [[nodiscard]]
+        auto answerSemanticInputTool(
+            operator_runtime::ToolCallPositionIdentity const& call
+        ) -> Result<operator_runtime::ToolCallCompletion>;
+
     public:
         ProductLifecycle(ProductLifecycle&&) noexcept;
         auto operator=(ProductLifecycle&&) noexcept -> ProductLifecycle& = delete;
@@ -146,12 +183,24 @@ namespace uf::service
         auto observe(task::TaskContext& context)
             -> Result<ProductObservation>;
 
-        // Runs a Framework-owned read-only Tool through the same durable Tool
-        // Runtime seam every actor adapter uses. Exact terminal replay returns
-        // without recapturing, waiting, or consulting provider code.
+        // Runs a Framework-owned Tool through the same durable Tool Runtime
+        // seam every actor adapter uses. Exact terminal replay returns without
+        // recapturing, waiting, delivering, or consulting provider code.
+        //
+        // A mutating descriptor carries a mutation proposal built from the
+        // descriptor's own effect bounds and this run's plan authority, and is
+        // refused outright while recovery leaves the lifecycle read-only. A
+        // call whose canonical arguments carry an `observation_reference` is
+        // issued against the reference this run minted for those exact bytes,
+        // so a call consuming an observation this run never produced is refused
+        // before it can occupy a durable coordinate at all.
+        //
+        // No production caller exists and none may be added before the
+        // generation cut: see
+        // docs/decisions/2026-08-22-production-reachability-is-the-cut-invariant.md.
         [[nodiscard]]
-        auto invokeFrameworkReadOnlyTool(
-            FrameworkReadOnlyToolCall request,
+        auto invokeFrameworkTool(
+            FrameworkToolCall request,
             task::TaskContext& context
         ) -> Result<operator_runtime::ToolCallReplay>;
 

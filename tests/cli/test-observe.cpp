@@ -16,6 +16,7 @@
 #include <cli/observe.hpp>
 
 #include <conformance/observation-fixture.hpp>
+#include <conformance/operator-protocol.hpp>
 
 #include <operator/ledger.hpp>
 #include <operator/project-observation.hpp>
@@ -335,6 +336,8 @@ namespace uf::cli
             std::string firstObserve{};
             std::string secondObserve{};
             std::string waited{};
+            std::string audited{};
+            std::string status{};
         };
 
         // The exemplar copied out of the repository, its RuntimeArtifact
@@ -547,7 +550,172 @@ namespace uf::cli
                     .liveFingerprint = *fingerprint,
                 };
             }
+
+            // Gives this world an Operator-owned PolicyArtifact that admits the
+            // one effect a Framework input Tool declares, and points the project
+            // manifest at it.
+            //
+            // Without it every mutating admission falls to the deny-all
+            // artifact ProductLifecycle substitutes for an absent one, and no
+            // mutating provider is ever reached. The artifact is built against
+            // the published Operator protocol schema's hash because that is the
+            // one ProductLifecycle pins into the SessionManifest a policy is
+            // verified against.
+            auto authorizeMutation() const -> void
+            {
+                constexpr auto k_operatorSchema = std::string_view{
+                    "schema/umbraflow-operator-v1.schema.json"
+                };
+                auto const root = json::repositoryRoot(k_operatorSchema);
+                REQUIRE_FALSE(root.empty());
+                auto schemaStream = std::ifstream{
+                    root / k_operatorSchema,
+                    std::ios::binary,
+                };
+                REQUIRE(schemaStream.good());
+                auto const schemaBytes = std::string{
+                    std::istreambuf_iterator<char>{schemaStream},
+                    std::istreambuf_iterator<char>{},
+                };
+                auto const schemaHash = sha256(
+                    std::as_bytes(std::span{std::string_view{schemaBytes}})
+                );
+                REQUIRE(schemaHash.has_value());
+                auto const effects = std::vector<std::string>{
+                    std::string{"framework.input.deliver"},
+                };
+                auto const policy =
+                    operator_runtime::conformance::policyArtifactBytes(
+                        *schemaHash,
+                        effects
+                    );
+                {
+                    auto stream = std::ofstream{
+                        m_project / "policy.json",
+                        std::ios::binary,
+                    };
+                    REQUIRE(stream.good());
+                    stream << policy;
+                    REQUIRE(stream.good());
+                }
+
+                auto const manifestPath = m_project / "umbraflow-project.json";
+                auto manifest = std::string{};
+                {
+                    auto stream = std::ifstream{manifestPath, std::ios::binary};
+                    REQUIRE(stream.good());
+                    manifest = std::string{
+                        std::istreambuf_iterator<char>{stream},
+                        std::istreambuf_iterator<char>{},
+                    };
+                }
+                auto const opening = manifest.find('{');
+                REQUIRE(opening != std::string::npos);
+                manifest.insert(
+                    opening + 1U,
+                    R"(
+  "policy_artifact": "policy.json",)"
+                );
+                auto stream = std::ofstream{
+                    manifestPath,
+                    std::ios::binary | std::ios::trunc,
+                };
+                REQUIRE(stream.good());
+                stream << manifest;
+                REQUIRE(stream.good());
+            }
         };
+
+        // Starts one production lifecycle over the recorded world and runs
+        // `body` against it and the TaskContext its engine session backs.
+        //
+        // Everything one run owns -- trace sink, recorder, engine session and
+        // context -- lives for exactly the body's extent, which is what makes
+        // two runs over one world two incarnations rather than one, and is what
+        // lets a case restart a run and watch recorded outcomes replay.
+        template <typename Body>
+        auto runProductLifecycle(
+            ObserveArgs const& args,
+            ObserveSources sources,
+            std::string_view controllerId,
+            std::vector<std::string> capabilities,
+            operator_runtime::ObservedInstanceWorldScope const& scope,
+            Body&& body
+        ) -> void
+        {
+            auto const liveFingerprint = sources.liveFingerprint;
+            auto lifecycle = service::ProductLifecycle::start(
+                service::ProductStart{
+                    .projectDirectory          = args.project,
+                    .runtimeDirectory          = args.runtime,
+                    .authenticatedControllerId = std::string{controllerId},
+                    .controllerCapabilities    = std::move(capabilities),
+                    .controlledTargetId        = "recorded-tool-target",
+                    .worldScope                = scope,
+                }
+            );
+            auto const lifecycleWhy = lifecycle.has_value()
+                ? std::string{}
+                : lifecycle.error().message();
+            REQUIRE_MESSAGE(lifecycle.has_value(), lifecycleWhy);
+            auto const identity = lifecycle->identity();
+
+            auto sink = trace::FileTraceSink::createNew(args.trace);
+            REQUIRE(sink.has_value());
+            auto recorder = trace::TraceRecorder::create(
+                std::move(*sink),
+                trace::TraceStreamSpec{
+                    .sessionId           = identity.sessionId,
+                    .sessionManifestHash = identity.sessionManifestHash,
+                    .producer            = "framework-tool-adapter-test",
+                }
+            );
+            REQUIRE(recorder.has_value());
+            auto session = engine::EngineSession::create(
+                std::move(sources.frameSource),
+                std::move(sources.actionSink),
+                *recorder,
+                engine::EngineSessionConfig{
+                    .liveFingerprint         = liveFingerprint,
+                    .projectFingerprint      = identity.runtimeModel.fingerprint(),
+                    .maximumPixelComparisons = args.budget,
+                    .recognitionTimeout      = args.recognitionTimeout,
+                },
+                std::move(sources.ocrEngine)
+            );
+            REQUIRE(session.has_value());
+            auto context = task::TaskContext{std::move(*session), *recorder};
+
+            body(*lifecycle, context);
+            CHECK(lifecycle->shutdown().has_value());
+        }
+
+        // What one Framework Tool call left in the ledger: the state its row
+        // reached and the exact payload bytes it recorded. A case reads both
+        // because a mutating call's classification is half of what it proves --
+        // proven_absent and confirmed carry the same payload shape and mean
+        // opposite things.
+        struct FrameworkToolOutcome final
+        {
+            operator_runtime::ToolCallState state{};
+            std::string                     payload{};
+        };
+
+        // The `verdict` member every native-input outcome records. Named rather
+        // than matched inside prose so a case that expects one refusal cannot
+        // pass on another.
+        [[nodiscard]]
+        auto inputVerdict(std::string_view payload) -> std::string
+        {
+            auto const parsed = json::parse(payload);
+            REQUIRE_MESSAGE(parsed.has_value(), payload);
+            auto const* const p_verdict = parsed->find("verdict");
+            REQUIRE_MESSAGE(p_verdict != nullptr, payload);
+            auto const* const p_delivered = parsed->find("delivered");
+            REQUIRE_MESSAGE(p_delivered != nullptr, payload);
+            CHECK_FALSE(p_delivered->boolean());
+            return std::string{p_verdict->string()};
+        }
     }
 
     TEST_CASE(
@@ -623,7 +791,7 @@ namespace uf::cli
                                        std::string_view exactArgumentsJcs
                                    )
         {
-            return service::FrameworkReadOnlyToolCall{
+            return service::FrameworkToolCall{
                 .requestKey                 = "recorded-observe-and-wait",
                 .exactRootRequestPreimageJcs =
                     R"({"objective":"observe and wait"})",
@@ -634,7 +802,7 @@ namespace uf::cli
         };
 
         // One whole run over the recorded world -- its own lifecycle, its own
-        // TaskContext, and the three calls it issues under one root request.
+        // TaskContext, and the five calls it issues under one root request.
         //
         // It is a lambda called twice because the caller no longer names a
         // coordinate: the ordinal is the seam's, so a repeated request inside
@@ -643,91 +811,54 @@ namespace uf::cli
         // the durability contract the Tool Runtime actually offers.
         auto runFrameworkTools = [&](std::string_view trace)
         {
-            auto const args = world.args(trace);
-            auto sources = world.sources(
-                delivered,
-                std::make_unique<PresentReader>()
-            );
-            auto const liveFingerprint = sources.liveFingerprint;
-            auto lifecycle = service::ProductLifecycle::start(
-                service::ProductStart{
-                    .projectDirectory          = args.project,
-                    .runtimeDirectory          = args.runtime,
-                    .authenticatedControllerId = "framework-tool-adapter",
-                    .controllerCapabilities    = {},
-                    .controlledTargetId        = "recorded-tool-target",
-                    .worldScope                = *scope,
+            auto payloads = FrameworkToolPayloads{};
+            runProductLifecycle(
+                world.args(trace),
+                world.sources(delivered, std::make_unique<PresentReader>()),
+                "framework-tool-adapter",
+                {},
+                *scope,
+                [&](service::ProductLifecycle& lifecycle,
+                    task::TaskContext& context)
+                {
+                    auto issued = [&lifecycle, &context, &frameworkCall](
+                                      std::string_view toolName,
+                                      std::string_view exactArgumentsJcs
+                                  )
+                    {
+                        auto const replay = lifecycle.invokeFrameworkTool(
+                            frameworkCall(toolName, exactArgumentsJcs),
+                            context
+                        );
+                        auto const replayWhy = replay.has_value()
+                            ? std::string{}
+                            : replay.error().message();
+                        REQUIRE_MESSAGE(replay.has_value(), replayWhy);
+                        CHECK(
+                            replay->state
+                            == operator_runtime::ToolCallState::Confirmed
+                        );
+                        REQUIRE(replay->payload.has_value());
+                        return std::string{replay->payload->bytes()};
+                    };
+
+                    // Braced initialization, so the five calls are issued in
+                    // the declaration order their ordinals follow.
+                    payloads = FrameworkToolPayloads{
+                        .firstObserve  = issued("framework.screen.observe", "{}"),
+                        .secondObserve = issued("framework.screen.observe", "{}"),
+                        .waited        = issued(
+                            "framework.workflow.wait",
+                            R"({"duration_ms":0})"
+                        ),
+                        .audited = issued(
+                            "framework.audit.record",
+                            R"({"record":{"note":"observed"}})"
+                        ),
+                        .status = issued("framework.workflow.status", "{}"),
+                    };
                 }
             );
-            auto const lifecycleWhy = lifecycle.has_value()
-                ? std::string{}
-                : lifecycle.error().message();
-            REQUIRE_MESSAGE(
-                lifecycle.has_value(),
-                lifecycleWhy
-            );
-            auto const identity = lifecycle->identity();
-
-            auto sink = trace::FileTraceSink::createNew(args.trace);
-            REQUIRE(sink.has_value());
-            auto recorder = trace::TraceRecorder::create(
-                std::move(*sink),
-                trace::TraceStreamSpec{
-                    .sessionId           = identity.sessionId,
-                    .sessionManifestHash = identity.sessionManifestHash,
-                    .producer            = "framework-tool-adapter-test",
-                }
-            );
-            REQUIRE(recorder.has_value());
-            auto session = engine::EngineSession::create(
-                std::move(sources.frameSource),
-                std::move(sources.actionSink),
-                *recorder,
-                engine::EngineSessionConfig{
-                    .liveFingerprint         = liveFingerprint,
-                    .projectFingerprint      = identity.runtimeModel.fingerprint(),
-                    .maximumPixelComparisons = args.budget,
-                    .recognitionTimeout      = args.recognitionTimeout,
-                },
-                std::move(sources.ocrEngine)
-            );
-            REQUIRE(session.has_value());
-            auto context = task::TaskContext{std::move(*session), *recorder};
-
-            auto issued = [&lifecycle, &context, &frameworkCall](
-                              std::string_view toolName,
-                              std::string_view exactArgumentsJcs
-                          )
-            {
-                auto const replay = lifecycle->invokeFrameworkReadOnlyTool(
-                    frameworkCall(toolName, exactArgumentsJcs),
-                    context
-                );
-                auto const replayWhy = replay.has_value()
-                    ? std::string{}
-                    : replay.error().message();
-                REQUIRE_MESSAGE(
-                    replay.has_value(),
-                    replayWhy
-                );
-                CHECK(
-                    replay->state == operator_runtime::ToolCallState::Confirmed
-                );
-                REQUIRE(replay->payload.has_value());
-                return std::string{replay->payload->bytes()};
-            };
-
-            // Braced initialization, so the three calls are issued in the
-            // declaration order their ordinals follow.
-            auto payloads = FrameworkToolPayloads{
-                .firstObserve  = issued("framework.screen.observe", "{}"),
-                .secondObserve = issued("framework.screen.observe", "{}"),
-                .waited        = issued(
-                    "framework.workflow.wait",
-                    R"({"duration_ms":0})"
-                ),
-            };
-            CHECK(lifecycle->shutdown().has_value());
             return payloads;
         };
 
@@ -748,6 +879,59 @@ namespace uf::cli
         CHECK(p_target->string() == "recorded-tool-target");
         CHECK(executed.waited == R"({"completed":true,"duration_ms":0})");
 
+        // The observation authority section 6 requires travels in the Tool
+        // result as an OBJECT, so a script can hold it, return it and record it
+        // with no host object crossing the boundary. Every binding a later
+        // native input is judged on is in it, and the two that name this run's
+        // coordinate are what refuse a reference presented under another root.
+        auto const* const p_reference =
+            parsedPayload->find("observation_reference");
+        REQUIRE(p_reference != nullptr);
+        CHECK(p_reference->kind() == json::ValueKind::Object);
+        for (auto const* const binding : {
+                 "authorized_ui_actions",
+                 "controlled_target_id",
+                 "expires_at_unix_ms",
+                 "frame_identity_hash",
+                 "host_generation",
+                 "issuing_parent_identity",
+                 "local_semantic_targets",
+                 "project_registration_hash",
+                 "root_identity",
+                 "runtime_artifact_root_hash",
+             })
+        {
+            CHECK_MESSAGE(p_reference->find(binding) != nullptr, binding);
+        }
+
+        // The audit Tool's durable row IS the record: the arguments carry it
+        // and the outcome names the hash of exactly those bytes, so nothing
+        // beside the ledger has to be consulted to read what a run recorded.
+        auto const auditedRecord = json::parse(executed.audited);
+        REQUIRE(auditedRecord.has_value());
+        auto const* const p_recorded = auditedRecord->find("recorded");
+        REQUIRE(p_recorded != nullptr);
+        CHECK(p_recorded->boolean());
+        auto const recordHash = sha256(
+            std::as_bytes(std::span{std::string_view{R"({"note":"observed"})"}})
+        );
+        REQUIRE(recordHash.has_value());
+        auto const* const p_recordHash = auditedRecord->find("record_hash");
+        REQUIRE(p_recordHash != nullptr);
+        CHECK(p_recordHash->string() == recordHash->hex());
+
+        // Status reports the run rather than the screen: it observes nothing,
+        // and a clean start has nothing left uncertain to report.
+        auto const reportedStatus = json::parse(executed.status);
+        REQUIRE(reportedStatus.has_value());
+        auto const* const p_access = reportedStatus->find("access");
+        REQUIRE(p_access != nullptr);
+        CHECK(p_access->string() == "writable");
+        auto const* const p_unreconciled =
+            reportedStatus->find("unreconciled_dispatches");
+        REQUIRE(p_unreconciled != nullptr);
+        CHECK(p_unreconciled->string() == "0");
+
         // The two observes are byte-identical requests, and they still differ:
         // the second one got its own ordinal, executed on its own and minted
         // its own observation. That is what stops a caller from addressing a
@@ -763,7 +947,215 @@ namespace uf::cli
         CHECK(replayed.firstObserve == executed.firstObserve);
         CHECK(replayed.secondObserve == executed.secondObserve);
         CHECK(replayed.waited == executed.waited);
+        CHECK(replayed.audited == executed.audited);
 
+        // Status is the one recorded outcome whose replay is load-bearing on
+        // its own: the second run's session id differs from the first's, so
+        // equality here is the ledger answering and not the provider.
+        CHECK(replayed.status == executed.status);
+
+        CHECK(*delivered == 0U);
+    }
+
+    TEST_CASE(
+        "production Framework input Tools spend one observation authority and refuse every other presentation"
+    )
+    {
+        auto const world = RecordedWorld{};
+        world.authorizeMutation();
+        auto const delivered = std::make_shared<uint32>();
+
+        auto const scope = operator_runtime::ObservedInstanceWorldScope::run(
+            "recorded-tool-target",
+            1
+        );
+        REQUIRE(scope.has_value());
+
+        auto const executionIdentity = operator_runtime::ToolExecutionIdentity{
+            .runIdentity = frameworkToolIdentity("framework-input-run"),
+            .frameworkReleaseIdentity = frameworkToolIdentity(
+                "framework-release"
+            ),
+            .toolRuntimeProtocolIdentity = frameworkToolIdentity(
+                "tool-runtime-protocol"
+            ),
+            .environmentIdentity = frameworkToolIdentity(
+                "native-adapter-environment"
+            ),
+        };
+
+        runProductLifecycle(
+            world.args("framework-input.jsonl"),
+            world.sources(delivered, std::make_unique<PresentReader>()),
+            "framework-input-adapter",
+            // The capability the fixture policy's allow rule requires. Without
+            // it the same artifact denies the same effect, which is what makes
+            // the rule a rule rather than a decoration.
+            {std::string{
+                operator_runtime::conformance::k_operateCapability
+            }},
+            *scope,
+            [&](service::ProductLifecycle& lifecycle, task::TaskContext& context)
+            {
+                auto issued = [&](std::string_view requestKey,
+                                  std::string_view toolName,
+                                  std::string_view exactArgumentsJcs)
+                {
+                    auto const replay = lifecycle.invokeFrameworkTool(
+                        service::FrameworkToolCall{
+                            .requestKey = std::string{requestKey},
+                            .exactRootRequestPreimageJcs =
+                                R"({"objective":"deliver one input"})",
+                            .executionIdentity = executionIdentity,
+                            .toolName          = std::string{toolName},
+                            .exactArgumentsJcs = std::string{exactArgumentsJcs},
+                        },
+                        context
+                    );
+                    auto const replayWhy = replay.has_value()
+                        ? std::string{}
+                        : replay.error().message();
+                    REQUIRE_MESSAGE(replay.has_value(), replayWhy);
+                    REQUIRE(replay->payload.has_value());
+                    return FrameworkToolOutcome{
+                        .state   = replay->state,
+                        .payload = std::string{replay->payload->bytes()},
+                    };
+                };
+
+                // Bare coordinates first, and they admit. The lifecycle binds a
+                // Human controller, whose profile is not restricted to semantic
+                // tools, so the Privileged surface is what decides who may
+                // reach this Tool and being a Framework Tool did not widen it.
+                auto const coordinate = issued(
+                    "input-root",
+                    "framework.input.coordinate",
+                    R"({"action":"click","x":1,"y":0})"
+                );
+                CHECK(
+                    coordinate.state
+                    == operator_runtime::ToolCallState::ProvenAbsent
+                );
+                CHECK(inputVerdict(coordinate.payload) == "host_delivery_unwired");
+
+                auto const observed = issued(
+                    "input-root",
+                    "framework.screen.observe",
+                    "{}"
+                );
+                CHECK(
+                    observed.state == operator_runtime::ToolCallState::Confirmed
+                );
+                auto const observedPayload = json::parse(observed.payload);
+                REQUIRE(observedPayload.has_value());
+                auto const* const p_reference =
+                    observedPayload->find("observation_reference");
+                REQUIRE(p_reference != nullptr);
+                auto const reference = json::canonicalBytes(*p_reference);
+
+                auto presented = [&reference](
+                                     std::string_view semanticTarget,
+                                     std::string_view uiAction
+                                 )
+                {
+                    return R"({"observation_reference":)" + reference
+                        + R"(,"semantic_target":")" + std::string{semanticTarget}
+                        + R"(","ui_action":")" + std::string{uiAction} + R"("})";
+                };
+
+                // Two refusals on the observation's own bounds, both before any
+                // successful consumption. They are ordered first on purpose: a
+                // refusal spends nothing, so the authority they refused has to
+                // still be available to the call below that is entitled to it.
+                auto const unknownTarget = issued(
+                    "input-root",
+                    "framework.input.semantic_target",
+                    presented("fixture.absent", "fixture.press")
+                );
+                CHECK(
+                    unknownTarget.state
+                    == operator_runtime::ToolCallState::ProvenAbsent
+                );
+                CHECK(
+                    inputVerdict(unknownTarget.payload) == "unknown_local_target"
+                );
+
+                auto const refusedAction = issued(
+                    "input-root",
+                    "framework.input.semantic_target",
+                    presented("fixture.target", "fixture.absent")
+                );
+                CHECK(
+                    inputVerdict(refusedAction.payload) == "action_refused"
+                );
+
+                // Another root request is another issuing coordinate, and the
+                // reference names the one it was minted at. This is the same
+                // reference and the same arguments; only the position moved.
+                auto const elsewhere = issued(
+                    "other-input-root",
+                    "framework.input.semantic_target",
+                    presented("fixture.target", "fixture.press")
+                );
+                CHECK(inputVerdict(elsewhere.payload) == "missing_parent");
+
+                // The one call that is entitled to it. It resolves against the
+                // same snapshot, registration, RuntimeArtifact, Host generation
+                // and issuing coordinate the observation was minted under, and
+                // spends the authority.
+                auto const delivering = issued(
+                    "input-root",
+                    "framework.input.semantic_target",
+                    presented("fixture.target", "fixture.press")
+                );
+                CHECK(
+                    delivering.state
+                    == operator_runtime::ToolCallState::ProvenAbsent
+                );
+                CHECK(
+                    inputVerdict(delivering.payload) == "host_delivery_unwired"
+                );
+
+                // At most one native input consumes one observation authority.
+                auto const repeated = issued(
+                    "input-root",
+                    "framework.input.semantic_target",
+                    presented("fixture.target", "fixture.press")
+                );
+                CHECK(inputVerdict(repeated.payload) == "already_consumed");
+
+                // Bytes this Framework never minted are refused at the seam,
+                // before a durable coordinate exists for them: recognition is
+                // byte equality against the recorded wire form and nothing
+                // else, so an edited reference is not a reference.
+                auto const forged = std::string{
+                    R"({"schema":"framework.observation_reference/1"})"
+                };
+                REQUIRE(forged != reference);
+                auto const unminted = lifecycle.invokeFrameworkTool(
+                    service::FrameworkToolCall{
+                        .requestKey = "input-root",
+                        .exactRootRequestPreimageJcs =
+                            R"({"objective":"deliver one input"})",
+                        .executionIdentity = executionIdentity,
+                        .toolName          = "framework.input.semantic_target",
+                        .exactArgumentsJcs =
+                            R"({"observation_reference":)" + forged
+                            + R"(,"semantic_target":"fixture.target")"
+                              R"(,"ui_action":"fixture.press"})",
+                    },
+                    context
+                );
+                REQUIRE_FALSE(unminted.has_value());
+                CHECK_MESSAGE(
+                    std::string{unminted.error().message()}.contains("unminted"),
+                    unminted.error().message()
+                );
+            }
+        );
+
+        // Nothing was posted, by any of them. That is what every proven_absent
+        // row above claims, and this is the sink saying the same thing.
         CHECK(*delivered == 0U);
     }
 

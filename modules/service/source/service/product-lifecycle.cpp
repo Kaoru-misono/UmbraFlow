@@ -7,7 +7,9 @@
 #include <operator/manifest.hpp>
 #include <operator/policy.hpp>
 #include <operator/project-plugin.hpp>
+#include <operator/snapshot-reference.hpp>
 #include <operator/tool-admission-request.hpp>
+#include <operator/tool-descriptor.hpp>
 #include <operator/tool-executor.hpp>
 
 #include <task/platform/confined-file.hpp>
@@ -18,6 +20,7 @@
 
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
+#include <core/safety/annotations.hpp>
 
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
@@ -31,9 +34,11 @@
 #include <map>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace uf::service
 {
@@ -53,6 +58,64 @@ namespace uf::service
         // and approval checks.
         constexpr auto k_upgradeControllerId = std::string_view{"umbra-flow-upgrade"};
         constexpr auto k_upgradeTargetId     = std::string_view{"runtime-artifact"};
+
+        // The Framework Tools this module answers. Every name is spelled once
+        // here so the provider switch and the seam that reads an argument
+        // cannot disagree about which Tool they are talking about.
+        constexpr auto k_observeTool = std::string_view{"framework.screen.observe"};
+        constexpr auto k_waitTool    = std::string_view{"framework.workflow.wait"};
+        constexpr auto k_auditTool   = std::string_view{"framework.audit.record"};
+        constexpr auto k_statusTool  = std::string_view{"framework.workflow.status"};
+        constexpr auto k_semanticInputTool = std::string_view{
+            "framework.input.semantic_target"
+        };
+        constexpr auto k_coordinateInputTool = std::string_view{
+            "framework.input.coordinate"
+        };
+
+        // The member a Tool's canonical arguments carry exactly when the call
+        // consumes one observation authority. Which Tools those are is the
+        // catalog's statement and not this module's, so the seam reads the
+        // member rather than listing the names again.
+        constexpr auto k_observationArgument = std::string_view{
+            "observation_reference"
+        };
+
+        // How long one minted observation authority may be presented for.
+        // CALIBRATION: thirty seconds is a placeholder well above the time an
+        // actor needs to interpret one observation and act on it, and well
+        // below any run budget.
+        constexpr auto k_observationAuthorityMillis = uint64{30'000};
+
+        // The risk one Framework input effect is proposed at. It is at or below
+        // every input descriptor's own maximumRisk, so what bounds an admission
+        // is the policy the session pinned rather than a number this module
+        // chose to be generous with.
+        constexpr auto k_inputEffectRisk = operator_runtime::Risk::Low;
+
+        // The empty project payload a Framework-owned effect carries. Framework
+        // owns the effect type, so there is no project document to put here and
+        // the member is present-and-empty rather than absent.
+        constexpr auto k_frameworkEffectPayload = std::string_view{"{}"};
+
+        [[nodiscard]]
+        auto unixMillisNow() -> uint64
+        {
+            auto const since = std::chrono::system_clock::now().time_since_epoch();
+            auto const millis =
+                std::chrono::duration_cast<std::chrono::milliseconds>(since)
+                    .count();
+            return millis <= 0 ? uint64{0} : static_cast<uint64>(millis);
+        }
+
+        // Counters render as decimal strings for SnapshotObservationReference's
+        // reason: RFC 8785 numbers are IEEE-754 doubles, so a generation or an
+        // instant above 2^53 would round inside a durable Tool result.
+        [[nodiscard]]
+        auto counterMember(uint64 value) -> json::Value
+        {
+            return json::Value::ofString(std::to_string(value));
+        }
 
         [[nodiscard]]
         auto hashOf(std::string_view bytes) -> Result<ContentHash>
@@ -151,6 +214,76 @@ namespace uf::service
                 std::move(canonical)
             );
         }
+
+        // What a native input that posted nothing records.
+        //
+        // proven_absent and not terminal_failure, and not an error either. A
+        // returned error is classified `possible` for a mutating Tool, which
+        // would set the target-wide mutation barrier for an input this module
+        // can prove never reached a sink -- and only a reconciliation carrying
+        // fresh Host evidence could lift it. Refusing on the observation's own
+        // bounds, or stopping at a delivery boundary that was never crossed,
+        // are both "the authorization was consumed and nothing was posted",
+        // which is exactly what task::DeliveryOutcome::NotDelivered means and
+        // exactly what proven_absent records.
+        //
+        // The evidence is mandatory and is the claim itself: no delivery ran,
+        // so no input was posted. It is not a Host observation because there is
+        // nothing for a Host to have observed.
+        [[nodiscard]]
+        auto absentInputResult(std::string_view verdict, std::string_view reason)
+            -> Result<operator_runtime::ToolCallCompletion>
+        {
+            UF_TRY_VALUE(
+                payload,
+                operator_runtime::CanonicalJson::parseExact(
+                    json::canonicalBytes(json::Value::ofObject({
+                        {"delivered", json::Value::ofBoolean(false)},
+                        {"reason", json::Value::ofString(std::string{reason})},
+                        {"verdict", json::Value::ofString(std::string{verdict})},
+                    }))
+                )
+            );
+            UF_TRY_VALUE(
+                evidence,
+                operator_runtime::CanonicalJson::parseExact(
+                    json::canonicalBytes(json::Value::ofObject({
+                        {"host_delivery", json::Value::ofString("none")},
+                        {"posted_inputs", counterMember(0U)},
+                    }))
+                )
+            );
+            return operator_runtime::ToolCallCompletion::provenAbsent(
+                std::move(payload),
+                std::move(evidence)
+            );
+        }
+
+        // The verdict a delivery that has no seam to cross records. It is not
+        // an ObservationRefusal: the observation authority was resolved and
+        // spent, and what stopped the call is the Framework's own missing
+        // delivery path.
+        constexpr auto k_unwiredDeliveryVerdict = std::string_view{
+            "host_delivery_unwired"
+        };
+
+        [[nodiscard]]
+        auto requiredStringArgument(
+            json::Value const& arguments,
+            std::string_view member
+        ) -> Result<std::string>
+        {
+            auto const* const p_member = arguments.find(member);
+            if (p_member == nullptr || p_member->kind() != json::ValueKind::String)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "the Framework Tool Catalog admitted arguments without a "
+                        + std::string{member} + " string"
+                );
+            }
+            return std::string{p_member->string()};
+        }
     }
 
     struct ProductLifecycle::Impl final
@@ -208,6 +341,22 @@ namespace uf::service
         // number of distinct root requests one lifecycle serves.
         std::map<ContentHash, operator_runtime::ToolCallIssuingContext>
             issuingContexts{};
+
+        // The run's observation authority: the only mint of an observation
+        // reference and the only route from one back to a resolved observation.
+        // It is run-scoped because every binding it records is a coordinate of
+        // this run, so a reference that outlives this lifecycle is inert --
+        // nothing else can resolve one.
+        operator_runtime::SnapshotObservationAuthority observations{};
+
+        // The reference values this run minted, kept because issuing a call
+        // AGAINST an observation takes the reference itself and the authority
+        // publishes no lookup. The authority still owns the spend: this is a
+        // handle store and answers only "were these exact bytes minted here",
+        // which is the one question that must be answered before a coordinate
+        // exists at all.
+        std::vector<operator_runtime::SnapshotObservationReference>
+            mintedObservations{};
 
         Impl(
             deployment::LoadedProject ownedLoaded,
@@ -313,6 +462,55 @@ namespace uf::service
                 )
             );
             return created.first->second.issue(invocation);
+        }
+
+        // The same assignment for a call that consumes one observation. The
+        // reference is a call-scoped borrow; the coordinate copies its identity
+        // and nothing is retained.
+        [[nodiscard]]
+        auto issueRootToolCallAgainstObservation(
+            operator_runtime::ToolRootRequestIdentity const& root,
+            operator_runtime::ToolExecutionIdentity const& executionIdentity,
+            operator_runtime::ValidatedToolInvocation const& invocation,
+            operator_runtime::SnapshotObservationReference const& observation
+        ) -> Result<operator_runtime::ToolCallPositionIdentity>
+        {
+            auto const opened = issuingContexts.find(root.identity());
+            if (opened != issuingContexts.end())
+            {
+                return opened->second.issueAgainstObservation(
+                    invocation,
+                    observation
+                );
+            }
+            auto const created = issuingContexts.emplace(
+                root.identity(),
+                operator_runtime::ToolCallIssuingContext::forRoot(
+                    root,
+                    executionIdentity
+                )
+            );
+            return created.first->second.issueAgainstObservation(
+                invocation,
+                observation
+            );
+        }
+
+        // A non-owning observation of one reference this run minted, or
+        // nullptr. It points into mintedObservations and stays valid until the
+        // next mint; every caller here consumes it before returning.
+        [[nodiscard]]
+        auto findObservation(std::string_view exactReferenceJcs) const noexcept
+            UF_LIFETIME_BOUND
+            -> operator_runtime::SnapshotObservationReference const*
+        {
+            auto const found = std::ranges::find_if(
+                mintedObservations,
+                [exactReferenceJcs](
+                    operator_runtime::SnapshotObservationReference const& minted
+                ) { return minted.wire().bytes() == exactReferenceJcs; }
+            );
+            return found == mintedObservations.end() ? nullptr : &*found;
         }
     };
 
@@ -550,8 +748,285 @@ namespace uf::service
         };
     }
 
-    auto ProductLifecycle::invokeFrameworkReadOnlyTool(
-        FrameworkReadOnlyToolCall request,
+    auto ProductLifecycle::answerObserveTool(
+        operator_runtime::ToolCallPositionIdentity const& call,
+        task::TaskContext& context
+    ) -> Result<operator_runtime::ToolCallCompletion>
+    {
+        UF_TRY_VALUE(observed, observe(context));
+        UF_TRY_VALUE(
+            stateResolution,
+            operator_runtime::CanonicalJson::parseExact(
+                observed.ui.canonicalJcs()
+            )
+        );
+        auto const& deployed = m_impl->deployment();
+
+        // The observation authority section 6 requires, bound to all six of
+        // the things it names. Every binding is read from what this run holds
+        // or from what the Host just resolved, and none of it is stated by a
+        // caller: a consumer that could name the frame, the target or the
+        // coordinate could present a reference against a world it never
+        // observed.
+        //
+        // TODO(cpp-debt): localSemanticTargets is the RuntimeModel's declared
+        // ui_target vocabulary rather than the targets THIS resolution
+        // reported, because the StateResolution document publishes readings
+        // only for declared Readers and this generation's models may declare
+        // none. Narrowing it needs the resolution to publish the targets it
+        // resolved; until it does, the reference is snapshot-scoped by its
+        // frame identity and model-scoped by its target vocabulary.
+        UF_TRY_VALUE(
+            reference,
+            m_impl->observations.mint(
+                operator_runtime::SnapshotObservationSpec{
+                    .controlledTargetId =
+                        m_impl->controller.controlledTargetId(),
+                    .runtimeArtifactRootHash = observed.ui.artifactRootHash(),
+                    .projectRegistrationHash = deployed.registration.hash(),
+                    .frameIdentityHash       = observed.snapshot.identityHash,
+                    .hostGeneration          = observed.ui.generation().value(),
+                    .rootIdentity            = call.rootIdentity(),
+                    .issuingParentIdentity   = call.parentIdentity(),
+                    .expiresAtUnixMillis =
+                        unixMillisNow() + k_observationAuthorityMillis,
+                    .localSemanticTargets =
+                        m_impl->runtimeModel.declaredUi().uiTargets,
+                    .authorizedUiActions =
+                        m_impl->runtimeModel.declaredUi().actions,
+                }
+            )
+        );
+        auto const referenceWire = reference.wire().value();
+        m_impl->mintedObservations.emplace_back(std::move(reference));
+
+        return confirmedToolResult(json::Value::ofObject({
+            {"artifact_root_hash",
+             json::Value::ofString(observed.ui.artifactRootHash().hex())},
+            {"controlled_target_id",
+             json::Value::ofString(m_impl->controller.controlledTargetId())},
+            {"decision_basis_hash",
+             json::Value::ofString(observed.snapshot.decisionBasisHash.hex())},
+            {"host_generation",
+             counterMember(observed.ui.generation().value())},
+            {"observation_id", json::Value::ofString(observed.ui.observationId())},
+            {"observation_reference", referenceWire},
+            {"project_registration_hash",
+             json::Value::ofString(deployed.registration.hash().hex())},
+            {"snapshot_identity_hash",
+             json::Value::ofString(observed.snapshot.identityHash.hex())},
+            {"snapshot_ref", json::Value::ofString(observed.snapshot.token)},
+            {"state_resolution", stateResolution.value()},
+            {"state_resolution_hash",
+             json::Value::ofString(observed.ui.stateResolutionHash().hex())},
+            {"target_generation",
+             counterMember(observed.ui.targetGeneration().value())},
+        }));
+    }
+
+    auto ProductLifecycle::answerStatusTool()
+        -> Result<operator_runtime::ToolCallCompletion>
+    {
+        // Run and call-tree status: what this run is, and whether it may still
+        // mutate. It observes no frame and delivers nothing, which is why its
+        // descriptor admits neither an observation nor a dispatch.
+        return confirmedToolResult(json::Value::ofObject({
+            {"access",
+             json::Value::ofString(
+                 m_impl->access == LifecycleAccess::Writable
+                     ? "writable"
+                     : "read_only"
+             )},
+            {"controlled_target_id",
+             json::Value::ofString(m_impl->controller.controlledTargetId())},
+            {"installed_generation", counterMember(m_impl->installedGeneration)},
+            {"session_id", json::Value::ofString(m_impl->sessionId)},
+            {"unreconciled_dispatches",
+             counterMember(static_cast<uint64>(m_impl->recoveries.size()))},
+        }));
+    }
+
+    auto ProductLifecycle::answerSemanticInputTool(
+        operator_runtime::ToolCallPositionIdentity const& call
+    ) -> Result<operator_runtime::ToolCallCompletion>
+    {
+        UF_TRY_VALUE(
+            arguments,
+            operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
+        );
+        UF_TRY_VALUE(
+            semanticTarget,
+            requiredStringArgument(arguments.value(), "semantic_target")
+        );
+        UF_TRY_VALUE(
+            uiAction,
+            requiredStringArgument(arguments.value(), "ui_action")
+        );
+        auto const* const p_reference = arguments.value().find(
+            k_observationArgument
+        );
+        UF_CHECK(p_reference != nullptr);
+
+        // Everything except the two names the caller chose is read from this
+        // run's own live authority. The Tool's argument schema declares exactly
+        // three members, so there is no controlled target, registration,
+        // artifact, generation or coordinate a caller could state here even if
+        // it wanted to -- which is what makes "validated against the SAME
+        // snapshot, Binding, plan, lease and fence" structural rather than
+        // checked.
+        auto const consumption = operator_runtime::SnapshotObservationConsumption{
+            .exactReferenceJcs       = json::canonicalBytes(*p_reference),
+            .controlledTargetId      = m_impl->controller.controlledTargetId(),
+            .runtimeArtifactRootHash = m_impl->runtimeModel.artifactRootHash(),
+            .projectRegistrationHash =
+                m_impl->deployment().registration.hash(),
+            .hostGeneration        = m_impl->generation.value(),
+            .rootIdentity          = call.rootIdentity(),
+            .issuingParentIdentity = call.parentIdentity(),
+            .localSemanticTarget   = semanticTarget,
+            .uiAction              = uiAction,
+            .presentedAtUnixMillis = unixMillisNow(),
+        };
+
+        // The whole refusal matrix is answered once, before anything is spent,
+        // and the verdict is recorded by name. A refusal spends nothing, so an
+        // action refused on its bounds leaves the authority available to the
+        // call that is entitled to it.
+        if (auto const refusal = m_impl->observations.refuse(consumption))
+        {
+            return absentInputResult(
+                operator_runtime::observationRefusalWireName(*refusal),
+                operator_runtime::observationRefusalDiagnostic(*refusal)
+            );
+        }
+        UF_TRY_VALUE(resolved, m_impl->observations.resolve(consumption));
+
+        // TODO(cpp-debt): Host delivery for a Tool-call-native input has no
+        // seam yet. task::TaskHost::deliver is private to
+        // operator_runtime::OperatorTaskHost, and the only authority a Host
+        // acts on is minted by OperatorCoordinator::reserveDispatch, which is
+        // keyed on an Operation -- the orchestration path the generation cut
+        // deletes. What is missing is one Coordinator mint over a dispatching
+        // Tool call and one OperatorTaskHost delivery over it; both live in
+        // modules/operator. Until they exist this provider reaches the
+        // delivery boundary and posts nothing, which is what its proven_absent
+        // outcome says.
+        return absentInputResult(
+            k_unwiredDeliveryVerdict,
+            std::format(
+                "the observation authority for {} resolved semantic target {} "
+                "and UI action {} on frame {}, and no Host delivery seam exists "
+                "to post it",
+                resolved.controlledTargetId(),
+                resolved.localSemanticTarget(),
+                resolved.uiAction(),
+                resolved.frameIdentityHash().hex()
+            )
+        );
+    }
+
+    auto ProductLifecycle::answerFrameworkTool(
+        operator_runtime::ToolCallPositionIdentity const& call,
+        task::TaskContext& context
+    ) -> Result<operator_runtime::ToolCallCompletion>
+    {
+        auto const& toolName = call.toolName();
+        if (toolName == k_observeTool)
+        {
+            return answerObserveTool(call, context);
+        }
+        if (toolName == k_statusTool)
+        {
+            return answerStatusTool();
+        }
+        if (toolName == k_semanticInputTool)
+        {
+            return answerSemanticInputTool(call);
+        }
+        if (toolName == k_waitTool)
+        {
+            UF_TRY_VALUE(
+                waitArguments,
+                operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
+            );
+            auto const* const p_duration =
+                waitArguments.value().find("duration_ms");
+            UF_CHECK(p_duration != nullptr);
+            auto const durationMillis = static_cast<uint64>(p_duration->number());
+            context.settle(std::chrono::milliseconds{durationMillis});
+            if (context.cancellationRequested())
+            {
+                return fail(
+                    AutomationErrorKind::Cancelled,
+                    "framework.workflow.wait was cancelled"
+                );
+            }
+            return confirmedToolResult(json::Value::ofObject({
+                {"completed", json::Value::ofBoolean(true)},
+                {"duration_ms",
+                 json::Value::ofNumber(static_cast<double>(durationMillis))},
+            }));
+        }
+        if (toolName == k_auditTool)
+        {
+            // The durable Tool call row IS the audit record: its canonical
+            // arguments are the whole of what was recorded and its terminal
+            // outcome is the whole of what happened to it. A second store
+            // beside it would be a second answer to "what did this run
+            // record", and only one of them would replay.
+            UF_TRY_VALUE(
+                auditArguments,
+                operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
+            );
+            auto const* const p_record = auditArguments.value().find("record");
+            UF_CHECK(p_record != nullptr);
+            UF_TRY_VALUE(
+                record,
+                operator_runtime::CanonicalJson::parseExact(
+                    json::canonicalBytes(*p_record)
+                )
+            );
+            return confirmedToolResult(json::Value::ofObject({
+                {"record_hash",
+                 json::Value::ofString(record.contentHash().hex())},
+                {"recorded", json::Value::ofBoolean(true)},
+            }));
+        }
+        if (toolName == k_coordinateInputTool)
+        {
+            // Bare coordinates resolve nothing: there is no observation to
+            // present and no semantic target to judge. What keeps them out of
+            // an ordinary actor's hands is the descriptor's Privileged
+            // surface, judged at admission against the controller profile, and
+            // being a Framework Tool does not widen that.
+            UF_TRY_VALUE(
+                coordinateArguments,
+                operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
+            );
+            UF_TRY_VALUE(
+                action,
+                requiredStringArgument(coordinateArguments.value(), "action")
+            );
+            // TODO(cpp-debt): the same missing Host delivery seam
+            // answerSemanticInputTool names.
+            return absentInputResult(
+                k_unwiredDeliveryVerdict,
+                std::format(
+                    "the bare-coordinate action {} on {} reached the delivery "
+                    "boundary, and no Host delivery seam exists to post it",
+                    action,
+                    m_impl->controller.controlledTargetId()
+                )
+            );
+        }
+        return fail(
+            AutomationErrorKind::InternalInvariant,
+            "Framework Tool Catalog admitted a Tool with no provider"
+        );
+    }
+
+    auto ProductLifecycle::invokeFrameworkTool(
+        FrameworkToolCall request,
         task::TaskContext& context
     ) -> Result<operator_runtime::ToolCallReplay>
     {
@@ -580,14 +1055,85 @@ namespace uf::service
             invocation,
             catalog.validate(std::move(request.toolName), std::move(arguments))
         );
-        UF_TRY_VALUE(
-            call,
-            m_impl->issueRootToolCall(
-                root,
-                request.executionIdentity,
-                invocation
-            )
+
+        auto const mutating = invocation.descriptor().mutability
+            == operator_runtime::ToolMutability::Mutating;
+        if (mutating && m_impl->access != LifecycleAccess::Writable)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "recovery is unfinished, so this lifecycle is read-only"
+            );
+        }
+
+        // A call whose canonical arguments carry an observation reference is
+        // issued AGAINST the reference this run minted for those exact bytes.
+        // Recognition is byte equality and nothing else, so caller-authored or
+        // caller-edited observation JSON is refused here -- before a durable
+        // coordinate exists for it -- rather than inside a provider that would
+        // then have to explain a row nobody should have been able to open.
+        auto const* const p_presented = invocation.canonicalArgs().value().find(
+            k_observationArgument
         );
+        auto issued = p_presented == nullptr
+            ? m_impl->issueRootToolCall(
+                  root,
+                  request.executionIdentity,
+                  invocation
+              )
+            : [this, &root, &request, &invocation, p_presented]()
+                -> Result<operator_runtime::ToolCallPositionIdentity>
+              {
+                  auto const* const p_minted = m_impl->findObservation(
+                      json::canonicalBytes(*p_presented)
+                  );
+                  if (p_minted == nullptr)
+                  {
+                      return fail(
+                          AutomationErrorKind::InvalidResource,
+                          std::string{
+                              operator_runtime::observationRefusalDiagnostic(
+                                  operator_runtime::ObservationRefusal::Unminted
+                              )
+                          }
+                      );
+                  }
+                  return m_impl->issueRootToolCallAgainstObservation(
+                      root,
+                      request.executionIdentity,
+                      invocation,
+                      *p_minted
+                  );
+              }();
+        UF_TRY_VALUE(call, std::move(issued));
+
+        // What a mutating call proposes: one effect per bound its own
+        // descriptor declares, scoped to the controlled target this run holds
+        // the lease on, judged by the policy the session pinned. A read-only
+        // call proposes none, and that is the whole of the difference between
+        // the two admissions.
+        auto mutation = std::optional<operator_runtime::ToolAdmissionRequest::Mutation>{};
+        if (mutating)
+        {
+            auto effects = std::vector<operator_runtime::ProposedEffect>{};
+            effects.reserve(invocation.descriptor().effectBounds.size());
+            for (auto const& bound : invocation.descriptor().effectBounds)
+            {
+                effects.emplace_back(operator_runtime::ProposedEffect{
+                    .namespacedType = bound.namespacedType,
+                    .risk           = k_inputEffectRisk,
+                    .scopeKind      = bound.scopeKind,
+                    .scopeKey = m_impl->controller.controlledTargetId(),
+                    .payloadSchemaHash    = bound.payloadSchemaHash,
+                    .opaqueProjectPayload = std::string{k_frameworkEffectPayload},
+                });
+            }
+            mutation.emplace(operator_runtime::ToolAdmissionRequest::Mutation{
+                .planAuthority = m_impl->planAuthority,
+                .effects   = std::move(effects),
+                .approvals = {},
+            });
+        }
 
         auto executor = operator_runtime::ToolRuntimeExecutor{
             m_impl->operatorHost.coordinator(),
@@ -596,102 +1142,18 @@ namespace uf::service
                             operator_runtime::ToolCallPositionIdentity const&
                                 admittedCall
                         ) -> Result<operator_runtime::ToolCallCompletion>
-        {
-            if (admittedCall.toolName() == "framework.screen.observe")
-            {
-                UF_TRY_VALUE(observed, observe(context));
-                UF_TRY_VALUE(
-                    stateResolution,
-                    operator_runtime::CanonicalJson::parseExact(
-                        observed.ui.canonicalJcs()
-                    )
-                );
-                auto const& deployed = m_impl->deployment();
-                return confirmedToolResult(json::Value::ofObject({
-                    {"artifact_root_hash",
-                     json::Value::ofString(
-                         observed.ui.artifactRootHash().hex()
-                     )},
-                    {"controlled_target_id",
-                     json::Value::ofString(
-                         m_impl->controller.controlledTargetId()
-                     )},
-                    {"decision_basis_hash",
-                     json::Value::ofString(
-                         observed.snapshot.decisionBasisHash.hex()
-                     )},
-                    {"host_generation",
-                     json::Value::ofString(std::to_string(
-                         observed.ui.generation().value()
-                     ))},
-                    {"observation_id",
-                     json::Value::ofString(observed.ui.observationId())},
-                    {"project_registration_hash",
-                     json::Value::ofString(deployed.registration.hash().hex())},
-                    {"snapshot_identity_hash",
-                     json::Value::ofString(
-                         observed.snapshot.identityHash.hex()
-                     )},
-                    {"snapshot_ref",
-                     json::Value::ofString(observed.snapshot.token)},
-                    {"state_resolution", stateResolution.value()},
-                    {"state_resolution_hash",
-                     json::Value::ofString(
-                         observed.ui.stateResolutionHash().hex()
-                     )},
-                    {"target_generation",
-                     json::Value::ofString(std::to_string(
-                         observed.ui.targetGeneration().value()
-                     ))},
-                }));
-            }
+        { return answerFrameworkTool(admittedCall, context); };
 
-            if (admittedCall.toolName() == "framework.workflow.wait")
-            {
-                UF_TRY_VALUE(
-                    waitArguments,
-                    operator_runtime::CanonicalJson::parseExact(
-                        admittedCall.canonicalArgs()
-                    )
-                );
-                auto const* const p_duration =
-                    waitArguments.value().find("duration_ms");
-                UF_CHECK(p_duration != nullptr);
-                auto const durationMillis = static_cast<uint64>(
-                    p_duration->number()
-                );
-                context.settle(std::chrono::milliseconds{durationMillis});
-                if (context.cancellationRequested())
-                {
-                    return fail(
-                        AutomationErrorKind::Cancelled,
-                        "framework.workflow.wait was cancelled"
-                    );
-                }
-                return confirmedToolResult(json::Value::ofObject({
-                    {"completed", json::Value::ofBoolean(true)},
-                    {"duration_ms",
-                     json::Value::ofNumber(
-                         static_cast<double>(durationMillis)
-                     )},
-                }));
-            }
-
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "Framework Tool Catalog admitted a Tool with no provider"
-            );
-        };
-        // No delegation grant and no mutation proposal: these are the
-        // root-positioned read-only calls this run's own context issues, a
-        // grant exists only for a child call under a dispatching handler, and
-        // the Framework descriptors reached here are read-only.
+        // No delegation grant: these are the root-positioned calls this run's
+        // own context issues, and a grant exists only for a child call under a
+        // dispatching handler.
         return executor.invoke(
             operator_runtime::ToolAdmissionRequest{
                 .controller = m_impl->controller,
                 .lease      = m_impl->controlLease(),
-                .root = std::move(root),
-                .call = std::move(call),
+                .root     = std::move(root),
+                .call     = std::move(call),
+                .mutation = std::move(mutation),
             },
             provider
         );
