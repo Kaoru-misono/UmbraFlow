@@ -8,10 +8,17 @@ Status: **owner-approved direction; internal implementation in progress**
 
 The ruling is frozen in
 [`tools are the shared game-driving boundary`](../decisions/2026-08-21-tools-are-the-shared-game-driving-boundary.md).
-Two later rulings refine it and are equally binding on this plan:
+Four later rulings refine it and are equally binding on this plan:
 [`scoped Tool execution is a third program type`](../decisions/2026-08-22-scoped-tool-execution-is-a-third-program-type.md)
 fixes the scoped program type, the native call shape, facade authorship, the
-replay key, and the audit path; and
+replay key, and the audit path;
+[`a Tool handler and an automation script are one mechanism`](../decisions/2026-08-22-handler-and-automation-script-are-one-mechanism.md)
+fixes the unified entry declaration, where the binding table lives, one compiled
+program per registration generation, the issuing context and its replay
+semantics, and the root-positioned call row;
+[`caller independence is structural`](../decisions/2026-08-22-caller-independence-is-structural.md)
+fixes how every caller reaches admission and what the four-way fixture is for;
+and
 [`production reachability is the cut invariant`](../decisions/2026-08-22-production-reachability-is-the-cut-invariant.md)
 fixes how the generation is staged and flipped. This live plan owns the
 experiments and atomic implementation. The current five-function ProjectPlugin
@@ -215,8 +222,9 @@ admission, and is addressed by its ordinal coordinate:
 - Tool name and version;
 - canonical arguments;
 - Framework release and Tool Runtime protocol identity;
-- Luau environment identity, and the automation-script identity when Luau is the
-  caller;
+- Luau environment identity, and the identity of the compiled scoped program the
+  caller runs when Luau is the caller — one program per Project registration
+  generation, not one per entry;
 - Project registration and Tool Catalog identity when a Project is involved; and
 - the observation/snapshot reference when the Tool consumes one.
 
@@ -232,7 +240,11 @@ evidence, and delivery classification.
 
 Agent, human, and automation adapters may have different transport envelopes,
 but they must compile into this one internal invocation. No adapter gets a
-second execution path.
+second execution path, and under
+[`caller independence is structural`](../decisions/2026-08-22-caller-independence-is-structural.md)
+that is enforced by construction rather than by adapter discipline: an adapter
+translates transport specifics into one internal admission-request value and can
+construct nothing that is executable.
 
 Internal checkpoint in the working tree on 2026-08-22: the split is implemented
 as described for the principals — `ToolExecutionIdentity` deliberately excludes
@@ -245,8 +257,9 @@ counter and `ToolCallPositionIdentity::create` is private to it. The
 observation term is real: it enters `callIdentityMaterial`, the
 `tool_call_positions.observation_reference_hash` column, and the field-by-field
 divergence comparison. Two gaps remain, and both stay requirements.
-`ToolExecutionIdentity` still has no automation-script identity member — it is
-four hashes and nothing more. And `environmentIdentity` (like
+`ToolExecutionIdentity` still carries no identity for the compiled scoped
+program a Luau caller runs — it is four hashes and nothing more. And
+`environmentIdentity` (like
 `toolRuntimeProtocolIdentity`) is still an opaque caller-supplied hash on the
 production seam: it arrives as a parameter of
 `ProductLifecycle::invokeFrameworkReadOnlyTool`, and nothing there derives it
@@ -483,9 +496,19 @@ fixes how that is built, and this plan implements it as ruled:
   `deepFreeze` rule that `__index` must be a table and never a function stands;
   its rationale mentions a "future yield protocol", and that phrase is option
   preservation, not an unpaid debt this plan owes.
-- In `@umbraflow/tools`, a "root call" is a parentless position under the run's
-  existing `ToolRootRequestIdentity` and a "child call" is a parented position
-  under the same root. Scripts never mint root request identities.
+- In `@umbraflow/tools`, a "root call" is a call the run's own issuing context
+  issues: its position names the run's existing `ToolRootRequestIdentity` as its
+  parent coordinate. A "child call" is one a handler's context issues, naming
+  that handler's own position row. No position is parentless, and the root
+  request itself gets no `tool_call_positions` row — inventing a shadow position
+  row per root request would be a second spelling of the root, so the write path
+  instead proves the named coordinate exists in whichever of the two tables
+  holds it, with a named refusal on either miss. This corrects the "parentless
+  position" wording of
+  [`scoped Tool execution is a third program type`](../decisions/2026-08-22-scoped-tool-execution-is-a-third-program-type.md),
+  which
+  [`a Tool handler and an automation script are one mechanism`](../decisions/2026-08-22-handler-and-automation-script-are-one-mechanism.md)
+  supersedes on exactly that word. Scripts never mint root request identities.
 - Tool results are references, not payloads, on the template of the existing
   `framework.screen.observe` opaque snapshot handle. Handles are plain JSON data
   wrapped by frozen helper functions; there is no userdata and no metatable
@@ -638,6 +661,10 @@ the derived-identity paragraph above as binding.
 
 ### 5.1 Project declaration
 
+[`A Tool handler and an automation script are one mechanism`](../decisions/2026-08-22-handler-and-automation-script-are-one-mechanism.md)
+fixes this section's declaration, its two halves, what the loader compiles from
+them, and the coordinate a run of one occupies. This plan implements it as ruled.
+
 A Tool handler and an automation script are one mechanism with one declaration.
 A Project declares an entry an actor may start at the top of a run exactly as it
 declares any other Tool: a Tool Catalog descriptor, plus a binding row naming the
@@ -648,23 +675,15 @@ Both are forbidden. What makes an entry startable at the top of a run is that
 the actor is admitted to start it, which is the same authority and policy
 question that already exists for an Agent-issued root call.
 
-The forcing argument is the tuple each side needs pinned. A Tool needs a binding
-into the closure, an argument schema, a result schema, and a
-`ChildEffectDeclaration` — `childToolNames`, `maximumChildSurface`,
-`maximumChildMutability`, `maximumChildRisk` and `maximumChildCalls`. A script
-needs an entry, a closed module closure, arguments and result schemas, a
-requested Tool set and profile, and requested budget ceilings. That is field for
-field the same tuple under two sets of names: the requested Tool set and profile
-are the `ChildEffectDeclaration`'s child Tool names together with its child
-surface, mutability and risk ceilings, and the requested budget ceilings are its
-child-call ceiling together with the descriptor's workflow limits and timeout
-policy. Two declaration shapes for one tuple is the "two spellings of one thing"
-the house rules ban, and it decays the way every shim decays: each future field
-must be added twice, and the next reader cannot tell whether an asymmetry
-between the two shapes was intentional. Section 7 already commits to
-run-semantics identity — "a restart replays the handler on the same terms as a
-top-level automation script" — and that demand is unmeetable if the automation
-path is a second machine.
+The forcing argument is recorded in full in that decision: a Tool's tuple and a
+script's tuple are field for field the same tuple under two sets of names, so
+two declaration shapes for it would be the "two spellings of one thing" the
+house rules ban. The field correspondence an implementer needs is that the
+requested Tool set and profile are the `ChildEffectDeclaration`'s child Tool
+names — `childToolNames` — together with its `maximumChildSurface`,
+`maximumChildMutability` and `maximumChildRisk` ceilings, and the requested
+budget ceilings are its `maximumChildCalls` together with the descriptor's
+workflow limits and timeout policy.
 
 One declaration therefore pins all of it, across the two documents section 5.2
 keeps apart. The descriptor, inside `tool_catalog_hash`, pins the argument and
@@ -731,7 +750,11 @@ re-registration of the same root; and through the declared-Tool-with-no-binding
 refusal it also refuses any registration whose catalog declares a Tool while its
 binding table is empty, which is every registration the project directory loader
 derives today. Per-entry variance is catalog data the compiler never sees: no
-child Tool set, ceiling or budget reaches `compile`, and a test asserts it. The loader also
+child Tool set, ceiling or budget reaches `compile`, and a test asserts it. The
+seam the one program is compiled against is run-stateless as the ruling
+requires: `script::ToolRuntimeInvoke` takes the call's coordinate and stop token
+as parameters, and `ScopedRunRequest` carries the run's parent position, so
+nothing run-scoped is an upvalue of the shared callable. The loader also
 renders the pinned discovery projection of both catalogs into the Framework
 resource `umbraflow.tool-catalog` that `@umbraflow/tools` reads, so description
 costs no Tool-call budget and cannot move under a running script.
@@ -773,7 +796,8 @@ Four identities/records remain distinct:
    rather than parts of its address, and are compared field by field at that
    coordinate:
 
-   - script/run identity;
+   - run identity, and the identity of the compiled scoped program when Luau is
+     the caller;
    - Tool name and version;
    - canonical arguments, JCS-canonicalised before comparison;
    - relevant observation reference;
@@ -808,6 +832,12 @@ Four identities/records remain distinct:
 
 The coordinate, counter, and named-field rules are fixed by
 [`scoped Tool execution is a third program type`](../decisions/2026-08-22-scoped-tool-execution-is-a-third-program-type.md).
+[`A Tool handler and an automation script are one mechanism`](../decisions/2026-08-22-handler-and-automation-script-are-one-mechanism.md)
+fixes the rest of the coordinate model: the parent coordinate is never absent, a
+root-positioned call carries `parent_call_identity = root_identity` naming its
+`tool_root_requests` row, the root request itself gets no position row, and the
+issuing context a dispatcher builds is fresh on every entry and numbers from 1
+with no persisted next-ordinal anywhere.
 
 Internal checkpoint in the working tree on 2026-08-22:
 
@@ -1056,8 +1086,20 @@ before that CAS publishes neither fact nor state; a crash after it observes
 both.
 
 The same Project Tool must have the same behavior and authority checks whether
-its caller is Agent, human, another Project Tool, or automation script. Tests
-compare those actor paths against one semantic fixture.
+its caller is Agent, human, another Project Tool, or a Project run started at the
+top.
+[`Caller independence is structural`](../decisions/2026-08-22-caller-independence-is-structural.md)
+rules that this is a property of the structure and not only of a test: every
+producer builds one internal admission-request value — actor identity, target
+tool name, canonical arguments, issuing coordinate context — consumed by exactly
+one admission function, and the position identity, delegation grant and dispatch
+capability downstream of it are constructible only inside the runtime, so an
+adapter is definitionally a translator that can construct nothing executable.
+The one semantic fixture is still required and is not a substitute: it compares
+canonical argument bytes, admission outcome, durable row attributes, and result
+across all four producers, modulo actor identity, because structure cannot see
+whether two producers canonicalise the same input the same way. Both are
+required, and neither discharges the other.
 
 Internal checkpoint in the working tree on 2026-08-22: the binding and the
 compiled program exist; the path that runs a handler does not. The binding is
@@ -1082,8 +1124,13 @@ entry and deliberately stops there, and its only caller is
 Tool result" is therefore a requirement the catalog can now express and no
 executed path yet enforces. There are no call-bound provisional Journal
 proposals, and no test compares the actor paths against a shared semantic
-fixture. What section 3.3 is remains the admission path a
-handler's child calls will take.
+fixture. Neither half of the caller-independence ruling is built: there is no
+single internal admission-request value either —
+`OperatorCoordinator::admitToolCall` takes controller, lease, root, position,
+mutability, plan authority, effects, approvals and delegation as separate
+parameters — and `ToolCallPositionIdentity::create` is still the only downstream
+artifact private to the runtime. What section 3.3 is remains the admission path
+a handler's child calls will take.
 
 ## 8. Journal reduction
 
@@ -1139,7 +1186,8 @@ Implementation requires one atomic generation across:
 - Framework and Project Tool catalogs and tool-handler binding;
 - actor-neutral ToolInvocation and nested-call envelopes;
 - Operator ledger call-tree, dispatch, delivery, and replay rows;
-- automation-script declaration, loader, registrar, and environment identity;
+- the one entry declaration — Tool Catalog descriptor plus binding row — with
+  its loader, registrar, and scoped execution environment identity;
 - reserved Framework SDK resolver and exact module catalog;
 - scoped Tool Runtime facades;
 - screen observation/reference and input Tool contracts;
@@ -1293,8 +1341,8 @@ generation does.
    and the Luau scoped SDK facades over it, including the
    `framework.audit.record` Tool the `@umbraflow/audit` facade wraps.
 6. Implement Project Tool handler binding and nested calls.
-7. Implement automation declarations, loader, deterministic restart, and
-   replay.
+7. Implement the one entry declaration, its loader and registrar, deterministic
+   restart, and replay.
 8. Implement Framework observation and input Tools over existing Host/runtime
    authority.
 9. Keep reducer execution pure and add trusted commit context.
@@ -1321,10 +1369,10 @@ deleted or reworded by this paragraph; it only says where each one stands.
 - WP2 is substantially done: root idempotency, origin and execution principals,
   delegation grants, the nine-state call machine, the ordinal replay key, the
   admission-attempt ledger and the target-wide mutation freeze all exist, and a
-  root run is now an ordinary positioned row rather than a null parent —
-  `tool_call_positions.parent_call_identity` is `NOT NULL` and names the root
-  request, with every row an earlier generation left null migrated to its own
-  `root_identity`. Its remaining gaps are the ones sections 5.2, 5.3 and 5.4
+  root-positioned call is now an ordinary position row rather than a null parent
+  — `tool_call_positions.parent_call_identity` is `NOT NULL` and names the root
+  request row, with every row an earlier generation left null migrated to its
+  own `root_identity`. Its remaining gaps are the ones sections 5.2, 5.3 and 5.4
   name — no `rejected` producer, no run-level termination, no trusted
   provider-query seam, and no admitted root effect envelope on `tool_runs`.
 - WP3 has not started. There are no Agent, Workbench/CLI or automation adapters.
@@ -1408,9 +1456,12 @@ of these is required before the flip, not after it.
 Implementation has reached the scoped program type, the four scoped facades, the
 eight-tool Framework Tool Catalog, nested Tool calls, the snapshot-observation
 refusal matrix, the Project Tool binding table inside the registration root, the
-real root positioned row, and the loader and registrar that compile one program
-per Project registration generation. All of it is production-unreachable; see
-section 9's state paragraph.
+root-positioned call row that replaced the null parent, and the loader and
+registrar that compile one program per Project registration generation — the
+last three as
+[`a Tool handler and an automation script are one mechanism`](../decisions/2026-08-22-handler-and-automation-script-are-one-mechanism.md)
+fixes them. All of it is production-unreachable; see section 9's state
+paragraph.
 
 **Gate state.** The `fe6dbe0` breakage this checkpoint used to report was that
 `scripts/generate_public_contract.py` expected two-field `PureModuleBinding`
@@ -1432,7 +1483,7 @@ that was followed is as much a part of the handoff as what remains.
 Two things have moved since the previous checkpoint, and a third is in progress
 between them. Identity and registration shape landed first — the binding table
 inside the registration root and outside `tool_catalog_hash`, the required
-per-tool `result_schema`, the real root positioned row, and the recorded
+per-tool `result_schema`, the root-positioned call row, and the recorded
 fixtures migrated in the same change — because every later step pins on those
 digests, and changing hash inputs late invalidates every fixture and replay row
 built on top, which is the most expensive rework available. The loader and
@@ -1444,18 +1495,38 @@ write, with kill-and-restart fixtures proving fresh-from-1 replay, the
 mismatch-names-the-field halt, and fence exclusion. It is the shared bottom of
 every caller path and what replaces step 3's fake-executor coverage for a
 Project Tool, so anything built before it stands on a stub and gets rebuilt. Do
-not describe it as done. Step 4 remains the next step of this list that nothing
-has started.
+not describe it as done. Step 4 remains the earliest step of this list that
+nothing has started, subject to the re-cut of the remaining order below.
+
+The remaining order was re-cut when the unified entry declaration landed, and
+this is the order to follow from here. After the dispatch executor comes the
+**root producer**: Operator admission of an actor's start at the top of a run,
+constructing the same admission request with a root coordinate. It is a stage of
+its own because the moment it exists automation scripts exist and no separate
+feature remains to build. Then the **actor adapters**, as thin translators onto
+the one internal admission request
+[`caller independence is structural`](../decisions/2026-08-22-caller-independence-is-structural.md)
+requires, with that ruling's four-way semantic fixture landing with the second
+adapter and growing with each. **Production mutating providers
+come last**, after every adapter: everything above them runs end to end against
+test providers, and they are the only stage whose doubles are cheap and whose
+real versions carry external risk. Step 4's read-only providers may therefore
+land at any point once the dispatch executor exists, but its two
+`framework.input.*` providers belong to that last stage, and the flip is the one
+commit after it. The minimum chain for the first real Project Tool end to end is
+identity and registration shape, the loader and registrar, and the dispatch
+executor, plus one admission producer, plus a provider only if that Tool's
+children need one.
 
 1. **Mostly done** — identity, envelope and ledger row types, and their
    conformance coverage. The types exist and carry unit coverage, and the
    registration shape every later step pins on is settled:
    `project_tool_bindings` inside the registration root and outside
    `tool_catalog_hash`,
-   `project_registration_format` 4, and a root run as a real
+   `project_registration_format` 4, and a root-positioned call as an ordinary
    `tool_call_positions` row whose `parent_call_identity` names its own root
-   request, with the rows an earlier generation left null migrated in the same
-   change. The *conformance* half still does not exist at all (section 12), and
+   request row, with the rows an earlier generation left null migrated in the
+   same change. The *conformance* half still does not exist at all (section 12), and
    neither `schema/` nor the public contract publishes a Tool Runtime envelope
    or call state. This step is not closed.
 2. **Done** — Framework and Project Tool catalogs and their validation. The
