@@ -1,11 +1,15 @@
+#include <operator/agent-profile.hpp>
+#include <operator/controller.hpp>
 #include <operator/ledger.hpp>
 #include <operator/project-plugin.hpp>
 #include <operator/project-tool-dispatch.hpp>
 #include <operator/project-tool-program.hpp>
+#include <operator/tool-actor-adapters.hpp>
 #include <operator/tool-admission-request.hpp>
 #include <operator/tool-descriptor.hpp>
 #include <operator/tool-executor.hpp>
 #include <operator/tool-invocation.hpp>
+#include <operator/tool-root-producer.hpp>
 
 #include <deployment/project-deployment.hpp>
 
@@ -18,9 +22,11 @@
 #include <domain/error.hpp>
 
 #include "project-fixture.hpp"
+#include "unsafe/operator-database-probe.hpp"
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -97,6 +103,16 @@ namespace uf::operator_runtime
         constexpr auto k_otherTargetId = std::string_view{"dispatch-other-target"};
         constexpr auto k_otherInstanceKey =
             std::string_view{"dispatch-other-instance"};
+
+        // One ProjectInstance per actor of the four-way adapter comparison.
+        // A unique index admits exactly one active write session per project
+        // instance, so three simultaneously pinned actors are three instances;
+        // they share one controlled target, which is what keeps the lease
+        // exclusive between them and the admitted target identical across them.
+        constexpr auto k_agentInstanceKey =
+            std::string_view{"dispatch-agent-instance"};
+        constexpr auto k_humanInstanceKey =
+            std::string_view{"dispatch-human-instance"};
         constexpr auto k_boundMillis = uint64{60'000};
 
         constexpr auto k_toolCatalogBytes = std::string_view{
@@ -564,6 +580,20 @@ return {
         // Project's own, and the one a Framework input Tool declares. A rule
         // that named neither would decide every mutating admission by the
         // artifact's default deny, which is not what any case here is about.
+        // The AgentProfile every incarnation's manifest attests to. It exists
+        // because an Agent is one of the four producers the adapter cases
+        // below compare, and pinSession requires a verified profile for
+        // exactly the kinds whose ControllerProfile says budgets are required.
+        // A Script or Human session is pinned against the same manifest and
+        // passes no profile at all.
+        [[nodiscard]]
+        auto agentProfileBytes() -> std::string
+        {
+            return test_support::agentProfileBytes(
+                test_support::k_unconstrainedAgentBudget
+            );
+        }
+
         [[nodiscard]]
         auto policyBytes() -> std::string
         {
@@ -623,8 +653,10 @@ return {
             VerifiedProjectRegistration const& registration,
             SessionManifest const& manifest,
             std::string_view sessionId,
-            std::string_view targetId    = k_targetId,
-            std::string_view instanceKey = k_instanceKey
+            std::string_view targetId     = k_targetId,
+            std::string_view instanceKey  = k_instanceKey,
+            ControllerKind kind           = ControllerKind::Script,
+            std::string_view controllerId = k_controllerId
         ) -> std::pair<ControllerBinding, ControlLease>
         {
             auto const worldScope = ObservedInstanceWorldScope::run(
@@ -632,11 +664,27 @@ return {
                 1
             );
             REQUIRE(worldScope.has_value());
+
+            // A profile is required for exactly the kinds whose
+            // ControllerProfile says budgets are required, and refused for the
+            // others, so the kind decides this rather than the caller.
+            auto profile = std::optional<AgentProfile>{};
+            if (controllerProfile(kind).budgetsRequired)
+            {
+                auto verified = AgentProfile::verifyExact(
+                    manifest,
+                    "agent-profile.json",
+                    agentProfileBytes(),
+                    test_support::agentProfileValidator()
+                );
+                REQUIRE_MESSAGE(verified.has_value(), failureText(verified));
+                profile = *std::move(verified);
+            }
             auto const pinned = store.pinSession(
                 SessionPin{
                     .sessionId                 = std::string{sessionId},
-                    .authenticatedControllerId = std::string{k_controllerId},
-                    .idempotencyNamespace      = std::string{k_controllerId},
+                    .authenticatedControllerId = std::string{controllerId},
+                    .idempotencyNamespace      = std::string{controllerId},
                     .projectRegistrationHash   = registration.hash(),
                     .controllerCapabilities    = {
                         std::string{conformance::k_operateCapability},
@@ -644,11 +692,11 @@ return {
                     .controlledTargetId = std::string{targetId},
                     .projectInstanceKey = std::string{instanceKey},
                     .mode               = SessionMode::Write,
-                    .kind               = ControllerKind::Script,
+                    .kind               = kind,
                     .worldScope         = *worldScope,
                 },
                 manifest,
-                std::nullopt
+                profile
             );
             REQUIRE_MESSAGE(pinned.has_value(), failureText(pinned));
             auto controller = store.bindController(std::string{sessionId});
@@ -691,11 +739,16 @@ return {
             auto const manifest = test_support::sessionManifest(
                 registration,
                 artifactRootHash,
-                hashOf("agent"),
+                hashOf(agentProfileBytes()),
                 policyBytes()
             );
             REQUIRE(store.registerProject(registration).has_value());
-            for (auto const instanceKey : {k_instanceKey, k_otherInstanceKey})
+            for (auto const instanceKey : {
+                     k_instanceKey,
+                     k_otherInstanceKey,
+                     k_agentInstanceKey,
+                     k_humanInstanceKey,
+                 })
             {
                 auto const provisioned = store.provisionProjectInstance(
                     registration,
@@ -738,7 +791,7 @@ return {
             auto const manifest = test_support::sessionManifest(
                 registration,
                 artifactRootHash,
-                hashOf("agent"),
+                hashOf(agentProfileBytes()),
                 policyBytes()
             );
             auto session = openSession(store, registration, manifest, sessionId);
@@ -2497,5 +2550,749 @@ return {
         REQUIRE_MESSAGE(resolved.has_value(), failureText(resolved));
         CHECK(resolved->state == ToolCallState::ProvenAbsent);
         CHECK(queried == 1U);
+    }
+
+    // The four-way semantic fixture of `caller independence is structural`,
+    // which is that ruling's experiment E1.
+    //
+    // The structural half of the ruling is already stated, and is stated by
+    // refusing to compile: tests/operator/test-tool-admission-funnel.cpp
+    // asserts that nothing downstream of admission -- the coordinate, the
+    // grant, the admitted call, the capability to dispatch -- is constructible
+    // outside the runtime, so a producer cannot assemble a second path to
+    // authority. What that half is blind to is what a producer puts INTO the
+    // request. An adapter that canonicalised arguments differently, or that
+    // mapped its transport principal to a subtly different actor, would pass
+    // every private constructor and open a call that is legitimately admitted
+    // with the wrong meaning.
+    //
+    // So these two cases drive one Tool, with one set of arguments, through
+    // every producer there is: the Agent adapter, the human Workbench/CLI
+    // adapter, the Project automation adapter, and the fourth producer the
+    // ruling names -- one Tool calling another, which the scoped seam has
+    // always been. They compare canonical argument bytes, admission outcome,
+    // durable row attributes and result.
+    //
+    // What may differ is actor identity and profile material: the principal,
+    // its kind, the session and lease it acts under, the root request those
+    // hang from, and the budget snapshot its profile requires. A root request
+    // is keyed inside its own caller's idempotency namespace, so two actors are
+    // two namespaces and two starts of one Tool are two addresses BY
+    // CONSTRUCTION. That is the actor-identity axis rather than a divergence,
+    // and it is why the comparisons below are of every stored attribute except
+    // the address itself.
+    namespace
+    {
+        // The three principals of the comparison. They are three because the
+        // point is that the actor varies: a fixture that gave all three the
+        // same principal would compare one actor with itself and pass whatever
+        // an adapter did with the other two.
+        constexpr auto k_agentPrincipal = std::string_view{"adapter-agent"};
+        constexpr auto k_humanPrincipal = std::string_view{"adapter-human"};
+
+        constexpr auto k_adapterObjectiveText =
+            std::string_view{R"({ "objective" :  "adapter" })"};
+
+        // What one producer's start is kept as. The request is kept whole
+        // rather than projected, because ToolAdmissionRequest is copyable on
+        // purpose: what a case compares is the value that was admitted.
+        //
+        // No in-class initializer for the request: three of its four members
+        // have no default state, so a start must come from construction.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+        struct ProducedStart final
+        {
+            std::string          principal{};
+            ControllerKind       kind{ControllerKind::Script};
+            ToolAdmissionRequest request;
+            std::string          payload{};
+        };
+
+        // The prepared world all three adapters act in. Every member is a
+        // call-scoped borrow owned by the case; nothing here is stored.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+        struct AdapterWorld final
+        {
+            Incarnation&                       prepared;
+            VerifiedProjectRegistration const& registration;
+            ProjectToolDispatcher&             dispatcher;
+            ProjectToolProgramHandle const&    program;
+            ToolStartCatalog const&            catalog;
+            OperatorPlanAuthority const&       authority;
+            ToolExecutionIdentity const&       execution;
+        };
+
+        // One Tool call, in the two shapes the transports carry it in: the
+        // structured value a model's tool-use block and a Project's own start
+        // document deliver, and the text a person types. The text is
+        // deliberately not canonical -- its spacing is exactly what exact
+        // canonical form refuses -- so a human adapter that passed its bytes
+        // through would open a different coordinate, and one that demanded
+        // canonical bytes would refuse the command outright.
+        struct AdapterCall final
+        {
+            std::string requestKey{};
+            std::string toolName{};
+            json::Value arguments{};
+            std::string argumentsText{};
+        };
+
+        [[nodiscard]]
+        auto adapterObjective() -> json::Value
+        {
+            return json::Value::ofObject({
+                {"objective", json::Value::ofString("adapter")},
+            });
+        }
+
+        [[nodiscard]]
+        auto stepArguments() -> json::Value
+        {
+            return json::Value::ofObject({
+                {"step", json::Value::ofNumber(1)},
+            });
+        }
+
+        [[nodiscard]]
+        auto childrenArguments() -> json::Value
+        {
+            return json::Value::ofObject({
+                {"children",
+                 json::Value::ofArray({
+                     json::Value::ofString(std::string{k_leafTool}),
+                 })},
+            });
+        }
+
+        // Runs one produced start through the dispatcher and keeps what it
+        // produced.
+        [[nodiscard]]
+        auto recordStart(
+            AdapterWorld& world,
+            std::string principal,
+            ControllerKind kind,
+            Result<ToolAdmissionRequest> produced
+        ) -> ProducedStart
+        {
+            REQUIRE_MESSAGE(produced.has_value(), failureText(produced));
+            auto const replay = world.dispatcher.dispatch(
+                world.program,
+                *produced,
+                std::stop_token{}
+            );
+            REQUIRE_MESSAGE(replay.has_value(), failureText(replay));
+            CHECK(replay->state == ToolCallState::Confirmed);
+            return ProducedStart{
+                .principal = std::move(principal),
+                .kind      = kind,
+                .request   = *std::move(produced),
+                .payload   = payloadOf(*replay),
+            };
+        }
+
+        // One Tool driven through all three actor adapters in turn.
+        //
+        // The lease is exclusive per controlled target, so the three take it in
+        // turn -- which is what a handover between a Project run, an Agent and
+        // a person on one target actually is, and what keeps the controlled
+        // target, the registration and the policy identical across the three.
+        // The Project automation actor goes first because it is the session the
+        // incarnation already pinned and already holds the lease on; the target
+        // is left unleased when this returns.
+        [[nodiscard]]
+        auto driveThreeActors(AdapterWorld& world, AdapterCall const& call)
+            -> std::vector<ProducedStart>
+        {
+            auto starts = std::vector<ProducedStart>{};
+
+            auto automation = ProjectAutomationAdapter{};
+            starts.emplace_back(recordStart(
+                world,
+                std::string{k_controllerId},
+                ControllerKind::Script,
+                automation.translate(
+                    ToolActorRun{
+                        .controller    = world.prepared.controller,
+                        .lease         = world.prepared.lease,
+                        .execution     = world.execution,
+                        .planAuthority = world.authority,
+                        .catalog       = world.catalog,
+                    },
+                    world.program.bindingTable(),
+                    ProjectAutomationStart{
+                        .requestKey    = call.requestKey,
+                        .objective     = adapterObjective(),
+                        .entryToolName = call.toolName,
+                        .arguments     = call.arguments,
+                    }
+                )
+            ));
+            REQUIRE(
+                world.prepared.store.releaseLease(world.prepared.lease)
+                    .has_value()
+            );
+
+            auto agent        = AgentToolAdapter{};
+            auto agentSession = openSession(
+                world.prepared.store,
+                world.registration,
+                world.prepared.manifest,
+                "adapter-agent-session",
+                k_targetId,
+                k_agentInstanceKey,
+                ControllerKind::Agent,
+                k_agentPrincipal
+            );
+            starts.emplace_back(recordStart(
+                world,
+                std::string{k_agentPrincipal},
+                ControllerKind::Agent,
+                agent.translate(
+                    ToolActorRun{
+                        .controller    = agentSession.first,
+                        .lease         = agentSession.second,
+                        .execution     = world.execution,
+                        .planAuthority = world.authority,
+                        .catalog       = world.catalog,
+                    },
+                    AgentToolUse{
+                        .requestKey = call.requestKey,
+                        .objective  = adapterObjective(),
+                        .toolName   = call.toolName,
+                        .arguments  = call.arguments,
+                    }
+                )
+            ));
+            REQUIRE(
+                world.prepared.store.releaseLease(agentSession.second).has_value()
+            );
+
+            auto human        = HumanToolAdapter{};
+            auto humanSession = openSession(
+                world.prepared.store,
+                world.registration,
+                world.prepared.manifest,
+                "adapter-human-session",
+                k_targetId,
+                k_humanInstanceKey,
+                ControllerKind::Human,
+                k_humanPrincipal
+            );
+            starts.emplace_back(recordStart(
+                world,
+                std::string{k_humanPrincipal},
+                ControllerKind::Human,
+                human.translate(
+                    ToolActorRun{
+                        .controller    = humanSession.first,
+                        .lease         = humanSession.second,
+                        .execution     = world.execution,
+                        .planAuthority = world.authority,
+                        .catalog       = world.catalog,
+                    },
+                    HumanToolCommand{
+                        .requestKey    = call.requestKey,
+                        .objectiveText = std::string{k_adapterObjectiveText},
+                        .toolName      = call.toolName,
+                        .argumentsText = call.argumentsText,
+                    }
+                )
+            ));
+            REQUIRE(
+                world.prepared.store.releaseLease(humanSession.second).has_value()
+            );
+            return starts;
+        }
+
+        // Everything two producers must agree on in the coordinate itself. The
+        // root identity, the parent coordinate and the call identity are absent
+        // because they are the address a start hangs from, and two actors
+        // address two roots by construction.
+        auto checkSameCoordinateShape(
+            ToolCallPositionIdentity const& left,
+            ToolCallPositionIdentity const& right
+        ) -> void
+        {
+            CHECK(left.canonicalArgs() == right.canonicalArgs());
+            CHECK(left.canonicalArgsHash() == right.canonicalArgsHash());
+            CHECK(left.toolName() == right.toolName());
+            CHECK(left.toolVersion() == right.toolVersion());
+            CHECK(left.sequence() == right.sequence());
+            CHECK(left.observationReference() == right.observationReference());
+            CHECK(
+                toolEffectComposition(left.provider())
+                == toolEffectComposition(right.provider())
+            );
+            auto const& leftExecution  = left.executionIdentity();
+            auto const& rightExecution = right.executionIdentity();
+            CHECK(leftExecution.runIdentity == rightExecution.runIdentity);
+            CHECK(
+                leftExecution.frameworkReleaseIdentity
+                == rightExecution.frameworkReleaseIdentity
+            );
+            CHECK(
+                leftExecution.toolRuntimeProtocolIdentity
+                == rightExecution.toolRuntimeProtocolIdentity
+            );
+            CHECK(
+                leftExecution.environmentIdentity
+                == rightExecution.environmentIdentity
+            );
+            CHECK(left.descriptor().mutability == right.descriptor().mutability);
+            CHECK(left.descriptor().surface == right.descriptor().surface);
+            CHECK(left.descriptor().idempotency == right.descriptor().idempotency);
+        }
+
+        // The stored attributes of one call position, minus its address. Read
+        // back out of the file the Operator wrote rather than off the value the
+        // producer built, because what a later run replays is the row.
+        [[nodiscard]]
+        auto storedPositionAttributes(
+            test_support::OperatorDatabaseProbe const& database,
+            std::string const& callIdentity
+        ) -> std::vector<std::string>
+        {
+            auto const rows = database.readRows(
+                "SELECT tool_name, tool_version, canonical_args, "
+                "canonical_args_hash, provider_kind, "
+                "coalesce(project_registration_hash, ''), tool_catalog_hash, "
+                "call_sequence, run_identity, framework_release_identity, "
+                "tool_runtime_protocol_identity, environment_identity, "
+                "coalesce(observation_reference_hash, '') "
+                "FROM tool_call_positions WHERE call_identity='"
+                    + callIdentity + "'"
+            );
+            REQUIRE(rows.size() == 1U);
+            return rows.front();
+        }
+
+        // What admission concluded, minus everything an actor's identity
+        // reaches. The budget snapshot is deliberately absent: an Agent is the
+        // one kind whose profile requires ceilings, so its snapshot differs
+        // from a Script's or a Human's, and that is the profile material E1
+        // puts on the same axis as the actor.
+        [[nodiscard]]
+        auto storedAdmissionVerdict(
+            test_support::OperatorDatabaseProbe const& database,
+            std::string const& callIdentity
+        ) -> std::vector<std::string>
+        {
+            auto const rows = database.readRows(
+                "SELECT controlled_target_id, project_registration_hash, "
+                "policy_hash, coalesce(effect_envelope, ''), "
+                "coalesce(effect_envelope_hash, ''), "
+                "coalesce(required_approvals, ''), "
+                "coalesce(approval_tokens, '') "
+                "FROM tool_admission_attempts WHERE call_identity='"
+                    + callIdentity + "'"
+            );
+            REQUIRE(rows.size() == 1U);
+            return rows.front();
+        }
+
+        // Who admission recorded as the origin of one call, and whether it
+        // stood on a handler's delegation. This is the actor axis itself, so a
+        // case states what it expects rather than comparing producers.
+        [[nodiscard]]
+        auto storedOrigin(
+            test_support::OperatorDatabaseProbe const& database,
+            std::string const& callIdentity
+        ) -> std::vector<std::string>
+        {
+            auto const rows = database.readRows(
+                "SELECT origin_principal_id, origin_principal_kind, "
+                "coalesce(delegation_grant_id, '') "
+                "FROM tool_admission_attempts WHERE call_identity='"
+                    + callIdentity + "'"
+            );
+            REQUIRE(rows.size() == 1U);
+            return rows.front();
+        }
+    } // namespace
+
+    TEST_CASE(
+        "four producers translate one read-only Tool call into one admission"
+    )
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const registration = verifiedRegistration();
+        auto databasePath  = std::filesystem::path{};
+        auto starts        = std::vector<ProducedStart>{};
+        auto childIdentity = std::string{};
+        auto childPayload  = std::string{};
+
+        {
+            auto prepared = firstIncarnation(temporary.path(), registration);
+            databasePath  = prepared.store.databasePath();
+            auto const log  = std::make_shared<RunLog>();
+            auto dispatcher = ProjectToolDispatcher::create(
+                prepared.store,
+                frameworkProvider(log)
+            );
+            REQUIRE_MESSAGE(dispatcher.has_value(), failureText(dispatcher));
+            auto registrar = ProjectToolProgramRegistrar{};
+            auto const program =
+                loadProgram(registration, registrar, log, *dispatcher);
+            auto const catalog =
+                ToolStartCatalog::create(toolCatalogOwner(registration));
+            REQUIRE_MESSAGE(catalog.has_value(), failureText(catalog));
+            auto const authority = planAuthorityFor(
+                prepared.store,
+                registration,
+                prepared.manifest,
+                prepared.artifactRootHash
+            );
+            auto const execution = executionIdentity(program);
+            auto world           = AdapterWorld{
+                          .prepared     = prepared,
+                          .registration = registration,
+                          .dispatcher   = *dispatcher,
+                          .program      = program,
+                          .catalog      = *catalog,
+                          .authority    = authority,
+                          .execution    = execution,
+            };
+
+            starts = driveThreeActors(
+                world,
+                AdapterCall{
+                    .requestKey = "adapter-read-only",
+                    .toolName   = std::string{k_leafTool},
+                    .arguments  = stepArguments(),
+                    .argumentsText = R"({ "step":  1 })",
+                }
+            );
+
+            // The fourth producer: one Tool calling another. A Project
+            // automation start of the handler entry is the same start as any
+            // other -- what makes an entry startable is that the actor is
+            // admitted to start it -- and the call this case compares is the
+            // child that entry's handler issued from inside its own run.
+            auto automation  = ProjectAutomationAdapter{};
+            auto const lease = prepared.store.acquireLease(prepared.controller);
+            REQUIRE_MESSAGE(lease.has_value(), failureText(lease));
+            auto const handler = automation.translate(
+                ToolActorRun{
+                    .controller    = prepared.controller,
+                    .lease         = *lease,
+                    .execution     = execution,
+                    .planAuthority = authority,
+                    .catalog       = *catalog,
+                },
+                program.bindingTable(),
+                ProjectAutomationStart{
+                    .requestKey    = "adapter-child",
+                    .objective     = adapterObjective(),
+                    .entryToolName = std::string{k_handlerTool},
+                    .arguments     = childrenArguments(),
+                }
+            );
+            REQUIRE_MESSAGE(handler.has_value(), failureText(handler));
+            auto const answered = dispatcher->dispatch(
+                program,
+                *handler,
+                std::stop_token{}
+            );
+            REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
+            CHECK(answered->state == ToolCallState::Confirmed);
+
+            // Naming the child is not a second mint. The position factory is
+            // private to the issuing context, so walking a context to the same
+            // ordinal under the same durable parent is the only way to name a
+            // call at all -- and the coordinate it re-derives is the one the
+            // handler's own context assigned.
+            auto context = ToolCallIssuingContext::forHandler(handler->call);
+            auto const child = context.issue(
+                invocationOf(program, k_leafTool, R"({"step":1})")
+            );
+            REQUIRE_MESSAGE(child.has_value(), failureText(child));
+            childIdentity = child->identity().hex();
+            auto const childReplay =
+                prepared.store.replayToolCall(handler->root, *child);
+            REQUIRE_MESSAGE(childReplay.has_value(), failureText(childReplay));
+            CHECK(childReplay->state == ToolCallState::Confirmed);
+            childPayload = payloadOf(*childReplay);
+            checkSameCoordinateShape(starts.front().request.call, *child);
+
+            // Two statements about what an adapter resolves, neither of which
+            // any comparison above can make, and both about translation alone
+            // -- a start is a value until something dispatches it.
+            //
+            // A Tool name is owned by its namespace, so the name decides which
+            // catalog validates it. An adapter that preferred one catalog would
+            // either be unable to name a Framework Tool at all or unable to
+            // name every Project Tool compared above.
+            auto const probeRun = ToolActorRun{
+                .controller    = prepared.controller,
+                .lease         = *lease,
+                .execution     = execution,
+                .planAuthority = authority,
+                .catalog       = *catalog,
+            };
+            auto probe           = AgentToolAdapter{};
+            auto const frameworkStart = probe.translate(
+                probeRun,
+                AgentToolUse{
+                    .requestKey = "adapter-framework",
+                    .objective  = adapterObjective(),
+                    .toolName   = std::string{k_auditTool},
+                    .arguments  = json::Value::ofObject({
+                        {"record", json::Value::ofObject({})},
+                    }),
+                }
+            );
+            REQUIRE_MESSAGE(
+                frameworkStart.has_value(),
+                failureText(frameworkStart)
+            );
+            CHECK(frameworkStart->call.toolName() == k_auditTool);
+            CHECK(
+                toolEffectComposition(frameworkStart->call.provider())
+                == ToolEffectComposition::DirectLeaf
+            );
+
+            // And a Project starts entries its own registration bound. The
+            // refusal is about whose entry it is rather than about what sort of
+            // entry it is: the Framework's audit Tool is another party's,
+            // whatever a Project might want to do with it. The arguments are
+            // the ones the Agent start above was admitted with, so the only
+            // thing left to refuse this is the binding table.
+            auto const foreignStart = automation.translate(
+                probeRun,
+                program.bindingTable(),
+                ProjectAutomationStart{
+                    .requestKey    = "adapter-foreign",
+                    .objective     = adapterObjective(),
+                    .entryToolName = std::string{k_auditTool},
+                    .arguments     = json::Value::ofObject({
+                        {"record", json::Value::ofObject({})},
+                    }),
+                }
+            );
+            CHECK_FALSE(foreignStart.has_value());
+
+            // A second start under the SAME root request advances that root's
+            // own ordinal rather than reopening it. A producer that built a
+            // context per start would hand this one the ordinal the handler
+            // above already occupies, and it would land on that call's durable
+            // row with different canonical arguments -- which is the aliasing
+            // the private position factory exists to prevent, and the reason
+            // the producer owns one context per root.
+            auto const second = automation.translate(
+                probeRun,
+                program.bindingTable(),
+                ProjectAutomationStart{
+                    .requestKey    = "adapter-child",
+                    .objective     = adapterObjective(),
+                    .entryToolName = std::string{k_leafTool},
+                    .arguments     = json::Value::ofObject({
+                        {"step", json::Value::ofNumber(2)},
+                    }),
+                }
+            );
+            REQUIRE_MESSAGE(second.has_value(), failureText(second));
+            CHECK(second->call.sequence() == 2U);
+            CHECK(second->root.identity() == handler->root.identity());
+            auto const secondReplay = dispatcher->dispatch(
+                program,
+                *second,
+                std::stop_token{}
+            );
+            REQUIRE_MESSAGE(secondReplay.has_value(), failureText(secondReplay));
+            CHECK(secondReplay->state == ToolCallState::Confirmed);
+            CHECK(payloadOf(*secondReplay) == R"({"leaf":2})");
+        }
+
+        REQUIRE(starts.size() == 3U);
+
+        // The actor axis is real rather than vacuous: three principals, three
+        // kinds, three roots.
+        auto principals = std::vector<std::string>{};
+        auto kinds      = std::vector<ControllerKind>{};
+        auto roots      = std::vector<std::string>{};
+        for (auto const& start : starts)
+        {
+            CHECK(start.request.controller.controllerId() == start.principal);
+            CHECK(start.request.controller.kind() == start.kind);
+            CHECK(start.request.isRootPositioned());
+            CHECK_FALSE(start.request.delegation.has_value());
+            CHECK_FALSE(start.request.mutation.has_value());
+            CHECK(start.request.requiredMutability() == ToolMutability::ReadOnly);
+            principals.emplace_back(start.principal);
+            kinds.emplace_back(start.kind);
+            roots.emplace_back(start.request.root.identity().hex());
+            checkSameCoordinateShape(
+                starts.front().request.call,
+                start.request.call
+            );
+            CHECK(start.payload == R"({"leaf":1})");
+        }
+        std::ranges::sort(principals);
+        std::ranges::sort(roots);
+        CHECK(std::ranges::adjacent_find(principals) == principals.end());
+        CHECK(std::ranges::adjacent_find(roots) == roots.end());
+        CHECK(kinds[0] != kinds[1]);
+        CHECK(kinds[1] != kinds[2]);
+        CHECK(kinds[0] != kinds[2]);
+        CHECK(childPayload == R"({"leaf":1})");
+
+        // The Operator claims its database exclusively, so the rows are read
+        // after the store above has been destroyed.
+        auto const database   = test_support::OperatorDatabaseProbe{databasePath};
+        auto const attributes = storedPositionAttributes(
+            database,
+            starts.front().request.call.identity().hex()
+        );
+        auto const verdict = storedAdmissionVerdict(
+            database,
+            starts.front().request.call.identity().hex()
+        );
+        for (auto const& start : starts)
+        {
+            auto const identity = start.request.call.identity().hex();
+            CHECK(storedPositionAttributes(database, identity) == attributes);
+            CHECK(storedAdmissionVerdict(database, identity) == verdict);
+            CHECK(
+                storedOrigin(database, identity)
+                == std::vector<std::string>{
+                    start.principal,
+                    std::string{controllerKindWireName(start.kind)},
+                    "",
+                }
+            );
+        }
+        CHECK(storedPositionAttributes(database, childIdentity) == attributes);
+        CHECK(storedAdmissionVerdict(database, childIdentity) == verdict);
+
+        // The fourth producer's one difference, and the only one: it stands on
+        // a handler's delegation grant rather than on the run's own authority.
+        auto const childOrigin = storedOrigin(database, childIdentity);
+        CHECK(childOrigin[0] == std::string{k_controllerId});
+        CHECK(childOrigin[1] == controllerKindWireName(ControllerKind::Script));
+        CHECK_FALSE(childOrigin[2].empty());
+    }
+
+    TEST_CASE(
+        "three actor adapters propose one mutation and are admitted identically"
+    )
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const registration = verifiedRegistration();
+        auto databasePath = std::filesystem::path{};
+        auto starts       = std::vector<ProducedStart>{};
+
+        {
+            auto prepared = firstIncarnation(temporary.path(), registration);
+            databasePath  = prepared.store.databasePath();
+            auto const log  = std::make_shared<RunLog>();
+            auto dispatcher = ProjectToolDispatcher::create(
+                prepared.store,
+                frameworkProvider(log)
+            );
+            REQUIRE_MESSAGE(dispatcher.has_value(), failureText(dispatcher));
+            auto registrar = ProjectToolProgramRegistrar{};
+            auto const program =
+                loadProgram(registration, registrar, log, *dispatcher);
+            auto const catalog =
+                ToolStartCatalog::create(toolCatalogOwner(registration));
+            REQUIRE_MESSAGE(catalog.has_value(), failureText(catalog));
+            auto const authority = planAuthorityFor(
+                prepared.store,
+                registration,
+                prepared.manifest,
+                prepared.artifactRootHash
+            );
+            auto const execution = executionIdentity(program);
+            auto world           = AdapterWorld{
+                          .prepared     = prepared,
+                          .registration = registration,
+                          .dispatcher   = *dispatcher,
+                          .program      = program,
+                          .catalog      = *catalog,
+                          .authority    = authority,
+                          .execution    = execution,
+            };
+
+            starts = driveThreeActors(
+                world,
+                AdapterCall{
+                    .requestKey = "adapter-mutation",
+                    .toolName   = std::string{k_mutatingHandlerTool},
+                    .arguments  = childrenArguments(),
+                    .argumentsText =
+                        R"({ "children" : ["dispatch.project.leaf"] })",
+                }
+            );
+        }
+
+        REQUIRE(starts.size() == 3U);
+
+        // The proposal is the producer's, derived from the descriptor's own
+        // effect bounds and the target this actor holds the lease on. No
+        // adapter states one, so all three propose the same effect at the same
+        // risk under the same authority -- and none of them presents an
+        // approval, because an approval is a human decision another door mints
+        // and a policy that required one would refuse these admissions.
+        auto const& expected = *starts.front().request.mutation;
+        for (auto const& start : starts)
+        {
+            CHECK(start.request.requiredMutability() == ToolMutability::Mutating);
+            REQUIRE(start.request.mutation.has_value());
+            auto const& mutation = *start.request.mutation;
+            CHECK(mutation.approvals.empty());
+            CHECK(
+                mutation.planAuthority.projectRegistrationHash()
+                == expected.planAuthority.projectRegistrationHash()
+            );
+            CHECK(
+                mutation.planAuthority.policyHash()
+                == expected.planAuthority.policyHash()
+            );
+            REQUIRE(mutation.effects.size() == 1U);
+            REQUIRE(expected.effects.size() == 1U);
+            auto const& proposed = mutation.effects.front();
+            auto const& first    = expected.effects.front();
+            CHECK(proposed.namespacedType == first.namespacedType);
+            CHECK(proposed.risk == first.risk);
+            CHECK(proposed.scopeKind == first.scopeKind);
+            CHECK(proposed.scopeKey == first.scopeKey);
+            CHECK(proposed.payloadSchemaHash == first.payloadSchemaHash);
+            CHECK(proposed.opaqueProjectPayload == first.opaqueProjectPayload);
+            checkSameCoordinateShape(
+                starts.front().request.call,
+                start.request.call
+            );
+            CHECK(start.payload == R"({"states":["confirmed"]})");
+        }
+
+        auto const database   = test_support::OperatorDatabaseProbe{databasePath};
+        auto const attributes = storedPositionAttributes(
+            database,
+            starts.front().request.call.identity().hex()
+        );
+        auto const verdict = storedAdmissionVerdict(
+            database,
+            starts.front().request.call.identity().hex()
+        );
+
+        // A mutating admission stored a real envelope rather than the absence a
+        // read-only one stores, which is what makes the equality below a
+        // statement about three evaluated envelopes.
+        CHECK_FALSE(verdict[3].empty());
+        CHECK_FALSE(verdict[4].empty());
+        for (auto const& start : starts)
+        {
+            auto const identity = start.request.call.identity().hex();
+            CHECK(storedPositionAttributes(database, identity) == attributes);
+            CHECK(storedAdmissionVerdict(database, identity) == verdict);
+            CHECK(
+                storedOrigin(database, identity)
+                == std::vector<std::string>{
+                    start.principal,
+                    std::string{controllerKindWireName(start.kind)},
+                    "",
+                }
+            );
+        }
     }
 }

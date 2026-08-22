@@ -11,6 +11,7 @@
 #include <operator/tool-admission-request.hpp>
 #include <operator/tool-descriptor.hpp>
 #include <operator/tool-executor.hpp>
+#include <operator/tool-root-producer.hpp>
 
 #include <task/platform/confined-file.hpp>
 #include <task/runtime-model-file.hpp>
@@ -31,7 +32,6 @@
 #include <atomic>
 #include <chrono>
 #include <format>
-#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -86,17 +86,6 @@ namespace uf::service
         // actor needs to interpret one observation and act on it, and well
         // below any run budget.
         constexpr auto k_observationAuthorityMillis = uint64{30'000};
-
-        // The risk one Framework input effect is proposed at. It is at or below
-        // every input descriptor's own maximumRisk, so what bounds an admission
-        // is the policy the session pinned rather than a number this module
-        // chose to be generous with.
-        constexpr auto k_inputEffectRisk = operator_runtime::Risk::Low;
-
-        // The empty project payload a Framework-owned effect carries. Framework
-        // owns the effect type, so there is no project document to put here and
-        // the member is present-and-empty rather than absent.
-        constexpr auto k_frameworkEffectPayload = std::string_view{"{}"};
 
         [[nodiscard]]
         auto unixMillisNow() -> uint64
@@ -343,27 +332,13 @@ namespace uf::service
 
         std::vector<operator_runtime::RecoveredUncertainDispatch> recoveries;
 
-        // One issuing context per Tool root request. Per R4 the call ordinal is
-        // a monotone child index assigned exclusively by this seam, so the
-        // calls one root issues have to advance one counter: a context built
-        // per call would hand every call ordinal 1, and a second call would
-        // then land on the first call's coordinate and inherit its recorded
-        // outcome -- exactly the aliasing R4 forbids a caller from performing.
-        //
-        // The key is the root identity, which ToolRootRequestIdentity derives
-        // from the caller namespace, the request key and the exact request
-        // preimage. Two distinct root requests therefore never share a counter,
-        // and a restart re-derives the same key with a fresh context that
-        // numbers from 1 again, which is what makes the recorded outcomes
-        // replay rather than re-execute.
-        //
-        // An entry is released only when this Impl is destroyed. Nothing
-        // releases one earlier because this seam is never told a root is
-        // finished: a request names its root and there is no termination
-        // signal to seal the context on. The map is therefore bounded by the
-        // number of distinct root requests one lifecycle serves.
-        std::map<ContentHash, operator_runtime::ToolCallIssuingContext>
-            issuingContexts{};
+        // Operator admission of this run's starts at the top of a run: the one
+        // producer that mints a root request identity from the authenticated
+        // binding, assigns a root-positioned call's ordinal, and derives what a
+        // mutating start proposes. It is the same producer every actor adapter
+        // holds, so this lifecycle is one more caller of the funnel rather than
+        // a second spelling of it.
+        operator_runtime::ToolRootProducer rootProducer{};
 
         // The run's observation authority: the only mint of an observation
         // reference and the only route from one back to a resolved observation.
@@ -458,65 +433,6 @@ namespace uf::service
         [[nodiscard]] auto deployment() -> deployment::LoadedDeployment&
         {
             return loaded.deployments[deploymentIndex];
-        }
-
-        // Assigns the coordinate of one root-positioned call under root,
-        // opening that root's issuing context on first use. The context is
-        // never handed out: it stays owned here and only the position it
-        // minted leaves, so no caller can hold a counter or read the next
-        // ordinal.
-        [[nodiscard]]
-        auto issueRootToolCall(
-            operator_runtime::ToolRootRequestIdentity const& root,
-            operator_runtime::ToolExecutionIdentity const& executionIdentity,
-            operator_runtime::ValidatedToolInvocation const& invocation
-        ) -> Result<operator_runtime::ToolCallPositionIdentity>
-        {
-            auto const opened = issuingContexts.find(root.identity());
-            if (opened != issuingContexts.end())
-            {
-                return opened->second.issue(invocation);
-            }
-            auto const created = issuingContexts.emplace(
-                root.identity(),
-                operator_runtime::ToolCallIssuingContext::forRoot(
-                    root,
-                    executionIdentity
-                )
-            );
-            return created.first->second.issue(invocation);
-        }
-
-        // The same assignment for a call that consumes one observation. The
-        // reference is a call-scoped borrow; the coordinate copies its identity
-        // and nothing is retained.
-        [[nodiscard]]
-        auto issueRootToolCallAgainstObservation(
-            operator_runtime::ToolRootRequestIdentity const& root,
-            operator_runtime::ToolExecutionIdentity const& executionIdentity,
-            operator_runtime::ValidatedToolInvocation const& invocation,
-            operator_runtime::SnapshotObservationReference const& observation
-        ) -> Result<operator_runtime::ToolCallPositionIdentity>
-        {
-            auto const opened = issuingContexts.find(root.identity());
-            if (opened != issuingContexts.end())
-            {
-                return opened->second.issueAgainstObservation(
-                    invocation,
-                    observation
-                );
-            }
-            auto const created = issuingContexts.emplace(
-                root.identity(),
-                operator_runtime::ToolCallIssuingContext::forRoot(
-                    root,
-                    executionIdentity
-                )
-            );
-            return created.first->second.issueAgainstObservation(
-                invocation,
-                observation
-            );
         }
 
         // A non-owning observation of one reference this run minted, or
@@ -1079,14 +995,6 @@ namespace uf::service
             )
         );
         UF_TRY_VALUE(
-            root,
-            operator_runtime::ToolRootRequestIdentity::create(
-                m_impl->controller.controllerId(),
-                std::move(request.requestKey),
-                std::move(rootPreimage)
-            )
-        );
-        UF_TRY_VALUE(
             arguments,
             operator_runtime::CanonicalJson::parseExact(
                 std::move(request.exactArgumentsJcs)
@@ -1098,15 +1006,33 @@ namespace uf::service
             catalog.validate(std::move(request.toolName), std::move(arguments))
         );
 
-        auto const mutating = invocation.descriptor().mutability
-            == operator_runtime::ToolMutability::Mutating;
-        if (mutating && m_impl->access != LifecycleAccess::Writable)
+        if (
+            invocation.descriptor().mutability
+                == operator_runtime::ToolMutability::Mutating
+            && m_impl->access != LifecycleAccess::Writable
+        )
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
                 "recovery is unfinished, so this lifecycle is read-only"
             );
         }
+
+        // The one producer of an actor's start at the top of a run. What this
+        // module supplies is a translation of its own request envelope and
+        // nothing else: the caller namespace, the call ordinal, the root
+        // identity and what a mutating start proposes are all the producer's,
+        // so this seam cannot state any of them differently from an actor
+        // adapter.
+        auto const start = operator_runtime::ToolRootStart{
+            .controller      = m_impl->controller,
+            .lease           = m_impl->controlLease(),
+            .execution       = request.executionIdentity,
+            .planAuthority   = m_impl->planAuthority,
+            .invocation      = invocation,
+            .requestKey      = std::move(request.requestKey),
+            .requestPreimage = std::move(rootPreimage),
+        };
 
         // A call whose canonical arguments carry an observation reference is
         // issued AGAINST the reference this run minted for those exact bytes.
@@ -1117,14 +1043,10 @@ namespace uf::service
         auto const* const p_presented = invocation.canonicalArgs().value().find(
             k_observationArgument
         );
-        auto issued = p_presented == nullptr
-            ? m_impl->issueRootToolCall(
-                  root,
-                  request.executionIdentity,
-                  invocation
-              )
-            : [this, &root, &request, &invocation, p_presented]()
-                -> Result<operator_runtime::ToolCallPositionIdentity>
+        auto produced = p_presented == nullptr
+            ? m_impl->rootProducer.start(start)
+            : [this, &start, p_presented]()
+                -> Result<operator_runtime::ToolAdmissionRequest>
               {
                   auto const* const p_minted = m_impl->findObservation(
                       json::canonicalBytes(*p_presented)
@@ -1140,42 +1062,12 @@ namespace uf::service
                           }
                       );
                   }
-                  return m_impl->issueRootToolCallAgainstObservation(
-                      root,
-                      request.executionIdentity,
-                      invocation,
+                  return m_impl->rootProducer.startAgainstObservation(
+                      start,
                       *p_minted
                   );
               }();
-        UF_TRY_VALUE(call, std::move(issued));
-
-        // What a mutating call proposes: one effect per bound its own
-        // descriptor declares, scoped to the controlled target this run holds
-        // the lease on, judged by the policy the session pinned. A read-only
-        // call proposes none, and that is the whole of the difference between
-        // the two admissions.
-        auto mutation = std::optional<operator_runtime::ToolAdmissionRequest::Mutation>{};
-        if (mutating)
-        {
-            auto effects = std::vector<operator_runtime::ProposedEffect>{};
-            effects.reserve(invocation.descriptor().effectBounds.size());
-            for (auto const& bound : invocation.descriptor().effectBounds)
-            {
-                effects.emplace_back(operator_runtime::ProposedEffect{
-                    .namespacedType = bound.namespacedType,
-                    .risk           = k_inputEffectRisk,
-                    .scopeKind      = bound.scopeKind,
-                    .scopeKey = m_impl->controller.controlledTargetId(),
-                    .payloadSchemaHash    = bound.payloadSchemaHash,
-                    .opaqueProjectPayload = std::string{k_frameworkEffectPayload},
-                });
-            }
-            mutation.emplace(operator_runtime::ToolAdmissionRequest::Mutation{
-                .planAuthority = m_impl->planAuthority,
-                .effects   = std::move(effects),
-                .approvals = {},
-            });
-        }
+        UF_TRY_VALUE(admission, std::move(produced));
 
         auto executor = operator_runtime::ToolRuntimeExecutor{
             m_impl->operatorHost.coordinator(),
@@ -1186,19 +1078,7 @@ namespace uf::service
                         ) -> Result<operator_runtime::ToolCallCompletion>
         { return answerFrameworkTool(admittedCall, context); };
 
-        // No delegation grant: these are the root-positioned calls this run's
-        // own context issues, and a grant exists only for a child call under a
-        // dispatching handler.
-        return executor.invoke(
-            operator_runtime::ToolAdmissionRequest{
-                .controller = m_impl->controller,
-                .lease      = m_impl->controlLease(),
-                .root     = std::move(root),
-                .call     = std::move(call),
-                .mutation = std::move(mutation),
-            },
-            provider
-        );
+        return executor.invoke(admission, provider);
     }
 
     auto ProductLifecycle::execute(
