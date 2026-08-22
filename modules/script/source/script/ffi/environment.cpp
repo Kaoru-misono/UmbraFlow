@@ -43,6 +43,7 @@ namespace uf::script
         // place they live: neither is reachable from any global table, so a
         // script has no name to start from.
         constexpr auto k_frameworkEnvironmentKey = "uf.script.framework_env";
+        constexpr auto k_frameworkModuleKey      = "uf.script.framework_modules";
         constexpr auto k_projectEnvironmentKey   = "uf.script.project_env";
 
         // The framework environment's __metatable value. Its presence is what
@@ -95,6 +96,16 @@ namespace uf::script
             "utf8",
             "vector",
         });
+
+        // Pushes the loader's module registry: every loaded Framework module's
+        // frozen exports, keyed by publication name. It lives in the VM registry
+        // beside the two environments, which no name in either environment can
+        // reach, so loading a module adds nothing to any global namespace. The
+        // resolver snapshot and the project whitelist both read it from here.
+        auto pushFrameworkModules(lua_State* state) -> void
+        {
+            lua_getfield(state, LUA_REGISTRYINDEX, k_frameworkModuleKey);
+        }
 
         [[nodiscard]]
         auto topError(lua_State* thread) -> std::string
@@ -214,6 +225,17 @@ namespace uf::script
                             + std::string{module.resolverName}
                     );
                 }
+                if (
+                    index != 0U
+                    && module.dependencyDepth < modules[index - 1U].dependencyDepth
+                )
+                {
+                    return fail(
+                        AutomationErrorKind::InternalInvariant,
+                        "framework modules are not ordered by dependency depth: "
+                            + std::string{module.name}
+                    );
+                }
 
                 for (auto prior = std::size_t{}; prior < index; ++prior)
                 {
@@ -271,10 +293,12 @@ namespace uf::script
         auto installFrameworkRequire(
             lua_State* state,
             int environmentIndex,
+            int moduleIndex,
             std::span<FrameworkModule const> loadedModules
         ) -> Status
         {
             int const environment = lua_absindex(state, environmentIndex);
+            int const registry    = lua_absindex(state, moduleIndex);
             lua_newtable(state);
             int const dependencies = lua_gettop(state);
             for (auto const& loaded : loadedModules)
@@ -285,7 +309,7 @@ namespace uf::script
                 }
 
                 auto const publication = std::string{loaded.name};
-                lua_rawgetfield(state, environment, publication.c_str());
+                lua_rawgetfield(state, registry, publication.c_str());
                 if (lua_isnil(state, -1))
                 {
                     lua_pop(state, 2);
@@ -519,6 +543,12 @@ namespace uf::script
         lua_setmetatable(state, environment);
 
         lua_setfield(state, LUA_REGISTRYINDEX, k_frameworkEnvironmentKey);
+
+        // The empty module registry the loader fills. It is created here, beside
+        // the environment, so every later step can assume it exists rather than
+        // testing for it.
+        lua_newtable(state);
+        lua_setfield(state, LUA_REGISTRYINDEX, k_frameworkModuleKey);
     }
 
     auto pushFrameworkEnvironment(lua_State* state) -> void
@@ -556,10 +586,21 @@ namespace uf::script
                 );
             }
 
+            pushFrameworkModules(state);
+            int const registry = lua_gettop(state);
+            if (!lua_istable(state, registry))
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "the framework module registry is missing from the VM registry"
+                );
+            }
+
             UF_TRY(
                 installFrameworkRequire(
                     state,
                     environment,
+                    registry,
                     modules.first(index)
                 )
             );
@@ -588,16 +629,30 @@ namespace uf::script
             }
 
             // The module's first return value is its exports, frozen and bound
-            // in the framework environment under the module name. Only a table
-            // can be frozen; a scalar or function export is already immutable or
+            // in the module registry under the module name. Only a table can be
+            // frozen; a scalar or function export is already immutable or
             // already opaque.
+            //
+            // The registry, and NOT the framework environment: a name bound in
+            // the environment would be a bare global for every module loaded
+            // afterwards, so a bundle entry's file stem would decide what that
+            // identifier means for the rest of the boot. Every intra-Framework
+            // dependency goes through the reserved resolver instead, exactly as
+            // on the pure path, and the project whitelist projects out of this
+            // same registry.
             lua_xpush(thread, state, 1);
             if (lua_istable(state, -1))
             {
                 UF_TRY(deepFreeze(state, -1));
             }
-            lua_rawsetfield(state, environment, std::string{module.name}.c_str());
+            lua_rawsetfield(state, registry, std::string{module.name}.c_str());
         }
+
+        // Loading is over, so the registry is complete. Freezing it says so:
+        // nothing may join the set of names the project whitelist can project.
+        pushFrameworkModules(state);
+        lua_setreadonly(state, -1, 1);
+        lua_pop(state, 1);
         return ok();
     }
 
@@ -645,13 +700,13 @@ namespace uf::script
 
         if (!frameworkGlobals.empty())
         {
-            pushFrameworkEnvironment(state);
+            pushFrameworkModules(state);
             int const framework = lua_gettop(state);
             if (!lua_istable(state, framework))
             {
                 return fail(
                     AutomationErrorKind::InternalInvariant,
-                    "the framework environment is missing from the VM registry"
+                    "the framework module registry is missing from the VM registry"
                 );
             }
             for (auto const& name : frameworkGlobals)
@@ -662,7 +717,7 @@ namespace uf::script
                         framework,
                         prototype,
                         name,
-                        "framework bundle"
+                        "framework module registry"
                     )
                 );
             }
@@ -677,6 +732,11 @@ namespace uf::script
         lua_pushvalue(state, prototype);
         lua_setfield(state, LUA_REGISTRYINDEX, k_projectEnvironmentKey);
         return ok();
+    }
+
+    auto projectStandardGlobals() noexcept -> std::span<std::string_view const>
+    {
+        return k_projectStandardGlobals;
     }
 
     auto pushProjectEnvironment(lua_State* state) -> Status

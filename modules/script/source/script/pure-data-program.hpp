@@ -29,8 +29,11 @@ namespace uf::script
     //
     // Typed resource readers expose only the immutable resource closure passed
     // to compile(). JSON is decoded and frozen, UTF-8 is admitted before the
-    // program is built, and bytes remain a Luau byte string. No host installer
-    // or native capability seam is part of this API.
+    // program is built, and bytes remain a Luau byte string. Resource names
+    // carry the same reservation module names do: the `umbraflow.` namespace is
+    // the Framework's, and a Project-authored resource inside it is refused at
+    // admission by name. No host installer or native capability seam is part of
+    // this API.
     class PureDataProgram final
     {
     public:
@@ -94,11 +97,22 @@ namespace uf::script
             std::span<Module const> modules
         ) -> Status;
 
+        // The Project half of the resource closure. A name inside the reserved
+        // `umbraflow.` Framework namespace is refused here by name: a Project
+        // that could register one would decide what a Framework module reads
+        // under it. Framework resources are supplied through compile()'s own
+        // `frameworkResources` parameter and are admitted by the opposite rule,
+        // so no resource value satisfies both admissions and neither side needs
+        // a trust flag to say which it came from.
         [[nodiscard]]
         static auto validateResourceClosure(
             std::span<Resource const> resources
         ) -> Status;
 
+        // `resources` are the Project's, outside the reserved namespace;
+        // `frameworkResources` are the host's, inside it. They arrive owned
+        // rather than as a span because a host computes their bytes, unlike the
+        // static Framework module sources `frameworkModules` borrows.
         [[nodiscard]]
         static auto compile(
             std::string_view pluginId,
@@ -106,7 +120,8 @@ namespace uf::script
             std::vector<Module> modules,
             std::span<std::string_view const> entryPoints,
             std::vector<Resource> resources,
-            std::span<FrameworkModule const> frameworkModules = {}
+            std::span<FrameworkModule const> frameworkModules = {},
+            std::vector<Resource> frameworkResources          = {}
         ) -> Result<PureDataProgram>;
 
         [[nodiscard]]

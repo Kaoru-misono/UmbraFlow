@@ -59,7 +59,8 @@ namespace uf::script
             std::string_view entryModule,
             std::vector<PureDataProgram::Module> modules,
             std::vector<PureDataProgram::Resource> resources = {},
-            std::vector<FrameworkModule> frameworkModules = {}
+            std::vector<FrameworkModule> frameworkModules = {},
+            std::vector<PureDataProgram::Resource> frameworkResources = {}
         ) -> Result<PureDataProgram>
         {
             return PureDataProgram::compile(
@@ -68,7 +69,8 @@ namespace uf::script
                 std::move(modules),
                 k_entryPoints,
                 std::move(resources),
-                frameworkModules
+                frameworkModules,
+                std::move(frameworkResources)
             );
         }
 
@@ -1543,6 +1545,126 @@ return {
         }
     }
 
+    // The resource analogue of the reserved @umbraflow/ module namespace. A
+    // Framework module reads its own data by an exact resource name, so a
+    // Project able to register that name would decide what the Framework module
+    // reads -- and the reservation has to cover the CLASS, because a reservation
+    // of one literal leaves the next Framework resource unprotected on the day
+    // it is added and says nothing at the moment it is added.
+    TEST_CASE("a Project resource cannot occupy the reserved Framework namespace")
+    {
+        auto const reservedNames = std::array{
+            std::string_view{"umbraflow.tool-catalog"},
+            std::string_view{"umbraflow.anything.at.all"},
+            std::string_view{"umbraflow.x"},
+        };
+        for (auto const reserved : reservedNames)
+        {
+            INFO("reserved resource name: ", reserved);
+            auto const refused = admissionRefusal(
+                "fixture.reserved-resource",
+                {resourceOf(
+                    PureDataProgram::ResourceKind::Json,
+                    std::string{reserved},
+                    "{}"
+                )}
+            );
+            CHECK(
+                refused
+                == "pure data resource name is reserved for the Framework: "
+                    + std::string{reserved}
+            );
+        }
+
+        // The offline validator every earlier boundary shares refuses the same
+        // names, so a deployment loader cannot admit a closure this runtime
+        // would later refuse.
+        auto const reserved = std::array{
+            PureDataProgram::Resource{
+                .kind  = PureDataProgram::ResourceKind::Json,
+                .name  = "umbraflow.tool-catalog",
+                .bytes = "{}",
+            },
+        };
+        auto const offline = PureDataProgram::validateResourceClosure(reserved);
+        REQUIRE_FALSE(offline.has_value());
+        CHECK(
+            std::string{offline.error().message()}
+            == "pure data resource name is reserved for the Framework: "
+               "umbraflow.tool-catalog"
+        );
+
+        // What is reserved is the namespace and not the letters: a Project name
+        // that merely begins with the same bytes without entering the namespace
+        // is still its own.
+        for (auto const admitted : {"umbraflow", "umbraflowish.map", "flow.umbraflow.x"})
+        {
+            INFO("project resource name: ", admitted);
+            auto const program = compileProgram(
+                "fixture.near-reserved",
+                "main",
+                {PureDataProgram::Module{
+                    .name = "main",
+                    .source =
+                        pluginReturning("fixture.near-reserved", "        return input"),
+                }},
+                {resourceOf(PureDataProgram::ResourceKind::Json, admitted, "{}")}
+            );
+            CHECK(program.has_value());
+        }
+    }
+
+    // The other half of the reservation. The Framework must be able to supply
+    // exactly the names a Project may not, and the two admissions are opposite
+    // readings of one prefix rather than one admission plus a trust flag: no
+    // resource value satisfies both, so relabelling cannot move one across.
+    TEST_CASE("a Framework resource occupies the namespace a Project is refused")
+    {
+        constexpr auto reader = std::string_view{
+            R"(        local catalog = resource.readJson("umbraflow.fixture-catalog")
+        return { pinned = catalog.pinned })"
+        };
+        auto const program = compileProgram(
+            "fixture.framework-resource",
+            "main",
+            {PureDataProgram::Module{
+                .name   = "main",
+                .source = pluginReturning("fixture.framework-resource", reader),
+            }},
+            {},
+            {},
+            {resourceOf(
+                PureDataProgram::ResourceKind::Json,
+                "umbraflow.fixture-catalog",
+                R"({"pinned":"framework"})"
+            )}
+        );
+        REQUIRE(program.has_value());
+        auto const answer = program->invoke("derive", parsed("{}"));
+        REQUIRE(answer.has_value());
+        CHECK(json::canonicalBytes(*answer) == R"({"pinned":"framework"})");
+
+        // And the mirror: the Framework channel is not a way to register an
+        // ordinary name, so a host cannot use it to slip a Project resource past
+        // the count and byte ceilings a Project was promised.
+        auto const unreserved = compileProgram(
+            "fixture.framework-resource",
+            "main",
+            {PureDataProgram::Module{
+                .name   = "main",
+                .source = pluginReturning("fixture.framework-resource", "        return input"),
+            }},
+            {},
+            {},
+            {resourceOf(PureDataProgram::ResourceKind::Json, "map", "{}")}
+        );
+        REQUIRE_FALSE(unreserved.has_value());
+        CHECK(
+            std::string{unreserved.error().message()}
+            == "Framework resource name is outside the reserved namespace: map"
+        );
+    }
+
     // Admission is two-stage and this is the first stage. Registration is where
     // a document that cannot become a value is refused, because the bytes are
     // pinned by the resource root hash: their value is a fact about the
@@ -1655,9 +1777,32 @@ return {
                   R"("resource_bytes":4194304,"resource_count":64)"
               )
               != std::string::npos);
+
+        // The resolver enters the preimage as its own bytes rather than as a
+        // sentence about itself: respell either caller-relative marker or the
+        // reserved prefix and resolveModuleRequest changes with this digest.
+        CHECK(material.find(
+                  R"("module_resolver":{"caller_relative_markers":["./","../"],)"
+                  R"("reserved_prefix":"@umbraflow/"})"
+              )
+              != std::string::npos);
+
+        // The resource-name reservation enters the preimage the same way, as the
+        // exact prefix both resource admissions read. Widening, narrowing or
+        // respelling it changes which names a Project may register, so it cannot
+        // ship under an unmoved digest.
+        CHECK(material.find(
+                  R"("resource_namespace":{"reserved_prefix":"umbraflow."})"
+              )
+              != std::string::npos);
+        CHECK(material.find(
+                  R"("resource":"ascii_dotted_segments_reserved_umbraflow_v2")"
+              )
+              != std::string::npos);
+        CHECK(material.find(R"("framework_resource_count":16)") != std::string::npos);
         CHECK(
             first->hex()
-            == "c2447cdb6daf8f3a528451cffccc03a4667bd22b54018ebcdb1ea64eeb3feac3"
+            == "a68c40d41cb0b6c5ae8560e9dc12d68e4382c2bb83a0430dbaf2860dd7af768f"
         );
     }
 } // namespace uf::script

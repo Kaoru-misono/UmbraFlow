@@ -8,9 +8,11 @@
 #include <domain/error.hpp>
 
 #include <chrono>
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stop_token>
 #include <string>
 #include <string_view>
@@ -101,9 +103,11 @@ namespace uf::script
     // generated bundle translation unit, which live for the whole process.
     struct FrameworkModule final
     {
-        // A consumer-owned canonical logical name. Engine's private framework
-        // environment admits bare identifiers; PureDataProgram admits only the
-        // reserved @umbraflow/ grammar. It is never a filesystem path.
+        // A consumer-owned canonical logical name. It keys this module's frozen
+        // exports in the loader's module registry, and it is the spelling
+        // `EngineConfig::frameworkProjectGlobals` projects by. It is never a
+        // filesystem path and never becomes a global: loading a module binds no
+        // name in any environment.
         std::string_view name{};
 
         // The module's UTF-8 source text.
@@ -112,9 +116,19 @@ namespace uf::script
         // An optional exact reserved name by which a later trusted Framework
         // module may require this module. The loader admits only @umbraflow/
         // names, rejects duplicates before running any source, and resolves
-        // against earlier modules only. This is separate from `name`, which
-        // remains the Framework global and Project publication spelling.
+        // against earlier modules only. It is the ONLY way one Framework module
+        // reaches another, so a module with no reserved name is a leaf that
+        // nothing in the bundle can depend on.
         std::string_view resolverName{};
+
+        // Where this module sits in the bundle's declared dependency topology:
+        // depth 0 resolves no reserved name, and a module at depth N depends
+        // only on modules of lower depth. The loader refuses a list that does
+        // not arrive in non-decreasing depth, so the declared topology cannot
+        // drift from the order actually loaded -- and, because resolution is
+        // earlier-only, a reordering is a refusal rather than a silently
+        // different graph.
+        std::size_t dependencyDepth{};
 
         // Whether Project-authored PureDataProgram modules may resolve `name`.
         // Framework-owned pure modules may always resolve it, so release-owned
@@ -264,10 +278,12 @@ namespace uf::script
         // The framework module names whose frozen exports the project
         // environment publishes, under the same name, as project globals: the
         // ONLY route by which anything the framework built becomes nameable from
-        // a project script. It publishes a value rather than opening a chain, so
-        // naming `ctx` here exposes that one frozen table and nothing else the
-        // framework environment holds. A name no framework module bound fails
-        // the generation, as an unregistered projectGlobals name does.
+        // a project script. It is a curated projection across a trust boundary,
+        // read out of the loader's module registry, and it publishes a value
+        // rather than opening a chain -- so naming `ctx` here exposes that one
+        // frozen table and nothing else the framework loaded. A name no
+        // framework module bound fails the generation, as an unregistered
+        // projectGlobals name does.
         std::vector<std::string> frameworkProjectGlobals{};
 
         // Optional decoder for a value a run raised and nobody caught. Empty
@@ -277,6 +293,14 @@ namespace uf::script
         // classifier cannot downgrade a hard cancel into a catchable kind.
         RaisedErrorClassifier classifyRaisedError{};
     };
+
+    // The deterministic standard-library names every project environment
+    // publishes, before the host's own `projectGlobals` and the framework
+    // projection are added. Published so that a caller choosing a projection
+    // name can be held to "no projected name shadows the standard library"
+    // without spelling this list a second time.
+    [[nodiscard]]
+    auto projectStandardGlobals() noexcept -> std::span<std::string_view const>;
 
     // Owns one embedded Luau VM (lua_State) for one generation. How many units
     // of script that generation runs is the front end's business: a task run

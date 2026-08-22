@@ -21,10 +21,11 @@ namespace uf::script
         // claim is about a concrete value rather than a name nobody defined.
         constexpr auto k_sentinel = std::string_view{"uf-probe-sentinel-91c4"};
 
-        // Publishes the sentinel twice: as module exports, which the loader binds under
-        // the module name, and as a plain global, which lands in the framework
-        // environment because that is where the module's closure writes globals. Both
-        // are routes the project side must fail to follow.
+        // Publishes the sentinel twice: as module exports, which the loader keeps in
+        // its own registry and binds to no name at all, and as a plain global, which
+        // lands in the framework environment because that is where the module's closure
+        // writes globals. The second is the only one that is nameable anywhere, and the
+        // project side must still fail to follow it.
         [[nodiscard]]
         auto frameworkSource() -> std::string
         {
@@ -63,7 +64,8 @@ namespace uf::script
                 end
 
                 scan({
-                    -- the framework's own two publication routes
+                    -- the framework's own global, and the module name that the
+                    -- loader deliberately binds nowhere
                     probe, frameworkSentinel,
                     -- the names the denial list removes, in case one came back
                     _G, getfenv, setfenv, newproxy, gcinfo, coroutine, debug,
@@ -180,11 +182,15 @@ namespace uf::script
                 CHECK(*named == doctest::Approx(1.0));
             }
 
-            SUBCASE("control: both framework names resolve on the framework side")
+            SUBCASE("the framework global resolves, the module name never does")
             {
+                // The control the case above needs -- something IS reachable on the
+                // framework side -- and the loader's own property in one expression:
+                // the module's exports are bound to no name even here, so a bundle
+                // entry's file stem can shadow nothing.
                 auto const named = runInEnvironment(
                     framework,
-                    "return (probe ~= nil and frameworkSentinel ~= nil) and 1 or 0",
+                    "return (probe == nil and frameworkSentinel ~= nil) and 1 or 0",
                     ProbeEnvironment::Framework
                 );
                 REQUIRE(named.has_value());

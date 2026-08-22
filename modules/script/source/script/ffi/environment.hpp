@@ -13,12 +13,13 @@
 
 namespace uf::script
 {
-    // Builds the framework environment and registers it in the VM registry,
-    // leaving the stack as it found it: a writable table whose frozen metatable
-    // chains __index to the main globals, so trusted framework code sees the
-    // admitted standard library and keeps its own globals off the main table.
-    // That proxy shape is deliberate HERE and forbidden for the project
-    // environment, which is exactly the `_G` escape the design rules out.
+    // Builds the framework environment and the loader's empty module registry
+    // and registers both in the VM registry, leaving the stack as it found it.
+    // The environment is a writable table whose frozen metatable chains __index
+    // to the main globals, so trusted framework code sees the admitted standard
+    // library and keeps its own globals off the main table. That proxy shape is
+    // deliberate HERE and forbidden for the project environment, which is
+    // exactly the `_G` escape the design rules out.
     //
     // Isolation in Luau is per-closure, not per-thread: luau_load takes the env
     // table a chunk's closure carries (lvmload.cpp) and a new thread's globals
@@ -30,11 +31,17 @@ namespace uf::script
     auto pushFrameworkEnvironment(lua_State* state) -> void;
 
     // Loads and runs each module in order under the framework environment,
-    // deep-freezes the value it returns, and binds that value in the framework
-    // environment under the module's name. A module may also declare one exact
-    // reserved resolver name. Each module receives a caller-bound `require`
-    // over a frozen snapshot of earlier resolver names only, so unknown names,
-    // forward dependencies, cycles, and duplicate aliases fail closed. The
+    // deep-freezes the value it returns, and binds that value in the loader's
+    // module registry under the module's name. NOTHING is bound in the
+    // framework environment, so loading a module adds no name to any VM's
+    // global namespace and a bundle entry's file stem can never shadow a
+    // standard-library table for the modules loaded after it.
+    //
+    // A module may declare one exact reserved resolver name, and that is the
+    // only way another module reaches it. Each module receives a caller-bound
+    // `require` over a frozen snapshot of earlier resolver names only, so
+    // unknown names, forward dependencies, cycles, and duplicate aliases fail
+    // closed. Modules must arrive in non-decreasing `dependencyDepth`. The
     // loader removes `require` after every load and the Project prototype never
     // copies it.
     //
@@ -59,11 +66,14 @@ namespace uf::script
     //
     // The prototype is an explicit whitelist: the deterministic base functions
     // and libraries the .cpp names one by one, plus `hostGlobals` and
-    // `frameworkGlobals`. It carries NO metatable, so there is no __index chain
-    // to the framework environment or to the main globals -- the one structural
-    // property that makes the whole denial list hold, and the reason publishing
-    // a framework export copies the value. A whitelisted name absent from its
-    // source table fails InternalInvariant rather than thinning the environment.
+    // `frameworkGlobals`. The framework half is a curated projection read out of
+    // the loader's module registry -- a different mechanism from the ambient
+    // namespace the loader deliberately does not build. It carries NO metatable,
+    // so there is no __index chain to the framework environment or to the main
+    // globals -- the one structural property that makes the whole denial list
+    // hold, and the reason publishing a framework export copies the value. A
+    // whitelisted name absent from its source table fails InternalInvariant
+    // rather than thinning the environment.
     [[nodiscard]]
     auto installProjectEnvironmentPrototype(
         lua_State* state,

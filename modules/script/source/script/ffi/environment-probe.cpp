@@ -10,9 +10,13 @@
 #include <core/utility/scope-exit.hpp>
 #include <domain/error.hpp>
 
+#include <algorithm>
+#include <cstddef>
 #include <memory>
+#include <span>
 #include <string>
 #include <utility>
+#include <vector>
 
 // Luau's C headers are third-party and do not build clean under the project's
 // /W4 /WX profile; wrap the includes exactly as the repo's other vendored FFI
@@ -41,6 +45,91 @@ namespace uf::script::testing
 {
     namespace
     {
+        // The string keys of the table at `index`, in traversal order. Only
+        // string keys are read, so lua_tolstring performs no conversion and
+        // cannot disturb the lua_next walk that is reading the same key.
+        [[nodiscard]]
+        auto tableKeys(lua_State* state, int index) -> std::vector<std::string>
+        {
+            int const table = lua_absindex(state, index);
+            auto names      = std::vector<std::string>{};
+            lua_pushnil(state);
+            while (lua_next(state, table) != 0)
+            {
+                if (lua_type(state, -2) == LUA_TSTRING)
+                {
+                    std::size_t length = 0;
+                    // SAFETY: the key was just confirmed to be a string, so this
+                    // returns the VM-owned bytes with their length and converts
+                    // nothing. The bytes are copied before the next lua_next.
+                    char const* p_text = lua_tolstring(state, -2, &length);
+                    names.emplace_back(p_text, length);
+                }
+                lua_pop(state, 1);
+            }
+            return names;
+        }
+
+        // Every name a framework chunk can reach: the framework environment is
+        // the chunk's globals table and its __index chains to the main globals,
+        // so the reachable set is the union of the two.
+        [[nodiscard]]
+        auto reachableGlobals(lua_State* state) -> std::vector<std::string>
+        {
+            lua_pushvalue(state, LUA_GLOBALSINDEX);
+            auto names = tableKeys(state, -1);
+            lua_pop(state, 1);
+
+            pushFrameworkEnvironment(state);
+            auto const environmentNames = tableKeys(state, -1);
+            lua_pop(state, 1);
+
+            names.insert(
+                names.end(),
+                environmentNames.begin(),
+                environmentNames.end()
+            );
+            std::ranges::sort(names);
+            auto const duplicates = std::ranges::unique(names);
+            names.erase(duplicates.begin(), duplicates.end());
+            return names;
+        }
+
+        [[nodiscard]]
+        auto bootedGlobals(std::span<FrameworkModule const> modules)
+            -> Result<std::vector<std::string>>
+        {
+            // SAFETY: luaL_newstate allocates the VM and returns null on
+            // failure; the scope guard closes it on every exit path. Confined to
+            // this test seam, which owns the whole VM lifetime locally.
+            lua_State* state = luaL_newstate();
+            if (state == nullptr)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "luaL_newstate returned null"
+                );
+            }
+            auto stateGuard = scopeExit(
+                [state]() noexcept
+                {
+                    lua_close(state);
+                }
+            );
+
+            luaL_openlibs(state);
+            UF_TRY(
+                installSandbox(
+                    state,
+                    EngineConfig{
+                        .frameworkModules = {modules.begin(), modules.end()},
+                    },
+                    nullptr
+                )
+            );
+            return reachableGlobals(state);
+        }
+
         // Runs at VM teardown for the userdata probeInstallerFailure registers.
         auto bumpFinalizationWitness(void* storage) -> void
         {
@@ -123,6 +212,17 @@ namespace uf::script::testing
             nullptr,
             nullptr
         );
+    }
+
+    auto probeFrameworkGlobals(std::span<FrameworkModule const> modules)
+        -> Result<FrameworkGlobalsProbe>
+    {
+        UF_TRY_VALUE(beforeLoad, bootedGlobals({}));
+        UF_TRY_VALUE(afterLoad, bootedGlobals(modules));
+        return FrameworkGlobalsProbe{
+            .beforeLoad = std::move(beforeLoad),
+            .afterLoad  = std::move(afterLoad),
+        };
     }
 
     auto probeInstallerFailure(

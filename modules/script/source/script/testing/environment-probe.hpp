@@ -1,5 +1,7 @@
 #pragma once
 
+#include <script/engine.hpp>
+
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
@@ -7,7 +9,10 @@
 #include <domain/error.hpp>
 
 #include <optional>
+#include <span>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace uf::script::testing
 {
@@ -34,6 +39,30 @@ namespace uf::script::testing
         std::string_view source,
         ProbeEnvironment environment
     ) -> Result<double>;
+
+    // Every name a chunk running under the trusted framework environment can
+    // reach: that environment's own keys plus the main globals its __index
+    // chains to, sorted and deduplicated.
+    struct FrameworkGlobalsProbe final
+    {
+        // The same boot with nothing to load, which is the baseline: the
+        // standard library the sandbox left standing plus whatever the host
+        // installer registered.
+        std::vector<std::string> beforeLoad{};
+
+        // The same boot after the given modules loaded. Equality with
+        // `beforeLoad` is the invariant: loading a Framework module must add no
+        // name to any VM's global namespace.
+        std::vector<std::string> afterLoad{};
+    };
+
+    // Test seam: boot the real sandbox twice -- once with no framework modules
+    // and once with `modules` -- and report the reachable global names each boot
+    // left. Both boots run the production installSandbox, so the baseline is the
+    // same machine and not a reimplementation of its ordering.
+    [[nodiscard]]
+    auto probeFrameworkGlobals(std::span<FrameworkModule const> modules)
+        -> Result<FrameworkGlobalsProbe>;
 
     // What booting a VM whose host-table installer fails left behind.
     struct InstallerFailureProbe final
