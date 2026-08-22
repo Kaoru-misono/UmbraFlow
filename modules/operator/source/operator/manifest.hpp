@@ -27,6 +27,25 @@ namespace uf::operator_runtime
     // judged the document.
     inline constexpr auto k_projectRegistrationFormat = uint64{4U};
 
+    // The generation of the TWO-CLOSURE ProjectRegistration document contract,
+    // stated in the same `project_registration_format` member and read by a
+    // different reader. Its shape is
+    // schema/umbraflow-project-registration-v3.schema.json.
+    //
+    // Two constants over one member is what a dark generation looks like, and
+    // it is safe for exactly one reason: no reader has both shapes behind it.
+    // validateClaims below accepts 4 and refuses everything else;
+    // validateGenerationClaims accepts 5 and refuses everything else. Neither
+    // reads the number to choose a behaviour, so the integer is an identity
+    // assertion and never a dispatch key. Code that inspected a document to
+    // pick a reader would be the selector both of them exist to avoid.
+    inline constexpr auto k_projectGenerationFormat = uint64{5U};
+
+    // The one entry point the pure program type keeps under the two-closure
+    // contract. `derive`, `plan`, `next_step` and `reconcile` are the
+    // five-function contract's, and no closure of a generation exports them.
+    inline constexpr auto k_reducerEntryPoint = std::string_view{"reduce"};
+
     // The namespace the Framework owns. Every Framework Tool is named inside
     // it, and no other registrant may claim it: a ProjectRegistration whose
     // plugin_id fell inside this namespace would own Tool names the Framework
@@ -238,6 +257,136 @@ namespace uf::operator_runtime
             ContentHash expectedRootHash,
             ProjectRegistrationSchemaOwner const& schemaOwner
         ) -> Result<VerifiedProjectRegistration>;
+    };
+
+    // One compiled closure of a two-closure registration generation: the exact
+    // module closure its manifest digest was taken over, and what the authoring
+    // path observed that closure to export.
+    //
+    // exportedEntryPoints is a STATEMENT and never a derivation. A loader may
+    // not compute it from the binding table, because the load-time check would
+    // then compare the table with itself; and it may not run the module to
+    // observe it, because the bridge would then compare exports with exports.
+    // Either collapse leaves a check no test can make fail and deletes the
+    // property the member exists to pin.
+    //
+    // It names entry points only. `plugin_id` is a field of every closure and
+    // is never listed here, so an empty vector is the whole statement that this
+    // closure offers no entry point at all.
+    struct ProjectClosureClaims final
+    {
+        ContentHash              moduleManifestHash;
+        std::vector<std::string> exportedEntryPoints{};
+
+        auto operator==(ProjectClosureClaims const&) const -> bool = default;
+    };
+
+    // Values extracted only after a validator has accepted the exact
+    // two-closure ProjectRegistration JCS bytes. Like ProjectRegistrationClaims
+    // it is not a construction spec: no caller mints a generation from one.
+    struct ProjectGenerationClaims final
+    {
+        uint64      projectRegistrationFormat{};
+        std::string pluginId{};
+
+        // Both slots, always. There is no absent-means-pure reading and no
+        // absent-means-scoped reading: a document carrying one closure is not a
+        // generation, and a project that binds no Tool states an empty tool
+        // closure rather than omitting one.
+        ProjectClosureClaims reducerClosure;
+        ProjectClosureClaims toolClosure;
+
+        ContentHash pluginEnvironmentHash;
+        ContentHash toolCatalogHash;
+        ContentHash projectStateSchemaHash;
+        ContentHash projectObservationSchemaHash;
+        ContentHash projectToolPreconditionSchemaHash;
+        ContentHash reconcilePayloadSchemaManifestHash;
+        ContentHash journalEventSchemaManifestHash;
+
+        std::string                  baselineEventType{};
+        std::vector<ProjectResource> projectResources{};
+
+        // Both sorted and unique by the derivation the loader performs before
+        // it writes, exactly as the one-closure document requires; see
+        // ProjectRegistrationClaims for why the order is the framework's own
+        // reading rather than something JSON Schema can state.
+        std::vector<ContentHash> observedInstanceIdentitySchemaHashes{};
+
+        std::vector<ProjectToolBinding> projectToolBindings{};
+    };
+
+    // The implementation must parse the complete generation document, validate
+    // it against the exact two-closure JSON Schema, and reject bytes that are
+    // not the exact RFC 8785 JCS serialization. Returning claims without doing
+    // all three is a validator bug, never an extension point for project code.
+    using ProjectGenerationExactValidator = std::function<
+        Result<ProjectGenerationClaims>(std::string_view exactJcs)
+    >;
+
+    // Authority-bearing identity of one two-closure registration generation.
+    // Its constructor is unreachable except from ProjectGeneration::verifyExact
+    // after exact JCS validation, exact schema validation, and root
+    // verification have all succeeded.
+    class VerifiedProjectGeneration final
+    {
+        ProjectGenerationClaims m_claims;
+        std::string             m_canonicalJcs;
+        ContentHash             m_rootHash;
+
+        VerifiedProjectGeneration(
+            ProjectGenerationClaims claims,
+            std::string canonicalJcs,
+            ContentHash rootHash
+        );
+
+        friend class ProjectGeneration;
+
+    public:
+        [[nodiscard]]
+        auto canonicalJcs() const noexcept UF_LIFETIME_BOUND
+            -> std::string const&;
+
+        [[nodiscard]] auto hash() const -> ContentHash;
+        [[nodiscard]] auto pluginId() const -> std::string;
+        [[nodiscard]] auto pluginEnvironmentHash() const -> ContentHash;
+        [[nodiscard]] auto toolCatalogHash() const -> ContentHash;
+
+        // The two closures, each answered by its own accessor. There is
+        // deliberately no accessor asking whether a generation has a tool
+        // closure: one that could answer "no" would be the optional slot this
+        // contract refuses.
+        [[nodiscard]]
+        auto reducerClosure() const noexcept UF_LIFETIME_BOUND
+            -> ProjectClosureClaims const&;
+
+        [[nodiscard]]
+        auto toolClosure() const noexcept UF_LIFETIME_BOUND
+            -> ProjectClosureClaims const&;
+
+        // One resource closure, read by both compiled closures.
+        [[nodiscard]]
+        auto projectResources() const noexcept UF_LIFETIME_BOUND
+            -> std::vector<ProjectResource> const&;
+
+        [[nodiscard]]
+        auto projectToolBindings() const noexcept UF_LIFETIME_BOUND
+            -> std::vector<ProjectToolBinding> const&;
+    };
+
+    // The sole mint for VerifiedProjectGeneration, and the reader that accepts
+    // the two-closure shape and nothing else. It shares no code path with
+    // ProjectRegistration::verifyExact and neither of them inspects a document
+    // to decide which of the two should read it.
+    class ProjectGeneration final
+    {
+    public:
+        [[nodiscard]]
+        static auto verifyExact(
+            std::string canonicalJcs,
+            ContentHash expectedRootHash,
+            ProjectGenerationExactValidator const& validate
+        ) -> Result<VerifiedProjectGeneration>;
     };
 
     struct SessionManifestSpec final

@@ -373,30 +373,41 @@ return {
         );
     }
 
+    // Aimed at the single-entry reducer type rather than at the five-function
+    // contract's entries, so that what it pins survives their deletion. What
+    // this refusal is about is the PROGRAM TYPE: a pure closure cannot name a
+    // scoped module whatever its entry set is, and that is what makes reduction
+    // and dispatch two types rather than two spellings of one.
     TEST_CASE("the pure resolver refuses each scoped module by name")
     {
+        constexpr auto reducerEntryPoints = std::array{
+            std::string_view{"reduce"},
+        };
         for (auto const scopedName : ScopedToolProgram::scopedModuleNames())
         {
             auto modules = std::vector<PureDataProgram::Module>{
                 PureDataProgram::Module{
                     .name   = "main",
-                    .source = pluginSource(
-                        "fixture.reducer",
-                        "",
-                        "        return require(\"" + std::string{scopedName} + "\")"
-                    ),
+                    .source = "return {\n"
+                              "    plugin_id = \"fixture.reducer\",\n"
+                              "    reduce = function(_input)\n"
+                              "        return require(\""
+                              + std::string{scopedName}
+                              + "\")\n"
+                                "    end,\n"
+                                "}\n",
                 },
             };
             auto const program = PureDataProgram::compile(
                 "fixture.reducer",
                 "main",
                 std::move(modules),
-                k_entryPoints,
+                reducerEntryPoints,
                 {}
             );
             REQUIRE(program.has_value());
 
-            auto const answer = program->invoke("derive", json::Value{});
+            auto const answer = program->invoke("reduce", json::Value{});
             REQUIRE_FALSE(answer.has_value());
             CHECK(
                 std::string{answer.error().message()}.find(

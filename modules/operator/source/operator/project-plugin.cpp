@@ -85,14 +85,13 @@ namespace uf::operator_runtime
     } // namespace
 
     auto verifyProjectResourceClosure(
-        VerifiedProjectRegistration const& registration,
+        std::span<ProjectResource const> pinnedResources,
         std::vector<ProjectPluginRegistrar::ResourceBlob> exactBlobs
     ) -> Result<std::vector<script::PureDataProgram::Resource>>
     {
         UF_TRY(validateProjectResourceClosure(exactBlobs));
-        auto const& resources = registration.projectResources();
         if (
-            resources.size() > script::PureDataProgram::k_maximumResourceCount
+            pinnedResources.size() > script::PureDataProgram::k_maximumResourceCount
             || exactBlobs.size() > script::PureDataProgram::k_maximumResourceCount
         )
         {
@@ -134,16 +133,20 @@ namespace uf::operator_runtime
         for (auto const& blob : blobsByName)
         {
             if (
-                std::ranges::find(resources, blob.first, &ProjectResource::name)
-                == resources.end()
+                std::ranges::find(
+                    pinnedResources,
+                    blob.first,
+                    &ProjectResource::name
+                )
+                == pinnedResources.end()
             )
             {
                 return refuse("Project closure carries an unregistered resource");
             }
         }
         auto verified = std::vector<script::PureDataProgram::Resource>{};
-        verified.reserve(resources.size());
-        for (auto const& resource : resources)
+        verified.reserve(pinnedResources.size());
+        for (auto const& resource : pinnedResources)
         {
             auto const found = blobsByName.find(resource.name);
             if (found == blobsByName.end())
@@ -543,7 +546,10 @@ namespace uf::operator_runtime
 
         UF_TRY_VALUE(
             verifiedResources,
-            verifyProjectResourceClosure(registration, std::move(exactResources))
+            verifyProjectResourceClosure(
+                registration.projectResources(),
+                std::move(exactResources)
+            )
         );
 
         auto modules = std::vector<script::PureDataProgram::Module>{};

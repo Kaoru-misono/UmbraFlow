@@ -1758,12 +1758,18 @@ namespace uf::script::detail
             return refuse("pure data plugin id is invalid");
         }
         UF_TRY(validateModuleClosure(spec.entryModule, modules));
-        if (
-            spec.entryPoints.empty()
-            || spec.entryPoints.size() > k_maximumEntryPointCount
-        )
+
+        // A ceiling and no floor. An empty set is a closure that offers its
+        // identity and nothing else, which the admission below still judges in
+        // full -- every field beyond `plugin_id` is refused. The floor that
+        // used to sit here assumed every program had at least one entry, which
+        // stopped being true when a registration grew a second closure: a
+        // project that binds no Tool ships a real tool closure with an
+        // explicitly empty entry set, and refusing to compile it would make the
+        // absent slot the only spelling of a pure project.
+        if (spec.entryPoints.size() > k_maximumEntryPointCount)
         {
-            return refuse("pure data module requires a bounded entry-point set");
+            return refuse("pure data module exceeds its entry-point ceiling");
         }
         std::ranges::sort(modules, {}, &PureDataProgram::Module::name);
         auto const entry = std::ranges::lower_bound(

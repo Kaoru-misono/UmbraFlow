@@ -328,9 +328,15 @@ namespace uf::operator_runtime
     // read it. Two copies of this check would be two answers to "which bytes
     // did this project register", and only one of them would be inside
     // project_registration_hash.
+    //
+    // It takes the pinned rows rather than a registration for the same reason:
+    // the one-closure and two-closure documents both state them, and a
+    // parameter naming one of the two document types would have forced the
+    // second copy this comment refuses. `pinnedResources` is a call-scoped
+    // borrow of the document's own rows; nothing here retains it.
     [[nodiscard]]
     auto verifyProjectResourceClosure(
-        VerifiedProjectRegistration const& registration,
+        std::span<ProjectResource const> pinnedResources,
         std::vector<ProjectPluginRegistrar::ResourceBlob> exactResources
     ) -> Result<std::vector<script::PureDataProgram::Resource>>;
 

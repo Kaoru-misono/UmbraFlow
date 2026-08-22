@@ -132,25 +132,42 @@ namespace uf::operator_runtime
             return output;
         }
 
+        // Both sides are named, because the whole of the diagnosis is which
+        // generation the document states and which one this reader was built
+        // to read. Each reader passes its OWN constant and refuses everything
+        // else; no caller passes a number it read out of the document, which
+        // is what keeps this an identity assertion rather than a dispatch.
         [[nodiscard]]
-        auto validateClaims(ProjectRegistrationClaims const& claims) -> Status
+        auto validateFormat(uint64 stated, uint64 read) -> Status
         {
-            // Both sides are named, because the whole of the diagnosis is which
-            // generation the registration states and which one this binary was
-            // built to read.
-            if (claims.projectRegistrationFormat != k_projectRegistrationFormat)
+            if (stated == read)
             {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    std::format(
-                        "ProjectRegistration format is not supported by this "
-                        "framework: the registration states {} and this "
-                        "framework reads {}",
-                        claims.projectRegistrationFormat,
-                        k_projectRegistrationFormat
-                    )
-                );
+                return ok();
             }
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "ProjectRegistration format is not supported by this "
+                    "framework: the registration states {} and this "
+                    "framework reads {}",
+                    stated,
+                    read
+                )
+            );
+        }
+
+        // Everything the one-closure and two-closure documents state
+        // identically. It is a template over the two claim types rather than
+        // one function each because the two are one reading of one member set;
+        // the instantiation set is those two and is closed in this file.
+        //
+        // The format member is deliberately NOT read here: a shared function
+        // that judged it would be one place that understands both generations,
+        // which is the selector this cut refuses.
+        template <typename Claims>
+        [[nodiscard]]
+        auto validateSharedClaims(Claims const& claims) -> Status
+        {
             UF_TRY(validateDottedName(claims.pluginId, "plugin_id", true));
 
             // A registrant's plugin_id IS the namespace it owns Tool names in,
@@ -272,6 +289,81 @@ namespace uf::operator_runtime
                 }
             }
             return ok();
+        }
+
+        // One closure's stated export surface. The names are the same dotted
+        // names an entry point is spelled with everywhere else, and the order
+        // is the loader's own derivation, so a statement in any other order is
+        // one no authoring path produced.
+        [[nodiscard]]
+        auto validateClosureClaims(
+            ProjectClosureClaims const& closure,
+            std::string_view field
+        ) -> Status
+        {
+            for (
+                auto index = std::size_t{0};
+                index < closure.exportedEntryPoints.size();
+                ++index
+            )
+            {
+                UF_TRY(validateDottedName(
+                    closure.exportedEntryPoints[index],
+                    field,
+                    false
+                ));
+                if (
+                    index != 0U
+                    && !jsonMemberNameLess(
+                        closure.exportedEntryPoints[index - 1U],
+                        closure.exportedEntryPoints[index]
+                    )
+                )
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "{} must be unique and JCS-ordered",
+                            field
+                        )
+                    );
+                }
+            }
+            return ok();
+        }
+
+        [[nodiscard]]
+        auto validateClaims(ProjectRegistrationClaims const& claims) -> Status
+        {
+            UF_TRY(validateFormat(
+                claims.projectRegistrationFormat,
+                k_projectRegistrationFormat
+            ));
+            return validateSharedClaims(claims);
+        }
+
+        // The two-closure reader. It accepts k_projectGenerationFormat and
+        // refuses every other number, including the one-closure generation's:
+        // the one-closure document is not a degraded generation this reader
+        // could fall back to reading, it is a document with another reader.
+        [[nodiscard]]
+        auto validateGenerationClaims(
+            ProjectGenerationClaims const& claims
+        ) -> Status
+        {
+            UF_TRY(validateFormat(
+                claims.projectRegistrationFormat,
+                k_projectGenerationFormat
+            ));
+            UF_TRY(validateSharedClaims(claims));
+            UF_TRY(validateClosureClaims(
+                claims.reducerClosure,
+                "reducer closure exported entry point"
+            ));
+            return validateClosureClaims(
+                claims.toolClosure,
+                "tool closure exported entry point"
+            );
         }
     }
 
@@ -473,6 +565,122 @@ namespace uf::operator_runtime
         );
         UF_TRY(validateClaims(claims));
         return VerifiedProjectRegistration{
+            std::move(claims),
+            std::move(canonicalJcs),
+            actualRootHash,
+        };
+    }
+
+    VerifiedProjectGeneration::VerifiedProjectGeneration(
+        ProjectGenerationClaims claims,
+        std::string canonicalJcs,
+        ContentHash rootHash
+    )
+        : m_claims{std::move(claims)}
+        , m_canonicalJcs{std::move(canonicalJcs)}
+        , m_rootHash{rootHash}
+    {
+    }
+
+    auto VerifiedProjectGeneration::canonicalJcs() const noexcept
+        -> std::string const&
+    {
+        return m_canonicalJcs;
+    }
+
+    auto VerifiedProjectGeneration::hash() const -> ContentHash
+    {
+        return m_rootHash;
+    }
+
+    auto VerifiedProjectGeneration::pluginId() const -> std::string
+    {
+        return m_claims.pluginId;
+    }
+
+    auto VerifiedProjectGeneration::pluginEnvironmentHash() const -> ContentHash
+    {
+        return m_claims.pluginEnvironmentHash;
+    }
+
+    auto VerifiedProjectGeneration::toolCatalogHash() const -> ContentHash
+    {
+        return m_claims.toolCatalogHash;
+    }
+
+    auto VerifiedProjectGeneration::reducerClosure() const noexcept
+        -> ProjectClosureClaims const&
+    {
+        return m_claims.reducerClosure;
+    }
+
+    auto VerifiedProjectGeneration::toolClosure() const noexcept
+        -> ProjectClosureClaims const&
+    {
+        return m_claims.toolClosure;
+    }
+
+    auto VerifiedProjectGeneration::projectResources() const noexcept
+        -> std::vector<ProjectResource> const&
+    {
+        return m_claims.projectResources;
+    }
+
+    auto VerifiedProjectGeneration::projectToolBindings() const noexcept
+        -> std::vector<ProjectToolBinding> const&
+    {
+        return m_claims.projectToolBindings;
+    }
+
+    auto ProjectGeneration::verifyExact(
+        std::string canonicalJcs,
+        ContentHash expectedRootHash,
+        ProjectGenerationExactValidator const& validate
+    ) -> Result<VerifiedProjectGeneration>
+    {
+        if (!validate)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "a ProjectRegistration generation requires an exact validator"
+            );
+        }
+        if (
+            canonicalJcs.empty()
+            || canonicalJcs.size() > k_maximumRegistrationBytes
+            || !isValidUtf8(canonicalJcs)
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "ProjectRegistration must be non-empty bounded UTF-8 JCS"
+            );
+        }
+
+        UF_TRY_VALUE(
+            actualRootHash,
+            sha256(std::as_bytes(std::span{canonicalJcs}))
+        );
+        if (actualRootHash != expectedRootHash)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "ProjectRegistration bytes do not match the expected root "
+                    "hash: expected {}, computed {}",
+                    expectedRootHash.hex(),
+                    actualRootHash.hex()
+                )
+            );
+        }
+
+        UF_TRY_VALUE_CONTEXT(
+            claims,
+            validate(canonicalJcs),
+            "validating exact two-closure ProjectRegistration JCS"
+        );
+        UF_TRY(validateGenerationClaims(claims));
+        return VerifiedProjectGeneration{
             std::move(claims),
             std::move(canonicalJcs),
             actualRootHash,

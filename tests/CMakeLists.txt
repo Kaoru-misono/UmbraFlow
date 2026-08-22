@@ -684,6 +684,7 @@ if(TARGET ${PROJECT_NAME}_operator)
             operator/test-lifecycle-facade.cpp
             operator/test-manifest.cpp
             operator/test-operation.cpp
+            operator/test-project-generation.cpp
             operator/test-project-tool-program.cpp
             operator/test-tool-admission-funnel.cpp
             operator/test-tool-authority.cpp
@@ -717,7 +718,7 @@ if(TARGET ${PROJECT_NAME}_operator)
     # beside it.
     uf_shard_doctest_gates(
         TARGET test-operator
-        TOTAL_CASES 216
+        TOTAL_CASES 220
         SHARDS 6
     )
 

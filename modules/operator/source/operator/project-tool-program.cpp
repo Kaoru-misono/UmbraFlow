@@ -288,7 +288,10 @@ namespace uf::operator_runtime
 
         UF_TRY_VALUE(
             resources,
-            verifyProjectResourceClosure(registration, std::move(exactResources))
+            verifyProjectResourceClosure(
+                registration.projectResources(),
+                std::move(exactResources)
+            )
         );
         UF_TRY_VALUE(frameworkCatalog, FrameworkToolCatalogOwner::create());
         UF_TRY_VALUE(
