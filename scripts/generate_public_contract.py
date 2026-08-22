@@ -59,6 +59,12 @@ DEPLOYMENT_DIRECTORY_HEADER = (
 PROJECT_DIRECTORY_SCHEMA = "schema/umbraflow-project-v2.schema.json"
 SCRIPT_CONTRACT_HEADER = "modules/script/source/script/pure-data-program.hpp"
 SCRIPT_CONTRACT_SOURCE = "modules/script/source/script/ffi/pure-data-program.cpp"
+# The closed-graph runtime both program types share. The ceilings, the published
+# contracts and the environment material live there because a pure program and a
+# scoped one must agree on every one of them by construction rather than by
+# comparison; only the wall-clock ceiling is each program type's own.
+SCRIPT_RUNTIME_HEADER = "modules/script/source/script/ffi/program-runtime.hpp"
+SCRIPT_RUNTIME_SOURCE = "modules/script/source/script/ffi/program-runtime.cpp"
 PROJECT_PLUGIN_SOURCE = "modules/operator/source/operator/project-plugin.cpp"
 FRAMEWORK_BUNDLE_SOURCE = "modules/task/source/task/framework-bundle.cpp"
 FRAMEWORK_RUNTIME_DIRECTORY = "modules/task/runtime"
@@ -198,6 +204,22 @@ MESSAGE_CALL = re.compile(r"\b(?:refuse|fail|invalid|complain)\s*\(|std::cerr\s*
 # ``$id`` without either restating the other.
 COMPILE_LABEL = re.compile(r"(?:\.label\s*=|compile\(\s*)\s*\"([^\"]+)\"")
 
+# The opening brace of one ``PureModuleBinding{...}`` row in the framework
+# bundle source. The lookbehind excludes ``InternalPureModuleBinding{``: that
+# is a distinct table for names no Project-authored module can ever resolve,
+# and without it the substring ``PureModuleBinding{`` inside
+# ``InternalPureModuleBinding{`` would match too. The row's own field count is
+# not baked into this pattern -- ``braced_span`` reads whatever fields the
+# struct currently declares.
+PURE_MODULE_BINDING = re.compile(r"(?<!Internal)PureModuleBinding\{")
+
+# The opening brace of one ``ScopedModuleBinding{...}`` row in the same source.
+# Scoped modules are publicly named SDK surface like the pure ones, but they are
+# a DIFFERENT contract -- they load only inside a ScopedToolProgram -- so they
+# are read by their own pattern into their own section rather than being folded
+# into the pure list.
+SCOPED_MODULE_BINDING = re.compile(r"\bScopedModuleBinding\{")
+
 # A struct member declared as one of the Operator's schema-bearing authorities.
 # The type ending decides, not the member name: an authority is an ``...Owner``
 # or a set of ``...Schemas``, and the registration beside them is a verified
@@ -312,6 +334,25 @@ def balanced_span(text: str, open_parenthesis: int) -> str:
                 return text[open_parenthesis + 1 : index]
         index += 1
     return text[open_parenthesis + 1 :]
+
+
+def braced_span(text: str, open_brace: int) -> str:
+    """The text inside the brace pair opening at open_brace.
+
+    Same shape as balanced_span, but for the ``{...}`` a struct's braced
+    initialiser opens rather than the ``(...)`` a call opens.
+    """
+    depth = 0
+    index = open_brace
+    while index < len(text):
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_brace + 1 : index]
+        index += 1
+    return text[open_brace + 1 :]
 
 
 def concatenated_literals(span: str) -> list[str]:
@@ -799,9 +840,15 @@ def cell(value: str) -> str:
 def integer_expression(expression: str, constants: dict[str, int]) -> int:
     """Evaluate the deliberately tiny integer subset used by limit constants."""
     if "duration_cast" in expression:
-        seconds = constants["k_maximumRuntime"]
+        # The environment material takes its wall-clock ceiling as a parameter,
+        # because each program type sets its own; the pure environment this
+        # contract describes passes k_pureRuntimeCeiling.
+        seconds = constants["k_pureRuntimeCeiling"]
         return seconds * 1000
     normalized = expression.replace("PureDataProgram::", "")
+    normalized = re.sub(
+        r"MonotonicInstant::Duration\{(.*)\}", r"(\1)", normalized, flags=re.DOTALL
+    )
     normalized = re.sub(r"std::(?:size_t|uint64)\{([^{}]+)\}", r"(\1)", normalized)
     normalized = re.sub(r"uint64\{([^{}]+)\}", r"(\1)", normalized)
     normalized = re.sub(r"std::chrono::seconds\{([^{}]+)\}", r"(\1)", normalized)
@@ -838,12 +885,14 @@ def integer_expression(expression: str, constants: dict[str, int]) -> int:
 def script_runtime_contract(root: Path) -> dict[str, object]:
     """The public Luau environment surface, extracted from its implementation."""
     header = read(root, SCRIPT_CONTRACT_HEADER)
+    runtime_header = read(root, SCRIPT_RUNTIME_HEADER)
+    runtime_source = read(root, SCRIPT_RUNTIME_SOURCE)
     source = read(root, SCRIPT_CONTRACT_SOURCE)
     framework_bundle = read(root, FRAMEWORK_BUNDLE_SOURCE)
     read(root, UNICODE_LICENSE)
     constant_expressions: dict[str, str] = {}
     pattern = re.compile(r"(?:static\s+)?constexpr\s+auto\s+(k_\w+)\s*=\s*(.*?);", re.DOTALL)
-    for text in (header, source):
+    for text in (header, runtime_header, runtime_source, source):
         for name, expression in pattern.findall(text):
             constant_expressions[name] = expression
 
@@ -861,7 +910,7 @@ def script_runtime_contract(root: Path) -> dict[str, object]:
         if not progressed:
             break
 
-    material = function_span(source, "pluginEnvironmentMaterial")
+    material = function_span(runtime_source, "sharedEnvironmentMaterial")
     limit_rows: list[tuple[str, int]] = []
     for name, expression in re.findall(
         r'appendLimit\(\s*"([^"]+)"\s*,\s*(.*?)\s*\);',
@@ -870,18 +919,18 @@ def script_runtime_contract(root: Path) -> dict[str, object]:
     ):
         limit_rows.append((name, integer_expression(expression, constants)))
     if not limit_rows:
-        raise SystemExit(f"{SCRIPT_CONTRACT_SOURCE}: environment material emits no limits")
+        raise SystemExit(f"{SCRIPT_RUNTIME_SOURCE}: environment material emits no limits")
 
     def string_constant(name: str) -> str:
         match = re.search(
             rf"\b{name}\s*=\s*std::string_view\{{\s*\"([^\"]+)\"\s*\}}",
-            source,
+            runtime_header,
         )
         if match is None:
-            raise SystemExit(f"{SCRIPT_CONTRACT_SOURCE}: cannot read {name}")
+            raise SystemExit(f"{SCRIPT_RUNTIME_HEADER}: cannot read {name}")
         return match.group(1)
 
-    globals_span = function_span(source, "k_pureGlobals")
+    globals_span = function_span(runtime_header, "k_pureGlobals")
     globals_ = re.findall(r'std::string_view\{"([^"]+)"\}', globals_span)
     api_constants = [
         ("require", "k_requireContract"),
@@ -910,57 +959,105 @@ def script_runtime_contract(root: Path) -> dict[str, object]:
     published_contracts = {constant for _name, constant in api_constants}
     if material_contracts != published_contracts:
         raise SystemExit(
-            f"{SCRIPT_CONTRACT_SOURCE}: public API contracts do not match environment material: "
+            f"{SCRIPT_RUNTIME_SOURCE}: public API contracts do not match environment material: "
             f"material={sorted(material_contracts)}, published={sorted(published_contracts)}"
         )
     apis = [(name, string_constant(constant)) for name, constant in api_constants]
     remaining = re.search(r'remaining_options\\":\\"([^"\\]+)\\"', material)
     if remaining is None:
-        raise SystemExit(f"{SCRIPT_CONTRACT_SOURCE}: cannot read remaining compiler options")
-    pure_bindings = re.findall(
-        r'PureModuleBinding\{\s*"([a-z0-9_-]+)"\s*,\s*'
-        r'"(@umbraflow/[a-z0-9_/-]+)"\s*\}',
-        framework_bundle,
-    )
+        raise SystemExit(f"{SCRIPT_RUNTIME_SOURCE}: cannot read remaining compiler options")
+    # Each row's own braces are read rather than restating its field count: a
+    # PureModuleBinding row currently carries a name pair and a
+    # dependencyDepth, and the lookbehind in PURE_MODULE_BINDING keeps this
+    # from also matching a row of the parallel InternalPureModuleBinding
+    # table, whose names are reserved and never Project-reachable. The scoped
+    # table is read by the same machinery under its own pattern, because scoped
+    # and pure are different contracts and must not merge into one list.
+    def module_bindings(pattern: re.Pattern[str], label: str) -> list[tuple[str, str]]:
+        bindings: list[tuple[str, str]] = []
+        for row in pattern.finditer(framework_bundle):
+            span = braced_span(framework_bundle, row.end() - 1)
+            fields = [unescape(literal) for literal in STRING_LITERAL.findall(span)]
+            if len(fields) < 2:
+                raise SystemExit(
+                    f"{FRAMEWORK_BUNDLE_SOURCE}: a {label} row holds fewer "
+                    "than the private/public name pair it must declare"
+                )
+            private_name, public_name = fields[0], fields[1]
+            if not re.fullmatch(r"[a-z0-9_-]+", private_name):
+                raise SystemExit(
+                    f"{FRAMEWORK_BUNDLE_SOURCE}: {label} private name "
+                    f"{private_name!r} is not a bare module name"
+                )
+            if not re.fullmatch(r"@umbraflow/[a-z0-9_/-]+", public_name):
+                raise SystemExit(
+                    f"{FRAMEWORK_BUNDLE_SOURCE}: {label} public name "
+                    f"{public_name!r} is not an @umbraflow/ module name"
+                )
+            bindings.append((private_name, public_name))
+        return bindings
+
+    def published_modules(bindings: list[tuple[str, str]]) -> list[dict[str, object]]:
+        modules: list[dict[str, object]] = []
+        for private_name, public_name in bindings:
+            relative_path = f"{FRAMEWORK_RUNTIME_DIRECTORY}/{private_name}.luau"
+            module_source = read(root, relative_path)
+            target = re.escape(private_name)
+            exports = sorted(
+                set(
+                    re.findall(
+                        rf"^function\s+{target}\.([a-z][a-z0-9_]*)\s*\(",
+                        module_source,
+                        re.MULTILINE,
+                    )
+                    + re.findall(
+                        rf"^{target}\.([a-z][a-z0-9_]*)\s*=",
+                        module_source,
+                        re.MULTILINE,
+                    )
+                )
+            )
+            if not exports:
+                raise SystemExit(f"{relative_path}: publishes no readable exports")
+            modules.append(
+                {
+                    "name": public_name,
+                    "exports": exports,
+                    "source_hash": hashlib.sha256(
+                        (root / relative_path).read_bytes()
+                    ).hexdigest(),
+                }
+            )
+        modules.sort(key=lambda module: str(module["name"]))
+        return modules
+
+    pure_bindings = module_bindings(PURE_MODULE_BINDING, "PureModuleBinding")
     if not pure_bindings:
         raise SystemExit(
             f"{FRAMEWORK_BUNDLE_SOURCE}: exposes no reserved Framework modules"
         )
-    reserved_modules: list[dict[str, object]] = []
-    for private_name, public_name in pure_bindings:
-        relative_path = f"{FRAMEWORK_RUNTIME_DIRECTORY}/{private_name}.luau"
-        module_source = read(root, relative_path)
-        target = re.escape(private_name)
-        exports = sorted(
-            set(
-                re.findall(
-                    rf"^function\s+{target}\.([a-z][a-z0-9_]*)\s*\(",
-                    module_source,
-                    re.MULTILINE,
-                )
-                + re.findall(
-                    rf"^{target}\.([a-z][a-z0-9_]*)\s*=",
-                    module_source,
-                    re.MULTILINE,
-                )
-            )
+    scoped_bindings = module_bindings(SCOPED_MODULE_BINDING, "ScopedModuleBinding")
+    if not scoped_bindings:
+        raise SystemExit(
+            f"{FRAMEWORK_BUNDLE_SOURCE}: exposes no scoped Framework modules"
         )
-        if not exports:
-            raise SystemExit(f"{relative_path}: publishes no readable exports")
-        reserved_modules.append(
-            {
-                "name": public_name,
-                "exports": exports,
-                "source_hash": hashlib.sha256(
-                    (root / relative_path).read_bytes()
-                ).hexdigest(),
-            }
+    # The two contracts must not overlap: one name that appeared in both tables
+    # would be a module a reader could not tell was loadable in a reducer.
+    shared = {name for _stem, name in pure_bindings} & {
+        name for _stem, name in scoped_bindings
+    }
+    if shared:
+        raise SystemExit(
+            f"{FRAMEWORK_BUNDLE_SOURCE}: {sorted(shared)} are declared both pure "
+            "and scoped, so the published contract cannot say which they are"
         )
-    reserved_modules.sort(key=lambda module: str(module["name"]))
+    reserved_modules = published_modules(pure_bindings)
+    scoped_modules = published_modules(scoped_bindings)
     return {
         "apis": apis,
         "globals": globals_,
         "reserved_modules": reserved_modules,
+        "scoped_modules": scoped_modules,
         "limits": limit_rows,
         "module_grammar_contract": string_constant("k_moduleGrammarContract"),
         "resource_grammar_contract": string_constant("k_resourceGrammarContract"),
@@ -1414,17 +1511,63 @@ def render(root: Path) -> str:
     lines.extend(
         [
             "",
+            "Reserved SCOPED Framework modules: "
+            + ", ".join(
+                f"`{module['name']}`"
+                for module in script_contract["scoped_modules"]
+            )
+            + ".",
+            "These are a DIFFERENT contract from the pure modules above and are",
+            "not interchangeable with them. A pure module loads in every Project",
+            "program: the five-function ProjectPlugin path and the Journal reducer",
+            "included. A scoped module loads only inside a scoped Tool execution",
+            "program, and `require` of one of these names from any other program",
+            "fails in the resolver naming the module, because the scoped set is a",
+            "property of the program type rather than of a runtime flag. They are",
+            "absent from the pure module closure, from the trusted framework",
+            "bundle, and from every project-global projection.",
+            "",
+            "A scoped module reaches the world only by making an ordinary Tool",
+            "call through one private capability primitive it is handed as its",
+            "chunk argument and cannot republish. Every such call creates a",
+            "ToolInvocation, spends Tool-call budget, and is recorded at a call",
+            "position the host assigns; a script cannot name, pass, or influence",
+            "that position. Tool discovery and description are frozen data read",
+            "from the run's pinned Tool catalog resource, not a call. A Tool",
+            "Runtime refusal is terminal for the run and no `pcall` can observe",
+            "it, while a Tool that ran and failed reports its delivery",
+            "classification inside the value it answers with.",
+            "",
+        ]
+    )
+    lines.extend(
+        table(
+            ["Reserved scoped module", "Exports", "Source SHA-256"],
+            [
+                [
+                    f"`{module['name']}`",
+                    ", ".join(f"`{name}`" for name in module["exports"]),
+                    f"`{module['source_hash']}`",
+                ]
+                for module in script_contract["scoped_modules"]
+            ],
+        )
+    )
+    lines.extend(
+        [
+            "",
             "### 4.2 Identity preimage",
             "",
             f"`plugin_environment_hash` is SHA-256 over exact canonical bytes emitted",
             f"by `currentProjectPluginEnvironmentMaterial()` in `{PROJECT_PLUGIN_SOURCE}`.",
             "The preimage contains the pure-data environment material; every public",
-            "and internal Framework module name, source hash, and Project visibility;",
-            "and the resolver, freeze and separate release-owned budget contracts.",
-            "The nested pure-data material",
-            "contains the trusted bridge source; compiler options; API contracts;",
-            "frozen tables and global whitelist; grammar, interrupt and module-failure",
-            "contracts; every numeric limit below; and the pinned Luau implementation.",
+            "and internal Framework module name, source hash, dependency depth, and",
+            "Project visibility; and the freeze and separate release-owned budget",
+            "contracts. The nested pure-data material contains the trusted bridge",
+            "source; compiler options; API contracts; frozen tables and global",
+            "whitelist; grammar, interrupt and module-failure contracts; the module",
+            "resolver's reserved prefix and caller-relative markers; every numeric",
+            "limit below; and the pinned Luau implementation.",
             "",
             f"Compiler: optimization `{compiler['optimization_level']}`, debug",
             f"`{compiler['debug_level']}`, remaining options",

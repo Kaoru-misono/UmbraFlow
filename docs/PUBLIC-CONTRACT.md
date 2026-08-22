@@ -31,7 +31,7 @@ Parity for one of these is byte identity: read the file, do not copy it.
 | `https://umbraflow.dev/schema/project-attestation/v2` | v2 | -- | `schema/umbraflow-project-attestation-v2.schema.json` | `set_version`, `predecessor_set_id`, `bundle_root_hash`, `plugin_id`, `attestations` |
 | `https://umbraflow.dev/schema/project-observation-proposal/v1` | v1 | `umbraflow-project-observation-proposal/v1` | `schema/umbraflow-project-observation-proposal-v1.schema.json` | `schema`, `canonical_opaque_payload`, `project_tool_preconditions`, `observed_instance_proposals` |
 | `https://umbraflow.dev/schema/project-observation/v1` | v1 | `umbraflow-project-observation/v1` | `schema/umbraflow-project-observation-v1.schema.json` | `schema`, `canonical_opaque_payload`, `project_tool_preconditions`, `observed_instances` |
-| `https://umbraflow.local/schema/project-registration-v2` | v2 | -- | `schema/umbraflow-project-registration-v2.schema.json` | `project_registration_format`, `plugin_id`, `plugin_module_manifest_hash`, `plugin_environment_hash`, `tool_catalog_hash`, `project_state_schema_hash`, `project_observation_schema_hash`, `project_tool_precondition_schema_hash`, `reconcile_payload_schema_manifest_hash`, `journal_event_schema_manifest_hash`, `observed_instance_identity_schema_hashes`, `baseline_event_type`, `project_resources` |
+| `https://umbraflow.local/schema/project-registration-v2` | v2 | -- | `schema/umbraflow-project-registration-v2.schema.json` | `project_registration_format`, `plugin_id`, `plugin_module_manifest_hash`, `plugin_environment_hash`, `tool_catalog_hash`, `project_state_schema_hash`, `project_observation_schema_hash`, `project_tool_precondition_schema_hash`, `reconcile_payload_schema_manifest_hash`, `journal_event_schema_manifest_hash`, `observed_instance_identity_schema_hashes`, `baseline_event_type`, `project_resources`, `project_tool_bindings` |
 | `https://umbraflow.dev/schema/project-tool-precondition/v1` | v1 | -- | `schema/umbraflow-project-tool-precondition-v1.schema.json` | `name`, `status` |
 | `https://umbraflow.dev/schema/project/directory` | v2 | `umbraflow-project/v2` | `schema/umbraflow-project-v2.schema.json` | `deployments`, `primary_deployment`, `runtime_artifact`, `schema`, `template_cuts` |
 | `https://umbraflow.dev/schema/umbraflow-runtime-artifact-v1.schema.json` | v1 | -- | `schema/umbraflow-runtime-artifact-v1.schema.json` | `runtime_artifact_format`, `runtime_model_format`, `page_model`, `assets` |
@@ -447,6 +447,7 @@ the Tool Catalog names tool precondition schema {}, and the schema this deployme
 the Tool Catalog names effect payload schema {}, which this deployment does not carry: its effect_payload_schemas hash to {}
 this deployment supplies an effect payload schema hashing to {}, which the Tool Catalog's effect_payload_sha256s does not name
 the Tool Catalog names argument schema {}, which the tool precondition schema does not declare
+the Tool Catalog names result schema {}, which the tool precondition schema does not declare
 the Tool Catalog bounds an effect to payload schema {}, which this deployment does not carry: its effect_payload_schemas hash to {}
 the journal event schema manifest names payload schema {} for {}, which this deployment does not carry: its journal_payload_schemas hash to {}
 this deployment supplies a journal payload schema hashing to {}, which the journal event schema manifest names under no event type
@@ -581,30 +582,60 @@ Unicode-derived data is distributed under `modules/task/runtime/UNICODE-LICENSE.
 | Reserved module | Exports | Source SHA-256 |
 | --- | --- | --- |
 | `@umbraflow/collections` | `append`, `contains`, `filter`, `fold`, `has`, `list`, `map`, `map_remove`, `map_set`, `set`, `set_at`, `stable_sort` | `958691559a7a1592c8474981976cec0ad86ec0d95c6dc437ed50cfab071363d5` |
-| `@umbraflow/jcs` | `encode`, `null` | `a9f2d71117e297a03f17af0d143c600c9e8c10f16995626ccbdfeaf0fae9e23b` |
-| `@umbraflow/json` | `append`, `array`, `encode`, `get`, `immutable`, `is_null`, `kind`, `null`, `object`, `parse`, `remove`, `set` | `4fe09ab82aa9bd341aa10a4b0bf86bc6abb7d2465386c350591b0e3936368c88` |
+| `@umbraflow/jcs` | `encode`, `equals`, `null` | `d68a96cfc30f8cf7d69511172576f7fe3bc0c229f6cdddc851a903f028721637` |
+| `@umbraflow/json` | `append`, `array`, `encode`, `get`, `immutable`, `is_null`, `kind`, `null`, `object`, `parse`, `remove`, `set` | `50bf47b5f1d21da0bc683ae8bcbed971644420f59ddf8d955f735581b67cffbd` |
 | `@umbraflow/result` | `and_then`, `err`, `is_error`, `is_ok`, `map`, `map_error`, `match`, `ok`, `unwrap_or` | `94c95226ab9c4c99fa1e9fa50bae377ff4d6dde65d671426f37bb87c189a5f75` |
-| `@umbraflow/text` | `case_fold`, `collapse_whitespace`, `contains`, `ends_with`, `equals`, `normalize`, `split`, `starts_with`, `tokens`, `trim`, `unicode_version` | `06e8a2749b9cb8e4c07b93d11aa635dd30bb87e5e1bff8da6cb04e6ab84d9590` |
+| `@umbraflow/text` | `case_fold`, `collapse_whitespace`, `contains`, `ends_with`, `equals`, `normalize`, `split`, `starts_with`, `tokens`, `trim`, `unicode_version` | `27d3dd8d13a9cda802ee07bd5a18f5e66dc27faae4c681b0955a9c6b1d3c67bc` |
 | `@umbraflow/utf8` | `classify`, `codepoints`, `is_valid`, `is_whitespace`, `length`, `slice`, `unicode_version`, `validate` | `d79e97a6dc10860e60bbfa713f49170b6279d0f05069db5da77f2f3ed598a410` |
+
+Reserved SCOPED Framework modules: `@umbraflow/audit`, `@umbraflow/screen`, `@umbraflow/tools`, `@umbraflow/workflow`.
+These are a DIFFERENT contract from the pure modules above and are
+not interchangeable with them. A pure module loads in every Project
+program: the five-function ProjectPlugin path and the Journal reducer
+included. A scoped module loads only inside a scoped Tool execution
+program, and `require` of one of these names from any other program
+fails in the resolver naming the module, because the scoped set is a
+property of the program type rather than of a runtime flag. They are
+absent from the pure module closure, from the trusted framework
+bundle, and from every project-global projection.
+
+A scoped module reaches the world only by making an ordinary Tool
+call through one private capability primitive it is handed as its
+chunk argument and cannot republish. Every such call creates a
+ToolInvocation, spends Tool-call budget, and is recorded at a call
+position the host assigns; a script cannot name, pass, or influence
+that position. Tool discovery and description are frozen data read
+from the run's pinned Tool catalog resource, not a call. A Tool
+Runtime refusal is terminal for the run and no `pcall` can observe
+it, while a Tool that ran and failed reports its delivery
+classification inside the value it answers with.
+
+| Reserved scoped module | Exports | Source SHA-256 |
+| --- | --- | --- |
+| `@umbraflow/audit` | `record`, `recorded` | `59ca9c95641c7582282ea718017f2893f60e0573f9375705048b817eeb497425` |
+| `@umbraflow/screen` | `actions`, `capture`, `observation`, `observe`, `targets`, `use`, `used` | `32c35f0363f2bf68c30800ec8aa5d1bb0f94547639b2ecc1fba88e8ccdeeeeda` |
+| `@umbraflow/tools` | `call`, `call_identity`, `catalog_hash`, `describe`, `evidence`, `knows`, `names`, `result`, `state`, `states`, `tool_name` | `bcf5b96295b298da14fd658a42494fe3a377da8d8562cd268dbb80952c83b93b` |
+| `@umbraflow/workflow` | `absent`, `child_flow`, `delivered`, `pending`, `reconcile`, `recover`, `refused`, `settled`, `status`, `stopped`, `uncertain`, `wait` | `a3af209b8c3ba732e5f9b90c9bc0ac5676412a4060e6e97dbef4f84226b92250` |
 
 ### 4.2 Identity preimage
 
 `plugin_environment_hash` is SHA-256 over exact canonical bytes emitted
 by `currentProjectPluginEnvironmentMaterial()` in `modules/operator/source/operator/project-plugin.cpp`.
 The preimage contains the pure-data environment material; every public
-and internal Framework module name, source hash, and Project visibility;
-and the resolver, freeze and separate release-owned budget contracts.
-The nested pure-data material
-contains the trusted bridge source; compiler options; API contracts;
-frozen tables and global whitelist; grammar, interrupt and module-failure
-contracts; every numeric limit below; and the pinned Luau implementation.
+and internal Framework module name, source hash, dependency depth, and
+Project visibility; and the freeze and separate release-owned budget
+contracts. The nested pure-data material contains the trusted bridge
+source; compiler options; API contracts; frozen tables and global
+whitelist; grammar, interrupt and module-failure contracts; the module
+resolver's reserved prefix and caller-relative markers; every numeric
+limit below; and the pinned Luau implementation.
 
 Compiler: optimization `1`, debug
 `0`, remaining options
 `default_zero_v1`. Luau: `luau-0.730+5bc7f4b23756f69f4669b419fa9034f117ccd6fe`.
 
 Module grammar contract: `ascii_slash_segments_relative_prefix_reserved_umbraflow_v2`;
-resource grammar contract: `ascii_dotted_segments_v1`;
+resource grammar contract: `ascii_dotted_segments_reserved_umbraflow_v2`;
 module failure contract: `canonical_cache_cycle_cached_script_terminal_vm_v1`;
 interrupt contract: `non_gc_loop_backedge_call_return_safepoints_v1`.
 
@@ -616,6 +647,7 @@ interrupt contract: `non_gc_loop_backedge_call_return_safepoints_v1`.
 | `entry_point_count` | `32` |
 | `entry_point_name_bytes` | `64` |
 | `framework_module_count` | `16` |
+| `framework_resource_count` | `16` |
 | `host_error_bytes` | `4096` |
 | `instruction_budget_ticks` | `2000000` |
 | `module_bytecode_bytes` | `1048576` |
