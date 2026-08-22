@@ -97,6 +97,40 @@ namespace uf::task
             })
         )lua"};
 
+        // The whole of TaskHost::deliverUiAction that runs inside the VM. It
+        // captures a frame, resolves the state on it, resolves the named ui
+        // target's Binding and asks the resolver to authorize the named action
+        // on it; the Receipt that mint produces is Host-private storage the
+        // chunk never sees, and the cycle is deliberately left OPEN so the
+        // delivery that follows posts into the frame the placement was measured
+        // on.
+        //
+        // The two names are interpolated rather than passed as arguments
+        // because a trusted chunk has no argument channel, and that is safe
+        // exactly because deliverUiAction admits only names its own generation's
+        // model declares: model.luau accepts an id only as
+        // ^[a-z][a-z0-9._:-]*$, so a declared name cannot carry a quote and an
+        // undeclared one never reaches this format call.
+        [[nodiscard]]
+        auto authorizeUiActionSource(
+            std::string_view uiTarget,
+            std::string_view action
+        ) -> std::string
+        {
+            return std::format(
+                R"lua(
+            local cycle = observe.open(project.load_project())
+            local state = cycle:resolve_state()
+            local binding = cycle:resolve_binding(state, "{}")
+            local receipt, reason = cycle:authorize(binding, "{}")
+            if receipt == nil then error(reason) end
+            return 1
+        )lua",
+                uiTarget,
+                action
+            );
+        }
+
         [[nodiscard]]
         auto runFinishedEvent(TaskRunReport const& report) -> trace::TraceEventSpec
         {
@@ -884,6 +918,72 @@ namespace uf::task
         }
         auto const receipt = Receipt{m_hostNonce, found->ordinal};
         return deliver(std::move(authority), receipt, context);
+    }
+
+    auto TaskHost::deliverUiAction(
+        DispatchAuthority authority,
+        TaskContext& context,
+        std::string_view uiTarget,
+        std::string_view action
+    ) -> Result<HostDeliveryReport>
+    {
+        UF_TRY_VALUE(p_generation, requireGeneration(authority.runtimeGeneration));
+        auto const& binding = p_generation->binding();
+        if (p_generation->kind() != GenerationKind::Runtime || !binding)
+        {
+            return fail(
+                AutomationErrorKind::UnsupportedCapability,
+                "authorized UI-action delivery requires a privately finalized "
+                "Runtime generation"
+            );
+        }
+
+        // Membership in what the trusted parser declared, and it is two things
+        // at once: the refusal a caller naming a target or action this model
+        // does not have earns, and the proof that the two names are safe to
+        // interpolate into a chunk. A name that reaches the format call is a
+        // name model.luau already admitted as an identifier.
+        auto const& declared = binding->declaredUi();
+        if (std::ranges::find(declared.uiTargets, uiTarget) == declared.uiTargets.end())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "this generation's RuntimeModel declares no ui target {}",
+                    uiTarget
+                )
+            );
+        }
+        if (std::ranges::find(declared.actions, action) == declared.actions.end())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "this generation's RuntimeModel declares no UI action {}",
+                    action
+                )
+            );
+        }
+
+        // The chunk leaves its cycle open on every path, including a raise, and
+        // a successful delivery spends it. The sweep is therefore unconditional
+        // and outranks both results: without it a refused delivery would leave
+        // the generation holding a frame no ticket names, and the next capture
+        // would be refused by the one-cycle rule.
+        auto const generation = authority.runtimeGeneration;
+        auto sweep = scopeExit(
+            [&context]() noexcept
+            {
+                static_cast<void>(context.sweepOpenCycle());
+            }
+        );
+        UF_TRY(runTrustedRuntime(
+            generation,
+            context,
+            authorizeUiActionSource(uiTarget, action),
+            "runtime-authorize"
+        ));
+        return deliver(std::move(authority), context);
     }
 
     auto TaskHost::adoptControlFence(ControlFence fence) -> Status

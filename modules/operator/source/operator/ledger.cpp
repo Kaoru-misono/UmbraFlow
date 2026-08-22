@@ -432,75 +432,6 @@ namespace uf::operator_runtime
             return std::visit(PersistedToolProviderVisitor{}, provider);
         }
 
-        // How a call reaches the world at all.
-        //
-        // A call answered by a bound Project entry reaches the world ONLY
-        // through child Tool calls: the scoped program type has no other
-        // capability, so every effect it causes is a durable row of its own.
-        // A call answered by a Framework provider reaches the world directly,
-        // and what that provider did is knowable only from the outcome it
-        // reported.
-        enum class ToolEffectComposition : uint8
-        {
-            RecordedChildren,
-            DirectLeaf,
-        };
-
-        // The closed set of answerers, and the only place the durable
-        // provider_kind vocabulary is joined to what an answerer can do. A
-        // Project descriptor with no binding is refused at load, so
-        // provider_kind='project' IS "answered by a bound scoped entry".
-        struct ToolAnswerer final
-        {
-            std::string_view      providerKind{};
-            ToolEffectComposition composition{ToolEffectComposition::DirectLeaf};
-        };
-
-        constexpr auto k_toolAnswerers = std::array{
-            ToolAnswerer{"framework", ToolEffectComposition::DirectLeaf},
-            ToolAnswerer{"project", ToolEffectComposition::RecordedChildren},
-        };
-
-        [[nodiscard]]
-        auto toolEffectComposition(ToolProviderIdentity const& provider)
-            -> ToolEffectComposition
-        {
-            auto const kind  = persistedToolProvider(provider).kind;
-            auto const found = std::ranges::find(
-                k_toolAnswerers,
-                kind,
-                &ToolAnswerer::providerKind
-            );
-            if (found == k_toolAnswerers.end())
-            {
-                UF_UNREACHABLE_MSG("Unknown Tool provider kind");
-            }
-            return found->composition;
-        }
-
-        // The one rule that decides whether a crash inside a dispatch can have
-        // left an external effect no durable row records, and therefore the one
-        // rule that decides both what a restart classifies uncertain and what a
-        // re-entry refuses.
-        //
-        // Two facts decide it, and neither is sufficient alone. A composed call
-        // re-executes effect-free up to the recorded frontier however mutating
-        // it is, because its whole effect surface is children that already
-        // carry their own classification. A read-only leaf declares no effect
-        // for a delivery to be uncertain about, so re-running its provider
-        // delivers nothing twice. Only a mutating leaf in flight is the
-        // non-replayable atom: the world may or may not have moved and no
-        // record can say.
-        [[nodiscard]]
-        auto toolCallEffectMayBeUnrecorded(
-            ToolEffectComposition composition,
-            ToolMutability mutability
-        ) noexcept -> bool
-        {
-            return composition == ToolEffectComposition::DirectLeaf
-                && mutability == ToolMutability::Mutating;
-        }
-
         // The same rule as a row filter over tool_call_history joined to
         // tool_call_positions, GENERATED from the predicate rather than
         // restated beside it. The (answerer, mutability) pairs are a closed
@@ -5877,6 +5808,17 @@ namespace uf::operator_runtime
             UF_TRY(transaction.commit());
             return next;
         }
+    }
+
+    // Defined here rather than beside its durable-spelling overload because the
+    // provider-identity-to-provider_kind mapping is this file's, and a second
+    // copy of it next to the answerer table would be a second answer to "which
+    // kind is this provider" -- the exact duplication the answerer table exists
+    // to close.
+    auto toolEffectComposition(ToolProviderIdentity const& provider)
+        -> ToolEffectComposition
+    {
+        return toolEffectComposition(persistedToolProvider(provider).kind);
     }
 
     struct OperatorCoordinator::Impl final
@@ -11769,6 +11711,157 @@ namespace uf::operator_runtime
         };
     }
 
+    auto toolCallCompletionFor(task::HostDeliveryReport const& report)
+        -> Result<ToolCallCompletion>
+    {
+        auto const outcome   = report.outcome();
+        auto const delivered = outcome == task::DeliveryOutcome::Delivered;
+        auto const verdict   = std::string{deliveryOutcomeWireName(outcome)};
+
+        // One payload and one evidence shape for all three, because the
+        // difference between them is the classification and not the vocabulary.
+        // A reader that had to learn three shapes to compare two outcomes could
+        // not compare them.
+        UF_TRY_VALUE(
+            payload,
+            CanonicalJson::parseExact(
+                json::canonicalBytes(json::Value::ofObject({
+                    {"delivered", json::Value::ofBoolean(delivered)},
+                    {"reason", json::Value::ofString(std::string{report.reason()})},
+                    {"verdict", json::Value::ofString(verdict)},
+                }))
+            )
+        );
+        // The counters render as decimal strings: RFC 8785 numbers are
+        // IEEE-754 doubles, and a Receipt ordinal above 2^53 would round
+        // inside a durable Tool outcome.
+        UF_TRY_VALUE(
+            evidence,
+            CanonicalJson::parseExact(
+                json::canonicalBytes(json::Value::ofObject({
+                    {"host_delivery", json::Value::ofString(verdict)},
+                    {"posted_inputs",
+                     json::Value::ofString(delivered ? "1" : "0")},
+                    {"receipt_id",
+                     json::Value::ofString(std::to_string(report.receiptId()))},
+                }))
+            )
+        );
+        switch (outcome)
+        {
+        case task::DeliveryOutcome::Delivered:
+            return ToolCallCompletion::confirmed(
+                std::move(payload),
+                std::move(evidence)
+            );
+        case task::DeliveryOutcome::NotDelivered:
+            return ToolCallCompletion::provenAbsent(
+                std::move(payload),
+                std::move(evidence)
+            );
+        case task::DeliveryOutcome::TransportUnknown:
+            return ToolCallCompletion::possible(
+                std::move(payload),
+                std::move(evidence)
+            );
+        }
+        UF_UNREACHABLE_MSG("Unknown task::DeliveryOutcome value");
+    }
+
+    auto OperatorCoordinator::reserveToolCallDispatch(
+        ToolCallPositionIdentity const& call,
+        ControlLease const& lease,
+        GenerationId runtimeGeneration,
+        std::string const& uiTarget
+    ) -> Result<ToolCallDispatchReservation>
+    {
+        if (uiTarget.empty())
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "a Tool call input delivery must name the model target its "
+                "observation resolved"
+            );
+        }
+        auto* const database = m_impl->database.get();
+        UF_TRY_VALUE(transaction, Transaction::begin(database));
+        UF_TRY(requireLiveLease(
+            database,
+            lease,
+            "Tool call input delivery lease was superseded"
+        ));
+
+        // The durable boundary, read rather than restated. `dispatching` is
+        // exactly "beginToolCallDispatch committed and no terminal outcome has
+        // been written", so the row is the proof and the active attempt is read
+        // off it instead of being carried in by a caller.
+        UF_TRY_VALUE(
+            query,
+            prepare(
+                database,
+                "SELECT history.active_admission_attempt, "
+                "attempt.controlled_target_id "
+                "FROM tool_call_history history "
+                "JOIN tool_admission_attempts attempt "
+                "ON attempt.call_identity=history.call_identity "
+                "AND attempt.attempt_number=history.active_admission_attempt "
+                "WHERE history.call_identity=?1 AND history.state='dispatching'"
+            )
+        );
+        UF_TRY(bindText(database, query.get(), 1, call.identity().hex()));
+        if (sqlite3_step(query.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool call input delivery names no dispatching Tool call"
+            );
+        }
+        auto const attemptNumber = static_cast<uint64>(
+            sqlite3_column_int64(query.get(), 0)
+        );
+        if (columnText(query.get(), 1) != lease.controlledTargetId)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool call input delivery lease does not own the controlled "
+                "target the admission recorded"
+            );
+        }
+        UF_TRY(transaction.commit());
+
+        // Six of the eleven members are the Host's own checks and are filled
+        // from the live lease and the caller's generation. The five that remain
+        // belong to the Operation path, where the Host carries them back so
+        // recordDeliveryOutcome can find its dispatches row; on this path the
+        // outcome is recorded by completeToolCallDispatch against the token
+        // that crossed the boundary, so there is nothing for the Host to carry.
+        //
+        // operationId and authorityDecisionId are therefore empty, and that is
+        // load-bearing rather than filler: recordDeliveryOutcome joins on
+        // operationId, so a Tool-call delivery report presented to it matches
+        // no dispatch and is refused. frozenPlanHash carries the call identity,
+        // which is this path's frozen statement of what the delivery was
+        // authorised to do -- the coordinate, the tool, the exact arguments,
+        // the descriptor and the catalog, all inside one hash -- and
+        // dispatchSequence carries the admission attempt, which is what
+        // sequences one call's dispatches.
+        return ToolCallDispatchReservation{
+            .authority = task::DispatchAuthority{
+                .controlledTargetId  = lease.controlledTargetId,
+                .uiTarget            = uiTarget,
+                .leaseId             = lease.leaseId,
+                .operationId         = {},
+                .authorityDecisionId = {},
+                .frozenPlanHash      = call.identity(),
+                .runtimeGeneration   = runtimeGeneration,
+                .targetGeneration    = {},
+                .sessionEpoch        = lease.sessionEpoch,
+                .fencingToken        = lease.fencingToken,
+                .dispatchSequence    = attemptNumber,
+            },
+        };
+    }
+
     auto OperatorCoordinator::completeToolCallDispatch(
         ToolCallDispatch const& dispatch,
         ToolCallCompletion const& completion
@@ -11783,10 +11876,18 @@ namespace uf::operator_runtime
             historyQuery,
             prepare(
                 database,
-                "SELECT state, revision, active_admission_attempt, "
-                "outcome_payload, outcome_payload_hash, evidence, evidence_hash, "
-                "mutating "
-                "FROM tool_call_history WHERE call_identity=?1"
+                // The position row is joined for its provider_kind, because
+                // the refusal below is keyed on how this call reaches the
+                // world and not only on whether it may change it.
+                "SELECT history.state, history.revision, "
+                "history.active_admission_attempt, history.outcome_payload, "
+                "history.outcome_payload_hash, history.evidence, "
+                "history.evidence_hash, history.mutating, "
+                "position.provider_kind "
+                "FROM tool_call_history history "
+                "JOIN tool_call_positions position "
+                "ON position.call_identity=history.call_identity "
+                "WHERE history.call_identity=?1"
             )
         );
         UF_TRY(bindText(
@@ -11812,13 +11913,36 @@ namespace uf::operator_runtime
         auto const activeAttempt = static_cast<uint64>(
             sqlite3_column_int64(historyQuery.get(), 2)
         );
-        auto const mutating = sqlite3_column_int(historyQuery.get(), 7) != 0;
-        if (mutating && terminalState == ToolCallState::TerminalFailure)
+        auto const mutating   = sqlite3_column_int(historyQuery.get(), 7) != 0;
+        auto const mutability = mutating
+            ? ToolMutability::Mutating
+            : ToolMutability::ReadOnly;
+
+        // The same predicate the restart's row filter is generated from and
+        // the re-entry gate refuses on, asked here for the same reason: whether
+        // this call could have reached the world without a durable row saying
+        // so. Only for that shape is terminal failure a claim the ledger cannot
+        // let a provider make, because "it failed" would be asserting an
+        // absence nothing observed.
+        //
+        // A mutating COMPOSED call may report terminal failure, and must be
+        // able to: its whole effect surface is children that each already carry
+        // their own classification, so a frame refused by name delivered
+        // nothing this ledger does not already know about. Converting that to
+        // `possible` would set the target-wide mutation barrier over an effect
+        // that was never the frame's.
+        if (
+            toolCallEffectMayBeUnrecorded(
+                toolEffectComposition(columnText(historyQuery.get(), 8)),
+                mutability
+            )
+            && terminalState == ToolCallState::TerminalFailure
+        )
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "A mutating Tool cannot report terminal failure after dispatch; "
-                "it must report possible"
+                "A mutating Tool answered directly by a provider cannot report "
+                "terminal failure after dispatch; it must report possible"
             );
         }
 

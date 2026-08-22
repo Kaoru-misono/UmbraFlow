@@ -285,14 +285,20 @@ namespace uf::operator_runtime
                     .effects       = effects,
                 },
             },
+            // Stated by the provider rather than converted from a failure.
+            // This call is COMPOSED, so nothing turns its failure into
+            // uncertainty; `possible` stays admissible for it because a
+            // handler that replayed to an unresolved child inherits that
+            // child's uncertainty and has nothing else to report.
             [&providerCalls](ToolCallPositionIdentity const&)
                 -> Result<ToolCallCompletion>
             {
                 ++providerCalls;
-                return fail(
-                    AutomationErrorKind::IoFailure,
-                    "input transport did not prove delivery"
+                auto explanation = CanonicalJson::parseExact(
+                    R"({"kind":"io_failure","reason":"a child delivery never resolved"})"
                 );
+                REQUIRE(explanation.has_value());
+                return ToolCallCompletion::possible(*explanation);
             }
         );
         auto const possibleWhy = possible.has_value()
@@ -637,9 +643,14 @@ namespace uf::operator_runtime
                     .effects       = effects,
                 },
             },
+            // Stated by the provider rather than converted from a failure:
+            // this call is COMPOSED, so the executor leaves its terminal
+            // failure terminal. `possible` stays admissible for it, because a
+            // handler that replayed to an unresolved child inherits that
+            // child's uncertainty and has nothing else to report.
             [&error](ToolCallPositionIdentity const&)
             {
-                return ToolCallCompletion::terminalFailure(*error);
+                return ToolCallCompletion::possible(*error);
             }
         );
         auto const possibleWhy = possible.has_value()
@@ -781,12 +792,17 @@ namespace uf::operator_runtime
                     .effects       = effects,
                 },
             },
+            // Stated rather than converted, for the reason the terminally
+            // unresolved case gives: this call is composed, so nothing turns
+            // its failure into uncertainty and only the handler itself can
+            // report inheriting a child's.
             [](ToolCallPositionIdentity const&) -> Result<ToolCallCompletion>
             {
-                return fail(
-                    AutomationErrorKind::IoFailure,
-                    "input transport did not prove delivery"
+                auto explanation = CanonicalJson::parseExact(
+                    R"({"reason":"a child delivery never resolved"})"
                 );
+                REQUIRE(explanation.has_value());
+                return ToolCallCompletion::possible(*explanation);
             }
         );
         auto const possibleWhy = possible.has_value()

@@ -117,15 +117,30 @@ namespace uf::operator_runtime
                   return m_coordinator.beginToolCallDispatch(admitted);
               }();
         UF_TRY_VALUE(dispatch, std::move(dispatched));
+        // Whether this call's outcome is allowed to be uncertain is the same
+        // question the restart, the re-entry gate and the completion refusal
+        // ask, so it is the same predicate and not a second reading of
+        // mutability. A composed call's whole effect surface is children that
+        // already carry their own classification, so its failure is a fact
+        // about the frame and stays terminal; only a mutating leaf's failure
+        // could be hiding an effect no row records, and only that is converted.
+        //
+        // The composition comes off the coordinate the runtime minted, so no
+        // durable read is needed here: the provider identity inside it is the
+        // same one persistToolCallPosition wrote the provider_kind column from.
+        auto const effectMayBeUnrecorded = toolCallEffectMayBeUnrecorded(
+            toolEffectComposition(call.provider()),
+            requiredMutability
+        );
         auto provided = provider(call);
-        auto classified = [&provided, requiredMutability]()
+        auto classified = [&provided, effectMayBeUnrecorded]()
             -> Result<ToolCallCompletion>
         {
             if (provided)
             {
                 auto completion = std::move(*provided);
                 if (
-                    requiredMutability == ToolMutability::Mutating
+                    effectMayBeUnrecorded
                     && completion.kind()
                         == ToolCallCompletionKind::TerminalFailure
                 )
@@ -137,7 +152,7 @@ namespace uf::operator_runtime
                 }
                 return completion;
             }
-            return requiredMutability == ToolMutability::Mutating
+            return effectMayBeUnrecorded
                 ? providerPossibleCompletion(provided.error())
                 : providerFailureCompletion(provided.error());
         }();

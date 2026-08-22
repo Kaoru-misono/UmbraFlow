@@ -259,12 +259,35 @@ namespace uf::service
             );
         }
 
-        // The verdict a delivery that has no seam to cross records. It is not
-        // an ObservationRefusal: the observation authority was resolved and
-        // spent, and what stopped the call is the Framework's own missing
-        // delivery path.
-        constexpr auto k_unwiredDeliveryVerdict = std::string_view{
-            "host_delivery_unwired"
+        // The verdict a delivery the Host refused before posting anything
+        // records. It is not an ObservationRefusal: the observation authority
+        // was resolved and spent, and what stopped the call is a refusal on the
+        // delivery side of that boundary.
+        constexpr auto k_refusedDeliveryVerdict = std::string_view{
+            "host_delivery_refused"
+        };
+
+        // The verdict a bare-coordinate input records, and it is a decision
+        // rather than a gap.
+        //
+        // The Host posts an input only against a Receipt, and a Receipt is the
+        // Host's proof that the point it posts was MEASURED on the frame it
+        // posts into: its surface, ui target, Binding, variant and proof
+        // locator all come from the trusted resolver, and TaskHost::deliver
+        // joins the ui target it names against the one the ledger reserved. A
+        // bare coordinate has none of those. Minting it a Receipt with those
+        // fields blank would be a proof of nothing, and it would turn that join
+        // into a comparison of one empty string against another -- a check that
+        // cannot fail, standing where the only check on aim is.
+        //
+        // So a bare coordinate posts nothing until it carries something a
+        // Receipt can be about. What that is is the open question, and it is a
+        // question about the Tool rather than about the Host: either the
+        // descriptor gains the frame the point was measured on, or the point is
+        // delivered under a distinct privileged authority that states plainly
+        // that nothing measured it.
+        constexpr auto k_unmeasuredInputVerdict = std::string_view{
+            "coordinate_input_unmeasured"
         };
 
         [[nodiscard]]
@@ -847,7 +870,8 @@ namespace uf::service
     }
 
     auto ProductLifecycle::answerSemanticInputTool(
-        operator_runtime::ToolCallPositionIdentity const& call
+        operator_runtime::ToolCallPositionIdentity const& call,
+        task::TaskContext& context
     ) -> Result<operator_runtime::ToolCallCompletion>
     {
         UF_TRY_VALUE(
@@ -901,28 +925,44 @@ namespace uf::service
         }
         UF_TRY_VALUE(resolved, m_impl->observations.resolve(consumption));
 
-        // TODO(cpp-debt): Host delivery for a Tool-call-native input has no
-        // seam yet. task::TaskHost::deliver is private to
-        // operator_runtime::OperatorTaskHost, and the only authority a Host
-        // acts on is minted by OperatorCoordinator::reserveDispatch, which is
-        // keyed on an Operation -- the orchestration path the generation cut
-        // deletes. What is missing is one Coordinator mint over a dispatching
-        // Tool call and one OperatorTaskHost delivery over it; both live in
-        // modules/operator. Until they exist this provider reaches the
-        // delivery boundary and posts nothing, which is what its proven_absent
-        // outcome says.
-        return absentInputResult(
-            k_unwiredDeliveryVerdict,
-            std::format(
-                "the observation authority for {} resolved semantic target {} "
-                "and UI action {} on frame {}, and no Host delivery seam exists "
-                "to post it",
-                resolved.controlledTargetId(),
-                resolved.localSemanticTarget(),
-                resolved.uiAction(),
-                resolved.frameIdentityHash().hex()
-            )
+        // The Host delivery seam. Nothing about what to deliver is stated
+        // here: the target and the action are the ones the authority resolved,
+        // the lease and the generation are this run's own, and the call is the
+        // coordinate the Coordinator already crossed the dispatch boundary for.
+        auto delivered = m_impl->operatorHost.deliverToolCallInput(
+            call,
+            m_impl->controlLease(),
+            m_impl->generation,
+            operator_runtime::OperatorTaskHost::ToolCallInputIntent{
+                .uiTarget = resolved.localSemanticTarget(),
+                .uiAction = resolved.uiAction(),
+            },
+            context
         );
+
+        // An Err from the seam is a refusal that posted nothing, and that is a
+        // property of the seam rather than an assumption made here: every
+        // refusal ahead of the engine call -- a superseded lease, a call whose
+        // row is no longer dispatching, a target or action this model does not
+        // declare, a resolution that found no Binding, a Receipt the Host would
+        // not mint -- returns before any input is authorized, and every failure
+        // from the engine call onwards is reported inside the report instead.
+        // So it is recorded as proven absence, for the reason absentInputResult
+        // states: classifying it possible would set the target-wide mutation
+        // barrier over an effect this run can prove never reached a sink.
+        if (!delivered)
+        {
+            return absentInputResult(
+                k_refusedDeliveryVerdict,
+                delivered.error().message()
+            );
+        }
+
+        // The classification is the ledger's. A provider that chose its own
+        // would be choosing whether the world may be uncertain about its own
+        // effect, and task::DeliveryOutcome is the only value that can prove
+        // one absent.
+        return operator_runtime::toolCallCompletionFor(*delivered);
     }
 
     auto ProductLifecycle::answerFrameworkTool(
@@ -941,7 +981,7 @@ namespace uf::service
         }
         if (toolName == k_semanticInputTool)
         {
-            return answerSemanticInputTool(call);
+            return answerSemanticInputTool(call, context);
         }
         if (toolName == k_waitTool)
         {
@@ -1007,13 +1047,15 @@ namespace uf::service
                 action,
                 requiredStringArgument(coordinateArguments.value(), "action")
             );
-            // TODO(cpp-debt): the same missing Host delivery seam
-            // answerSemanticInputTool names.
+            // TODO(cpp-debt): a bare coordinate has no Receipt to present, so
+            // it posts nothing; k_unmeasuredInputVerdict states why and what
+            // the Tool would have to carry for that to change.
             return absentInputResult(
-                k_unwiredDeliveryVerdict,
+                k_unmeasuredInputVerdict,
                 std::format(
                     "the bare-coordinate action {} on {} reached the delivery "
-                    "boundary, and no Host delivery seam exists to post it",
+                    "boundary, and nothing measured the point it names on the "
+                    "frame it would be posted into",
                     action,
                     m_impl->controller.controlledTargetId()
                 )

@@ -1036,7 +1036,10 @@ namespace uf::cli
                     coordinate.state
                     == operator_runtime::ToolCallState::ProvenAbsent
                 );
-                CHECK(inputVerdict(coordinate.payload) == "host_delivery_unwired");
+                CHECK(
+                    inputVerdict(coordinate.payload)
+                    == "coordinate_input_unmeasured"
+                );
 
                 auto const observed = issued(
                     "input-root",
@@ -1108,13 +1111,28 @@ namespace uf::cli
                     "framework.input.semantic_target",
                     presented("fixture.target", "fixture.press")
                 );
+
+                // It posts. The Host captures its own frame, resolves
+                // fixture.target on it, authorizes fixture.press on the Binding
+                // that resolved and delivers the Receipt that mint produced;
+                // the classification below is the ledger's reading of what the
+                // Host reported and not this provider's.
                 CHECK(
                     delivering.state
-                    == operator_runtime::ToolCallState::ProvenAbsent
+                    == operator_runtime::ToolCallState::Confirmed
                 );
-                CHECK(
-                    inputVerdict(delivering.payload) == "host_delivery_unwired"
+                auto const deliveringPayload = json::parse(delivering.payload);
+                REQUIRE_MESSAGE(
+                    deliveringPayload.has_value(),
+                    delivering.payload
                 );
+                auto const* const p_posted = deliveringPayload->find("delivered");
+                REQUIRE_MESSAGE(p_posted != nullptr, delivering.payload);
+                CHECK(p_posted->boolean());
+                auto const* const p_deliveredVerdict =
+                    deliveringPayload->find("verdict");
+                REQUIRE_MESSAGE(p_deliveredVerdict != nullptr, delivering.payload);
+                CHECK(p_deliveredVerdict->string() == "delivered");
 
                 // At most one native input consumes one observation authority.
                 auto const repeated = issued(
@@ -1123,6 +1141,40 @@ namespace uf::cli
                     presented("fixture.target", "fixture.press")
                 );
                 CHECK(inputVerdict(repeated.payload) == "already_consumed");
+
+                // A second authority, for the one refusal that lives past the
+                // observation's own bounds. The target below is declared, so
+                // the authority admits it and is spent; what refuses it is the
+                // resolver, which finds no Binding carrying this action on the
+                // frame the Host captured. Nothing was posted -- the refusal is
+                // ahead of the engine call -- so it is recorded as absence and
+                // not as uncertainty, which would have frozen the target over
+                // an input that never left the Framework.
+                auto const reobserved = issued(
+                    "input-root",
+                    "framework.screen.observe",
+                    "{}"
+                );
+                auto const reobservedPayload = json::parse(reobserved.payload);
+                REQUIRE(reobservedPayload.has_value());
+                auto const* const p_second =
+                    reobservedPayload->find("observation_reference");
+                REQUIRE(p_second != nullptr);
+                auto const secondReference = json::canonicalBytes(*p_second);
+                auto const unresolvable = issued(
+                    "input-root",
+                    "framework.input.semantic_target",
+                    R"({"observation_reference":)" + secondReference
+                        + R"(,"semantic_target":"fixture.marker")"
+                          R"(,"ui_action":"fixture.press"})"
+                );
+                CHECK(
+                    unresolvable.state
+                    == operator_runtime::ToolCallState::ProvenAbsent
+                );
+                CHECK(
+                    inputVerdict(unresolvable.payload) == "host_delivery_refused"
+                );
 
                 // Bytes this Framework never minted are refused at the seam,
                 // before a durable coordinate exists for them: recognition is
@@ -1154,9 +1206,10 @@ namespace uf::cli
             }
         );
 
-        // Nothing was posted, by any of them. That is what every proven_absent
-        // row above claims, and this is the sink saying the same thing.
-        CHECK(*delivered == 0U);
+        // Exactly one input reached the sink: the one call entitled to the
+        // authority it presented. Every other row above claims proven absence,
+        // and this is the sink saying the same thing about all of them.
+        CHECK(*delivered == 1U);
     }
 
     TEST_CASE("observe restarts through Coordinator and remains repeatable")

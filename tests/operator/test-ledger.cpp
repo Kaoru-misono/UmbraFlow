@@ -4983,18 +4983,6 @@ namespace uf::operator_runtime
 
         auto dispatch = prepared.store.beginToolCallDispatch(*admitted);
         REQUIRE(dispatch.has_value());
-        auto terminalError = CanonicalJson::parseExact(
-            R"({"error":"provider returned after dispatch"})"
-        );
-        REQUIRE(terminalError.has_value());
-        auto unsafeTerminal = prepared.store.completeToolCallDispatch(
-            *dispatch,
-            ToolCallCompletion::terminalFailure(*terminalError)
-        );
-        REQUIRE_FALSE(unsafeTerminal.has_value());
-        CHECK(unsafeTerminal.error().message().contains(
-            "must report possible"
-        ));
         auto result = CanonicalJson::parseExact(R"({"delivered":true})");
         REQUIRE(result.has_value());
         REQUIRE(prepared.store.completeToolCallDispatch(
@@ -8575,6 +8563,19 @@ namespace uf::operator_runtime
                 ? host->deliverIntoAnotherCycle(dispatch->authority)
                 : host->deliverReport(dispatch->authority);
             REQUIRE(report.outcome() == outcome);
+
+            // The ledger's Tool-call reading of the same report, asked here
+            // because this is the one place a Host produces both outcomes.
+            // Proving absence is what unlocks a Rejected disposition below, so
+            // the two readings have to agree about which outcome proves it --
+            // and exactly one does.
+            auto const completion = toolCallCompletionFor(report);
+            REQUIRE(completion.has_value());
+            CHECK(
+                (completion->kind() == ToolCallCompletionKind::ProvenAbsent)
+                == (outcome == task::DeliveryOutcome::NotDelivered)
+            );
+
             auto const reconciling = prepared.store.recordDeliveryOutcome(
                 prepared.lease,
                 dispatch->operationRevision,

@@ -315,6 +315,40 @@ namespace uf::task
             TaskContext& context
         ) -> Result<HostDeliveryReport>;
 
+        // Captures a frame, resolves `uiTarget` on it, authorizes `action` on
+        // the Binding that resolved, and delivers the Receipt that mint
+        // produced under `authority`.
+        //
+        // The four steps are ONE operation because the observation cycle is
+        // what joins them. A Receipt is measured on the frame its cycle holds
+        // and the input is posted into that same frame, so anything able to run
+        // between the mint and the delivery would be able to aim at one frame
+        // and post into another. This is also why the capture is here and not
+        // the caller's: observe() sweeps its own cycle, so a frame a caller had
+        // already observed is released before this call, and re-using its
+        // coordinates would be aiming at a frame nobody still holds.
+        //
+        // What ties the delivered input back to the frame the caller observed
+        // is therefore NOT the frame identity, which cannot survive the sweep.
+        // It is the (runtime generation, ui target, action) triple: the caller's
+        // authority names it, `authority.uiTarget` carries it to the Host, and
+        // deliver() refuses a Receipt whose intent names another target. The
+        // Binding is then re-resolved on the frame the input is actually posted
+        // into, so a world that moved between the two frames resolves a
+        // different placement or fails to resolve at all rather than delivering
+        // stale coordinates.
+        //
+        // Err means nothing was posted, exactly as for deliver(): everything
+        // ahead of the engine call refuses without consuming, and every failure
+        // past it is reported inside the returned HostDeliveryReport.
+        [[nodiscard]]
+        auto deliverUiAction(
+            DispatchAuthority authority,
+            TaskContext& context,
+            std::string_view uiTarget,
+            std::string_view action
+        ) -> Result<HostDeliveryReport>;
+
         // Raises this Host's control fence to the one the ledger now holds.
         // Strictly monotone: a fence at or below the current one is refused, so
         // a stale lease cannot re-arm a Host a takeover already fenced out. The

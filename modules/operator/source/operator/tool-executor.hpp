@@ -18,11 +18,11 @@ namespace uf::operator_runtime
     //
     // There is one provider protocol rather than a read-only and a mutating
     // one. A mutating provider may prove delivery, prove absence, or report
-    // uncertainty, and any error or terminal-failure it returns is
-    // conservatively persisted as possible because provider code ran only after
-    // the durable dispatch boundary; but which of the two a call is comes from
-    // the descriptor inside the coordinate, so a second callable type would
-    // only be a second spelling of one signature.
+    // uncertainty, and an error or terminal-failure returned by a MUTATING LEAF
+    // is conservatively persisted as possible because its provider code ran
+    // after the durable dispatch boundary and nothing else records what it did;
+    // but which shape a call is comes from the coordinate itself, so a second
+    // callable type would only be a second spelling of one signature.
     using ToolProvider =
         std::function<Result<ToolCallCompletion>(ToolCallPositionIdentity const&)>;
 

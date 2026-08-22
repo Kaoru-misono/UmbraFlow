@@ -4,6 +4,7 @@
 #include <operator/project-tool-program.hpp>
 #include <operator/tool-admission-request.hpp>
 #include <operator/tool-descriptor.hpp>
+#include <operator/tool-executor.hpp>
 #include <operator/tool-invocation.hpp>
 
 #include <deployment/project-deployment.hpp>
@@ -1723,6 +1724,87 @@ return {
                 "is a mutating leaf answered directly by a provider"
             ));
         }
+
+        SUBCASE("a mutating Framework leaf cannot report terminal failure")
+        {
+            // The completion-time half of the same key, and it is refused on
+            // the same conjunction rather than on mutability alone: only for a
+            // leaf could "it failed" be asserting an absence nothing observed.
+            auto const inputCall =
+                frameworkToolCall(program, root, k_inputTool, k_inputArguments);
+            REQUIRE(
+                prepared.store.persistToolCallPosition(root, inputCall)
+                    .has_value()
+            );
+            auto const authority = planAuthorityFor(
+                prepared.store,
+                registration,
+                prepared.manifest,
+                prepared.artifactRootHash
+            );
+            auto const admitted = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = prepared.controller,
+                    .lease      = prepared.lease,
+                    .root       = root,
+                    .call       = inputCall,
+                    .mutation   = ToolAdmissionRequest::Mutation{
+                        .planAuthority = authority,
+                        .effects       = std::vector{frameworkInputEffect(k_targetId)},
+                    },
+                }
+            );
+            REQUIRE_MESSAGE(admitted.has_value(), failureText(admitted));
+            auto const dispatch =
+                prepared.store.beginToolCallDispatch(*admitted);
+            REQUIRE_MESSAGE(dispatch.has_value(), failureText(dispatch));
+            auto const error =
+                CanonicalJson::parseExact(R"({"error":"the sink refused"})");
+            REQUIRE(error.has_value());
+            auto const refused = prepared.store.completeToolCallDispatch(
+                *dispatch,
+                ToolCallCompletion::terminalFailure(*error)
+            );
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(refused.error().message().contains("must report possible"));
+        }
+
+        SUBCASE("a mutating Framework leaf's provider failure is recorded uncertain")
+        {
+            // The executor's half, keyed on the same conjunction. A failing
+            // provider here could have moved the world with no row saying so,
+            // so its failure becomes uncertainty rather than a terminal claim
+            // -- and this is the one shape for which that conversion is right.
+            auto const inputCall =
+                frameworkToolCall(program, root, k_inputTool, k_inputArguments);
+            auto const authority = planAuthorityFor(
+                prepared.store,
+                registration,
+                prepared.manifest,
+                prepared.artifactRootHash
+            );
+            auto const answered = ToolRuntimeExecutor{prepared.store}.invoke(
+                ToolAdmissionRequest{
+                    .controller = prepared.controller,
+                    .lease      = prepared.lease,
+                    .root       = root,
+                    .call       = inputCall,
+                    .mutation   = ToolAdmissionRequest::Mutation{
+                        .planAuthority = authority,
+                        .effects       = std::vector{frameworkInputEffect(k_targetId)},
+                    },
+                },
+                [](ToolCallPositionIdentity const&) -> Result<ToolCallCompletion>
+                {
+                    return fail(
+                        AutomationErrorKind::IoFailure,
+                        "the input sink did not prove delivery"
+                    );
+                }
+            );
+            REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
+            CHECK(answered->state == ToolCallState::Possible);
+        }
     }
 
     TEST_CASE("a dispatcher with no Framework Tool provider is refused")
@@ -2147,16 +2229,50 @@ return {
         REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
 
         // The frame was refused loudly and the field that diverged is inside
-        // the durable row. The classification is `possible` rather than
-        // terminal failure because completion still keys uncertainty on
-        // mutability alone: a mutating call that reached its provider reports
-        // possible. That is conservative here -- this handler delivered
-        // nothing of its own -- and it is the completion-time half of the same
-        // cut, left for whoever lands production mutating providers.
-        CHECK(answered->state == ToolCallState::Possible);
+        // the durable row. The classification is TERMINAL FAILURE, and that is
+        // the completion-time half of the same cut: this handler is COMPOSED,
+        // so every effect it could have caused is one of its own recorded
+        // children and each of those already carries its own classification.
+        // Nothing about a refused frame is uncertain.
+        CHECK(answered->state == ToolCallState::TerminalFailure);
         CHECK(payloadOf(*answered).contains("canonical_args changed"));
         CHECK(payloadOf(*answered).contains("ordinal 1 under parent coordinate"));
         CHECK(log->handlerAnswers == 0U);
+
+        // And no barrier was set, which is the half a `possible` got wrong: it
+        // froze mutation for the whole target over an effect that was never
+        // this frame's, and only a reconciliation carrying fresh evidence
+        // about something that never happened could have lifted it.
+        auto const nextRoot = rootFor("dispatch-mutating-after-refusal");
+        REQUIRE(prepared.store.persistToolRootRequest(nextRoot).has_value());
+        auto const nextCall = projectRootCall(
+            program,
+            nextRoot,
+            k_mutatingHandlerTool,
+            R"({"children":[]})"
+        );
+        REQUIRE(
+            prepared.store.persistToolCallPosition(nextRoot, nextCall).has_value()
+        );
+        auto const authorityAfter = planAuthorityFor(
+            prepared.store,
+            registration,
+            prepared.manifest,
+            prepared.artifactRootHash
+        );
+        auto const readmitted = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = nextRoot,
+                .call       = nextCall,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .planAuthority = authorityAfter,
+                    .effects       = std::vector{projectEffect(k_targetId)},
+                },
+            }
+        );
+        REQUIRE_MESSAGE(readmitted.has_value(), failureText(readmitted));
     }
 
     // The classification pin: one restart, three interrupted dispatches, and

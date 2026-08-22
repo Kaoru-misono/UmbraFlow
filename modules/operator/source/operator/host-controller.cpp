@@ -174,4 +174,31 @@ namespace uf::operator_runtime
             .operation   = std::move(operation),
         };
     }
+
+    auto OperatorTaskHost::deliverToolCallInput(
+        ToolCallPositionIdentity const& call,
+        ControlLease const& lease,
+        GenerationId runtimeGeneration,
+        ToolCallInputIntent const& intent,
+        task::TaskContext& context
+    ) -> Result<task::HostDeliveryReport>
+    {
+        UF_TRY(requireControlledTarget(lease.controlledTargetId));
+        auto lock = std::scoped_lock{m_impl->targetSerialization};
+        UF_TRY_VALUE(
+            reservation,
+            m_impl->coordinator.reserveToolCallDispatch(
+                call,
+                lease,
+                runtimeGeneration,
+                intent.uiTarget
+            )
+        );
+        return m_impl->host.deliverUiAction(
+            std::move(reservation.authority),
+            context,
+            intent.uiTarget,
+            intent.uiAction
+        );
+    }
 }

@@ -388,6 +388,39 @@ namespace uf::operator_runtime
         uint64                  stepIndex{};
     };
 
+    // What one Tool-call-native input delivery was authorized against.
+    //
+    // It carries the authority and nothing else, and that is the whole
+    // difference from DispatchReservation. On the Operation path the Host
+    // carries the reservation's Operation members back so recordDeliveryOutcome
+    // can find its own dispatches row; on this path the ledger already holds
+    // the durable dispatching row the caller's ToolCallPositionIdentity names,
+    // so there is nothing for the Host to carry back and no second revision to
+    // compare. The outcome is recorded by completeToolCallDispatch against the
+    // dispatch token the executor holds, which is the token that crossed the
+    // boundary in the first place.
+    struct ToolCallDispatchReservation final
+    {
+        task::DispatchAuthority authority;
+    };
+
+    // The one classification a Host delivery may be recorded under, and the
+    // LEDGER'S rather than the provider's.
+    //
+    // task::DeliveryOutcome is the only value that can prove an external effect
+    // absent, and a provider free to choose its own completion would be
+    // choosing its own classification -- including the one that unlocks a
+    // Rejected disposition in reconciliation. The three outcomes map exactly
+    // one way. Delivered is an engine receipt for an input that reached the
+    // sink, so it is confirmed. NotDelivered is the Host reporting that it
+    // consumed the authorization and posted nothing, which is proven_absent and
+    // the only outcome that proves absence. TransportUnknown is the Host
+    // reporting that it reached the delivery path and cannot say whether input
+    // arrived, which is possible.
+    [[nodiscard]]
+    auto toolCallCompletionFor(task::HostDeliveryReport const& report)
+        -> Result<ToolCallCompletion>;
+
     // The transitions a controller may ask for by name. The four plan-lifecycle
     // events are absent because the Operator decides them: a caller that could
     // say ReadyWithoutApproval could skip an approval the derived risk
@@ -1039,6 +1072,35 @@ namespace uf::operator_runtime
             ToolRootRequestIdentity const& root,
             ToolCallPositionIdentity const& call
         ) -> Result<ToolCallDispatch>;
+
+        // The Tool Runtime's counterpart of reserveDispatch: the one mint of
+        // Host delivery authority over a Tool call that is already dispatching.
+        //
+        // It names the call rather than carrying the ToolCallDispatch token,
+        // and the reason is that the token proves less here than the row does.
+        // The token restates an attempt number and a history revision the
+        // ledger reads back anyway; what a delivery must know is that the
+        // durable boundary is crossed RIGHT NOW, and only the row can say that.
+        // A ToolCallPositionIdentity is constructible only inside the runtime,
+        // so naming a call is not an authority a caller can invent, and a call
+        // whose row is not `dispatching` is refused whoever presents it.
+        //
+        // uiTarget is the model target the call resolved. It is the caller's
+        // because only the call knows which target its own resolved observation
+        // named, and it is safe as the caller's for the reason the whole
+        // authority is plain data: the Host refuses a Receipt whose intent
+        // names another target, so naming the wrong one can only make the Host
+        // refuse.
+        //
+        // runtimeGeneration is the caller's for the reason reserveDispatch
+        // states.
+        [[nodiscard]]
+        auto reserveToolCallDispatch(
+            ToolCallPositionIdentity const& call,
+            ControlLease const& lease,
+            GenerationId runtimeGeneration,
+            std::string const& uiTarget
+        ) -> Result<ToolCallDispatchReservation>;
 
         // Records the exact provider conclusion. Repeating the same completion
         // rejoins; changing it after a terminal write is refused.

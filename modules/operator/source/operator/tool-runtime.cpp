@@ -2,6 +2,7 @@
 
 #include <core/error/contracts.hpp>
 
+#include <algorithm>
 #include <array>
 #include <string>
 #include <utility>
@@ -30,6 +31,33 @@ namespace uf::operator_runtime
                 "terminally_unresolved",
             },
         };
+    }
+
+    auto toolEffectComposition(std::string_view providerKind)
+        -> ToolEffectComposition
+    {
+        auto const found = std::ranges::find(
+            k_toolAnswerers,
+            providerKind,
+            &ToolAnswerer::providerKind
+        );
+        if (found == k_toolAnswerers.end())
+        {
+            // tool_call_positions.provider_kind is CHECK-constrained to the
+            // table's own two values, so a third one is a corrupted database
+            // rather than a case to classify.
+            UF_UNREACHABLE_MSG("Unknown Tool provider kind");
+        }
+        return found->composition;
+    }
+
+    auto toolCallEffectMayBeUnrecorded(
+        ToolEffectComposition composition,
+        ToolMutability mutability
+    ) noexcept -> bool
+    {
+        return composition == ToolEffectComposition::DirectLeaf
+            && mutability == ToolMutability::Mutating;
     }
 
     auto toolCallStateWireName(ToolCallState state) noexcept -> std::string_view

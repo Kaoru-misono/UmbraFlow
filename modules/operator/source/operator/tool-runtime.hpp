@@ -1,12 +1,14 @@
 #pragma once
 
 #include "project-plugin.hpp"
+#include "tool-invocation.hpp"
 
 #include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/content-hash.hpp>
 
+#include <array>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -14,6 +16,71 @@
 namespace uf::operator_runtime
 {
     class OperatorCoordinator;
+
+    // How a call reaches the world at all.
+    //
+    // A call answered by a bound Project entry reaches the world ONLY through
+    // child Tool calls: the scoped program type has no other capability, so
+    // every effect it causes is a durable row of its own. A call answered by a
+    // Framework provider reaches the world directly, and what that provider did
+    // is knowable only from the outcome it reported.
+    enum class ToolEffectComposition : uint8
+    {
+        RecordedChildren,
+        DirectLeaf,
+    };
+
+    // The closed set of answerers, and the only place the durable provider_kind
+    // vocabulary is joined to what an answerer can do. A Project descriptor
+    // with no binding is refused at load, so provider_kind='project' IS
+    // "answered by a bound scoped entry".
+    struct ToolAnswerer final
+    {
+        std::string_view      providerKind{};
+        ToolEffectComposition composition{ToolEffectComposition::DirectLeaf};
+    };
+
+    inline constexpr auto k_toolAnswerers = std::array{
+        ToolAnswerer{"framework", ToolEffectComposition::DirectLeaf},
+        ToolAnswerer{"project", ToolEffectComposition::RecordedChildren},
+    };
+
+    // The same lookup from the two spellings a call's answerer arrives in: the
+    // provider identity a live coordinate carries, and the provider_kind a
+    // durable row stores. They are two overloads of one name because they
+    // answer one question off one table; the identity form is defined in terms
+    // of the durable form, so the two cannot diverge.
+    [[nodiscard]]
+    auto toolEffectComposition(std::string_view providerKind)
+        -> ToolEffectComposition;
+
+    [[nodiscard]]
+    auto toolEffectComposition(ToolProviderIdentity const& provider)
+        -> ToolEffectComposition;
+
+    // The one rule that decides whether a crash inside a dispatch can have left
+    // an external effect no durable row records -- and therefore the one rule
+    // that decides what a restart classifies uncertain, what a re-entry
+    // refuses, whether a completion may report terminal failure, and whether an
+    // executor may convert a provider's failure to uncertainty.
+    //
+    // Two facts decide it, and neither is sufficient alone. A composed call
+    // re-executes effect-free up to the recorded frontier however mutating it
+    // is, because its whole effect surface is children that already carry their
+    // own classification. A read-only leaf declares no effect for a delivery to
+    // be uncertain about, so re-running its provider delivers nothing twice.
+    // Only a mutating leaf in flight is the non-replayable atom: the world may
+    // or may not have moved and no record can say.
+    //
+    // It is declared here rather than beside any one of its four callers
+    // because a second statement of it is the drift the re-entry ruling is most
+    // exposed to: the callers are read months apart and only a crash exercises
+    // them together.
+    [[nodiscard]]
+    auto toolCallEffectMayBeUnrecorded(
+        ToolEffectComposition composition,
+        ToolMutability mutability
+    ) noexcept -> bool;
 
     enum class ToolCallState : uint8
     {

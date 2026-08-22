@@ -36,6 +36,21 @@ namespace uf::operator_runtime
             StoredOperation          operation;
         };
 
+        // What one Tool-call-native input asks the Host to deliver: the model
+        // target the call's own resolved observation named, and the UI action
+        // it asks for on that target.
+        //
+        // The two travel as one value because they are one statement and are
+        // read together at every boundary they cross -- the ledger pins the
+        // target into the authority, the Host judges both against the model it
+        // parsed, and the resolver authorizes the action on the Binding the
+        // target resolved.
+        struct ToolCallInputIntent final
+        {
+            std::string uiTarget{};
+            std::string uiAction{};
+        };
+
         [[nodiscard]]
         static auto create(
             OperatorCoordinator coordinator,
@@ -83,5 +98,25 @@ namespace uf::operator_runtime
             std::optional<ApprovalGrant> const& approval,
             task::TaskContext& context
         ) -> Result<DispatchResult>;
+
+        // The Tool Runtime's counterpart of dispatch above, and it shares
+        // m_targetSerialization with lease acquire, release and takeover for
+        // the same reason: a fence displaced between the reservation and the
+        // Host call would let a Host act under authority the ledger has already
+        // superseded.
+        //
+        // It returns the report alone. There is no ledger write to pair with
+        // it here, because the outcome a Tool call records is written by
+        // completeToolCallDispatch under the dispatch token the executor holds,
+        // and the classification that report earns is
+        // toolCallCompletionFor's -- never the caller's.
+        [[nodiscard]]
+        auto deliverToolCallInput(
+            ToolCallPositionIdentity const& call,
+            ControlLease const& lease,
+            GenerationId runtimeGeneration,
+            ToolCallInputIntent const& intent,
+            task::TaskContext& context
+        ) -> Result<task::HostDeliveryReport>;
     };
 }

@@ -155,10 +155,13 @@ namespace uf::service
         // controlled target, Project registration, RuntimeArtifact, Host
         // generation and issuing coordinate, never against anything the
         // arguments state, and judges the named snapshot-local semantic target
-        // and UI action on the observation's own bounds before delivery.
+        // and UI action on the observation's own bounds before delivery, then
+        // posts it through the one Host delivery seam and records the
+        // classification the ledger derived from what the Host reported.
         [[nodiscard]]
         auto answerSemanticInputTool(
-            operator_runtime::ToolCallPositionIdentity const& call
+            operator_runtime::ToolCallPositionIdentity const& call,
+            task::TaskContext& context
         ) -> Result<operator_runtime::ToolCallCompletion>;
 
     public:
