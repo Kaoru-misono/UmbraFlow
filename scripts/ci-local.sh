@@ -51,6 +51,17 @@ else
     cmake --build --preset "$PRESET" -j "$BUILD_JOBS"
 fi
 
-ctest --test-dir "build/$PRESET" -L CI --output-on-failure
+# Six, not one and not the whole machine. CTest runs one test at a time by
+# default, which spends 362 seconds on a suite whose critical path is its
+# slowest single test; six workers finish it in 86. Past roughly six the extra
+# processes buy no wall clock and only take the machine away from the developer
+# sitting at it. Every gate registered here therefore has to hold its TIMEOUT
+# with five siblings running beside it, which is why the two fattest binaries
+# are registered as index shards in tests/CMakeLists.txt. The cap lives here
+# rather than in CMakePresets.json for the same reason the build cap above
+# does: CI invokes ctest directly and stays uncapped.
+TEST_JOBS=6
+
+ctest --test-dir "build/$PRESET" -L CI --output-on-failure --parallel "$TEST_JOBS"
 
 echo "GATE: PASS"

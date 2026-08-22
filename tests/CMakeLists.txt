@@ -41,6 +41,167 @@ function(cpp_add_test)
     endif()
 endfunction()
 
+# The driver behind every ${TARGET}-case-count gate below. Generated into the
+# build tree rather than checked in beside test-project-cli.cmake, the same way
+# the reclaim and upgrade drivers further down are: it is produced by this file,
+# and the alternative spelling is a second file that has to be kept in step with
+# the registration by hand. @ONLY, so the driver's own ${} references survive
+# configure and are read when CTest runs it.
+set(UF_DOCTEST_CASE_COUNT_DRIVER
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/check-doctest-case-count.cmake"
+)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(CONFIGURE
+    OUTPUT "${UF_DOCTEST_CASE_COUNT_DRIVER}"
+    @ONLY
+    CONTENT [=[
+cmake_minimum_required(VERSION 3.30)
+
+if(NOT EXISTS "${UF_CASE_COUNT_EXECUTABLE}")
+    message(FATAL_ERROR
+        "${UF_CASE_COUNT_TARGET} executable does not exist: ${UF_CASE_COUNT_EXECUTABLE}"
+    )
+endif()
+
+# doctest's own census of the binary, taken with a query flag: it prints the
+# number of cases that pass the current filters and quits without running any.
+execute_process(
+    COMMAND "${UF_CASE_COUNT_EXECUTABLE}" --count --no-colors
+    OUTPUT_VARIABLE COUNT_REPORT
+    ERROR_VARIABLE COUNT_ERROR
+    RESULT_VARIABLE COUNT_STATUS
+)
+if(NOT COUNT_STATUS EQUAL 0)
+    message(FATAL_ERROR
+        "${UF_CASE_COUNT_TARGET} --count failed (${COUNT_STATUS}):\n${COUNT_REPORT}${COUNT_ERROR}"
+    )
+endif()
+if(NOT "${COUNT_REPORT}" MATCHES "current filters: +([0-9]+)")
+    message(FATAL_ERROR
+        "${UF_CASE_COUNT_TARGET} --count reported no case count:\n${COUNT_REPORT}"
+    )
+endif()
+set(PRESENT_CASES "${CMAKE_MATCH_1}")
+
+if(NOT PRESENT_CASES STREQUAL UF_CASE_COUNT_PINNED)
+    message(FATAL_ERROR
+        "${UF_CASE_COUNT_TARGET} holds ${PRESENT_CASES} doctest cases; its "
+        "${UF_CASE_COUNT_SHARDS} index shards are cut for exactly "
+        "${UF_CASE_COUNT_PINNED}, so the difference runs in no gate. Set "
+        "TOTAL_CASES to ${PRESENT_CASES} in the uf_shard_doctest_gates call for "
+        "${UF_CASE_COUNT_TARGET} in tests/CMakeLists.txt, and raise SHARDS if a "
+        "shard is no longer comfortably inside its 60-second TIMEOUT with five "
+        "siblings running beside it."
+    )
+endif()
+
+message(
+    "${UF_CASE_COUNT_TARGET}: ${PRESENT_CASES} cases across "
+    "${UF_CASE_COUNT_SHARDS} shards"
+)
+]=]
+    NEWLINE_STYLE LF
+)
+if(NOT EXISTS "${UF_DOCTEST_CASE_COUNT_DRIVER}")
+    message(FATAL_ERROR "failed to generate the doctest case-count driver")
+endif()
+
+# A doctest binary too slow to finish one 60-second gate, cut into equal index
+# ranges over doctest's own `--first`/`--last`.
+#
+# Every range is closed at both ends and derived here from TOTAL_CASES, so the
+# shards partition 1..TOTAL_CASES exactly and no boundary is written by hand.
+# The scheme this replaces ended in an open `--first=101`: every case added to
+# the binary landed in that one shard, so the split unbalanced itself with no
+# edit anywhere -- test-operator-remainder had grown to 116 of 216 cases, and it
+# is the shard that crossed its timeout the first time the suite was run six
+# tests at a time.
+#
+# TOTAL_CASES is a pin, and ${TARGET}-case-count is what keeps it honest: it
+# reads the binary's own count and reddens the moment the real total moves off
+# the pin. A case added to a sharded binary therefore fails a gate that names
+# the number to change, instead of falling outside every closed range or
+# silently fattening an open one. Raising SHARDS needs no other edit -- the
+# ranges are recomputed from the two numbers.
+function(uf_shard_doctest_gates)
+    cmake_parse_arguments(ARG "" "TARGET;TOTAL_CASES;SHARDS" "" ${ARGN})
+
+    if(ARG_UNPARSED_ARGUMENTS)
+        message(FATAL_ERROR
+            "uf_shard_doctest_gates received unknown arguments: ${ARG_UNPARSED_ARGUMENTS}"
+        )
+    endif()
+    if(NOT TARGET ${ARG_TARGET})
+        message(FATAL_ERROR
+            "uf_shard_doctest_gates(${ARG_TARGET}) names no executable target"
+        )
+    endif()
+    if(NOT ARG_TOTAL_CASES MATCHES "^[1-9][0-9]*$")
+        message(FATAL_ERROR
+            "uf_shard_doctest_gates(${ARG_TARGET}) requires TOTAL_CASES as a "
+            "positive integer; got '${ARG_TOTAL_CASES}'"
+        )
+    endif()
+    if(NOT ARG_SHARDS MATCHES "^[1-9][0-9]*$")
+        message(FATAL_ERROR
+            "uf_shard_doctest_gates(${ARG_TARGET}) requires SHARDS as a "
+            "positive integer; got '${ARG_SHARDS}'"
+        )
+    endif()
+    if(ARG_SHARDS GREATER ARG_TOTAL_CASES)
+        message(FATAL_ERROR
+            "uf_shard_doctest_gates(${ARG_TARGET}) asks for ${ARG_SHARDS} shards "
+            "over ${ARG_TOTAL_CASES} cases, which leaves a shard with none"
+        )
+    endif()
+
+    set(COVERED_CASES 0)
+    math(EXPR LAST_SHARD "${ARG_SHARDS} - 1")
+    foreach(SHARD RANGE ${LAST_SHARD})
+        math(EXPR SHARD_NUMBER "${SHARD} + 1")
+        math(EXPR SHARD_FIRST "(${SHARD} * ${ARG_TOTAL_CASES}) / ${ARG_SHARDS} + 1")
+        math(EXPR SHARD_LAST "(${SHARD_NUMBER} * ${ARG_TOTAL_CASES}) / ${ARG_SHARDS}")
+        math(EXPR SHARD_CASES "${SHARD_LAST} - ${SHARD_FIRST} + 1")
+        math(EXPR COVERED_CASES "${COVERED_CASES} + ${SHARD_CASES}")
+
+        set(SHARD_NAME "${ARG_TARGET}-shard-${SHARD_NUMBER}-of-${ARG_SHARDS}")
+        add_test(
+            NAME "${SHARD_NAME}"
+            COMMAND ${ARG_TARGET} "--first=${SHARD_FIRST}" "--last=${SHARD_LAST}"
+        )
+        set_tests_properties("${SHARD_NAME}" PROPERTIES
+            TIMEOUT 60
+            LABELS "CI"
+        )
+        uf_require_executed_assertions("${SHARD_NAME}")
+    endforeach()
+
+    # The partition, restated as a sum rather than trusted to the division
+    # above. An off-by-one in a --first/--last range is invisible in a green run.
+    if(NOT COVERED_CASES EQUAL ARG_TOTAL_CASES)
+        message(FATAL_ERROR
+            "uf_shard_doctest_gates(${ARG_TARGET}) cut ${ARG_SHARDS} shards "
+            "covering ${COVERED_CASES} cases out of ${ARG_TOTAL_CASES}"
+        )
+    endif()
+
+    # No uf_require_executed_assertions here: --count is a query flag, so this
+    # gate executes no assertion by design.
+    add_test(
+        NAME "${ARG_TARGET}-case-count"
+        COMMAND ${CMAKE_COMMAND}
+            -DUF_CASE_COUNT_EXECUTABLE=$<TARGET_FILE:${ARG_TARGET}>
+            -DUF_CASE_COUNT_TARGET=${ARG_TARGET}
+            -DUF_CASE_COUNT_PINNED=${ARG_TOTAL_CASES}
+            -DUF_CASE_COUNT_SHARDS=${ARG_SHARDS}
+            -P "${UF_DOCTEST_CASE_COUNT_DRIVER}"
+    )
+    set_tests_properties("${ARG_TARGET}-case-count" PROPERTIES
+        TIMEOUT 30
+        LABELS "CI"
+    )
+endfunction()
+
 # Every gate a requirement owns, spelled exactly. Two prefixes, one vocabulary:
 #
 #   contract-<area>-<id>  exercises the code and goes red when the behaviour is
@@ -404,9 +565,11 @@ cpp_add_test(
 # decoder accepts rather than eight signature bytes.
 cpp_add_test(
     NAME test-deployment
+    NO_CTEST
     SOURCES
         deployment/test-project-deployment.cpp
         deployment/test-project-directory.cpp
+        deployment/test-project-tool-authoring.cpp
     LIBS
         ${PROJECT_NAME}_deployment
         ${PROJECT_NAME}_image
@@ -422,6 +585,17 @@ target_include_directories(test-deployment PRIVATE
 target_compile_definitions(test-deployment PRIVATE
     UF_STAGED_UMBRAFLOW_PROJECT="${UF_STAGED_UMBRAFLOW_PROJECT}"
     UF_STAGED_ARCANA_PROJECT="${UF_STAGED_ARCANA_PROJECT}"
+)
+
+# The deployment suite installs real projects into real roots and validates
+# their bytes, which costs 57 seconds over 52 cases -- close enough to the
+# 60-second limit that one gate passed only while nothing ran beside it, and
+# timed out the first time the suite was run six tests at a time. Four shards
+# put the slowest of them at 22 seconds.
+uf_shard_doctest_gates(
+    TARGET test-deployment
+    TOTAL_CASES 52
+    SHARDS 4
 )
 
 cpp_add_test(
@@ -511,8 +685,10 @@ if(TARGET ${PROJECT_NAME}_operator)
             operator/test-manifest.cpp
             operator/test-operation.cpp
             operator/test-project-tool-program.cpp
+            operator/test-tool-admission-funnel.cpp
             operator/test-tool-authority.cpp
             operator/test-tool-binding.cpp
+            operator/test-tool-dispatch.cpp
             operator/test-tool-executor.cpp
             operator/test-tool-nested-calls.cpp
             operator/test-tool-snapshot-reference.cpp
@@ -534,22 +710,15 @@ if(TARGET ${PROJECT_NAME}_operator)
     endif()
 
     # The Operator suite deliberately drives real SQLite stores and runtime
-    # artifacts. Keep its individual CI gates below the repository-wide
-    # 60-second limit while preserving one executable for focused local runs.
-    add_test(NAME test-operator COMMAND test-operator "--last=50")
-    add_test(
-        NAME test-operator-middle
-        COMMAND test-operator "--first=51" "--last=100"
-    )
-    add_test(NAME test-operator-remainder COMMAND test-operator "--first=101")
-    set_tests_properties(
-        test-operator test-operator-middle test-operator-remainder
-        PROPERTIES
-        TIMEOUT 60
-        LABELS "CI"
-    )
-    uf_require_executed_assertions(
-        test-operator test-operator-middle test-operator-remainder
+    # artifacts, which costs 110 seconds over 216 cases. Keep its individual CI
+    # gates below the repository-wide 60-second limit while preserving one
+    # executable for focused local runs. Six shards put the slowest of them at
+    # 22 seconds, which is the margin a gate needs when five siblings run
+    # beside it.
+    uf_shard_doctest_gates(
+        TARGET test-operator
+        TOTAL_CASES 216
+        SHARDS 6
     )
 
     cpp_add_contract_suite(

@@ -85,12 +85,17 @@ ctest --test-dir build/<preset> -L CI --output-on-failure --parallel 6
 Do **not** put `jobs` in `CMakePresets.json`. GitHub CI invokes
 `cmake --build --preset ...` directly, so a cap there would slow every runner
 as well. The cap belongs on the local command line and in `scripts/ci-local.*`,
-which CI does not use.
+which CI does not use. Both scripts carry both caps, so the gate itself is run
+with no flags.
 
 Six is the right `ctest` figure rather than a larger one because the suite's
 critical path is its slowest single test; beyond roughly six workers the extra
-processes buy no wall-clock and only take the machine. Re-measure after
-splitting a slow binary.
+processes buy no wall-clock and only take the machine. Measured 2026-08-22 on
+24 logical processors: 362 s at one worker, 86 s at six. Re-measure after
+splitting a slow binary — and split one when it needs it, because a gate must
+hold its `TIMEOUT` with five siblings taking the machine beside it. That is why
+`test-operator` and `test-deployment` are registered as index shards in
+`tests/CMakeLists.txt` rather than as one gate each.
 
 Concurrently dispatched agents each run their own builds, so their job counts
 multiply. Keep the number of live agents small.
