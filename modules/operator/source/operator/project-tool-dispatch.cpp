@@ -76,7 +76,7 @@ namespace uf::operator_runtime
         // table entry is erased before it returns.
         struct ActiveRun final
         {
-            ProjectToolProgramHandle const& program;
+            ProjectGenerationHandle const& program;
             ControllerBinding const&        controller;
             ControlLease const&             lease;
             ToolRootRequestIdentity const&  root;
@@ -118,7 +118,7 @@ namespace uf::operator_runtime
 
         [[nodiscard]]
         auto dispatchCall(
-            ProjectToolProgramHandle const& program,
+            ProjectGenerationHandle const& program,
             ToolAdmissionRequest const& request,
             std::stop_token const& cancellation
         ) -> Result<ToolCallReplay>
@@ -271,7 +271,7 @@ namespace uf::operator_runtime
     private:
         [[nodiscard]]
         auto runBoundEntry(
-            ProjectToolProgramHandle const& program,
+            ProjectGenerationHandle const& program,
             ControllerBinding const& controller,
             ControlLease const& lease,
             ToolRootRequestIdentity const& root,
@@ -389,7 +389,7 @@ namespace uf::operator_runtime
     }
 
     auto ProjectToolDispatcher::dispatch(
-        ProjectToolProgramHandle const& program,
+        ProjectGenerationHandle const& program,
         ToolAdmissionRequest const& request,
         std::stop_token cancellation
     ) -> Result<ToolCallReplay>

@@ -107,11 +107,9 @@ namespace uf::operator_runtime
     // context on, so the map is bounded by the number of distinct root requests
     // one actor's adapter serves.
     //
-    // Production-unreachable: its one non-test holder is
-    // service::ProductLifecycle, whose only door onto it --
-    // invokeFrameworkTool -- has no production caller and may not gain one
-    // before the generation cut. See
-    // docs/decisions/2026-08-22-production-reachability-is-the-cut-invariant.md.
+    // Production-reachable: service::ProductLifecycle holds one for its own
+    // Framework door, and each actor adapter holds its own. Four holders and
+    // one producer type, because an actor's ordinals are its own.
     class ToolRootProducer final
     {
         std::map<ContentHash, ToolCallIssuingContext> m_contexts{};

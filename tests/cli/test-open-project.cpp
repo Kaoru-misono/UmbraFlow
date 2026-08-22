@@ -185,31 +185,31 @@ namespace uf::cli
         CHECK(opened->deployments.size() == whole->deployments.size());
     }
 
-    // The case that makes "registered" a claim. The plugin's bytes reach the
-    // registration through plugin_module_manifest_hash, and that digest
-    // is the loader's own arithmetic on both sides -- so a plugin the script
+    // The case that makes "registered" a claim. A closure's bytes reach the
+    // registration through its own module_manifest_hash, and that digest is
+    // the loader's own arithmetic on both sides -- so a closure the script
     // substrate cannot compile loads with a different registration hash and no
     // complaint at all. Only the registrar refuses it.
-    TEST_CASE("a plugin missing an entry point loads and does not register")
+    TEST_CASE("a reducer closure missing its entry point loads and does not register")
     {
         auto const copy = ExemplarCopy{};
 
         // The positive control: without it every assertion below is satisfied
-        // by a registrar that refused this directory whatever its plugin said.
+        // by a registrar that refused this directory whatever its closure said.
         auto const whole = openProjectProduct(copy.args());
         INFO(why(whole));
         REQUIRE(whole.has_value());
         REQUIRE(everyPluginRegistered(*whole));
 
-        auto const plugin = copy.read("plugin/alpha.luau");
-        auto const opens  = plugin.find("    reduce = function(input)");
+        auto const reducer = copy.read("plugin/alpha-reducer.luau");
+        auto const opens   = reducer.find("    reduce = function(input)");
         REQUIRE(opens != std::string::npos);
         constexpr auto k_closes = std::string_view{"    end,\n"};
-        auto const     closes   = plugin.find(k_closes, opens);
+        auto const     closes   = reducer.find(k_closes, opens);
         REQUIRE(closes != std::string::npos);
         copy.rewrite(
-            "plugin/alpha.luau",
-            plugin.substr(0U, opens) + plugin.substr(closes + k_closes.size())
+            "plugin/alpha-reducer.luau",
+            reducer.substr(0U, opens) + reducer.substr(closes + k_closes.size())
         );
 
         auto const opened = openProjectProduct(copy.args());

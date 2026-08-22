@@ -588,6 +588,13 @@ namespace uf::task
         [[nodiscard]]
         auto cancellationRequested() const noexcept -> bool;
 
+        // The run's single cancel source, for a subsystem that must WAIT on it
+        // rather than poll it. It is the same token the owned EngineSession and
+        // the VM interrupt hold, so a caller cannot install a second cancel
+        // channel beside this one.
+        [[nodiscard]]
+        auto cancellation() const noexcept -> std::stop_token;
+
         // Whether an observation cycle is open, and so whether the host is still
         // holding a frame. The host-side truth a test asserts release against;
         // nothing about it involves the Lua collector.

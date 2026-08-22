@@ -162,8 +162,16 @@ namespace uf::project
         inline constexpr auto k_handWrittenPlugin = std::string_view{
             "plugin/dream.luau"
         };
+        // A deployment always states both closures, so every fixture manifest
+        // names a reducer module beside the module under test.
+        inline constexpr auto k_handWrittenReducer = std::string_view{
+            "plugin/dream-reducer.luau"
+        };
         inline constexpr auto k_generatedPlugin = std::string_view{
-            "generated/adapters/acme.tool/do-work.luau"
+            "generated/adapters/acme.tool/do-work/tool.luau"
+        };
+        inline constexpr auto k_generatedPluginReducer = std::string_view{
+            "generated/adapters/acme.tool/do-work/reducer.luau"
         };
         inline constexpr auto k_handWrittenAuthoring = std::string_view{
             R"json(      "plugin_authoring": "hand-written",
@@ -190,6 +198,16 @@ namespace uf::project
             std::string_view templateCuts
         ) -> std::string
         {
+            // Every deployment states both closures, so the module a case
+            // names is the TOOL closure's and the reducer beside it is the one
+            // its authoring form ships: a generated deployment's reducer is
+            // the second module its declaration renders, a hand-written one's
+            // is the fixture reducer.
+            auto const reducer = std::string_view{plugin}.starts_with(
+                "generated/adapters/"
+            )
+                ? std::string{k_generatedPluginReducer}
+                : std::string{k_handWrittenReducer};
             return std::string{R"json({
   "schema": "umbraflow-project/v2",
   "runtime_artifact": "runtime/artifact",
@@ -202,7 +220,10 @@ namespace uf::project
       "name": "dream",
       "plugin_id": "chaos.dream",
       "baseline_event_type": "project.baseline_created",
-      "plugin": {"entry":"main","modules":[{"name":"main","path":")json"
+      "reducer_closure": {"entry":"main","exported_entry_points":["reduce"],"modules":[{"name":"main","path":")json"
+                + std::string{reducer}
+                + R"json("}]},
+      "tool_closure": {"entry":"main","exported_entry_points":[],"modules":[{"name":"main","path":")json"
                 + std::string{plugin}
                 + R"json("}]},
 )json"
@@ -274,6 +295,10 @@ namespace uf::project
         ) -> Status
         {
             writeFile(workspace.source() / k_handWrittenPlugin, "return {}\n");
+            writeFile(
+                workspace.source() / k_handWrittenReducer,
+                "return {reduce = function(input) return input end}\n"
+            );
             writeRootManifest(workspace, manifest);
             auto spec = ProjectInitSpec{
                 .sourceDirectory = workspace.source(),
@@ -305,6 +330,10 @@ namespace uf::project
             writeFile(workspace.source() / "content" / "facts.txt", "facts\n");
             writeFile(workspace.source() / "decisions.txt", "decisions\n");
             writeFile(workspace.source() / k_handWrittenPlugin, "return {}\n");
+            writeFile(
+                workspace.source() / k_handWrittenReducer,
+                "return {reduce = function(input) return input end}\n"
+            );
             writeRootManifest(workspace, manifestDeclaringCuts(templateCuts));
             return initProject(
                 ProjectInitSpec{
@@ -326,22 +355,18 @@ namespace uf::project
             return initializedWorkspaceDeclaring(workspace, "[]");
         }
 
-        inline constexpr auto k_workflowEntryPoints = std::array{
-            std::string_view{"derive"},
-            std::string_view{"plan"},
-            std::string_view{"next_step"},
-            std::string_view{"reconcile"},
+        inline constexpr auto k_reducerEntryPoints = std::array{
             std::string_view{"reduce"},
         };
 
-        inline constexpr auto k_observedInstanceId = std::string_view{
-            "oi1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        };
         inline constexpr auto k_workflowDeclarationInput = std::string_view{
             "declarative-tools/chaos.project/dismiss-known-overlay.json"
         };
         inline constexpr auto k_generatedWorkflowAdapter = std::string_view{
-            "generated/adapters/chaos.project/dismiss-known-overlay.luau"
+            "generated/adapters/chaos.project/dismiss-known-overlay/tool.luau"
+        };
+        inline constexpr auto k_generatedWorkflowReducer = std::string_view{
+            "generated/adapters/chaos.project/dismiss-known-overlay/reducer.luau"
         };
         inline constexpr auto k_generatedToolCatalog = std::string_view{
             "generated/tool-catalogs/chaos.project/tool-catalog-v1.json"
@@ -399,6 +424,10 @@ namespace uf::project
                 validWorkflowDeclaration()
             );
             writeFile(workspace.source() / k_handWrittenPlugin, "return {}\n");
+            writeFile(
+                workspace.source() / k_handWrittenReducer,
+                "return {reduce = function(input) return input end}\n"
+            );
             writeRootManifest(workspace, acceptedDeploymentManifest());
             return initProject(
                 ProjectInitSpec{
@@ -485,50 +514,6 @@ namespace uf::project
         }
 
         [[nodiscard]]
-        auto generatedWorkflowProgram() -> script::PureDataProgram
-        {
-            auto const generated = generateDeclarativeWorkflowAdapter(
-                "chaos.project",
-                validWorkflowDeclaration()
-            );
-            auto const generatedMessage = (
-                generated.has_value()
-                    ? std::string{}
-                    : std::string{generated.error().message()}
-            );
-            REQUIRE_MESSAGE(
-                generated.has_value(),
-                generatedMessage
-            );
-            auto compiled = script::PureDataProgram::compile(
-                "chaos.project",
-                "main",
-                {
-                    script::PureDataProgram::Module{
-                        .name   = "main",
-                        .source = *generated,
-                    },
-                },
-                k_workflowEntryPoints,
-                {}
-            );
-            auto const compiledMessage = (
-                compiled.has_value()
-                    ? std::string{}
-                    : std::string{
-                          "generated adapter must expose only the derive, plan, "
-                          "next_step, reconcile and reduce SPI: "
-                      }
-                        + std::string{compiled.error().message()}
-            );
-            REQUIRE_MESSAGE(
-                compiled.has_value(),
-                compiledMessage
-            );
-            return *std::move(compiled);
-        }
-
-        [[nodiscard]]
         auto parsedJson(std::string_view text) -> json::Value
         {
             auto parsed = json::parse(text);
@@ -542,78 +527,6 @@ namespace uf::project
                 parsedMessage
             );
             return *std::move(parsed);
-        }
-
-        [[nodiscard]]
-        auto observation(
-            bool includesTarget,
-            std::string_view targetKind = "chaos.overlay",
-            bool surfaceFresh = true,
-            std::string_view surfaceResolution = "resolved",
-            bool surfaceUnambiguous = true
-        ) -> std::string
-        {
-            auto text = std::string{
-                R"json({"canonical_opaque_payload":{"surface_observations":[{"fresh":)json"
-            };
-            text += surfaceFresh ? "true" : "false";
-            text += R"json(,"resolution":")json";
-            text += surfaceResolution;
-            text += R"json(","surface_id":"chaos.overlay_layer","unambiguous":)json";
-            text += surfaceUnambiguous ? "true" : "false";
-            text += R"json(}]},"observed_instances":)json";
-            if (includesTarget)
-            {
-                text += R"json([{"kind":")json";
-                text += targetKind;
-                text += R"json(","observed_instance_id":")json";
-                text += k_observedInstanceId;
-                text += R"json("}])json";
-            }
-            else
-            {
-                text += "[]";
-            }
-            text += '}';
-            return text;
-        }
-
-        [[nodiscard]]
-        auto adapterInput(
-            std::string_view observationBytes,
-            bool includeTool
-        ) -> json::Value
-        {
-            auto text = std::string{R"json({"canonical_args":{"observed_instance_id":")json"};
-            text += k_observedInstanceId;
-            text += R"json("},"project_observation":)json";
-            text += observationBytes;
-            if (includeTool)
-            {
-                text += R"json(,"tool_name":"chaos.project.dismiss_known_overlay","tool_version":"1")json";
-            }
-            text += '}';
-            return parsedJson(text);
-        }
-
-        [[nodiscard]]
-        auto invoked(
-            script::PureDataProgram const& program,
-            std::string_view entryPoint,
-            json::Value const& input
-        ) -> json::Value
-        {
-            auto result = program.invoke(entryPoint, input);
-            auto const resultMessage = (
-                result.has_value()
-                    ? std::string{}
-                    : std::string{result.error().message()}
-            );
-            REQUIRE_MESSAGE(
-                result.has_value(),
-                resultMessage
-            );
-            return *std::move(result);
         }
     }
 
@@ -639,6 +552,7 @@ namespace uf::project
             == "umbraflow-project-kit-inputs-v1\n"
                "content/facts.txt\n"
                "decisions.txt\n"
+               "plugin/dream-reducer.luau\n"
                "plugin/dream.luau\n"
                "umbraflow-project.json\n",
             "project init must record declared inputs in canonical sorted order"
@@ -650,10 +564,16 @@ namespace uf::project
         auto const workspace = TemporaryWorkspace{"uf-project-init-modules"};
         auto manifest = replacedOnce(
             acceptedDeploymentManifest(),
-            R"json({"entry":"main","modules":[{"name":"main","path":"plugin/dream.luau"}]})json",
-            R"json({"entry":"main","modules":[{"name":"support","path":"plugin/support.luau"},{"name":"main","path":"plugin/main.luau"}]})json"
+            R"json("tool_closure": {"entry":"main","exported_entry_points":[],"modules":[{"name":"main","path":"plugin/dream.luau"}]})json",
+            R"json("tool_closure": {"entry":"main","exported_entry_points":[],"modules":[{"name":"support","path":"plugin/support.luau"},{"name":"main","path":"plugin/main.luau"}]})json"
         );
         writeRootManifest(workspace, manifest);
+        // The reducer closure is authored, so the only missing modules are the
+        // tool closure's -- which is what this case is about.
+        writeFile(
+            workspace.source() / k_handWrittenReducer,
+            "return {reduce = function(input) return input end}\n"
+        );
 
         auto const initialized = initProject(ProjectInitSpec{
             .sourceDirectory = workspace.source(),
@@ -719,7 +639,7 @@ namespace uf::project
             }
             else
             {
-                CHECK(source.contains("plugin/main.luau"));
+                CHECK(source.contains("plugin/reducer.luau"));
                 CHECK(source.contains("plugin/support.luau"));
             }
         }
@@ -746,8 +666,8 @@ namespace uf::project
         auto const workspace = TemporaryWorkspace{"uf-project-execution-closure"};
         auto manifest = replacedOnce(
             acceptedDeploymentManifest(),
-            R"json({"entry":"main","modules":[{"name":"main","path":"plugin/dream.luau"}]})json",
-            R"json({"entry":"main","modules":[{"name":"support","path":"plugin/support.luau"},{"name":"main","path":"plugin/main.luau"}]})json"
+            R"json("tool_closure": {"entry":"main","exported_entry_points":[],"modules":[{"name":"main","path":"plugin/dream.luau"}]})json",
+            R"json("tool_closure": {"entry":"main","exported_entry_points":[],"modules":[{"name":"support","path":"plugin/support.luau"},{"name":"main","path":"plugin/main.luau"}]})json"
         );
         manifest = replacedOnce(
             manifest,
@@ -757,6 +677,10 @@ namespace uf::project
         writeRootManifest(workspace, manifest);
         writeFile(workspace.source() / "plugin/main.luau", "return require(\"./support\")\n");
         writeFile(workspace.source() / "plugin/support.luau", "return {}\n");
+        writeFile(
+            workspace.source() / k_handWrittenReducer,
+            "return {reduce = function(input) return input end}\n"
+        );
         writeFile(workspace.source() / "runtime/corpus.json", "{\"answer\":42}\n");
         auto const initialized = initProject(ProjectInitSpec{
             .sourceDirectory = workspace.source(),
@@ -773,9 +697,10 @@ namespace uf::project
         REQUIRE_MESSAGE(built.has_value(), messageOf(built));
 
         auto const snapshot = snapshotTree(workspace.build());
-        CHECK(snapshot.at("generated/modules/dream/main.luau")
+        CHECK(snapshot.at("generated/modules/dream/tool/main.luau")
               == "return require(\"./support\")\n");
-        CHECK(snapshot.at("generated/modules/dream/support.luau") == "return {}\n");
+        CHECK(snapshot.at("generated/modules/dream/tool/support.luau")
+              == "return {}\n");
         CHECK(snapshot.at("generated/resources/dream/runtime.corpus.blob")
               == "{\"answer\":42}\n");
 
@@ -796,7 +721,12 @@ namespace uf::project
             modules
         );
         REQUIRE(moduleHash.has_value());
-        CHECK(record.find("plugin_module_manifest_hash")->string() == moduleHash->hex());
+        auto const* toolClosure = record.find("tool_closure");
+        REQUIRE(toolClosure != nullptr);
+        CHECK(
+            toolClosure->find("module_manifest_hash")->string()
+            == moduleHash->hex()
+        );
         auto const* resourceRows = record.find("project_resources");
         REQUIRE(resourceRows != nullptr);
         REQUIRE(resourceRows->items().size() == 1U);
@@ -1028,7 +958,7 @@ namespace uf::project
         }
     }
 
-    TEST_CASE("project build regenerates five-function adapters solely from declared source")
+    TEST_CASE("project build regenerates both adapter closures solely from declared source")
     {
         auto const workspace = TemporaryWorkspace{
             "uf-project-workflow-generation"
@@ -1064,14 +994,28 @@ namespace uf::project
         );
         auto snapshot = snapshotTree(workspace.build());
         REQUIRE_MESSAGE(
+            snapshot.contains(std::string{k_generatedWorkflowReducer}),
+            "project build must generate the named reducer closure"
+        );
+        REQUIRE_MESSAGE(
             snapshot.contains(std::string{k_generatedWorkflowAdapter}),
-            "project build must generate the named workflow adapter"
+            "project build must generate the named tool closure"
         );
         CHECK_MESSAGE(
-            snapshot.at(std::string{k_generatedWorkflowAdapter}) == *expected,
-            "generated adapter bytes must come from the declared source"
+            snapshot.at(std::string{k_generatedWorkflowReducer})
+                == expected->reducerModule,
+            "generated reducer bytes must come from the declared source"
+        );
+        CHECK_MESSAGE(
+            snapshot.at(std::string{k_generatedWorkflowAdapter})
+                == expected->toolModule,
+            "generated tool bytes must come from the declared source"
         );
 
+        writeFile(
+            workspace.build() / k_generatedWorkflowReducer,
+            "hand edited\n"
+        );
         writeFile(
             workspace.build() / k_generatedWorkflowAdapter,
             "hand edited\n"
@@ -1080,8 +1024,14 @@ namespace uf::project
         REQUIRE_MESSAGE(rebuilt.has_value(), messageOf(rebuilt));
         snapshot = snapshotTree(workspace.build());
         CHECK_MESSAGE(
-            snapshot.at(std::string{k_generatedWorkflowAdapter}) == *expected,
-            "a generated adapter must never become the next build's input"
+            snapshot.at(std::string{k_generatedWorkflowReducer})
+                == expected->reducerModule,
+            "a generated reducer must never become the next build's input"
+        );
+        CHECK_MESSAGE(
+            snapshot.at(std::string{k_generatedWorkflowAdapter})
+                == expected->toolModule,
+            "a generated tool closure must never become the next build's input"
         );
     }
 
@@ -1343,7 +1293,7 @@ namespace uf::project
         auto const* artifacts = manifest.find("artifacts");
         REQUIRE(inputs != nullptr);
         REQUIRE(artifacts != nullptr);
-        REQUIRE(inputs->items().size() == 3U);
+        REQUIRE(inputs->items().size() == 4U);
         CHECK_MESSAGE(
             std::ranges::any_of(
                 inputs->items(),
@@ -1524,6 +1474,10 @@ namespace uf::project
         );
         writeRootManifest(workspace, manifest);
         writeFile(workspace.source() / k_handWrittenPlugin, "return {}\n");
+        writeFile(
+            workspace.source() / k_handWrittenReducer,
+            "return {reduce = function(input) return input end}\n"
+        );
         writeFile(workspace.source() / "runtime/corpus.blob", acceptedBytes);
         auto const initialized = initProject(ProjectInitSpec{
             .sourceDirectory = workspace.source(),
@@ -1747,6 +1701,10 @@ namespace uf::project
         auto const workspace = TemporaryWorkspace{"uf-project-manifest-undeclared"};
         writeFile(workspace.source() / "dummy.txt", "dummy\n");
         writeFile(workspace.source() / k_handWrittenPlugin, "return {}\n");
+        writeFile(
+            workspace.source() / k_handWrittenReducer,
+            "return {reduce = function(input) return input end}\n"
+        );
         writeRootManifest(
             workspace,
             deploymentManifest(
@@ -2163,163 +2121,26 @@ namespace uf::project
             "a one-step schedule must generate an adapter"
         );
 
-        auto compiled = script::PureDataProgram::compile(
+        auto const reducer = script::PureDataProgram::compile(
             "chaos.project",
             "main",
             {
                 script::PureDataProgram::Module{
                     .name   = "main",
-                    .source = *generated,
+                    .source = generated->reducerModule,
                 },
             },
-            k_workflowEntryPoints,
+            k_reducerEntryPoints,
             {}
         );
         REQUIRE_MESSAGE(
-            compiled.has_value(),
-            "a one-step adapter must compile against the five entry points"
-        );
-
-        auto const present = observation(true);
-        auto const planned = invoked(
-            *compiled,
-            "plan",
-            adapterInput(present, true)
-        );
-        auto const* limits = planned.find("workflow_limits");
-        REQUIRE(limits != nullptr);
-        CHECK_MESSAGE(
-            limits->find("maximum_steps")->number() == 1.0,
-            "a one-step schedule must carry a step bound of one"
+            reducer.has_value(),
+            "a one-step adapter's reducer closure must compile against the "
+            "pure program type's single entry"
         );
         CHECK_MESSAGE(
-            limits->find("maximum_waits")->number() == 0.0,
-            "a schedule with no wait state must carry a wait bound of zero"
-        );
-    }
-
-    TEST_CASE("generated bounded workflow runs through the five-function SPI")
-    {
-        auto const program = generatedWorkflowProgram();
-        auto const present = observation(true);
-
-        auto const derived = invoked(program, "derive", parsedJson("{}"));
-        auto const* deriveSchema = derived.find("schema");
-        REQUIRE(deriveSchema != nullptr);
-        CHECK(
-            deriveSchema->string()
-            == "umbraflow-project-observation-proposal/v1"
-        );
-
-        auto const planned = invoked(
-            program,
-            "plan",
-            adapterInput(present, true)
-        );
-        auto const* limits = planned.find("workflow_limits");
-        REQUIRE(limits != nullptr);
-        CHECK_MESSAGE(
-            limits->find("maximum_steps")->number() == 2.0,
-            "bounded workflow plan must carry its finite step bound"
-        );
-        CHECK_MESSAGE(
-            limits->find("maximum_dispatches")->number() == 1.0,
-            "bounded workflow plan must carry its finite dispatch bound"
-        );
-        CHECK_MESSAGE(
-            limits->find("maximum_observations")->number() == 2.0,
-            "bounded workflow plan must carry its finite observation bound"
-        );
-        CHECK_MESSAGE(
-            limits->find("maximum_waits")->number() == 1.0,
-            "bounded workflow plan must carry its finite wait bound"
-        );
-        CHECK_MESSAGE(
-            limits->find("maximum_elapsed_ms")->number() == 3000.0,
-            "bounded workflow plan must carry its finite elapsed bound"
-        );
-
-        // The step envelope exactly as the Operator assembles it. It carries no
-        // canonical_args and its schema closes the object, so a fixture that
-        // supplied one would exercise a call the boundary cannot make.
-        auto stepInput = [&present](uint32 stepIndex) -> json::Value
-        {
-            auto text = std::string{
-                R"json({"frozen_plan_hash":")json"
-            };
-            text += std::string(64U, '0');
-            text += R"json(","project_observation":)json";
-            text += present;
-            text += R"json(,"project_state":{},"step_index":)json";
-            text += std::to_string(stepIndex);
-            text += '}';
-            return parsedJson(text);
-        };
-
-        auto const wait = invoked(program, "next_step", stepInput(1U));
-        CHECK_MESSAGE(
-            wait.find("action") == nullptr,
-            "the first bounded state must produce a real WaitIntent"
-        );
-        REQUIRE(wait.find("condition") != nullptr);
-        REQUIRE(wait.find("observation_budget") != nullptr);
-        CHECK_MESSAGE(
-            wait.find("observation_budget")->number() == 1.0,
-            "the wait state must carry its declared observation budget"
-        );
-
-        auto const action = invoked(program, "next_step", stepInput(2U));
-        REQUIRE(action.find("action") != nullptr);
-        CHECK_MESSAGE(
-            action.find("action")->find("action_id")->string()
-                == "chaos.ui.dismiss_overlay",
-            "the second bounded state must dispatch its declared UI action"
-        );
-        CHECK_MESSAGE(
-            action.find("step_key")->string() == "dismiss-overlay",
-            "the workflow must advance to its second named state"
-        );
-
-        auto const reconciled = invoked(
-            program,
-            "reconcile",
-            adapterInput(observation(false), false)
-        );
-        auto const* findings = reconciled.find("findings");
-        REQUIRE(findings != nullptr);
-        REQUIRE(findings->items().size() == 1U);
-        CHECK(
-            findings->items().front().find("kind")->string()
-            == "observed_instance_absent"
-        );
-
-        auto const reduced = invoked(program, "reduce", parsedJson("{}"));
-        CHECK(reduced.kind() == json::ValueKind::Object);
-        CHECK(reduced.members().empty());
-    }
-
-    TEST_CASE("missing step observation stops the bounded workflow")
-    {
-        auto const program = generatedWorkflowProgram();
-        auto const missing = parsedJson(
-            R"json({
-                "frozen_plan_hash":
-                    "0000000000000000000000000000000000000000000000000000000000000000",
-                "project_observation": null,
-                "project_state": {},
-                "step_index": 2
-            })json"
-        );
-        auto const result = program.invoke("next_step", missing);
-
-        REQUIRE_FALSE_MESSAGE(
-            result.has_value(),
-            "a step whose observation is missing must not advance the workflow"
-        );
-        CHECK_MESSAGE(
-            result.error().message().find("MissingStepObservation")
-                != std::string_view::npos,
-            "missing observation refusal must name the fresh-evidence property"
+            !generated->toolModule.empty(),
+            "a one-step adapter must also carry its tool closure"
         );
     }
 

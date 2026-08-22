@@ -245,9 +245,20 @@ namespace uf::deployment
                 block += R"json(","plugin_id":"fixture.)json";
                 block += name;
                 block += R"json(","baseline_event_type":"fixture.baseline",)json";
-                block += R"json("plugin":{"entry":"main","modules":[{"name":"main","path":"plugin/)json";
+                block += R"json("reducer_closure":{"entry":"main",)json"
+                    R"json("exported_entry_points":["reduce"],)json"
+                    R"json("modules":[{"name":"main","path":"plugin/)json";
                 block += name;
-                block += R"json(.luau"}]},)json";
+                block += R"json(-reducer.luau"}]},)json";
+                // This deployment binds no Tool, so its tool closure states an
+                // empty export set. The slot is written out rather than
+                // omitted: an absent slot would be an absent-means-pure
+                // reading, and both closures are always present.
+                block += R"json("tool_closure":{"entry":"main",)json"
+                    R"json("exported_entry_points":[],)json"
+                    R"json("modules":[{"name":"main","path":"plugin/)json";
+                block += name;
+                block += R"json(-tool.luau"}]},)json";
                 block += R"json("plugin_authoring":"hand-written",)json";
                 block += R"json("plugin_justification":"A fixture plugin that )json"
                     R"json(answers from constants: umbraflow-declarative-)json"
@@ -373,7 +384,12 @@ namespace uf::deployment
                 write(at("effect-0.json"), umbraflow::k_effectPayloadSchema);
                 write(at("identity-0.json"), umbraflow::k_observedIdentitySchema);
                 write(
-                    m_root / "plugin" / (std::string{name} + ".luau"),
+                    m_root / "plugin" / (std::string{name} + "-reducer.luau"),
+                    "return {plugin_id = \"fixture." + std::string{name}
+                        + "\", reduce = function(input) return input end}\n"
+                );
+                write(
+                    m_root / "plugin" / (std::string{name} + "-tool.luau"),
                     "return {plugin_id = \"fixture." + std::string{name} + "\"}\n"
                 );
                 // An artifact root is a JSON document: what a plugin reaches is
@@ -618,11 +634,26 @@ namespace uf::deployment
 
         auto const* const p_alpha = loaded->findDeployment("alpha");
         REQUIRE(p_alpha != nullptr);
-        CHECK(p_alpha->registration.pluginId() == "fixture.alpha");
-        CHECK(p_alpha->registration.baselineEventType() == "fixture.baseline");
-        CHECK(p_alpha->pluginEntryModule == "main");
-        REQUIRE(p_alpha->pluginModules.size() == 1U);
-        CHECK(p_alpha->pluginModules.front().source.starts_with("return {plugin_id ="));
+        CHECK(p_alpha->generation.pluginId() == "fixture.alpha");
+        CHECK(
+            operator_runtime::ProjectIdentity{p_alpha->generation}
+                .baselineEventType()
+            == "fixture.baseline"
+        );
+        CHECK(p_alpha->reducerClosure.entryModule == "main");
+        REQUIRE(p_alpha->reducerClosure.modules.size() == 1U);
+        CHECK(p_alpha->reducerClosure.modules.front().source.starts_with(
+            "return {plugin_id ="
+        ));
+        CHECK(
+            p_alpha->reducerClosure.declaredEntryPoints
+            == std::vector<std::string>{"reduce"}
+        );
+        // The tool closure is present and explicitly empty, which is the whole
+        // statement that this deployment binds no Tool.
+        CHECK(p_alpha->toolClosure.entryModule == "main");
+        REQUIRE(p_alpha->toolClosure.modules.size() == 1U);
+        CHECK(p_alpha->toolClosure.declaredEntryPoints.empty());
         REQUIRE(p_alpha->projectResources.size() == 1U);
         CHECK(p_alpha->projectResources.front().name == "page-model");
 
@@ -630,12 +661,12 @@ namespace uf::deployment
         // whole reason for a foreign role would be satisfied by one.
         auto const* const p_beta = loaded->findDeployment("beta");
         REQUIRE(p_beta != nullptr);
-        CHECK(p_alpha->registration.hash() != p_beta->registration.hash());
+        CHECK(p_alpha->generation.hash() != p_beta->generation.hash());
 
         // The five authorities are bound to that registration and can be asked
         // to judge, which is the whole of what constructing them was for.
         CHECK(p_alpha->schemaOwner.projectRegistrationHash()
-              == p_alpha->registration.hash());
+              == p_alpha->generation.hash());
         CHECK(p_alpha->schemaOwner.canonicalize("{\"revision\":0}").has_value());
         CHECK_FALSE(p_alpha->schemaOwner.canonicalize("{\"revision\": 0}").has_value());
         CHECK(p_alpha->toolCatalogSchemaOwner
@@ -656,16 +687,18 @@ namespace uf::deployment
         // authority from the very bindings the deployment compiled -- so the
         // authority answers for exactly the registration it was bound to.
         REQUIRE(
-            p_alpha->registration.observedInstanceIdentitySchemaHashes().size()
+            operator_runtime::ProjectIdentity{p_alpha->generation}
+                .observedInstanceIdentitySchemaHashes().size()
             == 1U
         );
         CHECK(
-            p_alpha->registration.observedInstanceIdentitySchemaHashes()[0]
+            operator_runtime::ProjectIdentity{p_alpha->generation}
+                .observedInstanceIdentitySchemaHashes()[0]
             == umbraflow::schemaHash(umbraflow::k_observedIdentitySchema)
         );
         CHECK(
             p_alpha->observedInstanceIdentitySchemas.projectRegistrationHash()
-            == p_alpha->registration.hash()
+            == p_alpha->generation.hash()
         );
 
         // Production loads retain only the authorities and pinned project data;
@@ -788,14 +821,18 @@ namespace uf::deployment
         REQUIRE(loaded.has_value());
         auto const* const p_alpha = loaded->findDeployment("alpha");
         REQUIRE(p_alpha != nullptr);
-        auto const& hashes = p_alpha->registration.observedInstanceIdentitySchemaHashes();
+        // The identity is named rather than left a temporary: the accessor
+        // returns a reference into it, and binding that to a name would leave
+        // the vector destroyed before the first assertion reads it.
+        auto const identity = operator_runtime::ProjectIdentity{p_alpha->generation};
+        auto const& hashes  = identity.observedInstanceIdentitySchemaHashes();
         REQUIRE(hashes.size() == 2U);
         CHECK(hashes[0] < hashes[1]);
         CHECK(hashes[0] == std::min(firstHash, secondHash));
         CHECK(hashes[1] == std::max(firstHash, secondHash));
         CHECK(
             p_alpha->observedInstanceIdentitySchemas.projectRegistrationHash()
-            == p_alpha->registration.hash()
+            == p_alpha->generation.hash()
         );
     }
 
@@ -1095,8 +1132,8 @@ namespace uf::deployment
             "umbraflow-project.json",
             substituted(
                 Fixture::projectManifest(),
-                R"json("path":"plugin/alpha.luau")json",
-                R"json("path":"schema/../plugin/alpha.luau")json"
+                R"json("path":"plugin/alpha-reducer.luau")json",
+                R"json("path":"schema/../plugin/alpha-reducer.luau")json"
             )
         );
         auto const traversal = fixture.load();
@@ -1107,8 +1144,8 @@ namespace uf::deployment
             "umbraflow-project.json",
             substituted(
                 Fixture::projectManifest(),
-                R"json("path":"plugin/alpha.luau")json",
-                R"json("path":"plugin\\alpha.luau")json"
+                R"json("path":"plugin/alpha-reducer.luau")json",
+                R"json("path":"plugin\\alpha-reducer.luau")json"
             )
         );
         auto const backslash = fixture.load();
@@ -1189,7 +1226,7 @@ namespace uf::deployment
         auto const declarative = substituted(
             substituted(
                 substituted(stated, member, ""),
-                R"json("path":"plugin/alpha.luau")json",
+                R"json("path":"plugin/alpha-reducer.luau")json",
                 std::string{R"json("path":")json"}
                     + std::string{k_generated} + R"json(")json"
             ),
@@ -1679,7 +1716,7 @@ namespace uf::deployment
         SUBCASE("one module cannot exceed the VM source ceiling")
         {
             fixture.rewrite(
-                "plugin/alpha.luau",
+                "plugin/alpha-reducer.luau",
                 std::string(
                     script::PureDataProgram::k_maximumModuleSourceBytes + 1U,
                     'x'
@@ -1729,8 +1766,10 @@ namespace uf::deployment
                 "umbraflow-project.json",
                 substituted(
                     Fixture::projectManifest(),
-                    R"json("plugin":{"entry":"main","modules":[{"name":"main","path":"plugin/alpha.luau"}]})json",
-                    "\"plugin\":{\"entry\":\"m0\",\"modules\":" + modules + "}"
+                    R"json("reducer_closure":{"entry":"main","exported_entry_points":["reduce"],"modules":[{"name":"main","path":"plugin/alpha-reducer.luau"}]})json",
+                    "\"reducer_closure\":{\"entry\":\"m0\","
+                        "\"exported_entry_points\":[\"reduce\"],"
+                        "\"modules\":" + modules + "}"
                 )
             );
             auto const refused = fixture.load();
@@ -1837,11 +1876,11 @@ namespace uf::deployment
         // that names the project it was pinned against.
         auto const manifest = operator_runtime::SessionManifest::create(
             operator_runtime::SessionManifestSpec{
-                .runtimeModelArtifactRootHash  = p_alpha->registration.hash(),
-                .operatorProtocolSchemaHash    = p_alpha->registration.hash(),
-                .projectRegistrationHash       = p_alpha->registration.hash(),
-                .policyArtifactHash            = p_alpha->registration.hash(),
-                .agentProfileHash              = p_alpha->registration.hash(),
+                .runtimeModelArtifactRootHash  = p_alpha->generation.hash(),
+                .operatorProtocolSchemaHash    = p_alpha->generation.hash(),
+                .projectRegistrationHash       = p_alpha->generation.hash(),
+                .policyArtifactHash            = p_alpha->generation.hash(),
+                .agentProfileHash              = p_alpha->generation.hash(),
             }
         );
         REQUIRE(manifest.has_value());
@@ -1873,7 +1912,7 @@ namespace uf::deployment
             ExpectedRegistration{.deployment = "alpha", .hash = recorded},
             ExpectedRegistration{
                 .deployment = "alpha",
-                .hash       = p_beta->registration.hash(),
+                .hash       = p_beta->generation.hash(),
             },
         };
         auto const conflicted = fixture.load(conflicting);
@@ -1881,8 +1920,9 @@ namespace uf::deployment
         CHECK(why(conflicted).contains("more than once"));
 
         fixture.rewrite(
-            "plugin/alpha.luau",
-            "return {plugin_id = \"fixture.alpha\"} -- one byte more\n"
+            "plugin/alpha-reducer.luau",
+            "return {plugin_id = \"fixture.alpha\", "
+            "reduce = function(input) return input end} -- one byte more\n"
         );
 
         auto const resumed = fixture.load(stored);
@@ -1894,8 +1934,8 @@ namespace uf::deployment
         REQUIRE(reloaded.has_value());
         auto const* const p_moved = reloaded->findDeployment("alpha");
         REQUIRE(p_moved != nullptr);
-        CHECK(p_moved->registration.hash() != recorded);
-        CHECK(refusal.contains(p_moved->registration.hash().hex()));
+        CHECK(p_moved->generation.hash() != recorded);
+        CHECK(refusal.contains(p_moved->generation.hash().hex()));
 
         // A commitment for a deployment this directory does not declare is a
         // refusal, not a value nobody read. Without it a misspelled name would

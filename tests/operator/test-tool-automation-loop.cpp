@@ -133,21 +133,33 @@ namespace uf::operator_runtime
         // drives a step, nothing outside it decides when to capture, and its
         // exit condition is what the game told it rather than a counter.
         //
-        // The scoped modules are required inside the entry bodies rather than
-        // at module scope, which is what lets the same bytes admit under both
-        // program types: this closure is registered twice against one
-        // registration -- once as the pure plugin the ledger provisions a
-        // ProjectInstance from, and once as the scoped program the dispatcher
-        // runs -- and the pure resolver never sees a scoped name because the
-        // pure program never calls an entry. `reduce` is the exception and
-        // must stay pure: the ledger folds a new ProjectInstance's baseline
-        // through it on the PURE program at provisioning time, so a scoped
-        // require there is a module the pure resolver rightly cannot find.
-        constexpr auto k_projectSource = std::string_view{R"LUAU(
+        // The reducer closure: `plugin_id` and one entry, compiled on the
+        // pure program type. The ledger folds a new ProjectInstance's baseline
+        // through it at provisioning time, and a scoped require here would be
+        // a module the pure resolver rightly cannot find -- which is why the
+        // fold lives in a closure of its own rather than beside the entries
+        // the loop dispatches.
+        constexpr auto k_reducerSource = std::string_view{R"LUAU(
 return {
     plugin_id = "e2.automation",
 
-    derive = function(input)
+    reduce = function(_input)
+        return { revision = 0 }
+    end,
+}
+)LUAU"};
+
+        // The tool closure: the four entries the loop's Tools are bound to.
+        //
+        // The scoped modules are required inside the entry bodies rather than
+        // at module scope. Nothing forces that now that this closure is
+        // compiled on the scoped type alone, but it keeps each entry's
+        // capability visible at the line that spends it.
+        constexpr auto k_toolSource = std::string_view{R"LUAU(
+return {
+    plugin_id = "e2.automation",
+
+    run = function(input)
         local results = require("@umbraflow/result")
         local screen = require("@umbraflow/screen")
         local tools = require("@umbraflow/tools")
@@ -207,7 +219,7 @@ return {
         return { delivered = delivered, settled = settled.settled, trace = trace }
     end,
 
-    plan = function(input)
+    recognise = function(input)
         local state = "transition"
         for index = 1, #input.targets do
             if input.targets[index] == "e2.ready" then
@@ -217,7 +229,7 @@ return {
         return { state = state }
     end,
 
-    next_step = function(input)
+    choose = function(input)
         return {
             action = input.actions[1],
             target = "e2.start",
@@ -230,7 +242,7 @@ return {
     -- script relays it exactly as it relays the one screen.observe answered
     -- with -- it has no way to tell them apart, which is the point. What
     -- separates them is whether this run's authority minted those bytes.
-    reconcile = function(input)
+    settle = function(input)
         if input.observation_reference ~= nil then
             local tools = require("@umbraflow/tools")
             return tools.call("framework.input.semantic_target", {
@@ -241,22 +253,30 @@ return {
         end
         return { settled = input.delivered }
     end,
-
-    reduce = function(_input)
-        return { revision = 0 }
-    end,
 }
 )LUAU"};
 
         [[nodiscard]]
-        auto moduleBlobs() -> std::vector<ProjectModuleBlob>
+        auto modulesOf(std::string_view source) -> std::vector<ProjectModuleBlob>
         {
             auto blobs = std::vector<ProjectModuleBlob>{};
             blobs.emplace_back(ProjectModuleBlob{
                 .name   = "main",
-                .source = std::string{k_projectSource},
+                .source = std::string{source},
             });
             return blobs;
+        }
+
+        [[nodiscard]]
+        auto reducerModules() -> std::vector<ProjectModuleBlob>
+        {
+            return modulesOf(k_reducerSource);
+        }
+
+        [[nodiscard]]
+        auto toolModules() -> std::vector<ProjectModuleBlob>
+        {
+            return modulesOf(k_toolSource);
         }
 
         [[nodiscard]]
@@ -265,31 +285,42 @@ return {
             return {
                 ProjectToolBinding{
                     .toolName   = std::string{k_chooseTool},
-                    .entryPoint = "next_step",
+                    .entryPoint = "choose",
                 },
                 ProjectToolBinding{
                     .toolName   = std::string{k_recogniseTool},
-                    .entryPoint = "plan",
+                    .entryPoint = "recognise",
                 },
                 ProjectToolBinding{
                     .toolName   = std::string{k_reducerTool},
-                    .entryPoint = "reduce",
+                    .entryPoint = "settle",
                 },
                 ProjectToolBinding{
                     .toolName   = std::string{k_runTool},
-                    .entryPoint = "derive",
+                    .entryPoint = "run",
                 },
                 ProjectToolBinding{
                     .toolName   = std::string{k_settleTool},
-                    .entryPoint = "reconcile",
+                    .entryPoint = "settle",
                 },
             };
         }
 
+        // What the tool closure states it exports: the sorted, unique union
+        // of the entry points its bindings name, written out rather than
+        // derived from boundEntries() -- a declaration computed from the table
+        // it is joined against would be the table compared with itself.
         [[nodiscard]]
-        auto exportedEntries() -> std::vector<std::string>
+        auto exportedToolEntries() -> std::vector<std::string>
         {
-            return {"derive", "next_step", "plan", "reconcile", "reduce"};
+            return {"choose", "recognise", "run", "settle"};
+        }
+
+        // The reducer closure's whole declared export set.
+        [[nodiscard]]
+        auto exportedReducerEntries() -> std::vector<std::string>
+        {
+            return {"reduce"};
         }
 
         [[nodiscard]]
@@ -407,8 +438,52 @@ return {
             };
         }
 
+        // The seam a registration made only to provision from answers with.
+        // A scoped program is required to hold one, and this one refuses every
+        // call: setup holds no lease, controller or observation authority for
+        // a call to be admitted under. One value, never a branch.
         [[nodiscard]]
-        auto registrationJcs(ProjectRegistrationClaims const& claims) -> std::string
+        auto refusingToolRuntime() -> script::ToolRuntimeInvoke
+        {
+            return [](
+                       std::string_view,
+                       json::Value const&,
+                       script::ToolCallCoordinate const&,
+                       std::stop_token
+                   ) -> Result<json::Value>
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "this registration dispatches no Tool call"
+                );
+            };
+        }
+
+        [[nodiscard]]
+        auto entryPointArray(std::vector<std::string> const& entries) -> json::Value
+        {
+            auto items = std::vector<json::Value>{};
+            items.reserve(entries.size());
+            for (auto const& entry : entries)
+            {
+                items.emplace_back(json::Value::ofString(entry));
+            }
+            return json::Value::ofArray(std::move(items));
+        }
+
+        [[nodiscard]]
+        auto closureValue(ProjectClosureClaims const& closure) -> json::Value
+        {
+            return json::Value::ofObject({
+                {"exported_entry_points",
+                 entryPointArray(closure.exportedEntryPoints)},
+                {"module_manifest_hash",
+                 json::Value::ofString(closure.moduleManifestHash.hex())},
+            });
+        }
+
+        [[nodiscard]]
+        auto generationJcs(ProjectGenerationClaims const& claims) -> std::string
         {
             auto bindings = std::vector<json::Value>{};
             for (auto const& binding : claims.projectToolBindings)
@@ -428,8 +503,6 @@ return {
                 {"plugin_environment_hash",
                  json::Value::ofString(claims.pluginEnvironmentHash.hex())},
                 {"plugin_id", json::Value::ofString(claims.pluginId)},
-                {"plugin_module_manifest_hash",
-                 json::Value::ofString(claims.pluginModuleManifestHash.hex())},
                 {"project_observation_schema_hash",
                  json::Value::ofString(claims.projectObservationSchemaHash.hex())},
                 {"project_registration_format",
@@ -448,24 +521,38 @@ return {
                  json::Value::ofString(
                      claims.reconcilePayloadSchemaManifestHash.hex()
                  )},
+                {"reducer_closure", closureValue(claims.reducerClosure)},
                 {"tool_catalog_hash",
                  json::Value::ofString(claims.toolCatalogHash.hex())},
+                {"tool_closure", closureValue(claims.toolClosure)},
             }));
         }
 
         [[nodiscard]]
-        auto verifiedRegistration() -> VerifiedProjectRegistration
+        auto manifestHashOf(std::vector<ProjectModuleBlob> const& modules)
+            -> ContentHash
         {
-            auto const modules            = moduleBlobs();
-            auto const moduleManifestHash =
-                derivePluginModuleManifestHash("main", modules);
-            REQUIRE(moduleManifestHash.has_value());
+            auto const hash = derivePluginModuleManifestHash("main", modules);
+            REQUIRE(hash.has_value());
+            return *hash;
+        }
+
+        [[nodiscard]]
+        auto verifiedGeneration() -> VerifiedProjectGeneration
+        {
             auto const environmentHash = currentProjectPluginEnvironmentHash();
             REQUIRE(environmentHash.has_value());
-            auto claims = ProjectRegistrationClaims{
-                .projectRegistrationFormat    = k_projectRegistrationFormat,
-                .pluginId                     = std::string{k_pluginId},
-                .pluginModuleManifestHash     = *moduleManifestHash,
+            auto claims = ProjectGenerationClaims{
+                .projectRegistrationFormat = k_projectGenerationFormat,
+                .pluginId                  = std::string{k_pluginId},
+                .reducerClosure            = ProjectClosureClaims{
+                    .moduleManifestHash  = manifestHashOf(reducerModules()),
+                    .exportedEntryPoints = exportedReducerEntries(),
+                },
+                .toolClosure = ProjectClosureClaims{
+                    .moduleManifestHash  = manifestHashOf(toolModules()),
+                    .exportedEntryPoints = exportedToolEntries(),
+                },
                 .pluginEnvironmentHash        = *environmentHash,
                 .toolCatalogHash              = hashOf(k_toolCatalogBytes),
                 .projectStateSchemaHash       = hashOf(k_stateSchemaBytes),
@@ -479,30 +566,26 @@ return {
                 .observedInstanceIdentitySchemaHashes = {},
                 .projectToolBindings                  = boundEntries(),
             };
-            auto const exactJcs = registrationJcs(claims);
-            auto owner          = ProjectRegistrationSchemaOwner::create(
+            auto const exactJcs = generationJcs(claims);
+            auto generation     = ProjectGeneration::verifyExact(
+                exactJcs,
+                hashOf(exactJcs),
                 [exactJcs = exactJcs, claims = std::move(claims)](
                     std::string_view candidate
-                ) -> Result<ProjectRegistrationClaims>
+                ) -> Result<ProjectGenerationClaims>
                 {
                     if (candidate != exactJcs)
                     {
                         return fail(
                             AutomationErrorKind::InvalidResource,
-                            "E2 fixture registration is not exact JCS"
+                            "E2 fixture generation is not exact JCS"
                         );
                     }
                     return claims;
                 }
             );
-            REQUIRE(owner.has_value());
-            auto registration = ProjectRegistration::verifyExact(
-                exactJcs,
-                hashOf(exactJcs),
-                *owner
-            );
-            REQUIRE(registration.has_value());
-            return *std::move(registration);
+            REQUIRE(generation.has_value());
+            return *std::move(generation);
         }
 
         // The world the Framework Tools of this run answer for, and the run's
@@ -685,7 +768,7 @@ return {
 
         [[nodiscard]]
         auto projectSchemaOwner(
-            VerifiedProjectRegistration const& registration
+            VerifiedProjectGeneration const& registration
         ) -> ProjectSchemaOwner
         {
             auto owner = ProjectSchemaOwner::create(
@@ -708,7 +791,7 @@ return {
 
         [[nodiscard]]
         auto toolCatalogOwner(
-            VerifiedProjectRegistration const& registration
+            VerifiedProjectGeneration const& registration
         ) -> ProjectToolCatalogSchemaOwner
         {
             auto owner = ProjectToolCatalogSchemaOwner::create(
@@ -740,7 +823,7 @@ return {
         [[nodiscard]]
         auto planAuthorityFor(
             OperatorCoordinator& store,
-            VerifiedProjectRegistration const& registration,
+            VerifiedProjectGeneration const& registration,
             SessionManifest const& manifest,
             ContentHash const& artifactRootHash
         ) -> OperatorPlanAuthority
@@ -756,13 +839,12 @@ return {
             auto const runtimeModel =
                 observation.host->runtimeModelBinding(observation.generation);
             REQUIRE(runtimeModel.has_value());
-            auto authority = conformance::planAuthority(
+            auto authority = OperatorPlanAuthority::create(
                 registration,
                 manifest,
                 *runtimeModel,
                 "operator",
-                policyBytes(),
-                test_support::k_fixtureUiAction
+                policyBytes()
             );
             REQUIRE_MESSAGE(authority.has_value(), failureText(authority));
             return *std::move(authority);
@@ -787,7 +869,7 @@ return {
         [[nodiscard]]
         auto openIncarnation(
             std::filesystem::path const& path,
-            VerifiedProjectRegistration const& registration
+            VerifiedProjectGeneration const& registration
         ) -> Incarnation
         {
             auto const release = test_support::runtimeRelease(path / "release");
@@ -804,15 +886,26 @@ return {
             REQUIRE_MESSAGE(installed.has_value(), failureText(installed));
             auto const artifactRootHash = installed->rootHash();
 
-            auto registrar = ProjectPluginRegistrar{};
-            auto plugin    = registrar.registerPlugin(
+            // Provisioning needs the generation's fold and nothing else, so
+            // this registration's Tool Runtime seam refuses every call.
+            auto registrar  = ProjectGenerationRegistrar{};
+            auto generation = registrar.registerGeneration(
                 registration,
-                "main",
-                moduleBlobs(),
+                toolCatalogOwner(registration),
+                projectSchemaOwner(registration),
+                ProjectGenerationRegistrar::ClosureModules{
+                    .entryModule = "main",
+                    .modules     = reducerModules(),
+                },
+                ProjectGenerationRegistrar::ClosureModules{
+                    .entryModule = "main",
+                    .modules     = toolModules(),
+                },
                 {},
-                projectSchemaOwner(registration)
+                [](std::string_view, std::string_view) -> Status { return ok(); },
+                refusingToolRuntime()
             );
-            REQUIRE_MESSAGE(plugin.has_value(), failureText(plugin));
+            REQUIRE_MESSAGE(generation.has_value(), failureText(generation));
 
             auto const policy   = policyBytes();
             auto const manifest = test_support::sessionManifest(
@@ -824,7 +917,7 @@ return {
             REQUIRE(store.registerProject(registration).has_value());
             auto const provisioned = store.provisionProjectInstance(
                 registration,
-                *plugin,
+                *generation,
                 ProjectInstanceBaseline{
                     .projectInstanceKey  = std::string{k_instanceKey},
                     .eventId             = "",
@@ -877,19 +970,24 @@ return {
 
         [[nodiscard]]
         auto loadProgram(
-            VerifiedProjectRegistration const& registration,
-            ProjectToolProgramRegistrar& registrar,
+            VerifiedProjectGeneration const& registration,
+            ProjectGenerationRegistrar& registrar,
             ProjectToolDispatcher const& dispatcher
-        ) -> ProjectToolProgramHandle
+        ) -> ProjectGenerationHandle
         {
-            auto const exported = exportedEntries();
-            auto loaded         = registrar.registerProject(
+            auto loaded = registrar.registerGeneration(
                 registration,
                 toolCatalogOwner(registration),
-                "main",
-                moduleBlobs(),
+                projectSchemaOwner(registration),
+                ProjectGenerationRegistrar::ClosureModules{
+                    .entryModule = "main",
+                    .modules     = reducerModules(),
+                },
+                ProjectGenerationRegistrar::ClosureModules{
+                    .entryModule = "main",
+                    .modules     = toolModules(),
+                },
                 {},
-                exported,
                 [](std::string_view, std::string_view) -> Status
                 { return ok(); },
                 dispatcher.toolRuntimeSeam()
@@ -899,7 +997,7 @@ return {
         }
 
         [[nodiscard]]
-        auto executionIdentity(ProjectToolProgramHandle const& program)
+        auto executionIdentity(ProjectGenerationHandle const& program)
             -> ToolExecutionIdentity
         {
             return ToolExecutionIdentity{
@@ -923,7 +1021,7 @@ return {
     TEST_CASE("a Project automation loop observes, acts, waits and terminates")
     {
         auto temporary          = TemporaryDirectory{};
-        auto const registration = verifiedRegistration();
+        auto const registration = verifiedGeneration();
         auto databasePath  = std::filesystem::path{};
         auto world         = std::shared_ptr<AutomationWorld>{};
         auto loopAnswer    = std::string{};
@@ -944,7 +1042,7 @@ return {
                 frameworkProvider(world)
             );
             REQUIRE_MESSAGE(dispatcher.has_value(), failureText(dispatcher));
-            auto registrar     = ProjectToolProgramRegistrar{};
+            auto registrar     = ProjectGenerationRegistrar{};
             auto const program = loadProgram(registration, registrar, *dispatcher);
             auto const catalog =
                 ToolStartCatalog::create(toolCatalogOwner(registration));

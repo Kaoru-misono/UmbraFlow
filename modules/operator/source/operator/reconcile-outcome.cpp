@@ -59,7 +59,7 @@ namespace uf::operator_runtime
     }
 
     auto ProjectReconcileSchemaOwner::create(
-        VerifiedProjectRegistration const& registration,
+        ProjectIdentity const& registration,
         std::string_view exactReconcileSchemaManifestBytes,
         ReconcileDispositionReader readDisposition
     ) -> Result<ProjectReconcileSchemaOwner>

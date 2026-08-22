@@ -93,19 +93,36 @@ namespace uf::deployment
         ProjectVocabulary vocabulary{};
     };
 
-    // One deployment, loaded: the registration this loader derived from the
-    // deployment's block and the digests of the files it read, and the six
-    // authorities built from it.
+    // One closure of a deployment's two-closure generation, as the loader read
+    // it: the entry module its manifest digest is taken over, the exact module
+    // blobs of the closed graph beneath it, and what the deployment block
+    // STATED the closure exports.
+    //
+    // The declaration is carried rather than derived. A loader that computed it
+    // from the binding table would compare the table with itself, and one that
+    // ran the module to observe it would compare exports with exports; both
+    // collapses leave a refusal no test can make fail.
+    struct DeploymentClosure final
+    {
+        std::string                                      entryModule{};
+        std::vector<operator_runtime::ProjectModuleBlob> modules{};
+        std::vector<std::string>                         declaredEntryPoints{};
+    };
+
+    // One deployment, loaded: the registration generation this loader derived
+    // from the deployment's block and the digests of the files it read, and the
+    // six authorities built from it.
     //
     // There is no authored registration document anywhere in a project
-    // directory. The block states intent -- which plugin, which schemas, which
-    // typed resources, each by path -- and every digest in the registration is
-    // this loader's own arithmetic.
+    // directory. The block states intent -- which closures, which schemas,
+    // which typed resources, each by path -- and every digest in the generation
+    // is this loader's own arithmetic. The one thing it does not derive is each
+    // closure's declared export set: that is the author's own second source.
     struct LoadedDeployment final
     {
         std::string name{};
 
-        operator_runtime::VerifiedProjectRegistration     registration;
+        operator_runtime::VerifiedProjectGeneration       generation;
         operator_runtime::ProjectSchemaOwner              schemaOwner;
         operator_runtime::ProjectJournalSchemaOwner       journalSchemaOwner;
         operator_runtime::ProjectToolCatalogSchemaOwner   toolCatalogSchemaOwner;
@@ -120,11 +137,13 @@ namespace uf::deployment
         // deployment's catalog be held to each other.
         ProjectDeployment catalog;
 
-        // registerPlugin's exact module/resource closure, as bytes. Paths have
-        // already been confined and do not survive into runtime identity.
-        std::string pluginEntryModule{};
-        std::vector<operator_runtime::ProjectModuleBlob>
-            pluginModules{};
+        // registerGeneration's exact module and resource closures, as bytes.
+        // Paths have already been confined and do not survive into runtime
+        // identity. The resource closure is one per registration and read by
+        // both compiled closures, which is why it sits beside them rather than
+        // inside either.
+        DeploymentClosure reducerClosure{};
+        DeploymentClosure toolClosure{};
         std::vector<operator_runtime::ProjectResourceBlob>
             projectResources{};
     };

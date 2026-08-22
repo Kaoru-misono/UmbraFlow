@@ -16,29 +16,21 @@ namespace uf::operator_runtime
     // The generation of the ProjectRegistration document contract this
     // framework derives and reads. It is a compatibility statement: a
     // registration declares the number and this binary decides whether it
-    // understands what that number describes.
-    //
-    // It is a generation rather than the digest of
-    // schema/umbraflow-project-registration-v2.schema.json, because the digest
-    // made every cosmetic edit to that file move every registration root -- and
-    // a registration root is a project's identity, pinned by consumers. The
-    // digest also compared a value with itself: the loader derived it once and
-    // handed the same local to both the document and the schema owner that
-    // judged the document.
-    inline constexpr auto k_projectRegistrationFormat = uint64{4U};
-
-    // The generation of the TWO-CLOSURE ProjectRegistration document contract,
-    // stated in the same `project_registration_format` member and read by a
-    // different reader. Its shape is
+    // understands what that number describes. Its shape is
     // schema/umbraflow-project-registration-v3.schema.json.
     //
-    // Two constants over one member is what a dark generation looks like, and
-    // it is safe for exactly one reason: no reader has both shapes behind it.
-    // validateClaims below accepts 4 and refuses everything else;
-    // validateGenerationClaims accepts 5 and refuses everything else. Neither
-    // reads the number to choose a behaviour, so the integer is an identity
-    // assertion and never a dispatch key. Code that inspected a document to
-    // pick a reader would be the selector both of them exist to avoid.
+    // It is a generation rather than the digest of that schema, because the
+    // digest made every cosmetic edit to the file move every registration
+    // root -- and a registration root is a project's identity, pinned by
+    // consumers. The digest also compared a value with itself: the loader
+    // derived it once and handed the same local to both the document and the
+    // schema owner that judged the document.
+    //
+    // There is ONE reader and it accepts exactly this number.
+    // validateGenerationClaims refuses every other value rather than choosing
+    // a behaviour from it, so the integer is an identity assertion inside the
+    // reader and never a dispatch key. Code that inspected a document to pick
+    // a reader would be the selector this constant exists to avoid.
     inline constexpr auto k_projectGenerationFormat = uint64{5U};
 
     // The one entry point the pure program type keeps under the two-closure
@@ -49,7 +41,7 @@ namespace uf::operator_runtime
     // The namespace the Framework owns. Every Framework Tool is named inside
     // it, and no other registrant may claim it: a ProjectRegistration whose
     // plugin_id fell inside this namespace would own Tool names the Framework
-    // catalog already owns, so validateClaims refuses the claim where a
+    // catalog already owns, so validateSharedClaims refuses the claim where a
     // registrant's namespace is stated rather than once per Tool name.
     inline constexpr auto k_frameworkToolNamespace = std::string_view{"framework"};
 
@@ -132,7 +124,6 @@ namespace uf::operator_runtime
         auto operator==(ProjectToolBinding const&) const -> bool = default;
     };
 
-    class VerifiedProjectRegistration;
     class VerifiedProjectGeneration;
 
     // What a verified Project registration IS to everything downstream of the
@@ -141,17 +132,12 @@ namespace uf::operator_runtime
     // its provenance, the schemas it pinned, and the Tools it bound.
     //
     // It is a projection and never a document. It carries no authority to mint
-    // one and cannot be verified into existence: the only two constructors take
-    // an already-verified registration of one document generation or the other,
-    // so a caller holding one of these has already been through a reader. What
-    // it removes is the document generation. A consumer that takes this cannot
-    // tell whether a one-closure registration or a two-closure generation stated
-    // it, which is the point -- consumers keyed on this survive the flip that
-    // deletes the older document type, and they need no branch to do it.
-    //
-    // Being generation-neutral is not the same as being a selector. Nothing
-    // here inspects a value to decide what a registration is; each constructor
-    // reads exactly one document type and knows which at compile time.
+    // one and cannot be verified into existence: its only constructor takes an
+    // already-verified generation, so a caller holding one of these has already
+    // been through the reader. What it removes is the document: a consumer that
+    // takes this names no document type at all, which is what let these
+    // consumers survive the flip that deleted the one-closure document without
+    // a branch of their own.
     //
     // It is deliberately not every claim a registration carries. The resource
     // closure, the environment digest and the journal and reconcile manifests
@@ -167,16 +153,18 @@ namespace uf::operator_runtime
         ContentHash                     m_projectStateSchemaHash;
         ContentHash                     m_projectObservationSchemaHash;
         ContentHash                     m_projectToolPreconditionSchemaHash;
+        ContentHash                     m_reconcilePayloadSchemaManifestHash;
+        ContentHash                     m_journalEventSchemaManifestHash;
         std::string                     m_baselineEventType;
+        std::vector<ContentHash>        m_observedInstanceIdentitySchemaHashes;
         std::vector<ProjectToolBinding> m_projectToolBindings;
 
     public:
-        // Both projections are implicit, because that is what they are: a
-        // narrowing from a verified document to the part of it that outlives
-        // the document's generation. Naming the narrowing at every call site
-        // would say only which document generation the caller happens to hold,
-        // which is exactly the fact these consumers must not depend on.
-        ProjectIdentity(VerifiedProjectRegistration const& registration);
+        // The projection is implicit, because that is what it is: a narrowing
+        // from a verified document to the part of it that outlives the
+        // document. Naming the narrowing at every call site would say only
+        // which loader the caller happens to hold, which is exactly the fact
+        // these consumers must not depend on.
         ProjectIdentity(VerifiedProjectGeneration const& generation);
 
         [[nodiscard]] auto hash() const -> ContentHash;
@@ -187,152 +175,35 @@ namespace uf::operator_runtime
             -> std::string const&;
 
         // The digest of the module closure the ledger records this
-        // registration's durable provenance under. A one-closure registration
-        // has one closure and states it; a two-closure generation projects its
-        // REDUCER closure, because the rows this digest guards -- the instance
-        // baseline, the project state and the Journal prefix they fold -- are
-        // produced by the fold and by nothing else. The tool closure is not
-        // lost by that choice: it is pinned inside the same root, whose exact
-        // bytes the same ledger row stores.
+        // registration's durable provenance under. It is the REDUCER closure's,
+        // because the rows this digest guards -- the instance baseline, the
+        // project state and the Journal prefix they fold -- are produced by the
+        // fold and by nothing else. The tool closure is not lost by that
+        // choice: it is pinned inside the same root, whose exact bytes the same
+        // ledger row stores.
         [[nodiscard]] auto moduleIdentityHash() const -> ContentHash;
 
         [[nodiscard]] auto toolCatalogHash() const -> ContentHash;
         [[nodiscard]] auto projectStateSchemaHash() const -> ContentHash;
         [[nodiscard]] auto projectObservationSchemaHash() const -> ContentHash;
         [[nodiscard]] auto projectToolPreconditionSchemaHash() const -> ContentHash;
-        [[nodiscard]] auto baselineEventType() const -> std::string;
-
-        [[nodiscard]]
-        auto projectToolBindings() const noexcept UF_LIFETIME_BOUND
-            -> std::vector<ProjectToolBinding> const&;
-    };
-
-    // Values extracted only after the schema owner has accepted the exact
-    // ProjectRegistration JCS bytes. This is not a construction spec: callers
-    // cannot pass it to the registrar or mint a registration from it.
-    struct ProjectRegistrationClaims final
-    {
-        uint64                       projectRegistrationFormat{};
-        std::string                  pluginId{};
-        ContentHash                  pluginModuleManifestHash;
-        ContentHash                  pluginEnvironmentHash;
-        ContentHash                  toolCatalogHash;
-        ContentHash                  projectStateSchemaHash;
-        ContentHash                  projectObservationSchemaHash;
-        ContentHash                  projectToolPreconditionSchemaHash;
-        ContentHash                  reconcilePayloadSchemaManifestHash;
-        ContentHash                  journalEventSchemaManifestHash;
-        std::string                  baselineEventType{};
-        std::vector<ProjectResource> projectResources{};
-
-        // The closed set of observed-instance identity schema documents this
-        // registration owns, as the sha256 of each exact document, sorted and
-        // unique. The deployment that supplied the documents derives it; the
-        // claims check refuses any other order.
-        std::vector<ContentHash> observedInstanceIdentitySchemaHashes{};
-
-        // The Project Tool binding table, sorted by tool name and unique. An
-        // empty table is the whole statement "this registration binds no Tool
-        // to an entry", which is what a project that ships no handler declares;
-        // there is deliberately no second spelling of that and no absent form.
-        std::vector<ProjectToolBinding> projectToolBindings{};
-    };
-
-    // The implementation must parse the complete registration, validate it
-    // against the owner's exact JSON Schema, and reject bytes that are not the
-    // exact RFC 8785 JCS serialization. Returning claims without doing all
-    // three is a schema-owner bug, never an extension point for project code.
-    using ProjectRegistrationExactValidator = std::function<
-        Result<ProjectRegistrationClaims>(std::string_view exactJcs)
-    >;
-
-    class ProjectRegistrationSchemaOwner final
-    {
-        ProjectRegistrationExactValidator m_validate;
-
-        explicit ProjectRegistrationSchemaOwner(
-            ProjectRegistrationExactValidator validate
-        );
-
-        friend class ProjectRegistration;
-
-        [[nodiscard]]
-        auto validate(std::string_view exactJcs) const
-            -> Result<ProjectRegistrationClaims>;
-
-    public:
-        [[nodiscard]]
-        static auto create(
-            ProjectRegistrationExactValidator validate
-        ) -> Result<ProjectRegistrationSchemaOwner>;
-    };
-
-    // Authority-bearing registration identity. Its constructor is unreachable
-    // except from ProjectRegistration::verifyExact after exact JCS validation,
-    // exact schema validation, and root verification have all succeeded.
-    class VerifiedProjectRegistration final
-    {
-        ProjectRegistrationClaims m_claims;
-        std::string               m_canonicalJcs;
-        ContentHash               m_rootHash;
-
-        VerifiedProjectRegistration(
-            ProjectRegistrationClaims claims,
-            std::string canonicalJcs,
-            ContentHash rootHash
-        );
-
-        friend class ProjectRegistration;
-        friend class ProjectIdentity;
-
-    public:
-        [[nodiscard]]
-        auto canonicalJcs() const noexcept UF_LIFETIME_BOUND
-            -> std::string const&;
-
-        [[nodiscard]] auto hash() const -> ContentHash;
-        [[nodiscard]] auto pluginId() const -> std::string;
-        [[nodiscard]] auto pluginModuleManifestHash() const -> ContentHash;
-        [[nodiscard]] auto pluginEnvironmentHash() const -> ContentHash;
-        [[nodiscard]] auto projectStateSchemaHash() const -> ContentHash;
-        [[nodiscard]] auto toolCatalogHash() const -> ContentHash;
-
-        // Each schema-owning authority is bound to the exact bytes the
-        // registration names here, so that an owner cannot answer for a schema
-        // this registration never pinned.
-        [[nodiscard]] auto projectObservationSchemaHash() const -> ContentHash;
-        [[nodiscard]] auto projectToolPreconditionSchemaHash() const -> ContentHash;
         [[nodiscard]] auto reconcilePayloadSchemaManifestHash() const -> ContentHash;
         [[nodiscard]] auto journalEventSchemaManifestHash() const -> ContentHash;
-
         [[nodiscard]] auto baselineEventType() const -> std::string;
 
+        // The closed set of observed-instance identity schema documents this
+        // registration owns, in the sorted-unique order the loader derived. It
+        // is here rather than left with the verified documents because the
+        // authority that judges an observed instance is built once per
+        // deployment and must be keyed on the identity rather than on which
+        // document generation stated it.
         [[nodiscard]]
-        auto projectResources() const noexcept UF_LIFETIME_BOUND
-            -> std::vector<ProjectResource> const&;
+        auto observedInstanceIdentitySchemaHashes() const noexcept UF_LIFETIME_BOUND
+            -> std::vector<ContentHash> const&;
 
-        [[nodiscard]]
-        auto observedInstanceIdentitySchemaHashes() const noexcept
-            UF_LIFETIME_BOUND -> std::vector<ContentHash> const&;
-
-        // The binding table this registration pinned. See ProjectToolBinding
-        // for why these bytes are inside this root and outside the catalog.
         [[nodiscard]]
         auto projectToolBindings() const noexcept UF_LIFETIME_BOUND
             -> std::vector<ProjectToolBinding> const&;
-    };
-
-    // The sole mint for VerifiedProjectRegistration. There is deliberately no
-    // loose field spec and no API that canonicalizes caller-provided fields.
-    class ProjectRegistration final
-    {
-    public:
-        [[nodiscard]]
-        static auto verifyExact(
-            std::string canonicalJcs,
-            ContentHash expectedRootHash,
-            ProjectRegistrationSchemaOwner const& schemaOwner
-        ) -> Result<VerifiedProjectRegistration>;
     };
 
     // One compiled closure of a two-closure registration generation: the exact
@@ -358,8 +229,8 @@ namespace uf::operator_runtime
     };
 
     // Values extracted only after a validator has accepted the exact
-    // two-closure ProjectRegistration JCS bytes. Like ProjectRegistrationClaims
-    // it is not a construction spec: no caller mints a generation from one.
+    // two-closure ProjectRegistration JCS bytes. This is not a construction
+    // spec: no caller mints a generation from one.
     struct ProjectGenerationClaims final
     {
         uint64      projectRegistrationFormat{};
@@ -384,9 +255,9 @@ namespace uf::operator_runtime
         std::vector<ProjectResource> projectResources{};
 
         // Both sorted and unique by the derivation the loader performs before
-        // it writes, exactly as the one-closure document requires; see
-        // ProjectRegistrationClaims for why the order is the framework's own
-        // reading rather than something JSON Schema can state.
+        // it writes. The order is the framework's own reading rather than
+        // something JSON Schema can state, so the claims check refuses any
+        // other order here instead of leaving it to the document's shape.
         std::vector<ContentHash> observedInstanceIdentitySchemaHashes{};
 
         std::vector<ProjectToolBinding> projectToolBindings{};
@@ -451,10 +322,11 @@ namespace uf::operator_runtime
             -> std::vector<ProjectToolBinding> const&;
     };
 
-    // The sole mint for VerifiedProjectGeneration, and the reader that accepts
-    // the two-closure shape and nothing else. It shares no code path with
-    // ProjectRegistration::verifyExact and neither of them inspects a document
-    // to decide which of the two should read it.
+    // The sole mint for VerifiedProjectGeneration, and the only reader of a
+    // ProjectRegistration document there is. It accepts the two-closure shape
+    // and refuses everything else, including the one-closure document the flip
+    // deleted: nothing inspects a document to decide which reader should have
+    // it, because there is no second reader to decide between.
     class ProjectGeneration final
     {
     public:

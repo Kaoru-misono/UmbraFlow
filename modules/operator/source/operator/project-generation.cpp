@@ -231,10 +231,9 @@ namespace uf::operator_runtime
         CanonicalJson const& input
     ) const -> Result<ValidatedDocument>
     {
-        // Validation is repeated at the call boundary for the reason the
-        // one-closure handle repeats it: a CanonicalJson carries no schema
-        // authority, so the value the fold runs on must be the one this
-        // owner produced rather than one a caller cached.
+        // Validation is repeated at the call boundary because a CanonicalJson
+        // carries no schema authority: the value the fold runs on must be the
+        // one this owner produced rather than one a caller cached.
         UF_TRY_VALUE(
             validatedInput,
             m_state->schemaOwner.validate(
@@ -285,25 +284,6 @@ namespace uf::operator_runtime
             m_state->validateResults(toolName, exactResultJcs),
             "validating the answer of the Project Tool " + std::string{toolName}
         );
-    }
-
-    ProjectBaselineReducer::ProjectBaselineReducer(
-        ProjectPluginHandle const& plugin
-    )
-        : m_projectRegistrationHash{plugin.projectRegistrationHash()}
-        , m_canonicalize{
-              [plugin](std::string exactJcs) -> Result<CanonicalJson>
-              {
-                  return plugin.canonicalize(std::move(exactJcs));
-              }
-          }
-        , m_fold{
-              [plugin](CanonicalJson const& input) -> Result<ValidatedDocument>
-              {
-                  return plugin.reduce(input);
-              }
-          }
-    {
     }
 
     ProjectBaselineReducer::ProjectBaselineReducer(

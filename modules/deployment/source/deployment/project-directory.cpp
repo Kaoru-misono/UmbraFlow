@@ -40,7 +40,7 @@ namespace uf::deployment
     namespace
     {
         constexpr auto k_registrationSchemaPath = std::string_view{
-            "schema/umbraflow-project-registration-v2.schema.json"
+            "schema/umbraflow-project-registration-v3.schema.json"
         };
 
         // umbraflow-project.json: the document production reads. Its shape is
@@ -424,18 +424,39 @@ namespace uf::deployment
         // bytes this loader read.
         struct DerivedRegistration final
         {
-            std::string              pluginId{};
-            std::string              baselineEventType{};
-            ContentHash              pluginModuleManifestHash;
-            ContentHash              pluginEnvironmentHash;
-            ContentHash              toolCatalogHash;
-            ContentHash              projectStateSchemaHash;
-            ContentHash              projectObservationSchemaHash;
-            ContentHash              projectToolPreconditionSchemaHash;
-            ContentHash              reconcilePayloadSchemaManifestHash;
-            ContentHash              journalEventSchemaManifestHash;
-            std::vector<ContentHash> observedInstanceIdentitySchemaHashes{};
+            std::string                            pluginId{};
+            std::string                            baselineEventType{};
+            operator_runtime::ProjectClosureClaims reducerClosure;
+            operator_runtime::ProjectClosureClaims toolClosure;
+            ContentHash                            pluginEnvironmentHash;
+            ContentHash                            toolCatalogHash;
+            ContentHash                            projectStateSchemaHash;
+            ContentHash                            projectObservationSchemaHash;
+            ContentHash                            projectToolPreconditionSchemaHash;
+            ContentHash                            reconcilePayloadSchemaManifestHash;
+            ContentHash                            journalEventSchemaManifestHash;
+            std::vector<ContentHash>               observedInstanceIdentitySchemaHashes{};
         };
+
+        // One closure, as the generation document states it: the digest of the
+        // module graph and the entry points the deployment declared it exports.
+        [[nodiscard]]
+        auto closureValue(operator_runtime::ProjectClosureClaims const& closure)
+            -> json::Value
+        {
+            auto entryPoints = std::vector<json::Value>{};
+            entryPoints.reserve(closure.exportedEntryPoints.size());
+            for (auto const& entryPoint : closure.exportedEntryPoints)
+            {
+                entryPoints.emplace_back(json::Value::ofString(entryPoint));
+            }
+            return json::Value::ofObject({
+                {"exported_entry_points",
+                 json::Value::ofArray(std::move(entryPoints))},
+                {"module_manifest_hash",
+                 json::Value::ofString(closure.moduleManifestHash.hex())},
+            });
+        }
 
         // The registration document, as exact RFC 8785 JCS. It is assembled as
         // a value and serialized by json::canonicalBytes rather than formatted,
@@ -505,13 +526,12 @@ namespace uf::deployment
                  json::Value::ofArray(std::move(identityHashes))},
                 {"plugin_environment_hash", hash(derived.pluginEnvironmentHash)},
                 {"plugin_id", json::Value::ofString(derived.pluginId)},
-                {"plugin_module_manifest_hash", hash(derived.pluginModuleManifestHash)},
                 {"project_observation_schema_hash",
                  hash(derived.projectObservationSchemaHash)},
                 {"project_registration_format",
                  json::Value::ofNumber(
                      static_cast<double>(
-                         operator_runtime::k_projectRegistrationFormat
+                         operator_runtime::k_projectGenerationFormat
                      )
                  )},
                 {"project_state_schema_hash", hash(derived.projectStateSchemaHash)},
@@ -521,7 +541,9 @@ namespace uf::deployment
                 {"project_resources", json::Value::ofArray(std::move(resources))},
                 {"reconcile_payload_schema_manifest_hash",
                  hash(derived.reconcilePayloadSchemaManifestHash)},
+                {"reducer_closure", closureValue(derived.reducerClosure)},
                 {"tool_catalog_hash", hash(derived.toolCatalogHash)},
+                {"tool_closure", closureValue(derived.toolClosure)},
             }));
         }
 
@@ -562,16 +584,43 @@ namespace uf::deployment
             UF_UNREACHABLE_MSG("registration schema admitted an unknown resource kind");
         }
 
+        // One closure, read back out of the document the schema has already
+        // accepted. The declared export set is read as stated: this reader is
+        // the second source the join needs, so it never repairs, sorts or
+        // completes what the author wrote.
+        [[nodiscard]]
+        auto readClosureClaims(
+            json::Value const& document,
+            std::string_view name
+        ) -> Result<operator_runtime::ProjectClosureClaims>
+        {
+            auto const& closure = member(document, name);
+            UF_TRY_VALUE(
+                moduleManifestHash,
+                parseHash(closure, "module_manifest_hash")
+            );
+            auto entryPoints = std::vector<std::string>{};
+            for (auto const& entryPoint :
+                 member(closure, "exported_entry_points").items())
+            {
+                entryPoints.emplace_back(entryPoint.string());
+            }
+            return operator_runtime::ProjectClosureClaims{
+                .moduleManifestHash  = moduleManifestHash,
+                .exportedEntryPoints = std::move(entryPoints),
+            };
+        }
+
         // The framework's own reading of the document it just derived. It is a
-        // whole ProjectRegistrationExactValidator: the registration schema
-        // judges the members, and this reads back only what that schema
+        // whole ProjectGenerationExactValidator: the two-closure registration
+        // schema judges the members, and this reads back only what that schema
         // accepted.
         [[nodiscard]]
         auto registrationValidator(json::Schema schema)
-            -> operator_runtime::ProjectRegistrationExactValidator
+            -> operator_runtime::ProjectGenerationExactValidator
         {
             return [judge = std::move(schema)](std::string_view exactJcs)
-                       -> Result<operator_runtime::ProjectRegistrationClaims>
+                       -> Result<operator_runtime::ProjectGenerationClaims>
             {
                 auto const canonical = json::requireExactCanonical(exactJcs);
                 if (!canonical.has_value())
@@ -586,8 +635,12 @@ namespace uf::deployment
                     readValidated(judge, "the derived ProjectRegistration", exactJcs)
                 );
                 UF_TRY_VALUE(
-                    moduleManifestHash,
-                    parseHash(document, "plugin_module_manifest_hash")
+                    reducerClosure,
+                    readClosureClaims(document, "reducer_closure")
+                );
+                UF_TRY_VALUE(
+                    toolClosure,
+                    readClosureClaims(document, "tool_closure")
                 );
                 UF_TRY_VALUE(
                     environmentHash,
@@ -653,13 +706,14 @@ namespace uf::deployment
                     identityHashes.emplace_back(hash);
                 }
 
-                return operator_runtime::ProjectRegistrationClaims{
+                return operator_runtime::ProjectGenerationClaims{
                     .projectRegistrationFormat             = formatOf(
                         document,
                         "project_registration_format"
                     ),
                     .pluginId                             = text(document, "plugin_id"),
-                    .pluginModuleManifestHash             = moduleManifestHash,
+                    .reducerClosure                       = std::move(reducerClosure),
+                    .toolClosure                          = std::move(toolClosure),
                     .pluginEnvironmentHash                = environmentHash,
                     .toolCatalogHash                      = catalogHash,
                     .projectStateSchemaHash               = stateHash,
@@ -710,32 +764,34 @@ namespace uf::deployment
         // outlive the create call.
         struct DeploymentFiles final
         {
-            std::string pluginEntryModule{};
-            std::vector<operator_runtime::ProjectModuleBlob>
-                pluginModules{};
-            std::string projectState{};
-            std::string projectObservation{};
-            std::string toolPrecondition{};
-            std::string reconcile{};
-            std::string toolCatalog{};
-            std::string journalEventManifest{};
-            std::string reconcileManifest{};
+            DeploymentClosure reducerClosure{};
+            DeploymentClosure toolClosure{};
+            std::string       projectState{};
+            std::string       projectObservation{};
+            std::string       toolPrecondition{};
+            std::string       reconcile{};
+            std::string       toolCatalog{};
+            std::string       journalEventManifest{};
+            std::string       reconcileManifest{};
 
             std::vector<std::string> journalPayloadSchemas{};
             std::vector<std::string> effectPayloadSchemas{};
             std::vector<std::string> observedInstanceIdentitySchemas{};
         };
 
+        // One closure of a deployment's generation, as bytes plus the export
+        // set the block stated for it. `name` picks which of the two closures
+        // is being read, and nothing about the read depends on which: both are
+        // module graphs with an entry and a declaration, and the difference
+        // between them is which program type compiles them.
         [[nodiscard]]
         auto readPluginClosure(
             task_platform::ConfinedRoot const& root,
-            json::Value const& block
-        ) -> Result<std::pair<
-            std::string,
-            std::vector<operator_runtime::ProjectModuleBlob>
-        >>
+            json::Value const& block,
+            std::string_view name
+        ) -> Result<DeploymentClosure>
         {
-            auto const& plugin = member(block, "plugin");
+            auto const& plugin = member(block, name);
             auto modules = std::vector<operator_runtime::ProjectModuleBlob>{};
             auto paths   = std::vector<std::string>{};
             auto const& declaredModules = member(plugin, "modules").items();
@@ -778,7 +834,23 @@ namespace uf::deployment
             }
             auto entry = text(plugin, "entry");
             UF_TRY(operator_runtime::derivePluginModuleManifestHash(entry, modules));
-            return std::pair{std::move(entry), std::move(modules)};
+
+            // The stated export set, carried through unchanged. It is the
+            // author's own second source and this loader never derives, sorts
+            // or completes it; the registrar joins it against what a closure of
+            // its kind may offer, and the bridge joins it against what the
+            // shipped bytes actually export.
+            auto declaredEntryPoints = std::vector<std::string>{};
+            for (auto const& entryPoint :
+                 member(plugin, "exported_entry_points").items())
+            {
+                declaredEntryPoints.emplace_back(entryPoint.string());
+            }
+            return DeploymentClosure{
+                .entryModule         = std::move(entry),
+                .modules             = std::move(modules),
+                .declaredEntryPoints = std::move(declaredEntryPoints),
+            };
         }
 
         [[nodiscard]]
@@ -818,7 +890,14 @@ namespace uf::deployment
                 );
             };
 
-            UF_TRY_VALUE(plugin, readPluginClosure(root, block));
+            UF_TRY_VALUE(
+                reducerClosure,
+                readPluginClosure(root, block, "reducer_closure")
+            );
+            UF_TRY_VALUE(
+                toolClosure,
+                readPluginClosure(root, block, "tool_closure")
+            );
             UF_TRY_VALUE(state, read("project_state_schema", k_maximumDocumentBytes));
             UF_TRY_VALUE(
                 observation,
@@ -867,8 +946,8 @@ namespace uf::deployment
             );
 
             return DeploymentFiles{
-                .pluginEntryModule               = std::move(plugin.first),
-                .pluginModules                   = std::move(plugin.second),
+                .reducerClosure                  = std::move(reducerClosure),
+                .toolClosure                     = std::move(toolClosure),
                 .projectState                    = std::move(state),
                 .projectObservation              = std::move(observation),
                 .toolPrecondition                = std::move(precondition),
@@ -1087,7 +1166,9 @@ namespace uf::deployment
         {
             auto const& vocabulary = played.vocabulary;
             auto const& catalog    = deployment.catalog;
-            auto const  registered = deployment.registration.baselineEventType();
+            auto const  registered =
+                operator_runtime::ProjectIdentity{deployment.generation}
+                    .baselineEventType();
             if (vocabulary.baselineEntry.eventType != registered)
             {
                 return refuse(std::format(
@@ -1377,14 +1458,12 @@ namespace uf::deployment
             readValidated(projectSchema, k_projectManifestFileName, projectBytes)
         );
 
-        auto registrationOwner =
-            operator_runtime::ProjectRegistrationSchemaOwner::create(
-                registrationValidator(std::move(registrationSchema))
-            );
-        if (!registrationOwner.has_value())
-        {
-            return std::unexpected{registrationOwner.error().clone()};
-        }
+        // The two-closure reader, held as the validator it is. There is no
+        // owner around it: ProjectGeneration::verifyExact takes the reader
+        // directly, and a wrapper would only restate that this loader is the
+        // one that reads.
+        auto const registrationValidate =
+            registrationValidator(std::move(registrationSchema));
 
         auto loaded = LoadedProject{
             .directory           = directory,
@@ -1485,10 +1564,17 @@ namespace uf::deployment
             }
 
             UF_TRY_VALUE(
-                pluginModuleManifestHash,
+                reducerModuleManifestHash,
                 operator_runtime::derivePluginModuleManifestHash(
-                    files.pluginEntryModule,
-                    files.pluginModules
+                    files.reducerClosure.entryModule,
+                    files.reducerClosure.modules
+                )
+            );
+            UF_TRY_VALUE(
+                toolModuleManifestHash,
+                operator_runtime::derivePluginModuleManifestHash(
+                    files.toolClosure.entryModule,
+                    files.toolClosure.modules
                 )
             );
             UF_TRY_VALUE(
@@ -1521,9 +1607,16 @@ namespace uf::deployment
             identityHashes.erase(identityUniqueBegin, identityUniqueEnd);
 
             auto const derived = DerivedRegistration{
-                .pluginId                             = pluginId,
-                .baselineEventType                    = text(block, "baseline_event_type"),
-                .pluginModuleManifestHash             = pluginModuleManifestHash,
+                .pluginId          = pluginId,
+                .baselineEventType = text(block, "baseline_event_type"),
+                .reducerClosure                       = operator_runtime::ProjectClosureClaims{
+                    .moduleManifestHash  = reducerModuleManifestHash,
+                    .exportedEntryPoints = files.reducerClosure.declaredEntryPoints,
+                },
+                .toolClosure                          = operator_runtime::ProjectClosureClaims{
+                    .moduleManifestHash  = toolModuleManifestHash,
+                    .exportedEntryPoints = files.toolClosure.declaredEntryPoints,
+                },
                 .pluginEnvironmentHash                = pluginEnvironmentHash,
                 .toolCatalogHash                      = catalogHash,
                 .projectStateSchemaHash               = stateHash,
@@ -1563,10 +1656,10 @@ namespace uf::deployment
             // the claims, and proves nothing at all about the root. What a
             // caller recorded earlier is compared above, once, where both
             // values can be named in the refusal.
-            auto registration = operator_runtime::ProjectRegistration::verifyExact(
+            auto registration = operator_runtime::ProjectGeneration::verifyExact(
                 canonicalJcs,
                 computed,
-                *registrationOwner
+                registrationValidate
             );
             if (!registration.has_value())
             {
@@ -1655,15 +1748,15 @@ namespace uf::deployment
 
             loaded.deployments.emplace_back(LoadedDeployment{
                 .name                            = name,
-                .registration                    = *std::move(registration),
+                .generation                      = *std::move(registration),
                 .schemaOwner                     = *std::move(projectSchemaOwner),
                 .journalSchemaOwner              = *std::move(journalOwner),
                 .toolCatalogSchemaOwner          = *std::move(catalogOwner),
                 .reconcileSchemaOwner            = *std::move(reconcileOwner),
                 .observedInstanceIdentitySchemas = *std::move(identitySet),
                 .catalog                         = *std::move(deployed),
-                .pluginEntryModule               = std::move(files.pluginEntryModule),
-                .pluginModules                   = std::move(files.pluginModules),
+                .reducerClosure                  = std::move(files.reducerClosure),
+                .toolClosure                     = std::move(files.toolClosure),
                 .projectResources                = std::move(resources),
             });
         }

@@ -941,6 +941,11 @@ namespace uf::task
         return m_config.cancellation.stop_requested();
     }
 
+    auto TaskContext::cancellation() const noexcept -> std::stop_token
+    {
+        return m_config.cancellation;
+    }
+
     auto TaskContext::hasOpenCycle() const noexcept -> bool
     {
         return m_cycles.isOpen();

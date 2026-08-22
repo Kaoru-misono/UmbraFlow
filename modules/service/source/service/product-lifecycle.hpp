@@ -2,6 +2,7 @@
 
 #include <operator/host-controller.hpp>
 #include <operator/ledger.hpp>
+#include <operator/tool-actor-adapters.hpp>
 #include <operator/tool-invocation.hpp>
 
 #include <task/task-context.hpp>
@@ -44,12 +45,6 @@ namespace uf::service
         // transferred into the session pin unchanged, so the observations this
         // lifecycle produces are bound to one scope.
         operator_runtime::ObservedInstanceWorldScope worldScope;
-    };
-
-    struct ProductExecution final
-    {
-        operator_runtime::StoredOperation       operation{};
-        std::optional<task::HostDeliveryReport> delivery{};
     };
 
     struct ProductIdentity final
@@ -130,39 +125,12 @@ namespace uf::service
 
         explicit ProductLifecycle(std::unique_ptr<Impl> implementation);
 
-        // The Framework provider surface. One function per Tool the Framework
-        // answers, all reached from one dispatch below, and every one of them
-        // handed nothing but the immutable call position the Coordinator
-        // already crossed the durable dispatch boundary for.
-        [[nodiscard]]
-        auto answerFrameworkTool(
-            operator_runtime::ToolCallPositionIdentity const& call,
-            task::TaskContext& context
-        ) -> Result<operator_runtime::ToolCallCompletion>;
-
-        [[nodiscard]]
-        auto answerObserveTool(
-            operator_runtime::ToolCallPositionIdentity const& call,
-            task::TaskContext& context
-        ) -> Result<operator_runtime::ToolCallCompletion>;
-
-        [[nodiscard]]
-        auto answerStatusTool()
-            -> Result<operator_runtime::ToolCallCompletion>;
-
-        // Section 6's input-authority boundary. It resolves the observation the
-        // call was issued against -- spending it, once -- against this run's own
-        // controlled target, Project registration, RuntimeArtifact, Host
-        // generation and issuing coordinate, never against anything the
-        // arguments state, and judges the named snapshot-local semantic target
-        // and UI action on the observation's own bounds before delivery, then
-        // posts it through the one Host delivery seam and records the
-        // classification the ledger derived from what the Host reported.
-        [[nodiscard]]
-        auto answerSemanticInputTool(
-            operator_runtime::ToolCallPositionIdentity const& call,
-            task::TaskContext& context
-        ) -> Result<operator_runtime::ToolCallCompletion>;
+        // The Framework provider surface lives on Impl rather than here. It is
+        // installed into a ProjectToolDispatcher that outlives every call, and
+        // a provider bound to this object would be bound to an address a move
+        // of this handle invalidates; Impl is heap-allocated, non-copyable and
+        // non-movable, so a pointer to it is a lifetime contract the dispatcher
+        // can be held to. See product-lifecycle.cpp.
 
     public:
         ProductLifecycle(ProductLifecycle&&) noexcept;
@@ -197,34 +165,45 @@ namespace uf::service
         // issued against the reference this run minted for those exact bytes,
         // so a call consuming an observation this run never produced is refused
         // before it can occupy a durable coordinate at all.
-        //
-        // No production caller exists and none may be added before the
-        // generation cut: see
-        // docs/decisions/2026-08-22-production-reachability-is-the-cut-invariant.md.
         [[nodiscard]]
         auto invokeFrameworkTool(
             FrameworkToolCall request,
             task::TaskContext& context
         ) -> Result<operator_runtime::ToolCallReplay>;
 
+        // The three actor transports, each one translation away from the same
+        // admitted request and the same dispatch. What differs between them is
+        // what the transport delivers -- a model's parsed tool-use block, a
+        // person's text, a Project's own bound entry -- and nothing after the
+        // translation differs at all.
+        //
+        // A Tool this Project bound runs on its scoped program; a Tool in the
+        // `framework` namespace is answered by this lifecycle's own providers.
+        // Neither the caller nor this seam chooses which: the name's namespace
+        // owns it, and ToolStartCatalog resolves it.
         [[nodiscard]]
-        auto execute(
-            operator_runtime::SnapshotRecord const& snapshot,
-            std::string toolName,
-            std::string exactArgumentsJcs,
-            std::string clientRequestId,
+        auto invokeAgentTool(
+            operator_runtime::AgentToolUse const& use,
             task::TaskContext& context
-        ) -> Result<ProductExecution>;
+        ) -> Result<operator_runtime::ToolCallReplay>;
+
+        [[nodiscard]]
+        auto invokeHumanTool(
+            operator_runtime::HumanToolCommand const& command,
+            task::TaskContext& context
+        ) -> Result<operator_runtime::ToolCallReplay>;
+
+        [[nodiscard]]
+        auto startProjectAutomation(
+            operator_runtime::ProjectAutomationStart const& start,
+            task::TaskContext& context
+        ) -> Result<operator_runtime::ToolCallReplay>;
 
         [[nodiscard]]
         auto wait(
             operator_runtime::SubscriptionCursor after,
             uint32 maximumEvents
         ) -> Result<operator_runtime::SubscriptionRead>;
-
-        [[nodiscard]]
-        auto reconcile(operator_runtime::ReconciliationCommit const& commit)
-            -> Result<operator_runtime::StoredOperation>;
 
         [[nodiscard]] auto shutdown() -> Status;
     };

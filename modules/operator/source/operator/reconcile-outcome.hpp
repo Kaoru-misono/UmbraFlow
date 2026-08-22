@@ -92,7 +92,7 @@ namespace uf::operator_runtime
         // reader provably answers for the schema this registration named.
         [[nodiscard]]
         static auto create(
-            VerifiedProjectRegistration const& registration,
+            ProjectIdentity const& registration,
             std::string_view exactReconcileSchemaManifestBytes,
             ReconcileDispositionReader readDisposition
         ) -> Result<ProjectReconcileSchemaOwner>;

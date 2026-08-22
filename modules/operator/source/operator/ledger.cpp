@@ -5645,7 +5645,7 @@ namespace uf::operator_runtime
         // privileged edges an atomic ledger method owns (DispatchStarted,
         // ApprovalObtained, HostOutcomeObserved, CorrectionCommitted plus the
         // three reconciliation dispositions), and four are the plan lifecycle
-        // freezePlan and mintNextStep decide.
+        // edges the deleted plan and step mints decided.
         struct SignalRule final
         {
             OperationSignal signal;
@@ -6974,6 +6974,143 @@ namespace uf::operator_runtime
         return transaction.commit();
     }
 
+    auto OperatorCoordinator::refoldProjectState(
+        ProjectIdentity const& project,
+        ProjectJournalSchemaOwner const& journal,
+        ProjectBaselineReducer const& reducer,
+        std::string const& projectInstanceKey
+    ) -> Result<RefoldedProjectState>
+    {
+        UF_TRY(requireName(projectInstanceKey, "project_instance_key"));
+        // The same one comparison provisioning makes, for the same reason: a
+        // reducer and an identity that agree on the registration root came from
+        // the same exact bytes, so a plugin id or a module digest compared
+        // beside this could never disagree with it.
+        if (reducer.projectRegistrationHash() != project.hash())
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Refold requires the reducer of the registration the instance "
+                "was provisioned under"
+            );
+        }
+
+        // One transaction for the whole read, so the prefix and the stored
+        // state are the same instant. A refold that read the events, let a
+        // write land, and then read the state would be comparing two worlds.
+        UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
+
+        UF_TRY_VALUE(
+            stateQuery,
+            prepare(
+                m_impl->database.get(),
+                "SELECT project_registration_hash, canonical_opaque_payload, "
+                "state_hash FROM project_state "
+                "WHERE plugin_id=?1 AND project_instance_key=?2"
+            )
+        );
+        UF_TRY(bindText(m_impl->database.get(), stateQuery.get(), 1, project.pluginId()));
+        UF_TRY(bindText(m_impl->database.get(), stateQuery.get(), 2, projectInstanceKey));
+        if (sqlite3_step(stateQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Refold names a ProjectInstance this ledger holds no state for"
+            );
+        }
+        if (columnText(stateQuery.get(), 0) != project.hash().hex())
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Stored ProjectState belongs to another ProjectRegistration"
+            );
+        }
+        auto const storedPayload = columnText(stateQuery.get(), 1);
+        UF_TRY_VALUE(storedHash, parseHashColumn(columnText(stateQuery.get(), 2)));
+
+        UF_TRY_VALUE(
+            eventQuery,
+            prepare(
+                m_impl->database.get(),
+                "SELECT event_id, namespaced_event_type, opaque_project_payload, "
+                "provenance FROM journal_events "
+                "WHERE plugin_id=?1 AND project_instance_key=?2 ORDER BY sequence"
+            )
+        );
+        UF_TRY(bindText(m_impl->database.get(), eventQuery.get(), 1, project.pluginId()));
+        UF_TRY(bindText(m_impl->database.get(), eventQuery.get(), 2, projectInstanceKey));
+
+        auto prefix = std::vector<JournalAppend>{};
+        auto step   = sqlite3_step(eventQuery.get());
+        while (step == SQLITE_ROW)
+        {
+            // The stored payload and provenance go back through the owner this
+            // registration pinned rather than being trusted as rows. A refold
+            // that skipped the schemas would answer for bytes the registration
+            // no longer admits, which is the opposite of what it is asked.
+            UF_TRY_VALUE(
+                payload,
+                CanonicalJson::parseExact(columnText(eventQuery.get(), 2))
+            );
+            UF_TRY_VALUE(
+                provenance,
+                CanonicalJson::parseExact(columnText(eventQuery.get(), 3))
+            );
+            UF_TRY_VALUE(
+                entry,
+                journal.validate(
+                    columnText(eventQuery.get(), 1),
+                    std::move(payload),
+                    std::move(provenance)
+                )
+            );
+            prefix.emplace_back(JournalAppend{
+                .eventId = columnText(eventQuery.get(), 0),
+                .entry   = std::move(entry),
+            });
+            step = sqlite3_step(eventQuery.get());
+        }
+        if (step != SQLITE_DONE)
+        {
+            return databaseFailure(
+                m_impl->database.get(),
+                "could not read the Journal prefix to refold"
+            );
+        }
+
+        // The complete prefix against no prior state, which is the definition
+        // of a baseline: every later revision is derived from this one, so a
+        // refold that started from a stored intermediate would be testing the
+        // increment rather than the fold.
+        UF_TRY_VALUE(
+            envelope,
+            reducer.canonicalize(reduceEnvelopeJcs(prefix, "null"))
+        );
+        UF_TRY_VALUE(refolded, reducer.reduce(envelope));
+        if (
+            refolded.projectRegistrationHash() != project.hash()
+            || refolded.function() != ProjectPluginFunction::Reduce
+            || refolded.direction() != ProjectDocumentDirection::Output
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Refolded ProjectState does not match the registered "
+                "ProjectState schema"
+            );
+        }
+
+        UF_TRY(transaction.commit());
+        return RefoldedProjectState{
+            .projectInstanceKey       = projectInstanceKey,
+            .journalEventCount        = static_cast<uint64>(prefix.size()),
+            .storedStateHash          = storedHash,
+            .refoldedStateHash        = refolded.contentHash(),
+            .storedCanonicalPayload   = storedPayload,
+            .refoldedCanonicalPayload = refolded.bytes(),
+        };
+    }
+
     auto OperatorCoordinator::pinSession(
         SessionPin const& pin,
         SessionManifest const& manifest,
@@ -8022,7 +8159,7 @@ namespace uf::operator_runtime
 
     auto OperatorCoordinator::createSnapshot(
         ControlLease const& lease,
-        ProjectPluginHandle const& plugin,
+        ProjectIdentity const& project,
         ProjectToolCatalogSchemaOwner const& catalog,
         ObservedInstanceIdentitySchemas const& identitySchemas,
         task::UiObservationSnapshot const& observation
@@ -8107,19 +8244,19 @@ namespace uf::operator_runtime
         auto const sessionArtifactRoot = columnText(sessionQuery.get(), 3);
         auto const pluginId            = columnText(sessionQuery.get(), 4);
 
-        // The same three-way check commitReconciliation makes: a handle for
-        // another registration is a different project reading this world.
+        // A handle for another registration is a different project reading
+        // this world, so the identity is compared before anything is read.
         if (
-            plugin.pluginId() != pluginId
-            || plugin.pluginModuleManifestHash().hex()
+            project.pluginId() != pluginId
+            || project.moduleIdentityHash().hex()
                 != columnText(sessionQuery.get(), 5)
-            || plugin.projectRegistrationHash().hex() != columnText(sessionQuery.get(), 6)
+            || project.hash().hex() != columnText(sessionQuery.get(), 6)
             || catalog.projectRegistrationHash().hex() != columnText(sessionQuery.get(), 6)
         )
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "Snapshot ProjectPlugin does not match the pinned session registration"
+                "Snapshot registration does not match the pinned session registration"
             );
         }
 
@@ -8211,7 +8348,6 @@ namespace uf::operator_runtime
             sqlite3_column_int64(stateQuery.get(), 0)
         );
         auto const projectStateHex = columnText(stateQuery.get(), 1);
-        auto const projectStateJcs = columnText(stateQuery.get(), 2);
 
         UF_TRY_VALUE(
             priorQuery,
@@ -8227,13 +8363,11 @@ namespace uf::operator_runtime
         UF_TRY(bindText(m_impl->database.get(), priorQuery.get(), 1, pluginId));
         UF_TRY(bindText(m_impl->database.get(), priorQuery.get(), 2, projectInstanceKey));
         auto priorRevision      = uint64{};
-        auto priorObservation   = std::string{"null"};
         auto priorObservationId = std::string{};
         auto priorFingerprint   = std::string{};
         if (sqlite3_step(priorQuery.get()) == SQLITE_ROW)
         {
             priorRevision      = static_cast<uint64>(sqlite3_column_int64(priorQuery.get(), 0));
-            priorObservation   = columnText(priorQuery.get(), 1);
             priorObservationId = columnText(priorQuery.get(), 2);
             priorFingerprint   = columnText(priorQuery.get(), 3);
             priorFingerprint += '\0';
@@ -8248,69 +8382,15 @@ namespace uf::operator_runtime
             priorFingerprint += priorObservationId;
         }
 
-        // The design's pending_operation_transition: a read-only summary of the
-        // one non-terminal Operation this instance may have, so the project can
-        // read its own world without the Operator interpreting it.
-        UF_TRY_VALUE(
-            pendingQuery,
-            prepare(
-                m_impl->database.get(),
-                "SELECT operation_id, state, revision FROM operations "
-                "WHERE plugin_id=?1 AND project_instance_key=?2 AND state IN "
-                "('proposed', 'awaiting_approval', 'ready', 'needs_revalidation', "
-                "'running', 'reconciling', 'ambiguous') "
-                "ORDER BY operation_id LIMIT 1"
-            )
-        );
-        UF_TRY(bindText(m_impl->database.get(), pendingQuery.get(), 1, pluginId));
-        UF_TRY(bindText(m_impl->database.get(), pendingQuery.get(), 2, projectInstanceKey));
-        auto pendingOperationJcs = std::string{"null"};
-        if (sqlite3_step(pendingQuery.get()) == SQLITE_ROW)
-        {
-            pendingOperationJcs = "{\"operation_id\":";
-            appendJsonString(pendingOperationJcs, columnText(pendingQuery.get(), 0));
-            pendingOperationJcs += ",\"revision\":";
-            pendingOperationJcs += std::to_string(
-                static_cast<uint64>(sqlite3_column_int64(pendingQuery.get(), 2))
-            );
-            pendingOperationJcs += ",\"state\":";
-            appendJsonString(pendingOperationJcs, columnText(pendingQuery.get(), 1));
-            pendingOperationJcs.push_back('}');
-        }
-
-        auto const pinnedResources = plugin.projectResourceHashes();
-
-        // The plugin runs inside the transaction, as reduce already does: the
-        // read of its inputs and the derivation from them must be one BEGIN
-        // IMMEDIATE, or a concurrent writer moves the state between the two.
-        // The plugin VM is quota-bound, so holding the write lock across it is
-        // bounded.
-        UF_TRY_VALUE(
-            deriveInput,
-            plugin.canonicalize(deriveEnvelopeJcs(DeriveEnvelopeInputs{
-                .pendingOperationJcs = pendingOperationJcs,
-                .pinnedArtifactRoots = pinnedResources,
-                .priorObservationJcs = priorObservation,
-                .projectStateJcs     = projectStateJcs,
-                .uiSnapshotJcs       = observation.canonicalJcs(),
-            }))
-        );
-        UF_TRY_VALUE(derived, plugin.derive(deriveInput));
-        if (
-            derived.projectRegistrationHash() != plugin.projectRegistrationHash()
-            || derived.function() != ProjectPluginFunction::Derive
-            || derived.direction() != ProjectDocumentDirection::Output
-        )
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Derived ProjectObservation does not match the pinned observation schema"
-            );
-        }
-
-        // The schema owner already parsed and validated the derive output; the
-        // proposal is its retained value, not a second parse of its bytes.
-        UF_TRY_VALUE(proposal, proposalFromDerived(derived.value()));
+        // No project code runs here. The reducer's whole contract is `reduce`,
+        // so a snapshot composes the empty observation, and a Project that
+        // wants to state one publishes it through publishProjectObservation
+        // from inside a bound Tool call. What the row still carries is every
+        // Operator-owned reading above -- the project state revision and hash,
+        // the prior observation's identity and the UI resolution -- so a
+        // snapshot remains a complete decision basis rather than the project's
+        // own opinion of one.
+        auto const proposal = ProjectObservationProposal{};
 
         // The context the mint re-checks its authorities against. The lease was
         // validated at the top of this function and the session row read above,
@@ -8327,14 +8407,13 @@ namespace uf::operator_runtime
                 },
                 worldScope,
                 identitySchemas,
-                plugin,
+                project,
                 proposal
             )
         );
 
         // The fingerprint names the final closed observation the canonical
-        // mint produced -- the bytes the row stores -- not the derive output
-        // that proposed it.
+        // mint produced -- the bytes the row stores.
         auto const observationHex     = finalObservation.hash().hex();
         auto const stateResolutionHex = observation.stateResolutionHash().hex();
         auto currentFingerprint       = stateResolutionHex;
@@ -8343,7 +8422,7 @@ namespace uf::operator_runtime
         currentFingerprint += '\0';
         currentFingerprint += projectStateHex;
         currentFingerprint += '\0';
-        currentFingerprint += plugin.projectRegistrationHash().hex();
+        currentFingerprint += project.hash().hex();
         currentFingerprint += '\0';
         currentFingerprint += observationHex;
 
@@ -8386,7 +8465,7 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 observationInsert.get(),
                 4,
-                plugin.projectRegistrationHash().hex()
+                project.hash().hex()
             ));
             UF_TRY(bindText(
                 m_impl->database.get(),
@@ -8429,8 +8508,8 @@ namespace uf::operator_runtime
         // functions and neither Impl nor the file-local helpers above. Its
         // payload is the final closed envelope, the bytes the row stores.
         auto projectObservation = StoredProjectObservation{
-            plugin.projectRegistrationHash(),
-            plugin.pluginModuleManifestHash(),
+            project.hash(),
+            project.moduleIdentityHash(),
             projectInstanceKey,
             observation.stateResolutionHash(),
             projectStateRevision,
@@ -8696,7 +8775,7 @@ namespace uf::operator_runtime
         ObservedInstanceContext const& context,
         ObservedInstanceWorldScope const& worldScope,
         ObservedInstanceIdentitySchemas const& identitySchemas,
-        ProjectPluginHandle const& plugin,
+        ProjectIdentity const& project,
         ProjectObservationProposal const& proposal
     ) -> Result<ProjectObservation>
     {
@@ -8761,10 +8840,10 @@ namespace uf::operator_runtime
         }
 
         if (
-            plugin.pluginId() != context.pluginId
-            || plugin.pluginModuleManifestHash().hex()
+            project.pluginId() != context.pluginId
+            || project.moduleIdentityHash().hex()
                 != context.pluginModuleManifestHash
-            || plugin.projectRegistrationHash() != context.projectRegistrationHash
+            || project.hash() != context.projectRegistrationHash
             || identitySchemas.projectRegistrationHash()
                 != context.projectRegistrationHash
         )
@@ -8830,7 +8909,7 @@ namespace uf::operator_runtime
 
     auto OperatorCoordinator::publishProjectObservation(
         ControlLease const& lease,
-        ProjectPluginHandle const& plugin,
+        ProjectIdentity const& project,
         ObservedInstanceWorldScope const& worldScope,
         ObservedInstanceIdentitySchemas const& identitySchemas,
         ProjectObservationProposal const& proposal
@@ -8851,7 +8930,7 @@ namespace uf::operator_runtime
                 derivedContext,
                 worldScope,
                 identitySchemas,
-                plugin,
+                project,
                 proposal
             )
         );
@@ -9203,11 +9282,8 @@ namespace uf::operator_runtime
         // U2c production entry gate. Every observed instance id the command's
         // canonical arguments spell is resolved here, before the operation row
         // is created -- which is before a read-only operation can complete and
-        // before plugin.plan can consume an id out of those arguments. A
-        // stale or foreign id therefore never reaches either consumer, and a
-        // mutating plan returning only Wait steps cannot carry one past the
-        // gate either. The plugin can still name an id no argument carried,
-        // which is why mintNextStep gates the step's ui_target_id again.
+        // before any Tool can consume an id out of those arguments. A stale or
+        // foreign id therefore never reaches a consumer at all.
         UF_TRY_VALUE(
             sessionWorldScope,
             restoreSessionWorldScope(
@@ -12777,307 +12853,6 @@ namespace uf::operator_runtime
         };
     }
 
-    auto OperatorCoordinator::freezePlan(
-        std::string const& operationId,
-        uint64 expectedRevision,
-        ControlLease const& lease,
-        ProjectPluginHandle const& plugin,
-        ProjectToolCatalogSchemaOwner const& catalog,
-        OperatorPlanAuthority const& planAuthority
-    ) -> Result<FrozenPlan>
-    {
-        UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
-        UF_TRY_VALUE(
-            query,
-            prepare(
-                m_impl->database.get(),
-                "SELECT o.state, o.revision, o.mutating, o.command_fingerprint, "
-                "o.tool_name, o.tool_version, o.canonical_args, o.session_id, "
-                "o.controlled_target_id, o.plugin_id, "
-                "session.project_registration_hash, registration.plugin_identity_hash, "
-                "snapshot.decision_basis_hash, observation.canonical_observation, "
-                "state.canonical_opaque_payload, session.controller_kind, "
-                "session.controller_capabilities, registration.registration_format, "
-                "registration.plugin_identity_kind "
-                "FROM operations o "
-                + std::string{k_liveControllerJoin}
-                + "JOIN project_registrations registration "
-                "ON registration.registration_hash=session.project_registration_hash "
-                "JOIN snapshots snapshot ON snapshot.token=o.snapshot_token "
-                "JOIN project_observations observation "
-                "ON observation.plugin_id=snapshot.plugin_id "
-                "AND observation.project_instance_key=snapshot.project_instance_key "
-                "AND observation.revision=snapshot.project_observation_revision "
-                "JOIN project_state state ON state.plugin_id=o.plugin_id "
-                "AND state.project_instance_key=o.project_instance_key "
-                "WHERE o.operation_id=?1 AND session.active=1 "
-                "AND session.session_epoch=?2"
-            )
-        );
-        UF_TRY(bindText(m_impl->database.get(), query.get(), 1, operationId));
-        UF_TRY(bindInteger(m_impl->database.get(), query.get(), 2, m_impl->sessionEpoch));
-        if (sqlite3_step(query.get()) != SQLITE_ROW)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Unknown operation_id, or its session no longer controls the target"
-            );
-        }
-        UF_TRY(requireExecutableRegistrationFormat(query.get(), 17));
-        auto const revision = static_cast<uint64>(sqlite3_column_int64(query.get(), 1));
-        if (revision != expectedRevision)
-        {
-            return fail(AutomationErrorKind::ActionRejected, "Operation revision is stale");
-        }
-        UF_TRY_VALUE(state, parseOperationState(columnText(query.get(), 0)));
-        if (state != OperationState::Proposed)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "A plan freezes from a proposed Operation only"
-            );
-        }
-        // A read-only Operation has no effect to declare and no dispatch to
-        // authorise, so a plan for one would be an audit record about nothing.
-        auto const mutating = sqlite3_column_int(query.get(), 2) != 0;
-        if (!mutating)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Read-only Operations carry no frozen plan"
-            );
-        }
-        if (
-            columnText(query.get(), 7) != lease.sessionId
-            || columnText(query.get(), 8) != lease.controlledTargetId
-        )
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Plan lease does not own the Operation target"
-            );
-        }
-        UF_TRY(requireLiveLease(m_impl->database.get(), lease, "Plan lease is stale"));
-
-        UF_TRY_VALUE(planKind, parseControllerKind(columnText(query.get(), 15)));
-        UF_TRY_VALUE(
-            planBudget,
-            readAgentBudget(m_impl->database.get(), lease.sessionId, planKind)
-        );
-        if (planBudget)
-        {
-            UF_TRY(requireWithinAgentDeadline(*planBudget));
-        }
-
-        auto const registrationHex = columnText(query.get(), 10);
-        if (
-            plugin.pluginId() != columnText(query.get(), 9)
-            || plugin.pluginModuleManifestHash().hex() != columnText(query.get(), 11)
-            || plugin.projectRegistrationHash().hex() != registrationHex
-        )
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Plan ProjectPlugin does not match the pinned session registration"
-            );
-        }
-        if (catalog.projectRegistrationHash().hex() != registrationHex)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Plan Tool Catalog does not match the pinned session registration"
-            );
-        }
-
-        auto const commandFingerprintHex = columnText(query.get(), 3);
-        auto const toolName              = columnText(query.get(), 4);
-        auto const toolVersion           = columnText(query.get(), 5);
-        auto const canonicalArgs         = columnText(query.get(), 6);
-        auto const decisionBasisHex      = columnText(query.get(), 12);
-        UF_TRY_VALUE(commandFingerprint, parseHashColumn(commandFingerprintHex));
-        UF_TRY_VALUE(decisionBasisHash, parseHashColumn(decisionBasisHex));
-        UF_TRY_VALUE(projectRegistrationHash, parseHashColumn(registrationHex));
-        UF_TRY_VALUE(descriptor, catalog.describe(toolName));
-        if (descriptor.toolVersion != toolVersion)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "The Tool Catalog now declares a different version of the tool "
-                "this Operation was created for"
-            );
-        }
-        UF_TRY_VALUE(
-            controllerCapabilities,
-            readNameArray(columnText(query.get(), 16))
-        );
-
-        // The plugin runs inside the transaction, as derive and reduce already
-        // do: the read of its inputs and the freeze against them must be one
-        // BEGIN IMMEDIATE, or a concurrent writer moves the world between them.
-        auto const observationJcs = columnText(query.get(), 13);
-        auto const projectStateJcs = columnText(query.get(), 14);
-        auto const planEnvelope    = planEnvelopeJcs(PlanEnvelopeInputs{
-            .canonicalArgs         = canonicalArgs,
-            .projectObservationJcs = observationJcs,
-            .projectStateJcs       = projectStateJcs,
-            .toolName              = toolName,
-            .toolVersion           = toolVersion,
-        });
-        UF_TRY_VALUE(planInput, plugin.canonicalize(planEnvelope));
-        UF_TRY_VALUE(proposal, plugin.plan(planInput));
-        UF_TRY_VALUE(
-            plan,
-            planAuthority.mintPlan(PlanMintInputs{
-                .proposal                = proposal,
-                .descriptor              = descriptor,
-                .controllerCapabilities  = controllerCapabilities,
-                .operationId             = operationId,
-                .toolName                = toolName,
-                .canonicalArgs           = canonicalArgs,
-                .projectRegistrationHash = projectRegistrationHash,
-                .commandFingerprint      = commandFingerprint,
-                .decisionBasisHash       = decisionBasisHash,
-            })
-        );
-
-        // Charged here and nowhere earlier, because risk does not exist before
-        // the plan is minted: it is derived from the effects the plugin
-        // declared for this command against this world. The charge precedes the
-        // operation_plans insert, so a refused risk budget leaves the Operation
-        // proposed with no plan row at all.
-        if (planBudget)
-        {
-            UF_TRY(chargeAgentBudget(
-                m_impl->database.get(),
-                lease.sessionId,
-                "UPDATE agent_budgets SET remaining_risk_units = "
-                "remaining_risk_units - ?2 WHERE session_id=?1",
-                riskUnits(plan.risk()),
-                "Agent risk budget is exhausted"
-            ));
-        }
-
-        // The Operation's own edge is decided here, by what the policy ruled.
-        // The caller has no signal for either of these two events for exactly
-        // that reason.
-        UF_TRY_VALUE(machine, OperationMachine::restore(state, false, false));
-        UF_TRY_VALUE(
-            nextState,
-            machine.transition(
-                plan.requiredApprovals().empty()
-                    ? OperationEvent::ReadyWithoutApproval
-                    : OperationEvent::ApprovalRequired
-            )
-        );
-
-        auto const limits            = plan.limits();
-        auto const requiredApprovals = canonicalNameArray(plan.requiredApprovals());
-        UF_TRY_VALUE(
-            insert,
-            prepare(
-                m_impl->database.get(),
-                "INSERT INTO operation_plans(operation_id, plan_hash, "
-                "command_fingerprint, decision_basis_hash, effect_envelope_hash, "
-                "project_registration_hash, risk, policy_hash, required_approvals, "
-                "maximum_steps, maximum_dispatches, maximum_observations, "
-                "maximum_waits, maximum_elapsed_ms, canonical_plan) "
-                "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, "
-                "?14, ?15)"
-            )
-        );
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 1, operationId));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 2, plan.planHash().hex()));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 3, commandFingerprintHex));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 4, decisionBasisHex));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            insert.get(),
-            5,
-            plan.effectEnvelopeHash().hex()
-        ));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 6, registrationHex));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 7, riskWireName(plan.risk())));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            insert.get(),
-            8,
-            planAuthority.policyHash().hex()
-        ));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 9, requiredApprovals));
-        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 10, limits.maximumSteps));
-        UF_TRY(bindInteger(
-            m_impl->database.get(),
-            insert.get(),
-            11,
-            limits.maximumDispatches
-        ));
-        UF_TRY(bindInteger(
-            m_impl->database.get(),
-            insert.get(),
-            12,
-            limits.maximumObservations
-        ));
-        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 13, limits.maximumWaits));
-        UF_TRY(bindInteger(
-            m_impl->database.get(),
-            insert.get(),
-            14,
-            limits.maximumElapsedMillis
-        ));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 15, plan.canonicalPlan()));
-        UF_TRY(expectDone(m_impl->database.get(), insert.get()));
-
-        UF_TRY_VALUE(nextRevision, checkedSqlIncrement(revision, "Operation revision"));
-        UF_TRY_VALUE(
-            update,
-            prepare(
-                m_impl->database.get(),
-                "UPDATE operations SET state=?1, revision=?2 "
-                "WHERE operation_id=?3 AND revision=?4"
-            )
-        );
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            update.get(),
-            1,
-            operationStateWireName(nextState)
-        ));
-        UF_TRY(bindInteger(m_impl->database.get(), update.get(), 2, nextRevision));
-        UF_TRY(bindText(m_impl->database.get(), update.get(), 3, operationId));
-        UF_TRY(bindInteger(m_impl->database.get(), update.get(), 4, revision));
-        UF_TRY(expectDone(m_impl->database.get(), update.get()));
-        if (sqlite3_changes(m_impl->database.get()) != 1)
-        {
-            return fail(AutomationErrorKind::ActionRejected, "Operation revision lost its CAS");
-        }
-        UF_TRY(appendLedgerEvent(
-            m_impl->database.get(),
-            lease.sessionEpoch,
-            lease.controlledTargetId,
-            LedgerEventKind::OperationStateChanged,
-            operationId,
-            operationStateWireName(nextState)
-        ));
-        UF_TRY(transaction.commit());
-        return FrozenPlan{
-            .operation = StoredOperation{
-                .operationId   = operationId,
-                .lookup        = CommandLookup::Existing,
-                .state         = nextState,
-                .revision      = nextRevision,
-                .planFrozen    = machine.planFrozen(),
-                .hasDispatched = machine.hasDispatched(),
-            },
-            .planHash           = plan.planHash(),
-            .decisionBasisHash  = plan.decisionBasisHash(),
-            .effectEnvelopeHash = plan.effectEnvelopeHash(),
-            .policyHash         = planAuthority.policyHash(),
-            .requiredApprovals  = plan.requiredApprovals(),
-            .limits             = limits,
-            .risk               = plan.risk(),
-        };
-    }
-
     auto OperatorCoordinator::restoreProjectObservation(std::string_view storedJcs)
         -> Result<ProjectObservation>
     {
@@ -13200,318 +12975,6 @@ namespace uf::operator_runtime
         };
     }
 
-    auto OperatorCoordinator::mintNextStep(
-        std::string const& operationId,
-        uint64 expectedRevision,
-        ControlLease const& lease,
-        ProjectPluginHandle const& plugin,
-        ProjectToolCatalogSchemaOwner const& catalog,
-        OperatorPlanAuthority const& planAuthority
-    ) -> Result<PlannedStep>
-    {
-        UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
-        UF_TRY_VALUE(
-            query,
-            prepare(
-                m_impl->database.get(),
-                "SELECT o.state, o.revision, o.session_id, o.controlled_target_id, "
-                "o.plugin_id, session.project_registration_hash, "
-                "registration.plugin_identity_hash, plan.plan_hash, plan.canonical_plan, "
-                "plan.maximum_steps, plan.required_approvals, "
-                "COALESCE((SELECT MAX(step_index) FROM operation_steps step "
-                "WHERE step.operation_id=o.operation_id), 0), "
-                "EXISTS(SELECT 1 FROM operation_steps step "
-                "WHERE step.operation_id=o.operation_id AND step.step_kind='ui_action' "
-                "AND step.dispatch_sequence IS NULL), "
-                "observation.canonical_observation, state.canonical_opaque_payload, "
-                "EXISTS(SELECT 1 FROM dispatches d "
-                "WHERE d.operation_id=o.operation_id), "
-                "session.runtime_artifact_root_hash, o.tool_name, o.tool_version, "
-                "session.world_scope_kind, session.world_scope_id, "
-                "session.world_scope_generation, registration.registration_format, "
-                "registration.plugin_identity_kind "
-                "FROM operations o "
-                + std::string{k_liveControllerJoin}
-                + "JOIN project_registrations registration "
-                "ON registration.registration_hash=session.project_registration_hash "
-                "JOIN operation_plans plan ON plan.operation_id=o.operation_id "
-                "JOIN snapshots snapshot ON snapshot.token=o.snapshot_token "
-                "JOIN project_observations observation "
-                "ON observation.plugin_id=snapshot.plugin_id "
-                "AND observation.project_instance_key=snapshot.project_instance_key "
-                "AND observation.revision=snapshot.project_observation_revision "
-                "JOIN project_state state ON state.plugin_id=o.plugin_id "
-                "AND state.project_instance_key=o.project_instance_key "
-                "WHERE o.operation_id=?1 AND session.active=1 "
-                "AND session.session_epoch=?2"
-            )
-        );
-        UF_TRY(bindText(m_impl->database.get(), query.get(), 1, operationId));
-        UF_TRY(bindInteger(m_impl->database.get(), query.get(), 2, m_impl->sessionEpoch));
-        if (sqlite3_step(query.get()) != SQLITE_ROW)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Unknown operation_id, no frozen plan, or its session lost the target"
-            );
-        }
-        UF_TRY(requireExecutableRegistrationFormat(query.get(), 22));
-        auto const revision = static_cast<uint64>(sqlite3_column_int64(query.get(), 1));
-        if (revision != expectedRevision)
-        {
-            return fail(AutomationErrorKind::ActionRejected, "Operation revision is stale");
-        }
-        UF_TRY_VALUE(state, parseOperationState(columnText(query.get(), 0)));
-        if (
-            state != OperationState::Ready
-            && state != OperationState::AwaitingApproval
-            && state != OperationState::Reconciling
-        )
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "A workflow step is minted from a ready, awaiting or reconciling Operation"
-            );
-        }
-        if (
-            columnText(query.get(), 2) != lease.sessionId
-            || columnText(query.get(), 3) != lease.controlledTargetId
-        )
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Step lease does not own the Operation target"
-            );
-        }
-        UF_TRY(requireLiveLease(m_impl->database.get(), lease, "Step lease is stale"));
-        if (
-            plugin.pluginId() != columnText(query.get(), 4)
-            || plugin.pluginModuleManifestHash().hex() != columnText(query.get(), 6)
-            || plugin.projectRegistrationHash().hex() != columnText(query.get(), 5)
-        )
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Step ProjectPlugin does not match the pinned session registration"
-            );
-        }
-        if (catalog.projectRegistrationHash().hex() != columnText(query.get(), 5))
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Step Tool Catalog does not match the pinned session registration"
-            );
-        }
-        UF_TRY_VALUE(descriptor, catalog.describe(columnText(query.get(), 17)));
-        if (descriptor.toolVersion != columnText(query.get(), 18))
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "The Tool Catalog now declares a different version of the tool "
-                "this Operation was created for"
-            );
-        }
-
-        // At most one UI-action step may await its dispatch. The check lives
-        // here and nowhere else on purpose: a partial unique index expressing
-        // the same rule would keep its test green after this line was deleted.
-        auto const pendingStep = sqlite3_column_int(query.get(), 12) != 0;
-        if (pendingStep)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "A UI-action step is still awaiting its dispatch"
-            );
-        }
-
-        auto const maximumSteps = static_cast<uint64>(sqlite3_column_int64(query.get(), 9));
-        UF_TRY_VALUE(
-            stepIndex,
-            checkedSqlIncrement(
-                static_cast<uint64>(sqlite3_column_int64(query.get(), 11)),
-                "workflow step index"
-            )
-        );
-        // Running out of budget stops the workflow and never terminates the
-        // Operation: it stays exactly where it was, plan frozen and mutation
-        // chain still held, because only a reconciliation may conclude.
-        if (stepIndex > maximumSteps)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Workflow step budget is exhausted for this frozen plan"
-            );
-        }
-
-        auto const planHashHex   = columnText(query.get(), 7);
-        auto const canonicalPlan = columnText(query.get(), 8);
-        auto const sessionArtifactRoot = columnText(query.get(), 16);
-        UF_TRY_VALUE(planHash, parseHashColumn(planHashHex));
-        auto const observationJcs  = columnText(query.get(), 13);
-        auto const projectStateJcs = columnText(query.get(), 14);
-        auto const stepEnvelope    = stepEnvelopeJcs(StepEnvelopeInputs{
-            .frozenPlanHashHex     = planHashHex,
-            .projectObservationJcs = observationJcs,
-            .projectStateJcs       = projectStateJcs,
-            .stepIndex             = stepIndex,
-        });
-        UF_TRY_VALUE(stepInput, plugin.canonicalize(stepEnvelope));
-        UF_TRY_VALUE(intent, plugin.nextStep(stepInput));
-        UF_TRY_VALUE(
-            step,
-            planAuthority.mintStep(StepMintInputs{
-                .intent                  = intent,
-                .descriptor              = descriptor,
-                .canonicalPlan           = canonicalPlan,
-                .operationId             = operationId,
-                .planHash                = planHash,
-                .stepIndex               = stepIndex,
-                .runtimeArtifactRootHash = sessionArtifactRoot,
-            })
-        );
-
-        if (step.kind() == StepKind::UiAction)
-        {
-            // U2c: a UI action names the observed instance it acts on, so the
-            // step is resolved through the same authorization gate as any
-            // other observed_instance_id use -- the persistent binding's scope
-            // is checked before fresh membership -- before the step row that
-            // commits it is written. The id is read off the same member the
-            // dispatch-side reader uses, so the step refused here is the step
-            // that would have been delivered. The scope is the session's
-            // pinned one, rebuilt from its stored tuple, which is the scope
-            // the observation's instances were minted in.
-            UF_TRY_VALUE(
-                sessionWorldScope,
-                restoreSessionWorldScope(
-                    columnText(query.get(), 19),
-                    columnText(query.get(), 20),
-                    columnText(query.get(), 21)
-                )
-            );
-            UF_TRY_VALUE(intentValue, json::parse(step.canonicalStep()));
-            auto const* const p_action = intentValue.find("action");
-            UF_CHECK(p_action != nullptr);
-            auto const* const p_uiTargetId = p_action->find("ui_target_id");
-            UF_CHECK(p_uiTargetId != nullptr);
-            UF_TRY_VALUE(
-                freshObservation,
-                restoreProjectObservation(observationJcs)
-            );
-            UF_TRY(resolveObservedInstance(
-                lease,
-                sessionWorldScope,
-                freshObservation,
-                p_uiTargetId->string()
-            ));
-        }
-
-        UF_TRY_VALUE(
-            insert,
-            prepare(
-                m_impl->database.get(),
-                "INSERT INTO operation_steps(operation_id, step_index, step_kind, "
-                "step_key, step_intent_hash, canonical_step, dispatch_sequence) "
-                "VALUES(?1, ?2, ?3, ?4, ?5, ?6, NULL)"
-            )
-        );
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 1, operationId));
-        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 2, stepIndex));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            insert.get(),
-            3,
-            stepKindWireName(step.kind())
-        ));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 4, step.stepKey()));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            insert.get(),
-            5,
-            step.stepIntentHash().hex()
-        ));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 6, step.canonicalStep()));
-        UF_TRY(expectDone(m_impl->database.get(), insert.get()));
-
-        // Only a UI-action step minted after a reconciliation moves the
-        // Operation, and the edge it takes is decided by the frozen plan's
-        // required_approvals rather than by the caller. A wait produces no
-        // dispatch, so moving to Running for one would leave a state with no
-        // outgoing edge; the first step of a plan is minted while the Operation
-        // is already Ready or AwaitingApproval and needs no edge at all.
-        auto const dispatched = sqlite3_column_int(query.get(), 15) != 0;
-        UF_TRY_VALUE(requiredApprovals, readNameArray(columnText(query.get(), 10)));
-        auto const approvalNeeded = !requiredApprovals.empty();
-        auto nextState      = state;
-        auto nextFrozen     = dispatched;
-        auto nextDispatched = dispatched;
-        if (state == OperationState::Reconciling && step.kind() == StepKind::UiAction)
-        {
-            UF_TRY_VALUE(machine, OperationMachine::restore(state, dispatched, dispatched));
-            UF_TRY_VALUE(
-                advanced,
-                machine.transition(
-                    approvalNeeded
-                        ? OperationEvent::NextStepApprovalRequired
-                        : OperationEvent::NextStepReady
-                )
-            );
-            nextState      = advanced;
-            nextFrozen     = machine.planFrozen();
-            nextDispatched = machine.hasDispatched();
-        }
-
-        UF_TRY_VALUE(nextRevision, checkedSqlIncrement(revision, "Operation revision"));
-        UF_TRY_VALUE(
-            update,
-            prepare(
-                m_impl->database.get(),
-                "UPDATE operations SET state=?1, revision=?2 "
-                "WHERE operation_id=?3 AND revision=?4"
-            )
-        );
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            update.get(),
-            1,
-            operationStateWireName(nextState)
-        ));
-        UF_TRY(bindInteger(m_impl->database.get(), update.get(), 2, nextRevision));
-        UF_TRY(bindText(m_impl->database.get(), update.get(), 3, operationId));
-        UF_TRY(bindInteger(m_impl->database.get(), update.get(), 4, revision));
-        UF_TRY(expectDone(m_impl->database.get(), update.get()));
-        if (sqlite3_changes(m_impl->database.get()) != 1)
-        {
-            return fail(AutomationErrorKind::ActionRejected, "Operation revision lost its CAS");
-        }
-        if (nextState != state)
-        {
-            UF_TRY(appendLedgerEvent(
-                m_impl->database.get(),
-                lease.sessionEpoch,
-                lease.controlledTargetId,
-                LedgerEventKind::OperationStateChanged,
-                operationId,
-                operationStateWireName(nextState)
-            ));
-        }
-        UF_TRY(transaction.commit());
-        return PlannedStep{
-            .operation = StoredOperation{
-                .operationId   = operationId,
-                .lookup        = CommandLookup::Existing,
-                .state         = nextState,
-                .revision      = nextRevision,
-                .planFrozen    = nextFrozen,
-                .hasDispatched = nextDispatched,
-            },
-            .stepIntentHash = step.stepIntentHash(),
-            .stepKey        = step.stepKey(),
-            .stepIndex      = stepIndex,
-            .kind           = step.kind(),
-        };
-    }
-
     auto OperatorCoordinator::reserveDispatch(
         std::string const& operationId,
         uint64 expectedRevision,
@@ -13612,8 +13075,8 @@ namespace uf::operator_runtime
         // cannot be handed to the authority: a step naming an instance with no
         // persistent binding, or a binding whose local_ref is the migrated
         // empty sentinel, is refused here rather than delivered. The id is
-        // read off the same member the mint-side gate uses, so the step that
-        // passed mintNextStep is exactly the step resolved here.
+        // read off the same member the step row stores, so the step the ledger
+        // recorded is exactly the step resolved here.
         UF_TRY_VALUE(intentValue, json::parse(columnText(query.get(), 14)));
         auto const* const p_action = intentValue.find("action");
         UF_CHECK(p_action != nullptr);
@@ -14270,474 +13733,6 @@ namespace uf::operator_runtime
         return ApprovalGrant{
             .token               = std::move(token),
             .authorityDecisionId = authorityDecisionId,
-        };
-    }
-
-    auto OperatorCoordinator::commitReconciliation(
-        ProjectPluginHandle const& plugin,
-        ReconciliationCommit const& commit
-    ) -> Result<StoredOperation>
-    {
-        UF_TRY(requireName(commit.operationId, "operation_id"));
-        if (
-            commit.outcome.disposition() == ReconcileDisposition::Diverged
-            && commit.journalEvents.empty()
-        )
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Diverged requires a committed correction or divergence JournalEvent"
-            );
-        }
-        if (
-            (
-                commit.outcome.disposition() == ReconcileDisposition::Rejected
-                || commit.outcome.disposition() == ReconcileDisposition::Ambiguous
-            )
-            && !commit.journalEvents.empty()
-        )
-        {
-            // Rejected means the step was refused and Ambiguous means its
-            // outcome was never established. Either one appending an event
-            // would write a world-changed record for a change nobody can say
-            // happened.
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Rejected and Ambiguous reconciliations cannot append JournalEvents"
-            );
-        }
-        for (auto const& event : commit.journalEvents)
-        {
-            UF_TRY(requireName(event.eventId, "journal event_id"));
-            if (
-                event.entry.projectRegistrationHash()
-                != plugin.projectRegistrationHash()
-            )
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "Journal data does not match the reconciliation ProjectPlugin registration"
-                );
-            }
-        }
-
-        UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
-        UF_TRY_VALUE(
-            operationQuery,
-            prepare(
-                m_impl->database.get(),
-                "SELECT o.state, o.revision, registration.plugin_id, "
-                "session.project_instance_key, session.manifest_hash, "
-                "registration.plugin_identity_hash, session.project_registration_hash, "
-                "o.controlled_target_id, registration.registration_format, "
-                "registration.plugin_identity_kind "
-                "FROM operations o "
-                + std::string{k_liveControllerJoin}
-                + "JOIN project_registrations registration ON "
-                "registration.registration_hash=session.project_registration_hash "
-                "WHERE o.operation_id=?1 AND session.active=1 AND session.session_epoch=?2"
-            )
-        );
-        UF_TRY(bindText(m_impl->database.get(), operationQuery.get(), 1, commit.operationId));
-        UF_TRY(bindInteger(
-            m_impl->database.get(),
-            operationQuery.get(),
-            2,
-            m_impl->sessionEpoch
-        ));
-        if (sqlite3_step(operationQuery.get()) != SQLITE_ROW)
-        {
-            // The epoch and active flag are part of the lookup rather than a
-            // later comparison: a restart revokes every lease and deactivates
-            // every session, and the Journal is the heaviest write there is, so
-            // a process fenced out of dispatch must not reach it either.
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Unknown operation_id, or its session is not active in this epoch"
-            );
-        }
-        UF_TRY(requireExecutableRegistrationFormat(operationQuery.get(), 8));
-        UF_TRY_VALUE(state, parseOperationState(columnText(operationQuery.get(), 0)));
-        if (state != OperationState::Reconciling)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Reconciliation can commit only from the reconciling state"
-            );
-        }
-        auto const operationRevision = static_cast<uint64>(
-            sqlite3_column_int64(operationQuery.get(), 1)
-        );
-        if (operationRevision != commit.expectedOperationRevision)
-        {
-            return fail(AutomationErrorKind::ActionRejected, "Operation revision is stale");
-        }
-        auto const pluginId = columnText(operationQuery.get(), 2);
-        auto const projectInstanceKey = columnText(operationQuery.get(), 3);
-        auto const sessionManifestHash = columnText(operationQuery.get(), 4);
-        if (
-            plugin.pluginId() != pluginId
-            || plugin.pluginModuleManifestHash().hex()
-                != columnText(operationQuery.get(), 5)
-            || plugin.projectRegistrationHash().hex() != columnText(operationQuery.get(), 6)
-        )
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Reconciliation ProjectPlugin does not match the Operation"
-            );
-        }
-        // The outcome carries the registration its authority was bound to, so
-        // asking it rather than only its document also pins which reconcile
-        // schema read the disposition.
-        if (
-            commit.outcome.projectRegistrationHash() != plugin.projectRegistrationHash()
-            || commit.outcome.operationId() != commit.operationId
-        )
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Reconciliation outcome was minted for a different ProjectRegistration "
-                "or a different Operation"
-            );
-        }
-
-        UF_TRY_VALUE(
-            stateQuery,
-            prepare(
-                m_impl->database.get(),
-                "SELECT revision, project_registration_hash, project_state_schema_hash, "
-                "last_journal_sequence, canonical_opaque_payload FROM project_state "
-                "WHERE plugin_id=?1 AND project_instance_key=?2"
-            )
-        );
-        UF_TRY(bindText(m_impl->database.get(), stateQuery.get(), 1, pluginId));
-        UF_TRY(bindText(m_impl->database.get(), stateQuery.get(), 2, projectInstanceKey));
-        if (sqlite3_step(stateQuery.get()) != SQLITE_ROW)
-        {
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "Reconciliation requires an existing provisioned ProjectState baseline"
-            );
-        }
-        // v1.7 failure-and-recovery contract 15: a multi-step Operation with a
-        // proven partial effect may not enter Rejected. Refusing an appending
-        // Rejected is not enough, because an earlier Continue on the same
-        // Operation may already have committed one; the Journal it wrote is
-        // where the proof lives, so that is what is asked.
-        if (commit.outcome.disposition() == ReconcileDisposition::Rejected)
-        {
-            // "Journal/outcome 证明部分 effect" -- the outcome half matters as
-            // much as the Journal half, and I-13 wants every possible external
-            // effect proven ABSENT. Only not_delivered is that proof: a NULL
-            // outcome is a dispatch nobody has answered for, transport_unknown
-            // is the recovery path's way of saying it does not know, and
-            // delivered says it happened. Any of the three leaves Rejected
-            // claiming more than the ledger can support.
-            UF_TRY_VALUE(
-                effectQuery,
-                prepare(
-                    m_impl->database.get(),
-                    "SELECT 1 FROM journal_events WHERE operation_id=?1 "
-                    "UNION ALL "
-                    "SELECT 1 FROM dispatches WHERE operation_id=?1 AND ("
-                    "delivery_outcome IS NULL OR delivery_outcome<>'not_delivered') "
-                    "LIMIT 1"
-                )
-            );
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                effectQuery.get(),
-                1,
-                commit.operationId
-            ));
-            if (sqlite3_step(effectQuery.get()) == SQLITE_ROW)
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "Rejected requires every possible external effect proven not to "
-                    "have happened; this Operation has a Journal event or a dispatch "
-                    "that is not proven undelivered. Commit the proven facts and "
-                    "Continue, or reach Diverged through a correction"
-                );
-            }
-        }
-
-        auto const storedStateRevision = static_cast<uint64>(
-            sqlite3_column_int64(stateQuery.get(), 0)
-        );
-        auto const projectRegistrationHash = columnText(stateQuery.get(), 1);
-        auto const projectStateSchemaHash = columnText(stateQuery.get(), 2);
-        auto journalSequence = static_cast<uint64>(sqlite3_column_int64(stateQuery.get(), 3));
-        auto const priorProjectState = columnText(stateQuery.get(), 4);
-        if (storedStateRevision != commit.expectedProjectStateRevision)
-        {
-            return fail(AutomationErrorKind::ActionRejected, "ProjectState revision is stale");
-        }
-        if (projectRegistrationHash.empty() || priorProjectState.empty())
-        {
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "ProjectState row is missing its registration identity or canonical bytes"
-            );
-        }
-
-        // The reducer runs here rather than before the transaction, and on
-        // bytes built here rather than supplied: its input is the events this
-        // commit appends together with the ProjectState the row above holds, so
-        // reading that row and reducing it have to be the same BEGIN IMMEDIATE.
-        // Anything else lets a concurrent writer move the state between the two.
-        // The plugin VM is quota-bound, so holding the write lock across it is
-        // bounded.
-        auto reducedState = std::optional<ValidatedDocument>{};
-        if (!commit.journalEvents.empty())
-        {
-            UF_TRY_VALUE(
-                reducerInput,
-                plugin.canonicalize(
-                    reduceEnvelopeJcs(commit.journalEvents, priorProjectState)
-                )
-            );
-            UF_TRY_VALUE(reduced, plugin.reduce(reducerInput));
-            if (
-                reduced.projectRegistrationHash().hex() != projectRegistrationHash
-                || reduced.function() != ProjectPluginFunction::Reduce
-                || reduced.direction() != ProjectDocumentDirection::Output
-            )
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "Reduced ProjectState does not match the pinned state schema"
-                );
-            }
-            reducedState.emplace(std::move(reduced));
-        }
-
-        for (auto const& event : commit.journalEvents)
-        {
-            if (
-                event.entry.projectRegistrationHash().hex()
-                != projectRegistrationHash
-            )
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "Journal data does not match the Operation registration"
-                );
-            }
-            if (journalSequence == static_cast<uint64>(std::numeric_limits<sqlite3_int64>::max()))
-            {
-                return fail(
-                    AutomationErrorKind::InternalInvariant,
-                    "Project Journal sequence exhausted"
-                );
-            }
-            ++journalSequence;
-            UF_TRY_VALUE(
-                eventInsert,
-                prepare(
-                    m_impl->database.get(),
-                    "INSERT INTO journal_events(event_id, plugin_id, project_instance_key, "
-                    "sequence, prior_project_state_revision, session_manifest_hash, operation_id, "
-                    "namespaced_event_type, payload_schema_hash, opaque_project_payload, "
-                    "provenance) "
-                    "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
-                )
-            );
-            UF_TRY(bindText(m_impl->database.get(), eventInsert.get(), 1, event.eventId));
-            UF_TRY(bindText(m_impl->database.get(), eventInsert.get(), 2, pluginId));
-            UF_TRY(bindText(m_impl->database.get(), eventInsert.get(), 3, projectInstanceKey));
-            UF_TRY(bindInteger(m_impl->database.get(), eventInsert.get(), 4, journalSequence));
-            UF_TRY(bindInteger(
-                m_impl->database.get(),
-                eventInsert.get(),
-                5,
-                storedStateRevision
-            ));
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                eventInsert.get(),
-                6,
-                sessionManifestHash
-            ));
-            UF_TRY(bindText(m_impl->database.get(), eventInsert.get(), 7, commit.operationId));
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                eventInsert.get(),
-                8,
-                event.entry.namespacedEventType()
-            ));
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                eventInsert.get(),
-                9,
-                event.entry.payloadSchemaHash().hex()
-            ));
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                eventInsert.get(),
-                10,
-                event.entry.payload().bytes()
-            ));
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                eventInsert.get(),
-                11,
-                event.entry.provenance().bytes()
-            ));
-            UF_TRY(expectDone(m_impl->database.get(), eventInsert.get()));
-        }
-
-        if (reducedState.has_value())
-        {
-            if (storedStateRevision == static_cast<uint64>(std::numeric_limits<sqlite3_int64>::max()))
-            {
-                return fail(
-                    AutomationErrorKind::InternalInvariant,
-                    "ProjectState revision exhausted"
-                );
-            }
-            auto const nextStateRevision = storedStateRevision + 1U;
-            UF_TRY_VALUE(
-                stateUpdate,
-                prepare(
-                    m_impl->database.get(),
-                    "UPDATE project_state SET revision=?1, canonical_opaque_payload=?2, state_hash=?3, "
-                    "last_journal_sequence=?4 WHERE plugin_id=?5 AND project_instance_key=?6 "
-                    "AND project_registration_hash=?7 AND project_state_schema_hash=?8 AND revision=?9"
-                )
-            );
-            UF_TRY(bindInteger(m_impl->database.get(), stateUpdate.get(), 1, nextStateRevision));
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                stateUpdate.get(),
-                2,
-                reducedState->bytes()
-            ));
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                stateUpdate.get(),
-                3,
-                reducedState->contentHash().hex()
-            ));
-            UF_TRY(bindInteger(m_impl->database.get(), stateUpdate.get(), 4, journalSequence));
-            UF_TRY(bindText(m_impl->database.get(), stateUpdate.get(), 5, pluginId));
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                stateUpdate.get(),
-                6,
-                projectInstanceKey
-            ));
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                stateUpdate.get(),
-                7,
-                projectRegistrationHash
-            ));
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                stateUpdate.get(),
-                8,
-                projectStateSchemaHash
-            ));
-            UF_TRY(bindInteger(
-                m_impl->database.get(),
-                stateUpdate.get(),
-                9,
-                storedStateRevision
-            ));
-            UF_TRY(expectDone(m_impl->database.get(), stateUpdate.get()));
-            if (sqlite3_changes(m_impl->database.get()) != 1)
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "ProjectState revision lost its CAS"
-                );
-            }
-        }
-
-        UF_TRY_VALUE(
-            reconciliationInsert,
-            prepare(
-                m_impl->database.get(),
-                "INSERT INTO reconciliations(operation_id, disposition, canonical_proposal) "
-                "VALUES(?1, ?2, ?3)"
-            )
-        );
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            reconciliationInsert.get(),
-            1,
-            commit.operationId
-        ));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            reconciliationInsert.get(),
-            2,
-            reconciliationWireName(commit.outcome.disposition())
-        ));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            reconciliationInsert.get(),
-            3,
-            commit.outcome.proposal().bytes()
-        ));
-        UF_TRY(expectDone(m_impl->database.get(), reconciliationInsert.get()));
-
-        UF_TRY_VALUE(
-            nextOperationRevision,
-            checkedSqlIncrement(operationRevision, "Operation revision")
-        );
-        auto const nextState = operationStateFor(commit.outcome.disposition());
-        UF_TRY_VALUE(
-            operationUpdate,
-            prepare(
-                m_impl->database.get(),
-                "UPDATE operations SET state=?1, revision=?2 WHERE operation_id=?3 AND revision=?4"
-            )
-        );
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            operationUpdate.get(),
-            1,
-            operationStateWireName(nextState)
-        ));
-        UF_TRY(bindInteger(
-            m_impl->database.get(),
-            operationUpdate.get(),
-            2,
-            nextOperationRevision
-        ));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            operationUpdate.get(),
-            3,
-            commit.operationId
-        ));
-        UF_TRY(bindInteger(m_impl->database.get(), operationUpdate.get(), 4, operationRevision));
-        UF_TRY(expectDone(m_impl->database.get(), operationUpdate.get()));
-        if (sqlite3_changes(m_impl->database.get()) != 1)
-        {
-            return fail(AutomationErrorKind::ActionRejected, "Operation revision lost its CAS");
-        }
-
-        UF_TRY(appendLedgerEvent(
-            m_impl->database.get(),
-            m_impl->sessionEpoch,
-            columnText(operationQuery.get(), 7),
-            LedgerEventKind::OperationStateChanged,
-            commit.operationId,
-            operationStateWireName(nextState)
-        ));
-
-        UF_TRY(transaction.commit());
-        return StoredOperation{
-            .operationId   = commit.operationId,
-            .lookup        = CommandLookup::Existing,
-            .state         = nextState,
-            .revision      = nextOperationRevision,
-            .planFrozen    = true,
-            .hasDispatched = true,
         };
     }
 }

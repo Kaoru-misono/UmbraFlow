@@ -7,6 +7,9 @@
 
 #include <operator/ledger.hpp>
 #include <operator/manifest.hpp>
+#include <operator/project-generation.hpp>
+
+#include <script/scoped-tool-program.hpp>
 
 #include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
@@ -116,22 +119,19 @@ namespace uf::operator_runtime::conformance
         std::string toolName
     ) -> ValidatedToolInvocation;
 
+    // The Tool Runtime seam a conformance run compiles its generation against.
+    // These cases drive the ledger rather than a Tool call, so nothing here
+    // admits one; the seam refuses, because a scoped program with no Tool
+    // Runtime is a pure program wearing the wrong type.
     [[nodiscard]]
-    auto loadPlugin(
+    auto conformanceToolRuntime() -> script::ToolRuntimeInvoke;
+
+    [[nodiscard]]
+    auto loadGeneration(
         deployment::ConformanceProject const& project,
         ProjectRole role
-    ) -> ProjectPluginHandle;
+    ) -> ProjectGenerationHandle;
 
-    [[nodiscard]]
-    auto reconcileOutcome(
-        deployment::ConformanceProject const& project,
-        ProjectRole role,
-        ProjectPluginHandle const& plugin,
-        std::string operationId,
-        std::string input
-    ) -> ValidatedReconcileOutcome;
-
-    [[nodiscard]]
     // The PolicyArtifact bytes a run pins, built from the effect types this
     // deployment's own descriptors bound. It is published because prepareStore
     // pins the manifest to their hash and the plan authority is built from the
@@ -144,7 +144,7 @@ namespace uf::operator_runtime::conformance
 
     [[nodiscard]]
     auto sessionManifest(
-        VerifiedProjectRegistration const& registration,
+        ProjectIdentity const& registration,
         ContentHash const& runtimeArtifactRootHash,
         std::string_view exactPolicyArtifactBytes
     ) -> SessionManifest;
@@ -155,14 +155,14 @@ namespace uf::operator_runtime::conformance
     struct PreparedStore final
     {
         OperatorCoordinator            store;
-        ProjectPluginHandle            plugin;
+        ProjectGenerationHandle        generation;
         deployment::ConformanceProject project;
         SessionManifest                manifest;
 
-        // The sole mint for an EffectivePlan. It is part of the prepared state
-        // because a deployment builds one from the exact operator protocol
-        // bytes its session manifest pins, and the suite must be unable to
-        // freeze a plan any other way.
+        // The session's evaluated policy, bound to the registration root. It
+        // is part of the prepared state because a deployment builds one from
+        // the exact operator protocol bytes its session manifest pins, and the
+        // suite must be unable to reach a PolicyArtifact any other way.
         OperatorPlanAuthority planAuthority;
 
         // The authenticated controller every entry point below is reached
@@ -224,44 +224,6 @@ namespace uf::operator_runtime::conformance
         std::string clientRequestId
     ) -> CommandRequest;
 
-    // One Operation the Operator itself froze a plan for and minted the first
-    // step of, which is the whole state a dispatch may be reserved from.
-    [[nodiscard]]
-    auto readyOperation(
-        PreparedStore& prepared,
-        std::string clientRequestId,
-        std::string toolName
-    ) -> StoredOperation;
-
-    [[nodiscard]]
-    auto frozenPlan(
-        PreparedStore& prepared,
-        StoredOperation const& operation
-    ) -> Result<FrozenPlan>;
-
-    [[nodiscard]]
-    auto plannedStep(
-        PreparedStore& prepared,
-        StoredOperation const& operation
-    ) -> Result<PlannedStep>;
-
-    // A Ready operation carried through one dispatch and one Host outcome, so
-    // that it is reconciling and a commit can be tested against it.
-    [[nodiscard]]
-    auto reconcilingOperation(
-        PreparedStore& prepared,
-        std::string clientRequestId,
-        std::string toolName
-    ) -> StoredOperation;
-
-    [[nodiscard]]
-    auto confirmedCommit(
-        PreparedStore const& prepared,
-        StoredOperation const& operation,
-        uint64 expectedProjectStateRevision,
-        std::string eventId,
-        deployment::ProjectJournalDocument const& entry
-    ) -> ReconciliationCommit;
 
     [[nodiscard]]
     auto occurrences(

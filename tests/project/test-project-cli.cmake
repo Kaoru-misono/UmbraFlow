@@ -15,11 +15,20 @@ set(DECLARATIVE_DIRECTORY
 set(DECLARATIVE_PATH
     "${DECLARATIVE_DIRECTORY}/dismiss-known-overlay.json"
 )
+set(ADAPTER_DIRECTORY
+    "generated/adapters/chaos.project/dismiss-known-overlay"
+)
+set(GENERATED_REDUCER_ADAPTER
+    "${BUILD_DIRECTORY}/${ADAPTER_DIRECTORY}/reducer.luau"
+)
+set(GENERATED_REDUCER_ADAPTER_NAME
+    "${ADAPTER_DIRECTORY}/reducer.luau"
+)
 set(GENERATED_ADAPTER
-    "${BUILD_DIRECTORY}/generated/adapters/chaos.project/dismiss-known-overlay.luau"
+    "${BUILD_DIRECTORY}/${ADAPTER_DIRECTORY}/tool.luau"
 )
 set(GENERATED_ADAPTER_NAME
-    "generated/adapters/chaos.project/dismiss-known-overlay.luau"
+    "${ADAPTER_DIRECTORY}/tool.luau"
 )
 set(DECLARED_CATALOG
     "${SOURCE_DIRECTORY}/generated/tool-catalogs/chaos.project/tool-catalog-v1.json"
@@ -36,11 +45,17 @@ set(GENERATED_BLOB
 set(GENERATED_BLOB_NAME
     "generated/resources/dream/facts.blob"
 )
+set(GENERATED_REDUCER_MODULE
+    "${BUILD_DIRECTORY}/generated/modules/dream/reducer/main.luau"
+)
+set(GENERATED_REDUCER_MODULE_NAME
+    "generated/modules/dream/reducer/main.luau"
+)
 set(GENERATED_MODULE
-    "${BUILD_DIRECTORY}/generated/modules/dream/main.luau"
+    "${BUILD_DIRECTORY}/generated/modules/dream/tool/main.luau"
 )
 set(GENERATED_MODULE_NAME
-    "generated/modules/dream/main.luau"
+    "generated/modules/dream/tool/main.luau"
 )
 set(GENERATED_REGISTRATION
     "${BUILD_DIRECTORY}/generated/registrations/dream.json"
@@ -66,12 +81,23 @@ file(WRITE "${SOURCE_DIRECTORY}/umbraflow-project.json" [=[{
       "name": "dream",
       "plugin_id": "chaos.dream",
       "baseline_event_type": "project.baseline_created",
-      "plugin": {
+      "reducer_closure": {
         "entry": "main",
+        "exported_entry_points": ["reduce"],
         "modules": [
           {
             "name": "main",
-            "path": "generated/adapters/chaos.project/dismiss-known-overlay.luau"
+            "path": "generated/adapters/chaos.project/dismiss-known-overlay/reducer.luau"
+          }
+        ]
+      },
+      "tool_closure": {
+        "entry": "main",
+        "exported_entry_points": [],
+        "modules": [
+          {
+            "name": "main",
+            "path": "generated/adapters/chaos.project/dismiss-known-overlay/tool.luau"
           }
         ]
       },
@@ -274,6 +300,11 @@ if(NOT CHECK_RESULT EQUAL 0)
     )
 endif()
 
+if(NOT EXISTS "${GENERATED_REDUCER_ADAPTER}")
+    message(FATAL_ERROR
+        "project build must generate ${GENERATED_REDUCER_ADAPTER_NAME}"
+    )
+endif()
 if(NOT EXISTS "${GENERATED_ADAPTER}")
     message(FATAL_ERROR
         "project build must generate ${GENERATED_ADAPTER_NAME}"
@@ -291,10 +322,16 @@ if(NOT EXISTS "${GENERATED_BLOB}")
         "deployment's declared resource"
     )
 endif()
+if(NOT EXISTS "${GENERATED_REDUCER_MODULE}")
+    message(FATAL_ERROR
+        "project build must generate ${GENERATED_REDUCER_MODULE_NAME} from the "
+        "deployment's generated reducer closure"
+    )
+endif()
 if(NOT EXISTS "${GENERATED_MODULE}")
     message(FATAL_ERROR
         "project build must generate ${GENERATED_MODULE_NAME} from the "
-        "deployment's generated one-module closure"
+        "deployment's generated tool closure"
     )
 endif()
 if(NOT EXISTS "${GENERATED_REGISTRATION}")
@@ -665,13 +702,13 @@ file(MAKE_DIRECTORY
     "${CUT_LYING_CORPUS}"
 )
 file(WRITE "${CUT_SOURCE}/declared.txt" "declared input\n")
+file(WRITE "${CUT_SOURCE}/plugin/dream-reducer.luau" [=[return {
+    plugin_id = "chaos.dream",
+    reduce = function(input) return input end,
+}
+]=])
 file(WRITE "${CUT_SOURCE}/plugin/dream.luau" [=[return {
     plugin_id = "chaos.dream",
-    derive = function(input) return input end,
-    plan = function(input) return input end,
-    next_step = function(input) return input end,
-    reconcile = function(input) return input end,
-    reduce = function(input) return input end,
 }
 ]=])
 file(SHA256 "${UF_PROJECT_TEST_FRAME}" CUT_SOURCE_HASH)
@@ -704,8 +741,16 @@ file(WRITE "${CUT_SOURCE}/umbraflow-project.json" "{
       \"name\": \"dream\",
       \"plugin_id\": \"chaos.dream\",
       \"baseline_event_type\": \"project.baseline_created\",
-      \"plugin\": {
+      \"reducer_closure\": {
         \"entry\": \"main\",
+        \"exported_entry_points\": [\"reduce\"],
+        \"modules\": [
+          {\"name\": \"main\", \"path\": \"plugin/dream-reducer.luau\"}
+        ]
+      },
+      \"tool_closure\": {
+        \"entry\": \"main\",
+        \"exported_entry_points\": [],
         \"modules\": [
           {\"name\": \"main\", \"path\": \"plugin/dream.luau\"}
         ]
@@ -963,8 +1008,14 @@ file(COPY "${CUT_SOURCE}/" DESTINATION "${BOOTSTRAP_SOURCE}")
 file(REMOVE_RECURSE "${BOOTSTRAP_SOURCE}/plugin")
 file(READ "${BOOTSTRAP_SOURCE}/umbraflow-project.json" BOOTSTRAP_MANIFEST)
 string(REPLACE
-    "{\"name\": \"main\", \"path\": \"plugin/dream.luau\"}"
+    "{\"name\": \"main\", \"path\": \"plugin/dream-reducer.luau\"}"
     "{\"name\": \"main\", \"path\": \"plugin/main.luau\"}, {\"name\": \"support\", \"path\": \"plugin/support.luau\"}"
+    BOOTSTRAP_MANIFEST
+    "${BOOTSTRAP_MANIFEST}"
+)
+string(REPLACE
+    "{\"name\": \"main\", \"path\": \"plugin/dream.luau\"}"
+    "{\"name\": \"main\", \"path\": \"plugin/main.luau\"}"
     BOOTSTRAP_MANIFEST
     "${BOOTSTRAP_MANIFEST}"
 )

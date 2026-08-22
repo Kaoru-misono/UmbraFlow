@@ -62,7 +62,7 @@ namespace uf::deployment
             "pattern": "^[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$"
         },
         "ToolName": {
-            "$comment": "The one spelling of a Tool name, in every document that carries one: the Tool Catalog's `name`, a plan's `tool_name`, and each entry of a child_effects `child_tool_names`. A Tool name is namespaced -- the namespace is its owner's registered namespace, `framework` for the Framework and a Project's plugin_id for a Project, and the local name is what follows the dot that ends it -- so the dot is required rather than optional: an unnamespaced name has no owner, and there would be nothing for the ownership rule to check. The grammar is the ProjectRegistration's namespaced_name byte for byte (schema/umbraflow-project-registration-v2.schema.json), because a name a catalog declares and a name a binding carries are one name; a catalog admitting a spelling the binding table refuses would declare a Tool no authoring tier could ever bind.",
+            "$comment": "The one spelling of a Tool name, in every document that carries one: the Tool Catalog's `name`, a plan's `tool_name`, and each entry of a child_effects `child_tool_names`. A Tool name is namespaced -- the namespace is its owner's registered namespace, `framework` for the Framework and a Project's plugin_id for a Project, and the local name is what follows the dot that ends it -- so the dot is required rather than optional: an unnamespaced name has no owner, and there would be nothing for the ownership rule to check. The grammar is the ProjectRegistration's namespaced_name byte for byte (schema/umbraflow-project-registration-v3.schema.json), because a name a catalog declares and a name a binding carries are one name; a catalog admitting a spelling the binding table refuses would declare a Tool no authoring tier could ever bind.",
             "type": "string",
             "minLength": 3,
             "maxLength": 128,
@@ -481,7 +481,7 @@ namespace uf::deployment
                             "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
                         },
                         "canonical_parameters": {
-                            "$comment": "Project-owned and judged by nothing here: no member of ProjectRegistrationClaims pins a schema for a UI action's parameters, so this module has no authority to invent one."
+                            "$comment": "Project-owned and judged by nothing here: no member of ProjectGenerationClaims pins a schema for a UI action's parameters, so this module has no authority to invent one."
                         },
                         "surface_id": {
                             "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
@@ -1714,142 +1714,6 @@ namespace uf::deployment
         };
     }
 
-    auto readPlanProposal(operator_runtime::ValidatedDocument const& proposal)
-        -> Result<operator_runtime::PlanProposalClaims>
-    {
-        UF_TRY(requireOutputOf(
-            proposal,
-            operator_runtime::ProjectPluginFunction::Plan,
-            "a PlanProposal"
-        ));
-        UF_TRY_VALUE(document, parseDocument(proposal.bytes()));
-
-        // canonical_args and every opaque_project_payload below are
-        // re-serialized rather than sliced out of the input. The document is
-        // its own RFC 8785 form, so a member's canonical bytes are the bytes it
-        // occupied -- which is the property the plan hash rests on.
-        auto claims = operator_runtime::PlanProposalClaims{
-            .toolName         = std::string{member(document, "tool_name").string()},
-            .toolVersion      = std::string{member(document, "tool_version").string()},
-            .canonicalArgs    = json::canonicalBytes(member(document, "canonical_args")),
-            .effects          = {},
-            .allowedUiActions = {},
-            .limits           = {},
-        };
-        for (auto const& action : member(document, "allowed_ui_actions").items())
-        {
-            claims.allowedUiActions.emplace_back(action.string());
-        }
-        for (auto const& effect : member(document, "effects").items())
-        {
-            auto const risk = std::ranges::find(
-                k_risks,
-                member(effect, "risk").string(),
-                operator_runtime::riskWireName
-            );
-            UF_CHECK(risk != k_risks.end());
-            // OP:`Hash` is bare lowercase hex; ContentHash spells its own
-            // canonical form with the algorithm in front.
-            UF_TRY_VALUE(
-                payloadSchemaHash,
-                ContentHash::parse(
-                    "sha256:"
-                    + std::string{member(effect, "payload_schema_hash").string()}
-                )
-            );
-            claims.effects.emplace_back(operator_runtime::ProposedEffect{
-                .namespacedType    = std::string{member(effect, "namespaced_type").string()},
-                .risk              = *risk,
-                .scopeKind         = std::string{member(effect, "scope_kind").string()},
-                .scopeKey          = std::string{member(effect, "scope_key").string()},
-                .payloadSchemaHash = payloadSchemaHash,
-                .opaqueProjectPayload = json::canonicalBytes(
-                    member(effect, "opaque_project_payload")
-                ),
-            });
-        }
-
-        auto const& limits = member(document, "workflow_limits");
-        UF_TRY_VALUE(
-            steps,
-            workflowBound(limits, "maximum_steps", k_workflowCountBound)
-        );
-        UF_TRY_VALUE(
-            dispatches,
-            workflowBound(limits, "maximum_dispatches", k_workflowCountBound)
-        );
-        UF_TRY_VALUE(
-            observations,
-            workflowBound(limits, "maximum_observations", k_workflowCountBound)
-        );
-        UF_TRY_VALUE(
-            waits,
-            workflowBound(limits, "maximum_waits", k_workflowCountBound)
-        );
-        UF_TRY_VALUE(
-            elapsed,
-            workflowBound(limits, "maximum_elapsed_ms", k_workflowMillisBound)
-        );
-        claims.limits = operator_runtime::WorkflowLimits{
-            .maximumSteps         = static_cast<uint32>(steps),
-            .maximumDispatches    = static_cast<uint32>(dispatches),
-            .maximumObservations  = static_cast<uint32>(observations),
-            .maximumWaits         = static_cast<uint32>(waits),
-            .maximumElapsedMillis = elapsed,
-        };
-        return claims;
-    }
-
-    auto readStepIntent(operator_runtime::ValidatedDocument const& intent)
-        -> Result<operator_runtime::StepIntentClaims>
-    {
-        UF_TRY(requireOutputOf(
-            intent,
-            operator_runtime::ProjectPluginFunction::NextStep,
-            "a step intent"
-        ));
-        UF_TRY_VALUE(document, parseDocument(intent.bytes()));
-
-        // Which of the two the oneOf matched, read back off the document:
-        // `action` is required by OP:`UIActionIntent` and forbidden by
-        // OP:`WaitIntent`, so its presence is the answer the schema already
-        // reached. A wait names no UI and leaves the three identifiers empty,
-        // which is what mintStep refuses a UI-action step for.
-        auto const timeout = readTimeoutPolicy(member(document, "timeout_policy"));
-        auto const* const p_action = document.find("action");
-        if (p_action == nullptr)
-        {
-            return operator_runtime::StepIntentClaims{
-                .stepKey = std::string{member(document, "step_key").string()},
-                .timeout = timeout,
-                .kind    = operator_runtime::StepKind::Wait,
-            };
-        }
-        auto const deliveryClass = std::ranges::find(
-            k_deliveryClasses,
-            member(document, "delivery_class").string(),
-            &DeliveryClassName::wire
-        );
-        UF_CHECK(deliveryClass != k_deliveryClasses.end());
-        // canonical_parameters is re-serialized for the reason canonical_args
-        // is in readPlanProposal: the document is its own RFC 8785 form, so a
-        // member's canonical bytes are the bytes it occupied -- which is what
-        // lets mintStep compare it member by member against the frozen plan's
-        // arguments without either side being re-canonicalized on the way.
-        return operator_runtime::StepIntentClaims{
-            .stepKey    = std::string{member(document, "step_key").string()},
-            .surfaceId  = std::string{member(*p_action, "surface_id").string()},
-            .uiTargetId = std::string{member(*p_action, "ui_target_id").string()},
-            .actionId   = std::string{member(*p_action, "action_id").string()},
-            .canonicalParameters = json::canonicalBytes(
-                member(*p_action, "canonical_parameters")
-            ),
-            .timeout       = timeout,
-            .deliveryClass = deliveryClass->deliveryClass,
-            .kind          = operator_runtime::StepKind::UiAction,
-        };
-    }
-
     ProjectDeployment::ProjectDeployment(std::shared_ptr<State const> p_state) noexcept
         : m_state{std::move(p_state)}
     {
@@ -2108,7 +1972,7 @@ namespace uf::deployment
         }
 
         // The effect payload schemas' only route into any digest. Nothing else
-        // in a project names them: no member of ProjectRegistrationClaims pins
+        // in a project names them: no member of ProjectGenerationClaims pins
         // one and no manifest lists one, so without this member editing a byte
         // of a pinned effect payload schema would move no hash anywhere and the
         // first consequence would be a Plan refused much later

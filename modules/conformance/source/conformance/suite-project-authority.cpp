@@ -47,7 +47,6 @@ namespace uf::operator_runtime::conformance
         template <typename T>
         concept NamesTool = requires(T value) { value.toolName; };
 
-        static_assert(!NamesReducerInput<ReconciliationCommit>);
         static_assert(!NamesReducerInput<ProjectInstanceBaseline>);
         static_assert(!NamesMutability<CommandRequest>);
         static_assert(!NamesTool<CommandRequest>);
@@ -75,7 +74,7 @@ namespace uf::operator_runtime::conformance
         CHECK(
             std::get<ProjectToolProvider>(mutating.provider())
                     .projectRegistrationHash
-            == underTest.registration.hash()
+            == ProjectIdentity{underTest.generation}.hash()
         );
         CHECK_FALSE(mutating.descriptor().toolVersion.empty());
 
@@ -112,7 +111,7 @@ namespace uf::operator_runtime::conformance
         // permissive it is.
         CHECK_FALSE(
             ProjectToolCatalogSchemaOwner::create(
-                underTest.registration,
+                ProjectIdentity{underTest.generation},
                 "not-the-tool-catalog",
                 []() -> Result<std::vector<ToolCatalogEntry>>
                 {
@@ -131,7 +130,7 @@ namespace uf::operator_runtime::conformance
         );
         CHECK_FALSE(
             ProjectReconcileSchemaOwner::create(
-                underTest.registration,
+                ProjectIdentity{underTest.generation},
                 "not-the-reconcile-manifest",
                 [](std::string_view) -> Result<ReconcileDisposition>
                 {
@@ -141,7 +140,7 @@ namespace uf::operator_runtime::conformance
         );
         CHECK_FALSE(
             ProjectJournalSchemaOwner::create(
-                underTest.registration,
+                ProjectIdentity{underTest.generation},
                 "not-the-journal-manifest",
                 [](std::string_view, std::string_view) -> Result<ContentHash>
                 {
@@ -156,7 +155,7 @@ namespace uf::operator_runtime::conformance
         auto const project    = loadedProject();
         auto const& underTest = deploymentFor(project, ProjectRole::UnderTest);
         auto const& foreign   = deploymentFor(project, ProjectRole::Foreign);
-        REQUIRE(foreign.registration.hash() != underTest.registration.hash());
+        REQUIRE(ProjectIdentity{foreign.generation}.hash() != ProjectIdentity{underTest.generation}.hash());
 
         // A second registration mints its own documents perfectly well. What it
         // cannot do is have them accepted anywhere the first one is named.
@@ -174,10 +173,10 @@ namespace uf::operator_runtime::conformance
             foreignInvocation.provider()
         );
         CHECK(
-            foreignProvider.projectRegistrationHash == foreign.registration.hash()
+            foreignProvider.projectRegistrationHash == ProjectIdentity{foreign.generation}.hash()
         );
         CHECK(
-            foreignProvider.projectRegistrationHash != underTest.registration.hash()
+            foreignProvider.projectRegistrationHash != ProjectIdentity{underTest.generation}.hash()
         );
 
         auto const foreignEntry = journalEntry(
@@ -187,186 +186,98 @@ namespace uf::operator_runtime::conformance
         );
         CHECK(
             foreignEntry.projectRegistrationHash()
-            != underTest.registration.hash()
+            != ProjectIdentity{underTest.generation}.hash()
         );
 
-        // The plugin is bound the same way: a handle registered under one
-        // registration answers only for that one.
-        auto const plugin = loadPlugin(project, ProjectRole::UnderTest);
-        CHECK(plugin.projectRegistrationHash() == underTest.registration.hash());
+        // The loaded generation is bound the same way: a handle registered
+        // under one registration answers only for that one, and its reducer
+        // closure digest is the one that registration pinned.
+        auto const generation = loadGeneration(project, ProjectRole::UnderTest);
         CHECK(
-            plugin.pluginModuleManifestHash()
-            == underTest.registration.pluginModuleManifestHash()
+            generation.projectRegistrationHash()
+            == ProjectIdentity{underTest.generation}.hash()
+        );
+        CHECK(
+            generation.reducerModuleManifestHash()
+            == underTest.generation.reducerClosure().moduleManifestHash
         );
     }
 
-    TEST_CASE("a ProjectPlugin cannot be registered against foreign bytes")
-    {
-        auto const project    = loadedProject();
-        auto const& underTest = deploymentFor(project, ProjectRole::UnderTest);
-        auto const& foreign   = deploymentFor(project, ProjectRole::Foreign);
-
-        auto registrar = ProjectPluginRegistrar{};
-
-        // The registrar derives the exact module manifest it is handed and
-        // compares it with the registration, so a foreign closure cannot load.
-        CHECK_FALSE(registrar.registerPlugin(
-            underTest.registration,
-            foreign.pluginEntryModule,
-            foreign.pluginModules,
-            underTest.projectResources,
-            underTest.schemaOwner
-        ).has_value());
-
-        // Nor can a schema owner bound to the other registration stand in for
-        // this one.
-        CHECK_FALSE(registrar.registerPlugin(
-            underTest.registration,
-            underTest.pluginEntryModule,
-            underTest.pluginModules,
-            underTest.projectResources,
-            foreign.schemaOwner
-        ).has_value());
-
-        CHECK(registrar.registerPlugin(
-            underTest.registration,
-            underTest.pluginEntryModule,
-            underTest.pluginModules,
-            underTest.projectResources,
-            underTest.schemaOwner
-        ).has_value());
-
-        // Startup-only: the same exact registration cannot be replaced.
-        CHECK_FALSE(registrar.registerPlugin(
-            underTest.registration,
-            underTest.pluginEntryModule,
-            underTest.pluginModules,
-            underTest.projectResources,
-            underTest.schemaOwner
-        ).has_value());
-    }
-
-    // The one refusal conformance/operator-protocol.hpp adds to the
-    // deployment's step reader. A run drives exactly one UI action, so a plan
-    // naming another is telling the suite two different things about what this
-    // Operation does, and nothing else would notice: task::DispatchAuthority
-    // carries no UI identifier and the ledger stores the intent bytes without
-    // reading their surface_id or ui_target_id.
+    // The flip replaced the code that produces a ProjectInstance's baseline, so
+    // the question every stored baseline poses is whether the new reducer
+    // answers what the stored bytes say. This case asks it the only way that
+    // means anything: the Journal prefix is read back OUT of the database, put
+    // back through the schemas this registration pinned, and folded again --
+    // and the answer is compared with the bytes the provisioning transaction
+    // wrote, which nothing in this case supplied.
     //
-    // ui_target_id is deliberately not one of the rows: the U2c gates own it,
-    // and both of them precede this authority in every production path. An id
-    // a command's canonical arguments spell is resolved in submitCommand,
-    // before the operation row is created and therefore before this plan
-    // authority (or the plugin behind it) is consulted at all; the step's own
-    // ui_target_id is resolved again in mintNextStep, before the step row is
-    // written. So the agreement here covers surface and action and nothing
-    // else, and neither gate has been bypassed by the time it runs.
-    //
-    // The disagreement is made on the run's side because the plan's side is out
-    // of reach. A plugin's bytes are the project's and are pinned by the
-    // registration's module-manifest identity, so the suite cannot obtain one that answers
-    // with a UIActionIntent of the suite's choosing, and a step minted under the
-    // foreign project's plugin is refused for the registration it names long
-    // before any step is read. The check compares two pairs of strings and is
-    // indifferent to which side of a pair moved.
-    TEST_CASE("a plan step must name the UI action the run agreed on")
+    // It is a conformance obligation rather than a test because the subject is
+    // a consumer's own store: a project directory this run was pointed at, the
+    // reducer it ships, and the baseline it was provisioned with.
+    TEST_CASE("a stored baseline is the fold of the Journal prefix beside it")
     {
-        auto const root   = TemporaryDirectory{"ui-action-agreement"};
-        auto prepared     = prepareStore(root.path());
-        auto const& words = prepared.project.underTest.vocabulary;
-        auto const agreed = uiActionOf(words);
+        auto const root = TemporaryDirectory{"refold"};
+        auto prepared   = prepareStore(root.path());
+        auto const& underTest = deploymentFor(prepared.project, ProjectRole::UnderTest);
 
-        auto const proposed = prepared.store.submitCommand(
-            prepared.controller,
-            command(prepared.snapshot, "request-1"),
-            toolInvocation(
-                prepared.project,
-                ProjectRole::UnderTest,
-                words.mutatingTool
-            )
+        auto const refolded = prepared.store.refoldProjectState(
+            ProjectIdentity{underTest.generation},
+            underTest.journalSchemaOwner,
+            prepared.generation,
+            "instance-1"
         );
-        REQUIRE(proposed.has_value());
-
-        // Frozen under the authority that agrees, so the only thing the mints
-        // below vary is the UI action their own authority was built for.
-        auto const frozen = frozenPlan(prepared, proposed->operation);
-        REQUIRE(frozen.has_value());
-
-        auto runtimeModel = prepared.observation.host->runtimeModelBinding(
-            prepared.observation.generation
+        auto const refusal = (
+            refolded.has_value()
+                ? std::string{}
+                : std::string{refolded.error().message()}
         );
-        REQUIRE(runtimeModel.has_value());
+        REQUIRE_MESSAGE(refolded.has_value(), refusal);
 
-        // One row per identifier the agreement covers, because the agreement is
-        // three comparisons and a check that lost one of them would stay green
-        // on the other two.
-        struct DisagreeingRun final
-        {
-            std::string_view        field{};
-            task::UiActionUnderTest action{};
-        };
-        for (auto const& testCase : std::array{
-            DisagreeingRun{
-                .field  = "surface_id",
-                .action = task::UiActionUnderTest{
-                    .surface  = agreed.surface + "-elsewhere",
-                    .uiTarget = agreed.uiTarget,
-                    .action   = agreed.action,
-                },
-            },
-            DisagreeingRun{
-                .field  = "action_id",
-                .action = task::UiActionUnderTest{
-                    .surface  = agreed.surface,
-                    .uiTarget = agreed.uiTarget,
-                    .action   = agreed.action + "-elsewhere",
-                },
-            },
-        })
-        {
-            INFO(testCase.field);
-            auto authority = planAuthority(
-                deploymentFor(
-                    prepared.project,
-                    ProjectRole::UnderTest
-                ).registration,
-                prepared.manifest,
-                *runtimeModel,
-                "operator",
-                policyArtifact(
-                    deploymentFor(prepared.project, ProjectRole::UnderTest),
-                    prepared.project.underTest.vocabulary
-                ),
-                testCase.action
-            );
-            REQUIRE(authority.has_value());
+        // The prefix must have something in it. An equality over an empty
+        // prefix would be satisfied by a reducer that ignored its input, so the
+        // count is asserted before the bytes are.
+        CHECK_MESSAGE(
+            refolded->journalEventCount == 1U,
+            "the provisioned instance's Journal prefix must hold its baseline "
+            "event, or the equality below is over nothing"
+        );
+        CHECK_MESSAGE(
+            refolded->refoldedCanonicalPayload == refolded->storedCanonicalPayload,
+            "the ProjectState stored at provisioning must be byte-identical to "
+            "the fold of the Journal prefix the database still holds"
+        );
+        CHECK_MESSAGE(
+            refolded->refoldedStateHash == refolded->storedStateHash,
+            "the stored state_hash must be the digest of the refolded bytes"
+        );
 
-            auto const refused = prepared.store.mintNextStep(
-                frozen->operation.operationId,
-                frozen->operation.revision,
-                prepared.lease,
-                prepared.plugin,
-                deploymentFor(
-                    prepared.project,
-                    ProjectRole::UnderTest
-                ).toolCatalogSchemaOwner,
-                *authority
-            );
-            REQUIRE_FALSE(refused.has_value());
-
-            // The message rather than the kind. The deployment's own step
-            // reader answers InvalidResource for every document it refuses, so
-            // a case reading only the kind would pass just as well on a step
-            // this suite never judged.
-            CHECK(refused.error().message().contains(
-                "names a UI action other than the one this run agreed on"
-            ));
-        }
-
-        // The same Operation, at the same revision, mints under the authority
-        // that agrees. Without this, every refusal above would be explained just
-        // as well by an Operation that had stopped being mintable at all.
-        auto const minted = plannedStep(prepared, frozen->operation);
-        REQUIRE(minted.has_value());
+        // The positive control. A reducer belonging to another registration is
+        // refused rather than answering a different fold, which is what makes
+        // the equality above a fact about THIS project's reducer and not about
+        // any reducer at all.
+        //
+        // The refusal is asked for BY NAME rather than by outcome. A foreign
+        // reducer also fails the stamp check further down, so "it was refused"
+        // alone would stay true with the identity comparison deleted -- and a
+        // check that cannot be made to fail is not a check. Naming the reducer
+        // in the sentence is what makes the earlier refusal the one measured,
+        // and the ordering matters: it refuses before another project's VM is
+        // ever entered.
+        auto const foreign = prepared.store.refoldProjectState(
+            ProjectIdentity{underTest.generation},
+            underTest.journalSchemaOwner,
+            loadGeneration(prepared.project, ProjectRole::Foreign),
+            "instance-1"
+        );
+        REQUIRE_FALSE_MESSAGE(
+            foreign.has_value(),
+            "a refold offered another registration's reducer must be refused"
+        );
+        CHECK_MESSAGE(
+            foreign.error().message().contains("reducer"),
+            "the refusal must be the reducer identity comparison, which runs "
+            "before the foreign closure is executed at all"
+        );
     }
+
 }

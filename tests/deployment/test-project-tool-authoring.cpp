@@ -1,7 +1,7 @@
 // The authoring path for a Project Tool program, end to end and with nothing
 // hand-built in the middle.
 //
-// Every other case that has ever reached ProjectToolProgramRegistrar built its
+// Every other case that has ever reached a Project Tool registrar built its
 // registration in C++: opaque catalog bytes, a claims struct written out by
 // hand, a binding table handed straight to the registrar. Such a case can prove
 // that the loader refuses a disagreement, and it can prove nothing at all about
@@ -30,7 +30,7 @@
 #include <domain/content-hash.hpp>
 
 #include <operator/project-plugin.hpp>
-#include <operator/project-tool-program.hpp>
+#include <operator/project-generation.hpp>
 #include <operator/tool-descriptor.hpp>
 #include <operator/tool-invocation.hpp>
 
@@ -61,9 +61,8 @@ namespace uf::deployment
         namespace umbraflow = operator_runtime::test_support;
 
         using operator_runtime::ChildEffectDeclaration;
-        using operator_runtime::ProjectPluginRegistrar;
-        using operator_runtime::ProjectToolBinding;
-        using operator_runtime::ProjectToolProgramRegistrar;
+                using operator_runtime::ProjectToolBinding;
+        using operator_runtime::ProjectGenerationRegistrar;
         using operator_runtime::Risk;
         using operator_runtime::TimeoutAction;
         using operator_runtime::TimeoutPolicy;
@@ -79,18 +78,48 @@ namespace uf::deployment
         constexpr auto k_dismissEntry = std::string_view{"dismiss"};
         constexpr auto k_sweepEntry   = std::string_view{"sweep"};
 
-        // What the deployment's closure exports, stated as the fact about the
-        // CODE that it is. The loader cannot derive it -- refusing a
+        // What the deployment's tool closure exports, stated as the fact about
+        // the CODE that it is. The loader cannot derive it -- refusing a
         // disagreement between the contract and the code is its whole job, so
         // it may not compute one side from the other -- and nothing short of
-        // running the module can read a Luau table's keys. It is checked by
-        // execution rather than trusted: the bridge admits a module whose
-        // exported set is exactly `plugin_id` plus the declared entries, so a
-        // statement here that the source does not honour fails the invoke.
+        // running the module can read a Luau table's keys. It is checked twice
+        // and trusted neither time: the registrar joins it against the binding
+        // table, and the bridge then admits a module whose exported set is
+        // exactly `plugin_id` plus these entries.
+        //
+        // It is authored INTO the root document now, so a case that wants a
+        // different statement writes a different document.
         [[nodiscard]] auto exportedEntryPoints() -> std::vector<std::string>
         {
             return {std::string{k_dismissEntry}, std::string{k_sweepEntry}};
         }
+
+        [[nodiscard]] auto entryPointsJson(
+            std::vector<std::string> const& entryPoints
+        ) -> std::string
+        {
+            auto rendered = std::string{"["};
+            for (auto index = std::size_t{0}; index < entryPoints.size(); ++index)
+            {
+                rendered += index == 0U ? "" : ",";
+                rendered += "\"" + entryPoints.at(index) + "\"";
+            }
+            rendered += "]";
+            return rendered;
+        }
+
+        // The reducer closure this project ships: `plugin_id` and one entry,
+        // and no reach for a scoped module. A generation's reducer is compiled
+        // on the pure type, whose resolver would refuse @umbraflow/tools by
+        // name, so the fold cannot live beside the entries below.
+        constexpr auto k_reducerSource = std::string_view{R"LUAU(
+return {
+    plugin_id = "chaos.project",
+    reduce = function(input)
+        return input
+    end,
+}
+)LUAU"};
 
         // Two entries, one closure. `dismiss` reaches the Tool Runtime through
         // the scoped facade -- which is loadable only because the registrar
@@ -267,7 +296,9 @@ return {
             AuthoredProject(
                 std::string_view toolCatalog,
                 std::string_view toolBindings,
-                std::string_view pluginSource
+                std::string_view pluginSource,
+                std::vector<std::string> declaredEntryPoints
+                    = exportedEntryPoints()
             )
             {
                 m_root = std::filesystem::temp_directory_path()
@@ -309,8 +340,12 @@ return {
                     );
                 }
                 write(m_root / "plugin/main.luau", pluginSource);
+                write(m_root / "plugin/reducer.luau", k_reducerSource);
                 write(m_root / "runtime/artifact/runtime-model.toml", "[[page]]\n");
-                write(m_root / "umbraflow-project.json", manifest(toolBindings));
+                write(
+                    m_root / "umbraflow-project.json",
+                    manifest(toolBindings, declaredEntryPoints)
+                );
             }
 
             AuthoredProject(AuthoredProject const&)                    = delete;
@@ -338,7 +373,11 @@ return {
             }
 
             [[nodiscard]]
-            static auto manifest(std::string_view toolBindings) -> std::string
+            static auto manifest(
+                std::string_view toolBindings,
+                std::vector<std::string> const& declaredEntryPoints
+                    = exportedEntryPoints()
+            ) -> std::string
             {
                 auto document =
                     std::string{R"json({"schema":"umbraflow-project/v2",)json"};
@@ -348,7 +387,13 @@ return {
                 document += R"json("name":"main","plugin_id":")json";
                 document += k_pluginId;
                 document += R"json(","baseline_event_type":"fixture.baseline",)json";
-                document += R"json("plugin":{"entry":"main","modules":)json"
+                document += R"json("reducer_closure":{"entry":"main",)json"
+                    R"json("exported_entry_points":["reduce"],"modules":)json"
+                    R"json([{"name":"main","path":"plugin/reducer.luau"}]},)json";
+                document += R"json("tool_closure":{"entry":"main",)json"
+                    R"json("exported_entry_points":)json";
+                document += entryPointsJson(declaredEntryPoints);
+                document += R"json(,"modules":)json"
                     R"json([{"name":"main","path":"plugin/main.luau"}]},)json";
                 document += R"json("plugin_authoring":"hand-written",)json";
                 document += R"json("plugin_justification":"This deployment's )json"
@@ -435,24 +480,32 @@ return {
         }
 
         // The registrar call every case below makes, over one loaded
-        // deployment. The result validator is the deployment's own, minted from
-        // the pinned tool precondition schema and the catalog that names a
-        // definition inside it -- not a lambda that accepts.
+        // deployment. Every declared entry set comes from the loaded
+        // generation rather than from this call, which is the whole of what
+        // moved when the declaration became an authored member. The result
+        // validator is the deployment's own, minted from the pinned tool
+        // precondition schema and the catalog that names a definition inside
+        // it -- not a lambda that accepts.
         [[nodiscard]]
         auto registerLoaded(
-            ProjectToolProgramRegistrar& registrar,
+            ProjectGenerationRegistrar& registrar,
             LoadedDeployment const& deployment,
-            std::vector<std::string> const& exportedEntryPoints,
             std::shared_ptr<std::vector<RecordedCall>> p_calls
-        ) -> Result<operator_runtime::ProjectToolProgramHandle>
+        ) -> Result<operator_runtime::ProjectGenerationHandle>
         {
-            return registrar.registerProject(
-                deployment.registration,
+            return registrar.registerGeneration(
+                deployment.generation,
                 deployment.toolCatalogSchemaOwner,
-                deployment.pluginEntryModule,
-                deployment.pluginModules,
+                deployment.schemaOwner,
+                ProjectGenerationRegistrar::ClosureModules{
+                    .entryModule = deployment.reducerClosure.entryModule,
+                    .modules     = deployment.reducerClosure.modules,
+                },
+                ProjectGenerationRegistrar::ClosureModules{
+                    .entryModule = deployment.toolClosure.entryModule,
+                    .modules     = deployment.toolClosure.modules,
+                },
                 deployment.projectResources,
-                exportedEntryPoints,
                 deployment.catalog.toolResultValidator(),
                 recordingRuntime(std::move(p_calls))
             );
@@ -476,7 +529,7 @@ return {
         // The registration the loader derived carries the binding table the
         // deployment block declared, sorted by tool name the way it sorts
         // every other derived member. Nothing in this test wrote it.
-        auto const& bindings = p_deployment->registration.projectToolBindings();
+        auto const& bindings = p_deployment->generation.projectToolBindings();
         REQUIRE(bindings.size() == 2U);
         CHECK(bindings[0].toolName == k_dismissTool);
         CHECK(bindings[0].entryPoint == k_dismissEntry);
@@ -502,21 +555,16 @@ return {
         CHECK(sweep->childEffects.childToolNames.empty());
         CHECK(sweep->childEffects.maximumChildCalls == 0U);
 
-        auto       registrar = ProjectToolProgramRegistrar{};
+        auto       registrar = ProjectGenerationRegistrar{};
         auto       p_calls   = std::make_shared<std::vector<RecordedCall>>();
-        auto const loaded    = registerLoaded(
-            registrar,
-            *p_deployment,
-            exportedEntryPoints(),
-            p_calls
-        );
+        auto const loaded    = registerLoaded(registrar, *p_deployment, p_calls);
         INFO(why(loaded));
         REQUIRE(loaded.has_value());
 
         CHECK(loaded->pluginId() == k_pluginId);
-        CHECK(loaded->projectRegistrationHash() == p_deployment->registration.hash());
-        CHECK(loaded->toolCatalogHash()
-              == p_deployment->registration.toolCatalogHash());
+        CHECK(loaded->projectRegistrationHash() == p_deployment->generation.hash());
+        CHECK(loaded->catalog().toolCatalogHash()
+              == p_deployment->generation.toolCatalogHash());
         CHECK(
             loaded->bindingTable().entryPoints()
             == std::vector<std::string>{
@@ -592,8 +640,8 @@ return {
         INFO(why(second));
         REQUIRE(second.has_value());
 
-        auto const& one = first->findDeployment("main")->registration;
-        auto const& two = second->findDeployment("main")->registration;
+        auto const& one = first->findDeployment("main")->generation;
+        auto const& two = second->findDeployment("main")->generation;
         CHECK(one.hash() != two.hash());
 
         // And the catalog's own digest does not move, because a binding is not
@@ -621,8 +669,8 @@ return {
         REQUIRE(first.has_value());
         REQUIRE(second.has_value());
 
-        auto const& one = first->findDeployment("main")->registration;
-        auto const& two = second->findDeployment("main")->registration;
+        auto const& one = first->findDeployment("main")->generation;
+        auto const& two = second->findDeployment("main")->generation;
         CHECK(one.toolCatalogHash() != two.toolCatalogHash());
         CHECK(one.hash() != two.hash());
     }
@@ -705,16 +753,19 @@ return {
         {
             auto only = acceptedBindings();
             only.pop_back();
-            auto const authored =
-                AuthoredProject{catalog, bindingsJson(only), k_pluginSource};
+            auto const authored = AuthoredProject{
+                catalog,
+                bindingsJson(only),
+                k_pluginSource,
+                {std::string{k_dismissEntry}},
+            };
             auto const project = authored.load();
             REQUIRE(project.has_value());
 
-            auto       registrar = ProjectToolProgramRegistrar{};
+            auto       registrar = ProjectGenerationRegistrar{};
             auto const refused   = registerLoaded(
                 registrar,
                 *project->findDeployment("main"),
-                exportedEntryPoints(),
                 std::make_shared<std::vector<RecordedCall>>()
             );
             INFO(why(refused));
@@ -736,11 +787,10 @@ return {
             auto const project = authored.load();
             REQUIRE(project.has_value());
 
-            auto       registrar = ProjectToolProgramRegistrar{};
+            auto       registrar = ProjectGenerationRegistrar{};
             auto const refused   = registerLoaded(
                 registrar,
                 *project->findDeployment("main"),
-                exportedEntryPoints(),
                 std::make_shared<std::vector<RecordedCall>>()
             );
             INFO(why(refused));
@@ -750,26 +800,33 @@ return {
             ));
         }
 
+        // The document states what its bindings require and the shipped bytes
+        // do not carry it. The registrar's own join passes -- declaration and
+        // binding union agree -- so the refusal can only come from the bridge,
+        // which is the leg no document check can stand in for.
         SUBCASE("a binding naming an entry the closure does not export")
         {
             auto absent = acceptedBindings();
             absent[0].entryPoint = "vanish";
-            auto const authored =
-                AuthoredProject{catalog, bindingsJson(absent), k_pluginSource};
+            auto const authored = AuthoredProject{
+                catalog,
+                bindingsJson(absent),
+                k_pluginSource,
+                {std::string{k_sweepEntry}, "vanish"},
+            };
             auto const project = authored.load();
             REQUIRE(project.has_value());
 
-            auto       registrar = ProjectToolProgramRegistrar{};
+            auto       registrar = ProjectGenerationRegistrar{};
             auto const refused   = registerLoaded(
                 registrar,
                 *project->findDeployment("main"),
-                exportedEntryPoints(),
                 std::make_shared<std::vector<RecordedCall>>()
             );
             INFO(why(refused));
             REQUIRE_FALSE(refused.has_value());
             CHECK(std::string{refused.error().message()}.contains(
-                "which the Project closure does not export"
+                "missing an entry point"
             ));
         }
     }
@@ -825,94 +882,4 @@ return {
         }
     }
 
-    // The constraint this stage does NOT resolve, stated as an executable fact
-    // rather than as prose.
-    //
-    // A registration carries one module closure, and two registrars admit it.
-    // The trusted bridge admits a module whose exported set is exactly
-    // `plugin_id` plus the entries its program was compiled with -- no more and
-    // no fewer. A ProjectPlugin program is compiled with the five pure entries;
-    // a Project Tool program is compiled with the binding table's union. So one
-    // closure satisfies both only when the binding table binds Tools to exactly
-    // derive/plan/next_step/reconcile/reduce, which is not an authoring shape
-    // any project would choose and not one this authoring path should force.
-    //
-    // Both refusals below are real and neither is the other. Resolving the
-    // conflict is the flip's work; what belongs in this cut is that the tree
-    // says the conflict exists.
-    TEST_CASE("a Tool-bound closure is not also a five-function ProjectPlugin")
-    {
-        auto const registerAsPlugin = [](LoadedDeployment const& deployment)
-        {
-            auto registrar = ProjectPluginRegistrar{};
-            return registrar.registerPlugin(
-                deployment.registration,
-                deployment.pluginEntryModule,
-                deployment.pluginModules,
-                deployment.projectResources,
-                deployment.schemaOwner
-            );
-        };
-
-        SUBCASE("because the pure resolver has no scoped module to give it")
-        {
-            auto const authored = AuthoredProject{
-                generatedCatalog(catalogDeclaration()),
-                bindingsJson(acceptedBindings()),
-                k_pluginSource,
-            };
-            auto const project = authored.load();
-            REQUIRE(project.has_value());
-
-            auto const refused =
-                registerAsPlugin(*project->findDeployment("main"));
-            INFO(why(refused));
-            REQUIRE_FALSE(refused.has_value());
-            CHECK(std::string{refused.error().message()}.contains(
-                "@umbraflow/tools"
-            ));
-        }
-
-        // And the module catalog is not the whole of it. A closure that reaches
-        // for no scoped module at all, exporting exactly the two entries this
-        // project's Tools are bound to, is still not a ProjectPlugin: the
-        // exported set is not the five.
-        SUBCASE("and because the exported set is not the five pure entries")
-        {
-            constexpr auto k_pureSource = std::string_view{R"LUAU(
-return {
-    plugin_id = "chaos.project",
-    dismiss = function(input) return { outcome = "dismissed" } end,
-    sweep = function(input) return { outcome = "swept" } end,
-}
-)LUAU"};
-            auto const authored = AuthoredProject{
-                generatedCatalog(catalogDeclaration()),
-                bindingsJson(acceptedBindings()),
-                k_pureSource,
-            };
-            auto const project = authored.load();
-            REQUIRE(project.has_value());
-
-            auto const refused =
-                registerAsPlugin(*project->findDeployment("main"));
-            INFO(why(refused));
-            REQUIRE_FALSE(refused.has_value());
-            CHECK(std::string{refused.error().message()}.contains(
-                "missing an entry point"
-            ));
-
-            // The same closure IS a Project Tool program, which is what makes
-            // the refusal above a conflict rather than a broken project.
-            auto       registrar = ProjectToolProgramRegistrar{};
-            auto const loaded    = registerLoaded(
-                registrar,
-                *project->findDeployment("main"),
-                exportedEntryPoints(),
-                std::make_shared<std::vector<RecordedCall>>()
-            );
-            INFO(why(loaded));
-            CHECK(loaded.has_value());
-        }
-    }
 }

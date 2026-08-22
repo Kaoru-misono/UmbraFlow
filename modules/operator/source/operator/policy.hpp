@@ -72,7 +72,7 @@ namespace uf::operator_runtime
     };
 
     // What the Operator reads out of a PolicyArtifact. Like
-    // ProjectRegistrationClaims this is not a construction spec: no caller can
+    // ProjectGenerationClaims this is not a construction spec: no caller can
     // hand one to the artifact and mint a verified policy from it.
     //
     // default_decision and unknown_effect_decision are absent because the

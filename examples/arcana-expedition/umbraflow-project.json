@@ -9,16 +9,19 @@
       "name": "expedition",
       "plugin_id": "arcana.expedition",
       "baseline_event_type": "expedition.founded",
-      "plugin": {
+      "reducer_closure": {
         "entry": "main",
-        "modules": [
-          {"name": "main", "path": "plugin/expedition.luau"},
-          {"name": "plans", "path": "plugin/plans.luau"},
-          {"name": "state/reducer", "path": "plugin/state/reducer.luau"}
-        ]
+        "exported_entry_points": ["reduce"],
+        "modules": [{"name": "main", "path": "plugin/expedition-reducer.luau"}]
+      },
+      "tool_closure": {
+        "$comment": "One entry per Tool this deployment's Tool Catalog declares. The set is stated here and the join to Tool names is stated in tool_bindings below, so neither document can be derived from the other and the loader's cross-check has two sources to compare.",
+        "entry": "main",
+        "exported_entry_points": ["approval", "move", "survey", "trade"],
+        "modules": [{"name": "main", "path": "plugin/expedition-tools.luau"}]
       },
       "plugin_authoring": "hand-written",
-      "plugin_justification": "umbraflow-declarative-workflow-tool/v1 declares one const tool_name over a fixed states/steps schedule of wait and ui_action states. It has no effects member, so the per-tool OP:PlanProposal effect sets this deployment proposes (distinct scope_key and risk per camp) cannot be declared, and it has no reduce semantics at all, so folding expedition.advanced/arrived/blocked Journal entries into ProjectState has no declarative spelling.",
+      "plugin_justification": "umbraflow-declarative-workflow-tool/v1 declares one tool over a fixed schedule of wait and ui_action states and renders a tool closure that exports no entry at all. This deployment binds four Tools, one of which turns a MarchArguments into the leagues it marched, and its reducer folds expedition.advanced/arrived/blocked Journal entries into ProjectState, so neither closure has a declarative spelling.",
       "project_state_schema": "schema/project-state-v1.schema.json",
       "project_observation_schema": "schema/project-observation-v1.schema.json",
       "tool_precondition_schema": "schema/tool-precondition-v1.schema.json",
@@ -35,11 +38,16 @@
       "effect_payload_schemas": [
         "schema/effect/expedition.march-v1.schema.json"
       ],
-      "$comment": "The one observed instance this deployment mints is the expedition's target control, admitted by the identity schema it registers here. It binds no Tool to a closure entry: its plugin is the five-function pure module, and the member is written empty rather than left out, on the same terms as every other declaration here.",
+      "$comment": "The one observed instance this deployment mints is the expedition's target control, admitted by the identity schema it registers here. It binds every Tool its Tool Catalog declares to an entry of its tool closure, which is what makes those Tools reachable: a declared Tool with no binding has no code to run and the loader refuses the generation.",
       "observed_instance_identity_schemas": [
         "schema/observed-identity-v1.schema.json"
       ],
-      "tool_bindings": [],
+      "tool_bindings": [
+        {"tool_name": "arcana.expedition.approval", "entry_point": "approval"},
+        {"tool_name": "arcana.expedition.move", "entry_point": "move"},
+        {"tool_name": "arcana.expedition.survey", "entry_point": "survey"},
+        {"tool_name": "arcana.expedition.trade", "entry_point": "trade"}
+      ],
       "resources": [
         {"kind": "json", "name": "map", "path": "blob/map.blob"}
       ]
@@ -48,16 +56,19 @@
       "name": "rival",
       "plugin_id": "arcana.rival",
       "baseline_event_type": "expedition.founded",
-      "plugin": {
+      "reducer_closure": {
         "entry": "main",
-        "modules": [
-          {"name": "main", "path": "plugin/rival.luau"},
-          {"name": "plans", "path": "plugin/plans.luau"},
-          {"name": "state/reducer", "path": "plugin/state/reducer.luau"}
-        ]
+        "exported_entry_points": ["reduce"],
+        "modules": [{"name": "main", "path": "plugin/rival-reducer.luau"}]
+      },
+      "tool_closure": {
+        "$comment": "The same four entries the expedition deployment exports, over this deployment's own plugin id. The two closures are separate modules rather than one shared file because each states the identity its registration is judged under.",
+        "entry": "main",
+        "exported_entry_points": ["approval", "move", "survey", "trade"],
+        "modules": [{"name": "main", "path": "plugin/rival-tools.luau"}]
       },
       "plugin_authoring": "hand-written",
-      "plugin_justification": "The same reason as the expedition deployment, and it is not shared: umbraflow-declarative-workflow-tool/v1 has no effects member and no reduce semantics, so this second registration's plan proposals and its Journal fold cannot be declared either. What makes it a separate plugin rather than a second declaration is the plugin_id every proposal is judged under.",
+      "plugin_justification": "The same reason as the expedition deployment, and it is not shared: umbraflow-declarative-workflow-tool/v1 renders a tool closure exporting no entry and a reducer answering the empty object, so this second registration's four Tool handlers and its Journal fold cannot be declared either. What makes it a separate plugin rather than a second declaration is the plugin_id every Tool name sits under.",
       "project_state_schema": "schema/project-state-v1.schema.json",
       "project_observation_schema": "schema/project-observation-v1.schema.json",
       "tool_precondition_schema": "schema/tool-precondition-v1.schema.json",
@@ -74,11 +85,16 @@
       "effect_payload_schemas": [
         "schema/effect/expedition.march-v1.schema.json"
       ],
-      "$comment": "The one observed instance this deployment mints is the expedition's target control, admitted by the identity schema it registers here. It binds no Tool to a closure entry: its plugin is the five-function pure module, and the member is written empty rather than left out, on the same terms as every other declaration here.",
+      "$comment": "The one observed instance this deployment mints is the expedition's target control, admitted by the identity schema it registers here. It binds every Tool its Tool Catalog declares to an entry of its tool closure, and those Tools are its own: the same local names under another plugin id are another registration's Tools.",
       "observed_instance_identity_schemas": [
         "schema/observed-identity-v1.schema.json"
       ],
-      "tool_bindings": [],
+      "tool_bindings": [
+        {"tool_name": "arcana.rival.approval", "entry_point": "approval"},
+        {"tool_name": "arcana.rival.move", "entry_point": "move"},
+        {"tool_name": "arcana.rival.survey", "entry_point": "survey"},
+        {"tool_name": "arcana.rival.trade", "entry_point": "trade"}
+      ],
       "resources": [
         {"kind": "json", "name": "map", "path": "blob/map.blob"}
       ]

@@ -1083,7 +1083,7 @@ def render(root: Path) -> str:
     release_facts = release_manifest_facts(root)
     directory_schema = json.loads(read(root, PROJECT_DIRECTORY_SCHEMA))
     deployment_definition = definition(directory_schema, "Deployment")
-    plugin_definition = definition(directory_schema, "Plugin")
+    closure_definition = definition(directory_schema, "Closure")
     module_definition = definition(directory_schema, "Module")
     resource_definition = definition(directory_schema, "Resource")
     module_name_definition = definition(directory_schema, "ModuleName")
@@ -1353,14 +1353,23 @@ def render(root: Path) -> str:
             "",
             "### 2.3 Module and resource closures",
             "",
-            "`plugin` is an explicit closed module graph. `entry` selects one",
-            "logical module name; every module and resource path is confined to",
-            "the project directory, while runtime identity retains names, kinds,",
-            "sizes and exact byte hashes but no host path. Authored array order is",
-            "not identity.",
+            "A deployment states TWO closures and both are mandatory:",
+            "`reducer_closure`, compiled on the pure program type, and",
+            "`tool_closure`, compiled on the scoped Tool program type. There is",
+            "no absent-means-pure reading and no registration that carries one",
+            "closure and infers the other; a project that binds no Tool ships a",
+            "tool closure with an explicitly empty `exported_entry_points` and an",
+            "empty `tool_bindings`.",
             "",
-            "Plugin required members: "
-            + ", ".join(f"`{value}`" for value in plugin_definition["required"])
+            "Each closure is an explicit closed module graph. `entry` selects one",
+            "logical module name, `exported_entry_points` STATES what that graph",
+            "exports and is never derived from the binding table, and every module",
+            "and resource path is confined to the project directory, while runtime",
+            "identity retains names, kinds, sizes and exact byte hashes but no host",
+            "path. Authored array order is not identity.",
+            "",
+            "Closure required members: "
+            + ", ".join(f"`{value}`" for value in closure_definition["required"])
             + ". Module required members: "
             + ", ".join(f"`{value}`" for value in module_definition["required"])
             + ". Resource required members: "
@@ -1519,8 +1528,8 @@ def render(root: Path) -> str:
             + ".",
             "These are a DIFFERENT contract from the pure modules above and are",
             "not interchangeable with them. A pure module loads in every Project",
-            "program: the five-function ProjectPlugin path and the Journal reducer",
-            "included. A scoped module loads only inside a scoped Tool execution",
+            "program, the Journal reducer included. A scoped module loads only",
+            "inside a scoped Tool execution",
             "program, and `require` of one of these names from any other program",
             "fails in the resolver naming the module, because the scoped set is a",
             "property of the program type rather than of a runtime flag. They are",

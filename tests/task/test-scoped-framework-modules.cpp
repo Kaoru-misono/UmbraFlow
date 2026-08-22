@@ -51,7 +51,7 @@ namespace uf::task
         };
 
         // The pinned Tool catalog the resource carries. It is the exact
-        // projection ProjectToolProgramRegistrar bakes into the scoped resource
+        // projection ProjectGenerationRegistrar bakes into the scoped resource
         // -- argument_contract, child_effects, name and tool_version on every
         // entry, in JCS member order, sorted by name -- rather than a subset
         // shaped to what these cases happen to read. The projection has an

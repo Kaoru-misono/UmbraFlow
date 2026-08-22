@@ -54,8 +54,16 @@ namespace uf::project
             "umbraflow-project-kit-artifact-manifest/v1"
         };
         constexpr auto k_executionClosureSchema = std::string_view{
-            "umbraflow-project-kit-execution-closure/v1"
+            "umbraflow-project-kit-execution-closure/v2"
         };
+
+        // The two closure slots of one deployment, spelled once. Each names the
+        // staging subdirectory its modules are written under, which is what
+        // lets both closures carry a logical module of the same name -- and
+        // both of this repository's examples do, since `main` is the natural
+        // name for either entry.
+        constexpr auto k_reducerClosureName = std::string_view{"reducer"};
+        constexpr auto k_toolClosureName    = std::string_view{"tool"};
         constexpr auto k_declarativeToolDirectory = std::string_view{
             "declarative-tools"
         };
@@ -116,12 +124,24 @@ namespace uf::project
             std::filesystem::path sourceInput{};
         };
 
+        // One closure of a deployment's registration generation: the entry
+        // module its manifest digest is taken over, and the closed module
+        // graph beneath it. Two of these make a deployment, and neither is
+        // optional -- a project that binds no Tool declares a tool closure
+        // whose exported entry set is empty rather than leaving the slot out.
+        struct ProjectClosureBuildSpec final
+        {
+            std::string                    entryModule{};
+            std::vector<std::string>       exportedEntryPoints{};
+            std::vector<ProjectModuleSpec> modules{};
+        };
+
         struct ProjectRegistrationBuildSpec final
         {
             std::string                      deploymentName{};
             std::string                      pluginId{};
-            std::string                      entryModule{};
-            std::vector<ProjectModuleSpec>   modules{};
+            ProjectClosureBuildSpec          reducerClosure{};
+            ProjectClosureBuildSpec          toolClosure{};
             std::vector<ProjectResourceSpec> resources{};
         };
 
@@ -175,10 +195,17 @@ namespace uf::project
             return bytes;
         }
 
+        // One scaffolded closure. The reducer carries the scaffold's support
+        // module beside its entry so a starter project shows a closed graph
+        // rather than a lone file; the tool closure carries only its entry,
+        // because a scaffold binds no Tool and its declared entry set is
+        // therefore explicitly empty.
         [[nodiscard]]
-        auto scaffoldPlugin(
+        auto scaffoldClosure(
             std::string const& pluginId,
-            ProjectPluginForm form
+            ProjectPluginForm form,
+            std::string_view closureName,
+            std::vector<std::string> const& exportedEntryPoints
         ) -> json::Value
         {
             auto modules = std::vector<json::Value>{};
@@ -190,8 +217,8 @@ namespace uf::project
                     {
                         "path",
                         json::Value::ofString(
-                            "generated/adapters/" + pluginId
-                            + "/scaffold.luau"
+                            "generated/adapters/" + pluginId + "/scaffold/"
+                            + std::string{closureName} + ".luau"
                         ),
                     },
                 }));
@@ -199,16 +226,28 @@ namespace uf::project
             case ProjectPluginForm::HandWritten:
                 modules.emplace_back(json::Value::ofObject({
                     {"name", json::Value::ofString("main")},
-                    {"path", json::Value::ofString("plugin/main.luau")},
+                    {"path", json::Value::ofString(
+                        "plugin/" + std::string{closureName} + ".luau"
+                    )},
                 }));
-                modules.emplace_back(json::Value::ofObject({
-                    {"name", json::Value::ofString("support")},
-                    {"path", json::Value::ofString("plugin/support.luau")},
-                }));
+                if (closureName == k_reducerClosureName)
+                {
+                    modules.emplace_back(json::Value::ofObject({
+                        {"name", json::Value::ofString("support")},
+                        {"path", json::Value::ofString("plugin/support.luau")},
+                    }));
+                }
                 break;
+            }
+            auto entryPoints = std::vector<json::Value>{};
+            entryPoints.reserve(exportedEntryPoints.size());
+            for (auto const& entryPoint : exportedEntryPoints)
+            {
+                entryPoints.emplace_back(json::Value::ofString(entryPoint));
             }
             return json::Value::ofObject({
                 {"entry", json::Value::ofString("main")},
+                {"exported_entry_points", json::Value::ofArray(std::move(entryPoints))},
                 {"modules", json::Value::ofArray(std::move(modules))},
             });
         }
@@ -249,8 +288,25 @@ namespace uf::project
                     json::Value::ofArray({}),
                 },
                 {
-                    "plugin",
-                    scaffoldPlugin(spec.pluginId, spec.pluginForm),
+                    "reducer_closure",
+                    scaffoldClosure(
+                        spec.pluginId,
+                        spec.pluginForm,
+                        k_reducerClosureName,
+                        {"reduce"}
+                    ),
+                },
+                {
+                    // A scaffold binds no Tool, so its tool closure states an
+                    // empty export set. The slot is written out rather than
+                    // omitted on the same terms as tool_bindings below.
+                    "tool_closure",
+                    scaffoldClosure(
+                        spec.pluginId,
+                        spec.pluginForm,
+                        k_toolClosureName,
+                        {}
+                    ),
                 },
                 {
                     "plugin_authoring",
@@ -794,31 +850,47 @@ namespace uf::project
             std::string_view modulePath
         ) -> Result<std::string>
         {
+            // One declaration renders both closures of one deployment, so the
+            // closure slot is the last path component and the declaration is
+            // the one above it. Both slots therefore map back to the same
+            // declared input, which is what makes the input set a project
+            // states independent of how many closures a generator emits.
             constexpr auto prefix = std::string_view{"generated/adapters/"};
             constexpr auto suffix = std::string_view{".luau"};
-            if (
-                !modulePath.starts_with(prefix)
-                || !modulePath.ends_with(suffix)
-                || modulePath.size() == prefix.size() + suffix.size()
-            )
+            auto const refuseShape = [modulePath]
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
                     std::format(
                         "generated Project module \"{}\" must map to "
-                        "generated/adapters/<plugin>/<tool>.luau",
+                        "generated/adapters/<plugin>/<tool>/<closure>.luau",
                         modulePath
                     )
                 );
-            }
-            auto relative = std::string{
-                modulePath.substr(
-                    prefix.size(),
-                    modulePath.size() - prefix.size() - suffix.size()
-                )
             };
+            if (!modulePath.starts_with(prefix) || !modulePath.ends_with(suffix))
+            {
+                return refuseShape();
+            }
+            auto const body = modulePath.substr(
+                prefix.size(),
+                modulePath.size() - prefix.size() - suffix.size()
+            );
+            auto const slot = body.rfind('/');
+            if (slot == std::string_view::npos || slot == 0U)
+            {
+                return refuseShape();
+            }
+            auto const closureName = body.substr(slot + 1U);
+            if (
+                closureName != k_reducerClosureName
+                && closureName != k_toolClosureName
+            )
+            {
+                return refuseShape();
+            }
             return std::string{k_declarativeToolDirectory}
-                + "/" + relative + ".json";
+                + "/" + std::string{body.substr(0U, slot)} + ".json";
         }
 
         [[nodiscard]]
@@ -1043,30 +1115,33 @@ namespace uf::project
 
             for (auto const& deployment : member(document, "deployments").items())
             {
-                auto const& plugin = member(deployment, "plugin");
                 auto const isGenerated = (
                     member(deployment, "plugin_authoring").string()
                     == "generated"
                 );
-                for (auto const& module : member(plugin, "modules").items())
+                for (auto const* const slot : {"reducer_closure", "tool_closure"})
                 {
-                    UF_TRY_VALUE(
-                        normalized,
-                        normalizeInputPath(
-                            std::filesystem::path{member(module, "path").string()}
-                        )
-                    );
-                    if (isGenerated)
+                    auto const& closure = member(deployment, slot);
+                    for (auto const& module : member(closure, "modules").items())
                     {
                         UF_TRY_VALUE(
-                            declaration,
-                            declarativeInputForGeneratedModule(normalized)
+                            normalized,
+                            normalizeInputPath(
+                                std::filesystem::path{member(module, "path").string()}
+                            )
                         );
-                        inputs.emplace(std::move(declaration));
-                    }
-                    else
-                    {
-                        inputs.emplace(normalized);
+                        if (isGenerated)
+                        {
+                            UF_TRY_VALUE(
+                                declaration,
+                                declarativeInputForGeneratedModule(normalized)
+                            );
+                            inputs.emplace(std::move(declaration));
+                        }
+                        else
+                        {
+                            inputs.emplace(normalized);
+                        }
                     }
                 }
                 for (auto const& resource : member(deployment, "resources").items())
@@ -1189,21 +1264,40 @@ namespace uf::project
             auto registrations = std::vector<ProjectRegistrationBuildSpec>{};
             for (auto const& deployment : member(document, "deployments").items())
             {
-                auto const& plugin = member(deployment, "plugin");
+                auto closureOf = [&deployment](std::string_view slot)
+                {
+                    auto const& declared = member(deployment, slot);
+                    auto closure = ProjectClosureBuildSpec{
+                        .entryModule = std::string{
+                            member(declared, "entry").string()
+                        },
+                    };
+                    for (
+                        auto const& entryPoint
+                        : member(declared, "exported_entry_points").items()
+                    )
+                    {
+                        closure.exportedEntryPoints.emplace_back(
+                            entryPoint.string()
+                        );
+                    }
+                    for (auto const& module : member(declared, "modules").items())
+                    {
+                        closure.modules.emplace_back(ProjectModuleSpec{
+                            .name = std::string{member(module, "name").string()},
+                            .sourceInput = std::filesystem::path{
+                                member(module, "path").string()
+                            },
+                        });
+                    }
+                    return closure;
+                };
                 auto registration = ProjectRegistrationBuildSpec{
                     .deploymentName = std::string{member(deployment, "name").string()},
                     .pluginId       = std::string{member(deployment, "plugin_id").string()},
-                    .entryModule    = std::string{member(plugin, "entry").string()},
+                    .reducerClosure = closureOf("reducer_closure"),
+                    .toolClosure    = closureOf("tool_closure"),
                 };
-                for (auto const& module : member(plugin, "modules").items())
-                {
-                    registration.modules.emplace_back(ProjectModuleSpec{
-                        .name = std::string{member(module, "name").string()},
-                        .sourceInput = std::filesystem::path{
-                            member(module, "path").string()
-                        },
-                    });
-                }
                 for (auto const& resource : member(deployment, "resources").items())
                 {
                     registration.resources.emplace_back(ProjectResourceSpec{
@@ -1289,13 +1383,24 @@ namespace uf::project
                         input
                     )
                 );
-                auto adapterName = components.back();
-                adapterName.replace_extension(".luau");
+                // One declaration generates two modules, so its adapter
+                // directory is the declaration's own name and the two closures
+                // are files inside it. A flat <name>.luau could hold only one
+                // of them, and a deployment needs both.
+                auto const adapterDirectory =
+                    std::filesystem::path{pluginId} / components.back().stem();
                 adapters.emplace_back(
                     GeneratedArtifact{
-                        .relativePath = std::filesystem::path{pluginId}
-                            / adapterName,
-                        .bytes        = std::move(adapter),
+                        .relativePath = adapterDirectory
+                            / (std::string{k_reducerClosureName} + ".luau"),
+                        .bytes = std::move(adapter.reducerModule),
+                    }
+                );
+                adapters.emplace_back(
+                    GeneratedArtifact{
+                        .relativePath = adapterDirectory
+                            / (std::string{k_toolClosureName} + ".luau"),
+                        .bytes = std::move(adapter.toolModule),
                     }
                 );
             }
@@ -1548,6 +1653,176 @@ namespace uf::project
             return artifacts;
         }
 
+        // What staging one closure produced: the rows the execution-closure
+        // record states for it, the module blobs staged under the build tree,
+        // and the digest that closure is identified by.
+        //
+        // ContentHash has no default state, so this struct has none either.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+        struct StagedClosure final
+        {
+            std::vector<json::Value>       moduleRows{};
+            std::vector<GeneratedArtifact> stagedModules{};
+            ContentHash                    moduleManifestHash;
+        };
+
+        // Stages one closure's modules and derives its manifest digest.
+        //
+        // `closureName` is the slot the closure fills, and it is part of the
+        // staged path rather than decoration: both closures of a deployment
+        // may carry a logical module of the same name, and a path without the
+        // slot would let one closure's bytes overwrite the other's.
+        [[nodiscard]]
+        auto stagedClosure(
+            std::filesystem::path const& sourceDirectory,
+            std::vector<std::string> const& inputs,
+            std::vector<GeneratedArtifact> const& generatedAdapters,
+            std::string_view deploymentName,
+            std::string_view closureName,
+            ProjectClosureBuildSpec const& closure
+        ) -> Result<StagedClosure>
+        {
+            auto normalizedModules = closure.modules;
+            for (auto& module : normalizedModules)
+            {
+                UF_TRY_VALUE(normalized, normalizeInputPath(module.sourceInput));
+                module.sourceInput = std::filesystem::path{normalized};
+            }
+            std::ranges::sort(normalizedModules, {}, &ProjectModuleSpec::name);
+
+            auto modulePaths = std::set<std::string>{};
+            auto moduleBlobs = std::vector<operator_runtime::ProjectModuleBlob>{};
+            auto moduleRows  = std::vector<json::Value>{};
+            auto stagedBlobs = std::vector<GeneratedArtifact>{};
+            moduleBlobs.reserve(normalizedModules.size());
+            moduleRows.reserve(normalizedModules.size());
+            stagedBlobs.reserve(normalizedModules.size());
+            for (auto const& module : normalizedModules)
+            {
+                auto const sourcePath = module.sourceInput.generic_string();
+                if (!modulePaths.emplace(sourcePath).second)
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "project deployment {} uses module path \"{}\" "
+                            "more than once in its {} closure",
+                            deploymentName,
+                            sourcePath,
+                            closureName
+                        )
+                    );
+                }
+
+                auto bytes = std::string{};
+                constexpr auto generatedPrefix = std::string_view{"generated/adapters/"};
+                if (std::string_view{sourcePath}.starts_with(generatedPrefix))
+                {
+                    auto const relative = std::string_view{sourcePath}.substr(
+                        generatedPrefix.size()
+                    );
+                    auto const generated = std::ranges::find_if(
+                        generatedAdapters,
+                        [relative](GeneratedArtifact const& artifact)
+                        {
+                            return artifact.relativePath.generic_string() == relative;
+                        }
+                    );
+                    if (generated == generatedAdapters.end())
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            std::format(
+                                "project module {} names missing generated adapter \"{}\"",
+                                module.name,
+                                sourcePath
+                            )
+                        );
+                    }
+                    bytes = generated->bytes;
+                }
+                else
+                {
+                    if (!std::ranges::binary_search(inputs, sourcePath))
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            std::format(
+                                "project module {} names undeclared source input \"{}\"",
+                                module.name,
+                                sourcePath
+                            )
+                        );
+                    }
+                    UF_TRY_VALUE(
+                        sourceBytes,
+                        readText(sourceDirectory / module.sourceInput, "project module source")
+                    );
+                    bytes = std::move(sourceBytes);
+                }
+                UF_TRY_VALUE(digest, sha256(std::as_bytes(std::span{bytes})));
+                auto const storedPath = (
+                    std::filesystem::path{deploymentName}
+                    / closureName
+                    / (module.name + ".luau")
+                );
+                moduleRows.emplace_back(json::Value::ofObject({
+                    {"name", json::Value::ofString(module.name)},
+                    {"path", json::Value::ofString(
+                        (std::filesystem::path{k_generatedDirectory}
+                         / k_generatedModuleDirectory
+                         / storedPath).generic_string()
+                    )},
+                    {"sha256", json::Value::ofString(digest.hex())},
+                    {"size", json::Value::ofNumber(static_cast<double>(bytes.size()))},
+                }));
+                moduleBlobs.emplace_back(
+                    operator_runtime::ProjectModuleBlob{
+                        .name   = module.name,
+                        .source = bytes,
+                    }
+                );
+                stagedBlobs.emplace_back(GeneratedArtifact{
+                    .relativePath = storedPath,
+                    .bytes        = std::move(bytes),
+                });
+            }
+            UF_TRY_VALUE(
+                moduleManifestHash,
+                operator_runtime::derivePluginModuleManifestHash(
+                    closure.entryModule,
+                    moduleBlobs
+                )
+            );
+            return StagedClosure{
+                .moduleRows         = std::move(moduleRows),
+                .stagedModules      = std::move(stagedBlobs),
+                .moduleManifestHash = moduleManifestHash,
+            };
+        }
+
+        [[nodiscard]]
+        auto closureRecord(
+            ProjectClosureBuildSpec const& closure,
+            StagedClosure staged
+        ) -> json::Value
+        {
+            auto entryPoints = std::vector<json::Value>{};
+            entryPoints.reserve(closure.exportedEntryPoints.size());
+            for (auto const& entryPoint : closure.exportedEntryPoints)
+            {
+                entryPoints.emplace_back(json::Value::ofString(entryPoint));
+            }
+            return json::Value::ofObject({
+                {"entry", json::Value::ofString(closure.entryModule)},
+                {"exported_entry_points",
+                 json::Value::ofArray(std::move(entryPoints))},
+                {"module_manifest_hash",
+                 json::Value::ofString(staged.moduleManifestHash.hex())},
+                {"modules", json::Value::ofArray(std::move(staged.moduleRows))},
+            });
+        }
+
         [[nodiscard]]
         auto generatedExecutionClosures(
             std::filesystem::path const& sourceDirectory,
@@ -1589,112 +1864,36 @@ namespace uf::project
 
             for (auto& registration : orderedRegistrations)
             {
-                auto normalizedModules = registration.modules;
-                for (auto& module : normalizedModules)
-                {
-                    UF_TRY_VALUE(normalized, normalizeInputPath(module.sourceInput));
-                    module.sourceInput = std::filesystem::path{normalized};
-                }
-                std::ranges::sort(normalizedModules, {}, &ProjectModuleSpec::name);
-                auto modulePaths = std::set<std::string>{};
-                auto moduleBlobs = std::vector<operator_runtime::ProjectModuleBlob>{};
-                auto moduleRows  = std::vector<json::Value>{};
-                moduleBlobs.reserve(normalizedModules.size());
-                moduleRows.reserve(normalizedModules.size());
-                for (auto const& module : normalizedModules)
-                {
-                    auto const sourcePath = module.sourceInput.generic_string();
-                    if (!modulePaths.emplace(sourcePath).second)
-                    {
-                        return fail(
-                            AutomationErrorKind::InvalidResource,
-                            std::format(
-                                "project deployment {} uses module path \"{}\" more than once",
-                                registration.deploymentName,
-                                sourcePath
-                            )
-                        );
-                    }
-
-                    auto bytes = std::string{};
-                    constexpr auto generatedPrefix = std::string_view{"generated/adapters/"};
-                    if (std::string_view{sourcePath}.starts_with(generatedPrefix))
-                    {
-                        auto const relative = std::string_view{sourcePath}.substr(
-                            generatedPrefix.size()
-                        );
-                        auto const generated = std::ranges::find_if(
-                            generatedAdapters,
-                            [relative](GeneratedArtifact const& artifact)
-                            {
-                                return artifact.relativePath.generic_string() == relative;
-                            }
-                        );
-                        if (generated == generatedAdapters.end())
-                        {
-                            return fail(
-                                AutomationErrorKind::InvalidResource,
-                                std::format(
-                                    "project module {} names missing generated adapter \"{}\"",
-                                    module.name,
-                                    sourcePath
-                                )
-                            );
-                        }
-                        bytes = generated->bytes;
-                    }
-                    else
-                    {
-                        if (!std::ranges::binary_search(inputs, sourcePath))
-                        {
-                            return fail(
-                                AutomationErrorKind::InvalidResource,
-                                std::format(
-                                    "project module {} names undeclared source input \"{}\"",
-                                    module.name,
-                                    sourcePath
-                                )
-                            );
-                        }
-                        UF_TRY_VALUE(
-                            sourceBytes,
-                            readText(sourceDirectory / module.sourceInput, "project module source")
-                        );
-                        bytes = std::move(sourceBytes);
-                    }
-                    UF_TRY_VALUE(digest, sha256(std::as_bytes(std::span{bytes})));
-                    auto const storedPath = (
-                        std::filesystem::path{registration.deploymentName}
-                        / (module.name + ".luau")
-                    );
-                    moduleRows.emplace_back(json::Value::ofObject({
-                        {"name", json::Value::ofString(module.name)},
-                        {"path", json::Value::ofString(
-                            (std::filesystem::path{k_generatedDirectory}
-                             / k_generatedModuleDirectory
-                             / storedPath).generic_string()
-                        )},
-                        {"sha256", json::Value::ofString(digest.hex())},
-                        {"size", json::Value::ofNumber(static_cast<double>(bytes.size()))},
-                    }));
-                    moduleBlobs.emplace_back(
-                        operator_runtime::ProjectModuleBlob{
-                            .name   = module.name,
-                            .source = bytes,
-                        }
-                    );
-                    modules.emplace_back(GeneratedArtifact{
-                        .relativePath = storedPath,
-                        .bytes        = std::move(bytes),
-                    });
-                }
                 UF_TRY_VALUE(
-                    moduleManifestHash,
-                    operator_runtime::derivePluginModuleManifestHash(
-                        registration.entryModule,
-                        moduleBlobs
+                    reducerClosure,
+                    stagedClosure(
+                        sourceDirectory,
+                        inputs,
+                        generatedAdapters,
+                        registration.deploymentName,
+                        k_reducerClosureName,
+                        registration.reducerClosure
                     )
                 );
+                UF_TRY_VALUE(
+                    toolClosure,
+                    stagedClosure(
+                        sourceDirectory,
+                        inputs,
+                        generatedAdapters,
+                        registration.deploymentName,
+                        k_toolClosureName,
+                        registration.toolClosure
+                    )
+                );
+                for (auto& staged : reducerClosure.stagedModules)
+                {
+                    modules.emplace_back(std::move(staged));
+                }
+                for (auto& staged : toolClosure.stagedModules)
+                {
+                    modules.emplace_back(std::move(staged));
+                }
 
                 auto normalizedResources = registration.resources;
                 for (auto& resource : normalizedResources)
@@ -1804,13 +2003,18 @@ namespace uf::project
                 closureRecords.emplace_back(GeneratedArtifact{
                     .relativePath = registration.deploymentName + ".json",
                     .bytes = json::canonicalBytes(json::Value::ofObject({
-                        {"entry", json::Value::ofString(registration.entryModule)},
-                        {"modules", json::Value::ofArray(std::move(moduleRows))},
                         {"plugin_environment_hash", json::Value::ofString(environmentHash.hex())},
                         {"plugin_id", json::Value::ofString(registration.pluginId)},
-                        {"plugin_module_manifest_hash", json::Value::ofString(moduleManifestHash.hex())},
                         {"project_resources", json::Value::ofArray(std::move(resourceRows))},
+                        {"reducer_closure", closureRecord(
+                            registration.reducerClosure,
+                            std::move(reducerClosure)
+                        )},
                         {"schema", json::Value::ofString(std::string{k_executionClosureSchema})},
+                        {"tool_closure", closureRecord(
+                            registration.toolClosure,
+                            std::move(toolClosure)
+                        )},
                     })),
                 });
             }
@@ -3305,16 +3509,23 @@ namespace uf::project
                 ),
             });
             files.emplace_back(ScaffoldFile{
-                .relativePath = "plugin/main.luau",
+                .relativePath = "plugin/reducer.luau",
                 .bytes = (
                     "local support = require(\"./support\")\n\n"
                     "return {\n"
                     "    plugin_id = \"" + spec.pluginId + "\",\n"
-                    "    derive = support.identity,\n"
-                    "    plan = support.identity,\n"
-                    "    next_step = support.identity,\n"
-                    "    reconcile = support.identity,\n"
                     "    reduce = support.identity,\n"
+                    "}\n"
+                ),
+            });
+            files.emplace_back(ScaffoldFile{
+                .relativePath = "plugin/tool.luau",
+                .bytes = (
+                    "-- This deployment binds no Tool yet, so this closure\n"
+                    "-- exports its identity and nothing else. Add an entry\n"
+                    "-- here and name it in tool_bindings together.\n"
+                    "return {\n"
+                    "    plugin_id = \"" + spec.pluginId + "\",\n"
                     "}\n"
                 ),
             });

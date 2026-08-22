@@ -254,17 +254,18 @@ set(UF_REQUIRED_CONTRACT_GATES
     schema-state-s04
     contract-control-c01
     contract-control-c02
-    contract-control-c03
     contract-control-c04
-    contract-control-c05
     contract-control-c06
     contract-control-c07
-    contract-control-c08
-    contract-control-c09
-    contract-control-c10
-    contract-control-c11
-    contract-control-c12
-    contract-control-c13
+    # contract-control-c03, c05, c08 and c09 through c13 are absent while their
+    # subject is. Each drove a real Operation through freezePlan, mintNextStep,
+    # reserveDispatch and commitReconciliation, and the two-closure registration
+    # generation leaves those doors with no project entry to call. Their
+    # requirements keep the schema-control gates below, so no requirement lost
+    # every gate; what they lost is the behavioural half, and restoring it
+    # belongs to the change that gives the Tool Runtime the coverage those cases
+    # held. contract-agent-a07 is absent for the same reason and keeps
+    # schema-agent-a07.
     contract-control-c14
     schema-control-c03
     schema-control-c05
@@ -280,7 +281,6 @@ set(UF_REQUIRED_CONTRACT_GATES
     contract-agent-a04
     contract-agent-a05
     contract-agent-a06
-    contract-agent-a07
     contract-agent-a08
     schema-agent-a01
     schema-agent-a02
@@ -351,7 +351,26 @@ endif()
 # gates and requires the two to agree, in both directions. That is as far as the
 # prefix can be held to account from here -- it makes a reclassification, which
 # is one keystroke on a name, an explicit edit to this list.
-set(UF_SCHEMA_ONLY_REQUIREMENTS)
+set(UF_SCHEMA_ONLY_REQUIREMENTS
+    # These are here because the two-closure registration generation took their
+    # behavioural half's vehicle away: each drove a real Operation through
+    # freezePlan, mintNextStep and commitReconciliation, and a Project of the
+    # new generation exports no plan, next_step or reconcile for those doors to
+    # call. Without a minted step nothing reaches reserveDispatch either, which
+    # is what took C-03's delivery authority and A-07's takeover race with it.
+    # Their schema- gates still read the shape. This entry is the explicit
+    # statement that the behaviour is unenforced today, and it comes out again
+    # with the change that gives the Tool Runtime the coverage those cases held.
+    agent-a07
+    control-c03
+    control-c05
+    control-c08
+    control-c09
+    control-c10
+    control-c11
+    control-c12
+    control-c13
+)
 
 # A suite is valid only when its requested IDs and concrete doctest declarations
 # are the same set. The global registry also rejects placeholders, cross-suite
@@ -594,7 +613,7 @@ target_compile_definitions(test-deployment PRIVATE
 # put the slowest of them at 22 seconds.
 uf_shard_doctest_gates(
     TARGET test-deployment
-    TOTAL_CASES 52
+    TOTAL_CASES 51
     SHARDS 4
 )
 
@@ -685,7 +704,6 @@ if(TARGET ${PROJECT_NAME}_operator)
             operator/test-manifest.cpp
             operator/test-operation.cpp
             operator/test-project-generation.cpp
-            operator/test-project-tool-program.cpp
             operator/test-tool-admission-funnel.cpp
             operator/test-tool-authority.cpp
             operator/test-tool-automation-loop.cpp
@@ -719,7 +737,7 @@ if(TARGET ${PROJECT_NAME}_operator)
     # beside it.
     uf_shard_doctest_gates(
         TARGET test-operator
-        TOTAL_CASES 226
+        TOTAL_CASES 170
         SHARDS 6
     )
 
@@ -727,11 +745,9 @@ if(TARGET ${PROJECT_NAME}_operator)
         TARGET test-contract-operator
         SOURCES
             operator/test-product-contract.cpp
-            operator/test-project-plugin-contract.cpp
             operator/test-state-contract.cpp
             operator/test-control-contract.cpp
             operator/test-agent-audit-contract.cpp
-            workflow/test-step-kind.cpp
         LIBS
             ${PROJECT_NAME}_operator
             ${PROJECT_NAME}_image
@@ -768,11 +784,8 @@ if(TARGET ${PROJECT_NAME}_operator)
             schema-state-s02
             schema-state-s04
             contract-control-c02
-            contract-control-c03
             contract-control-c04
-            contract-control-c05
             contract-control-c07
-            contract-control-c08
             contract-control-c14
             schema-control-c03
             schema-control-c05
@@ -786,7 +799,6 @@ if(TARGET ${PROJECT_NAME}_operator)
             contract-agent-a02
             contract-agent-a04
             contract-agent-a06
-            contract-agent-a07
             contract-agent-a08
             schema-agent-a01
             schema-agent-a02
@@ -881,31 +893,6 @@ cpp_add_test(
         ${PROJECT_NAME}_domain
         ${PROJECT_NAME}_image
 )
-
-# The two authoring paths meet only at the ProjectPlugin admission boundary, so
-# this gate names the generator, the boundary, and the module that owns the real
-# bidirectional document validation the boundary is handed. It is a target of
-# its own rather than a file inside test-project, because test-project links
-# neither the Operator nor deployment and a gate that only compiles the adapter
-# bare is the gap this closes.
-cpp_add_test(
-    NAME test-authoring-path-parity
-    SOURCES
-        project/test-authoring-path-parity.cpp
-    LIBS
-        ${PROJECT_NAME}_project
-        ${PROJECT_NAME}_deployment
-        ${PROJECT_NAME}_operator
-        ${PROJECT_NAME}_json
-        ${PROJECT_NAME}_domain
-        ${PROJECT_NAME}_image
-)
-if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
-    cpp_stage_runtime_libraries(
-        test-authoring-path-parity
-        ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES}
-    )
-endif()
 
 # umbraflow-project.json is judged by the offline kit and by the runtime loader,
 # and those two live in modules that cannot link one another. This target is the
@@ -1694,28 +1681,11 @@ endif()
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 if(TARGET test-operator)
-    add_test(
-        NAME fault-matrix-crash
-        COMMAND ${Python3_EXECUTABLE}
-            "${CMAKE_CURRENT_SOURCE_DIR}/fault-injection/run-crash.py"
-            $<TARGET_FILE:test-operator>
-            "${CMAKE_CURRENT_BINARY_DIR}/fault-injection"
-    )
-    add_test(
-        NAME fault-matrix-lease
-        COMMAND test-operator
-            "--test-case=fault matrix lease takeover reports in-flight dispatch and fences the displaced controller"
-    )
-    add_test(
-        NAME fault-matrix-stale
-        COMMAND test-operator
-            "--test-case=fault matrix stale instance expires without emitting input"
-    )
-    add_test(
-        NAME fault-matrix-timeout
-        COMMAND test-operator
-            "--test-case=fault matrix timeout never records an unreturned action as success"
-    )
+    # fault-matrix-crash, -lease, -stale and -timeout are absent while their
+    # subject is: each drove an Operation to a reserved dispatch, and a Project
+    # of the two-closure generation exports no next_step for a step to be minted
+    # from. They come back with the change that gives the Tool Runtime the
+    # coverage those cases held.
     add_test(
         NAME fault-matrix-tamper
         COMMAND ${Python3_EXECUTABLE}
@@ -1729,10 +1699,6 @@ if(TARGET test-operator)
             "--test-case=fault matrix migration failure rolls back the active release"
     )
     set_tests_properties(
-        fault-matrix-crash
-        fault-matrix-lease
-        fault-matrix-stale
-        fault-matrix-timeout
         fault-matrix-tamper
         fault-matrix-migration
         PROPERTIES

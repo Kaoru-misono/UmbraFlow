@@ -8,6 +8,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <span>
 #include <string>
@@ -65,7 +66,23 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
-        auto registrationJcs(ProjectRegistrationClaims const& claims) -> std::string
+        auto closureValue(ProjectClosureClaims const& closure) -> json::Value
+        {
+            auto entries = std::vector<json::Value>{};
+            entries.reserve(closure.exportedEntryPoints.size());
+            for (auto const& entry : closure.exportedEntryPoints)
+            {
+                entries.emplace_back(json::Value::ofString(entry));
+            }
+            return json::Value::ofObject({
+                {"exported_entry_points", json::Value::ofArray(std::move(entries))},
+                {"module_manifest_hash",
+                 json::Value::ofString(closure.moduleManifestHash.hex())},
+            });
+        }
+
+        [[nodiscard]]
+        auto generationJcs(ProjectGenerationClaims const& claims) -> std::string
         {
             auto bindings = std::vector<json::Value>{};
             for (auto const& binding : claims.projectToolBindings)
@@ -85,8 +102,6 @@ namespace uf::operator_runtime
                 {"plugin_environment_hash",
                  json::Value::ofString(claims.pluginEnvironmentHash.hex())},
                 {"plugin_id", json::Value::ofString(claims.pluginId)},
-                {"plugin_module_manifest_hash",
-                 json::Value::ofString(claims.pluginModuleManifestHash.hex())},
                 {"project_observation_schema_hash",
                  json::Value::ofString(claims.projectObservationSchemaHash.hex())},
                 {"project_registration_format",
@@ -105,24 +120,56 @@ namespace uf::operator_runtime
                  json::Value::ofString(
                      claims.reconcilePayloadSchemaManifestHash.hex()
                  )},
+                {"reducer_closure", closureValue(claims.reducerClosure)},
                 {"tool_catalog_hash",
                  json::Value::ofString(claims.toolCatalogHash.hex())},
+                {"tool_closure", closureValue(claims.toolClosure)},
             }));
         }
 
-        // A verified registration over exactly this binding table. The owner
+        // The tool closure a generation carrying these bindings would state:
+        // the sorted, unique union of the entries they name. It is derived here
+        // because these cases are about the TABLE, and bind() takes the
+        // exported set as its own parameter -- that set is what a loader
+        // observed, and each case below states it deliberately.
+        [[nodiscard]]
+        auto declaredEntries(
+            std::vector<ProjectToolBinding> const& bindings
+        ) -> std::vector<std::string>
+        {
+            auto entries = std::vector<std::string>{};
+            entries.reserve(bindings.size());
+            for (auto const& binding : bindings)
+            {
+                entries.emplace_back(binding.entryPoint);
+            }
+            std::ranges::sort(entries);
+            auto const repeated = std::ranges::unique(entries);
+            entries.erase(repeated.begin(), repeated.end());
+            return entries;
+        }
+
+        // A verified generation over exactly this binding table. The reader
         // answers for the bytes this fixture built and nothing else, which is
         // the same contract the deployment loader's validator satisfies.
         [[nodiscard]]
         auto registrationBinding(
             std::vector<ProjectToolBinding> bindings,
             std::string_view catalogBytes = k_toolCatalogBytes
-        ) -> VerifiedProjectRegistration
+        ) -> VerifiedProjectGeneration
         {
-            auto claims = ProjectRegistrationClaims{
-                .projectRegistrationFormat          = k_projectRegistrationFormat,
-                .pluginId                           = "chaos.project",
-                .pluginModuleManifestHash           = hashOf("modules"),
+            auto entries = declaredEntries(bindings);
+            auto claims  = ProjectGenerationClaims{
+                .projectRegistrationFormat = k_projectGenerationFormat,
+                .pluginId                  = "chaos.project",
+                .reducerClosure            = ProjectClosureClaims{
+                    .moduleManifestHash  = hashOf("reducer-modules"),
+                    .exportedEntryPoints = {std::string{k_reducerEntryPoint}},
+                },
+                .toolClosure = ProjectClosureClaims{
+                    .moduleManifestHash  = hashOf("tool-modules"),
+                    .exportedEntryPoints = std::move(entries),
+                },
                 .pluginEnvironmentHash              = hashOf("environment"),
                 .toolCatalogHash                    = hashOf(catalogBytes),
                 .projectStateSchemaHash             = hashOf("state"),
@@ -134,10 +181,12 @@ namespace uf::operator_runtime
                 .projectResources                   = {},
                 .projectToolBindings                = std::move(bindings),
             };
-            auto const exactJcs = registrationJcs(claims);
-            auto owner          = ProjectRegistrationSchemaOwner::create(
+            auto const exactJcs = generationJcs(claims);
+            auto registration   = ProjectGeneration::verifyExact(
+                exactJcs,
+                hashOf(exactJcs),
                 [exactJcs, claims](std::string_view candidate)
-                    -> Result<ProjectRegistrationClaims>
+                    -> Result<ProjectGenerationClaims>
                 {
                     if (candidate != exactJcs)
                     {
@@ -149,19 +198,13 @@ namespace uf::operator_runtime
                     return claims;
                 }
             );
-            REQUIRE(owner.has_value());
-            auto registration = ProjectRegistration::verifyExact(
-                exactJcs,
-                hashOf(exactJcs),
-                *owner
-            );
             REQUIRE(registration.has_value());
             return *std::move(registration);
         }
 
         [[nodiscard]]
         auto catalogOver(
-            VerifiedProjectRegistration const& registration,
+            VerifiedProjectGeneration const& registration,
             std::vector<std::string> toolNames,
             std::string_view catalogBytes = k_toolCatalogBytes
         ) -> ProjectToolCatalogSchemaOwner
@@ -354,10 +397,17 @@ namespace uf::operator_runtime
 
     TEST_CASE("a registration states its Tool bindings sorted and unique")
     {
-        auto claims = ProjectRegistrationClaims{
-            .projectRegistrationFormat          = k_projectRegistrationFormat,
-            .pluginId                           = "chaos.project",
-            .pluginModuleManifestHash           = hashOf("modules"),
+        auto claims = ProjectGenerationClaims{
+            .projectRegistrationFormat = k_projectGenerationFormat,
+            .pluginId                  = "chaos.project",
+            .reducerClosure            = ProjectClosureClaims{
+                .moduleManifestHash  = hashOf("reducer-modules"),
+                .exportedEntryPoints = {std::string{k_reducerEntryPoint}},
+            },
+            .toolClosure = ProjectClosureClaims{
+                .moduleManifestHash  = hashOf("tool-modules"),
+                .exportedEntryPoints = {"dismiss", "sweep"},
+            },
             .pluginEnvironmentHash              = hashOf("environment"),
             .toolCatalogHash                    = hashOf(k_toolCatalogBytes),
             .projectStateSchemaHash             = hashOf("state"),
@@ -378,17 +428,15 @@ namespace uf::operator_runtime
                 },
             },
         };
-        auto const exactJcs = registrationJcs(claims);
-        auto owner          = ProjectRegistrationSchemaOwner::create(
-            [exactJcs, claims](std::string_view)
-                -> Result<ProjectRegistrationClaims> { return claims; }
-        );
-        REQUIRE(owner.has_value());
+        auto const exactJcs = generationJcs(claims);
 
-        auto const refused = ProjectRegistration::verifyExact(
+        auto const refused = ProjectGeneration::verifyExact(
             exactJcs,
             hashOf(exactJcs),
-            *owner
+            [claims](std::string_view) -> Result<ProjectGenerationClaims>
+            {
+                return claims;
+            }
         );
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().message().contains(
@@ -402,10 +450,17 @@ namespace uf::operator_runtime
     // registration is read rather than one document later.
     TEST_CASE("a registration's Tool binding names a namespaced Tool")
     {
-        auto claims = ProjectRegistrationClaims{
-            .projectRegistrationFormat          = k_projectRegistrationFormat,
-            .pluginId                           = "chaos.project",
-            .pluginModuleManifestHash           = hashOf("modules"),
+        auto claims = ProjectGenerationClaims{
+            .projectRegistrationFormat = k_projectGenerationFormat,
+            .pluginId                  = "chaos.project",
+            .reducerClosure            = ProjectClosureClaims{
+                .moduleManifestHash  = hashOf("reducer-modules"),
+                .exportedEntryPoints = {std::string{k_reducerEntryPoint}},
+            },
+            .toolClosure = ProjectClosureClaims{
+                .moduleManifestHash  = hashOf("tool-modules"),
+                .exportedEntryPoints = {"dismiss"},
+            },
             .pluginEnvironmentHash              = hashOf("environment"),
             .toolCatalogHash                    = hashOf(k_toolCatalogBytes),
             .projectStateSchemaHash             = hashOf("state"),
@@ -422,17 +477,15 @@ namespace uf::operator_runtime
                 },
             },
         };
-        auto const exactJcs = registrationJcs(claims);
-        auto owner          = ProjectRegistrationSchemaOwner::create(
-            [exactJcs, claims](std::string_view)
-                -> Result<ProjectRegistrationClaims> { return claims; }
-        );
-        REQUIRE(owner.has_value());
+        auto const exactJcs = generationJcs(claims);
 
-        auto const refused = ProjectRegistration::verifyExact(
+        auto const refused = ProjectGeneration::verifyExact(
             exactJcs,
             hashOf(exactJcs),
-            *owner
+            [claims](std::string_view) -> Result<ProjectGenerationClaims>
+            {
+                return claims;
+            }
         );
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().message().contains(

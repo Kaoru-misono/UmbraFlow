@@ -44,43 +44,11 @@ namespace uf::operator_runtime
     {
         using test_support::toolCallAt;
 
-        // The one plugin every case here registers. It comes from the shared
-        // fixture because plan and next_step now answer with real operator
-        // protocol documents, and a second spelling of them would be a second
-        // plugin module-manifest hash for one project.
-        inline auto const k_pluginSource = test_support::pluginSource("fixture.alpha");
+        // The one reducer closure every case here registers. It comes from
+        // the shared fixture because a second spelling of it would be a
+        // second reducer module-manifest hash for one project.
+        inline auto const k_reducerSource = test_support::reducerSource("fixture.alpha");
 
-        // The same plugin except that reduce answers with a document the
-        // pinned ProjectState schema refuses -- but only once a prior state
-        // exists, so provisioning still succeeds and the failure lands inside
-        // the reconciliation transaction, which is where the no-write-on-failure
-        // test needs it.
-        [[nodiscard]]
-        inline auto rejectedReducePluginSource() -> std::string
-        {
-            auto source        = test_support::pluginSource("fixture.alpha");
-            auto const accepted = std::string{"return { revision = 1 }"};
-            auto const at      = source.find(accepted);
-            REQUIRE(at != std::string::npos);
-            return source.replace(at, accepted.size(), "return { value = 99 }");
-        }
-
-        // The same plugin except that its OP:`UIActionIntent` names one
-        // identifier the installed RuntimeModel does not define. Only the one
-        // member moves, so a refusal is about that member and not about a
-        // document the reader stopped understanding.
-        [[nodiscard]]
-        inline auto pluginNamingUndefinedUi(
-            std::string_view spelled,
-            std::string_view replacement
-        ) -> std::string
-        {
-            auto source   = test_support::pluginSource("fixture.alpha");
-            auto const at = source.find(spelled);
-            REQUIRE(at != std::string::npos);
-            REQUIRE(source.find(spelled, at + spelled.size()) == std::string::npos);
-            return source.replace(at, spelled.size(), replacement);
-        }
 
         class TemporaryDirectory final
         {
@@ -958,7 +926,7 @@ namespace uf::operator_runtime
         using test_support::journalEntry;
         using test_support::k_fixtureProvenance;
         using test_support::k_fixtureProvenanceViolations;
-        using test_support::loadPlugin;
+        using test_support::loadGeneration;
         using test_support::makeProject;
         using test_support::sessionManifest;
         using test_support::toolInvocation;
@@ -994,7 +962,6 @@ namespace uf::operator_runtime
             value.observedInstanceId;
         };
 
-        static_assert(!NamesReducerInput<ReconciliationCommit>);
         static_assert(!NamesReducerInput<ProjectInstanceBaseline>);
         static_assert(!NamesMutability<CommandRequest>);
         static_assert(!NamesTool<CommandRequest>);
@@ -1054,7 +1021,7 @@ namespace uf::operator_runtime
         struct PreparedStore final
         {
             OperatorCoordinator          store;
-            ProjectPluginHandle          plugin;
+            ProjectGenerationHandle      generation;
             test_support::ProjectFixture project;
             SessionManifest              manifest;
             OperatorPlanAuthority        planAuthority;
@@ -1076,7 +1043,7 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto prepareStore(
             std::filesystem::path const& path,
-            std::string_view pluginSource = k_pluginSource,
+            std::string_view reducerBytes = k_reducerSource,
             std::string_view preconditionSchema = test_support::k_toolPreconditionSchema
         ) -> PreparedStore
         {
@@ -1103,7 +1070,7 @@ namespace uf::operator_runtime
             auto const installedGeneration = installed->installedGeneration();
             auto const project = makeProject(
                 "fixture.alpha",
-                pluginSource,
+                reducerBytes,
                 test_support::k_projectObservationSchema,
                 preconditionSchema
             );
@@ -1113,11 +1080,11 @@ namespace uf::operator_runtime
                 hashOf("agent"),
                 test_support::policyArtifactBytes()
             );
-            auto const projectPlugin = loadPlugin(project, pluginSource);
+            auto const projectGeneration = loadGeneration(project, reducerBytes);
             REQUIRE(store.registerProject(project.registration).has_value());
             REQUIRE(store.provisionProjectInstance(
                 project.registration,
-                projectPlugin,
+                projectGeneration,
                 ProjectInstanceBaseline{
                     .projectInstanceKey  = "instance-1",
                     .eventId             = "baseline-1",
@@ -1161,7 +1128,7 @@ namespace uf::operator_runtime
             );
             auto snapshot = store.createSnapshot(
                 *lease,
-                projectPlugin,
+                project.registration,
                 project.toolCatalogSchemaOwner,
                 project.observedInstanceIdentitySchemas,
                 conformance::observeOnce(observation)
@@ -1171,18 +1138,17 @@ namespace uf::operator_runtime
                 observation.generation
             );
             REQUIRE(runtimeModel.has_value());
-            auto planAuthority = conformance::planAuthority(
+            auto planAuthority = OperatorPlanAuthority::create(
                 project.registration,
                 manifest,
                 *runtimeModel,
                 "operator",
-                test_support::policyArtifactBytes(),
-                test_support::k_fixtureUiAction
+                test_support::policyArtifactBytes()
             );
             REQUIRE(planAuthority.has_value());
             return PreparedStore{
                 .store                   = std::move(store),
-                .plugin                  = projectPlugin,
+                .generation              = projectGeneration,
                 .project                 = project,
                 .manifest                = manifest,
                 .planAuthority           = *std::move(planAuthority),
@@ -1193,21 +1159,6 @@ namespace uf::operator_runtime
                 .runtimeArtifactRootHash = artifactRootHash,
                 .installedGeneration     = installedGeneration,
             };
-        }
-
-        // A Host that can act under this store's current lease.
-        [[nodiscard]]
-        auto deliveringHost(PreparedStore& prepared)
-            -> std::unique_ptr<conformance::DeliveringHost>
-        {
-            return conformance::deliveringHostFor(
-                prepared.store,
-                prepared.lease,
-                prepared.installedGeneration,
-                prepared.runtimeArtifactRootHash,
-                test_support::k_fixtureUiAction,
-                test_support::umbraflowProbeFrame()
-            );
         }
 
         [[nodiscard]]
@@ -1235,21 +1186,6 @@ namespace uf::operator_runtime
                 .kind               = ControllerKind::Script,
                 .worldScope         = *worldScope,
             };
-        }
-
-        [[nodiscard]]
-        auto reconciliationOutcome(
-            PreparedStore const& prepared,
-            std::string operationId,
-            std::string document
-        ) -> ValidatedReconcileOutcome
-        {
-            return test_support::reconcileOutcome(
-                prepared.project,
-                prepared.plugin,
-                std::move(operationId),
-                std::move(document)
-            );
         }
 
         [[nodiscard]]
@@ -1303,65 +1239,6 @@ namespace uf::operator_runtime
             );
         }
 
-        // An observed instance id minted under a second session on another
-        // target of the SAME registration: a real persistent binding, but one
-        // whose world scope no command of the prepared session may name. The
-        // mint reads the scope out of the pinned tuple, so the second
-        // createSnapshot derives a different canonical authority and mints a
-        // different id than the prepared snapshot's.
-        [[nodiscard]]
-        auto foreignObservedInstanceId(
-            PreparedStore& prepared
-        ) -> std::string
-        {
-            REQUIRE(prepared.store.provisionProjectInstance(
-                prepared.project.registration,
-                prepared.plugin,
-                ProjectInstanceBaseline{
-                    .projectInstanceKey  = "instance-2",
-                    .eventId             = "baseline-instance-2",
-                    .sessionManifestHash = prepared.manifest.hash(),
-                    .entry               = journalEntry(
-                        prepared.project,
-                        prepared.project.registration.baselineEventType(),
-                        "{\"kind\":\"baseline\"}"
-                    ),
-                }
-            ).has_value());
-            auto const secondScope = ObservedInstanceWorldScope::run("target-2", 1);
-            REQUIRE(secondScope.has_value());
-            REQUIRE(prepared.store.pinSession(
-                SessionPin{
-                    .sessionId                 = "session-2",
-                    .authenticatedControllerId = "controller-1",
-                    .idempotencyNamespace      = "controller-1",
-                    .projectRegistrationHash   = prepared.project.registration.hash(),
-                    .controllerCapabilities    = {std::string{conformance::k_operateCapability}},
-                    .controlledTargetId        = "target-2",
-                    .projectInstanceKey        = "instance-2",
-                    .mode                      = SessionMode::Write,
-                    .kind                      = ControllerKind::Script,
-                    .worldScope                = *secondScope,
-                },
-                prepared.manifest,
-                std::nullopt
-            ).has_value());
-            auto second = prepared.store.bindController("session-2");
-            REQUIRE(second.has_value());
-            auto lease = prepared.store.acquireLease(*second);
-            REQUIRE(lease.has_value());
-            auto snapshot = prepared.store.createSnapshot(
-                *lease,
-                prepared.plugin,
-                prepared.project.toolCatalogSchemaOwner,
-                prepared.project.observedInstanceIdentitySchemas,
-                conformance::observeOnce(prepared.observation)
-            );
-            REQUIRE(snapshot.has_value());
-            return snapshot->observation.payload()
-                .observedInstances()[0].observedInstanceId.value();
-        }
-
         [[nodiscard]]
         auto proposedOperation(
             PreparedStore& prepared,
@@ -1378,43 +1255,8 @@ namespace uf::operator_runtime
             return operation->operation;
         }
 
-        [[nodiscard]]
-        auto freezePlanFor(
-            PreparedStore& prepared,
-            StoredOperation const& operation
-        ) -> Result<FrozenPlan>
-        {
-            return prepared.store.freezePlan(
-                operation.operationId,
-                operation.revision,
-                prepared.lease,
-                prepared.plugin,
-                prepared.project.toolCatalogSchemaOwner,
-                prepared.planAuthority
-            );
-        }
-
-        [[nodiscard]]
-        auto mintStepFor(
-            PreparedStore& prepared,
-            StoredOperation const& operation
-        ) -> Result<PlannedStep>
-        {
-            return prepared.store.mintNextStep(
-                operation.operationId,
-                operation.revision,
-                prepared.lease,
-                prepared.plugin,
-                prepared.project.toolCatalogSchemaOwner,
-                prepared.planAuthority
-            );
-        }
-
-        // A plan authority carrying nothing but the Operator's own protocol
-        // readers, which is what a production deployment builds.
-        // conformance::planAuthority wraps the step reader in a check that the
-        // step names the run's one agreed UI action, and that check would
-        // answer the cases below before the Operator did.
+        // A plan authority over a manifest naming the artifact root given,
+        // which is what a production deployment builds.
         [[nodiscard]]
         auto deploymentAuthority(
             PreparedStore& prepared,
@@ -1435,61 +1277,8 @@ namespace uf::operator_runtime
                 ),
                 *runtimeModel,
                 "operator",
-                test_support::policyArtifactBytes(),
-                deployment::readPlanProposal,
-                deployment::readStepIntent
+                test_support::policyArtifactBytes()
             );
-        }
-
-        [[nodiscard]]
-        auto mintStepUnder(
-            PreparedStore& prepared,
-            OperatorPlanAuthority const& authority
-        ) -> Result<PlannedStep>
-        {
-            auto const proposed = proposedOperation(
-                prepared,
-                "request-1",
-                prepared.project.toolName("command-1")
-            );
-            auto const frozen   = prepared.store.freezePlan(
-                proposed.operationId,
-                proposed.revision,
-                prepared.lease,
-                prepared.plugin,
-                prepared.project.toolCatalogSchemaOwner,
-                authority
-            );
-            REQUIRE(frozen.has_value());
-            return prepared.store.mintNextStep(
-                frozen->operation.operationId,
-                frozen->operation.revision,
-                prepared.lease,
-                prepared.plugin,
-                prepared.project.toolCatalogSchemaOwner,
-                authority
-            );
-        }
-
-        // Proposed, plan frozen by the Operator, first step minted from the
-        // plugin's own next_step: everything a dispatch may be reserved from.
-        [[nodiscard]]
-        auto createReadyOperation(
-            PreparedStore& prepared,
-            std::string clientRequestId,
-            std::string_view toolName
-        ) -> StoredOperation
-        {
-            auto const proposed = proposedOperation(
-                prepared,
-                std::move(clientRequestId),
-                toolName
-            );
-            auto const frozen = freezePlanFor(prepared, proposed);
-            REQUIRE(frozen.has_value());
-            auto const step = mintStepFor(prepared, frozen->operation);
-            REQUIRE(step.has_value());
-            return step->operation;
         }
 
         // test_support::runtimeRelease always writes the same page model, so
@@ -1781,6 +1570,68 @@ namespace uf::operator_runtime
             return *std::move(scope);
         }
 
+        // An observed instance id minted under a second session on another
+        // target of the SAME registration: a real persistent binding, but one
+        // whose world scope no command of the prepared session may name. The
+        // mint reads the scope out of the pinned tuple, so the publication
+        // below derives a different canonical authority and mints a different
+        // id than anything the prepared session could name.
+        [[nodiscard]]
+        auto foreignObservedInstanceId(
+            PreparedStore& prepared
+        ) -> std::string
+        {
+            REQUIRE(prepared.store.provisionProjectInstance(
+                prepared.project.registration,
+                prepared.generation,
+                ProjectInstanceBaseline{
+                    .projectInstanceKey  = "instance-2",
+                    .eventId             = "baseline-instance-2",
+                    .sessionManifestHash = prepared.manifest.hash(),
+                    .entry               = journalEntry(
+                        prepared.project,
+                        prepared.project.registration.baselineEventType(),
+                        "{\"kind\":\"baseline\"}"
+                    ),
+                }
+            ).has_value());
+            auto const secondScope = ObservedInstanceWorldScope::run("target-2", 1);
+            REQUIRE(secondScope.has_value());
+            REQUIRE(prepared.store.pinSession(
+                SessionPin{
+                    .sessionId                 = "session-2",
+                    .authenticatedControllerId = "controller-1",
+                    .idempotencyNamespace      = "controller-1",
+                    .projectRegistrationHash   = prepared.project.registration.hash(),
+                    .controllerCapabilities    = {std::string{conformance::k_operateCapability}},
+                    .controlledTargetId        = "target-2",
+                    .projectInstanceKey        = "instance-2",
+                    .mode                      = SessionMode::Write,
+                    .kind                      = ControllerKind::Script,
+                    .worldScope                = *secondScope,
+                },
+                prepared.manifest,
+                std::nullopt
+            ).has_value());
+            auto second = prepared.store.bindController("session-2");
+            REQUIRE(second.has_value());
+            auto lease = prepared.store.acquireLease(*second);
+            REQUIRE(lease.has_value());
+            auto observation = prepared.store.publishProjectObservation(
+                *lease,
+                prepared.project.registration,
+                *secondScope,
+                prepared.project.observedInstanceIdentitySchemas,
+                observationProposal({
+                    observedInstanceProposal("foreign", "foreign-native"),
+                })
+            );
+            REQUIRE(observation.has_value());
+            REQUIRE(observation->observedInstances().size() == 1U);
+            return observation->observedInstances()[0].observedInstanceId.value();
+        }
+
+
         [[nodiscard]]
         auto normativeProjectObservationErrorWireName(
             ProjectObservationErrorCode code
@@ -1861,79 +1712,6 @@ namespace uf::operator_runtime
         }
     }
 
-    // The two operator protocol readers, on documents this registration's
-    // schema owner stamped. They are read here rather than in tests/deployment
-    // because each takes a ValidatedDocument and only a ProjectSchemaOwner can
-    // mint one, so reaching a reader at all needs a plugin.
-    TEST_CASE("the operator protocol readers read a stamped document")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        auto const project = prepared.project;
-        auto const plugin  = prepared.plugin;
-
-        auto const proposal = plugin.plan(canonical(
-            project.schemaOwner,
-            "{\"canonical_args\":{\"value\":1},\"project_observation\":"
-                + prepared.snapshot.observation.payload().canonicalBytes()
-                + ",\"project_state\":{\"revision\":0},\"tool_name\":"
-                  "\"fixture.alpha.command-1\",\"tool_version\":\"1\"}"
-        ));
-        REQUIRE(proposal.has_value());
-        // The stored final observation, exactly as mintNextStep hands it to the
-        // plugin: the default next_step names the minted id back out of it.
-        auto const intent = plugin.nextStep(canonical(
-            project.schemaOwner,
-            "{\"frozen_plan_hash\":\"" + hashOf("plan").hex()
-                + "\",\"project_observation\":"
-                + prepared.snapshot.observation.payload().canonicalBytes()
-                + ",\"project_state\":{\"revision\":0},\"step_index\":1}"
-        ));
-        REQUIRE(intent.has_value());
-
-        auto const claims = deployment::readPlanProposal(*proposal);
-        REQUIRE(claims.has_value());
-        CHECK(claims->toolName == project.toolName("command-1"));
-        CHECK(claims->toolVersion == "1");
-        CHECK(claims->canonicalArgs == "{\"value\":1}");
-        REQUIRE(claims->allowedUiActions.size() == 1U);
-        CHECK(claims->allowedUiActions.front() == "fixture.step");
-        REQUIRE(claims->effects.size() == 2U);
-        CHECK(claims->effects.front().namespacedType == "fixture.write");
-        CHECK(claims->effects.front().risk == Risk::Low);
-        CHECK(claims->effects.front().scopeKind == "instance");
-        CHECK(claims->effects.front().scopeKey == "alpha");
-        CHECK(claims->effects.front().opaqueProjectPayload == "{\"value\":1}");
-        CHECK(claims->effects.back().risk == Risk::Medium);
-        CHECK(claims->effects.back().scopeKey == "beta");
-        CHECK(claims->limits.maximumSteps == 8U);
-        CHECK(claims->limits.maximumDispatches == 8U);
-        CHECK(claims->limits.maximumObservations == 16U);
-        CHECK(claims->limits.maximumWaits == 4U);
-        CHECK(claims->limits.maximumElapsedMillis == 60000U);
-
-        auto const step = deployment::readStepIntent(*intent);
-        REQUIRE(step.has_value());
-        CHECK(step->kind == StepKind::UiAction);
-        CHECK(step->stepKey == "fixture.step");
-        CHECK(step->surfaceId == "fixture.surface");
-        CHECK(
-            step->uiTargetId
-            == prepared.snapshot.observation.payload().observedInstances()[0]
-                   .observedInstanceId
-                   .value()
-        );
-        CHECK(step->actionId == "fixture.press");
-        CHECK(step->canonicalParameters == "{\"value\":1}");
-
-        // The one claim a ValidatedDocument does not carry, and the whole of
-        // what each reader still refuses. Both documents are exact JCS this
-        // owner's schema accepted, so neither refusal is about canonical form
-        // or about the definition -- only about which function stamped it.
-        CHECK_FALSE(deployment::readPlanProposal(*intent).has_value());
-        CHECK_FALSE(deployment::readStepIntent(*proposal).has_value());
-    }
-
     TEST_CASE("OperatorCoordinator creates only the production database name")
     {
         auto temporary = TemporaryDirectory{};
@@ -1977,7 +1755,7 @@ namespace uf::operator_runtime
         auto const scope = runScope();
         auto first = prepared.store.publishProjectObservation(
             prepared.lease,
-            prepared.plugin,
+            prepared.project.registration,
             scope,
             schemas,
             observationProposal({
@@ -2054,7 +1832,7 @@ namespace uf::operator_runtime
         }
         auto equivalent = prepared.store.publishProjectObservation(
             prepared.lease,
-            prepared.plugin,
+            prepared.project.registration,
             scope,
             schemas,
             equivalentProposal
@@ -2071,7 +1849,7 @@ namespace uf::operator_runtime
 
         auto changedBasis = prepared.store.publishProjectObservation(
             prepared.lease,
-            prepared.plugin,
+            prepared.project.registration,
             scope,
             schemas,
             observationProposal({
@@ -2086,7 +1864,7 @@ namespace uf::operator_runtime
 
         auto changedBasisMember = prepared.store.publishProjectObservation(
             prepared.lease,
-            prepared.plugin,
+            prepared.project.registration,
             scope,
             schemas,
             observationProposal({
@@ -2111,7 +1889,7 @@ namespace uf::operator_runtime
             "fixture.other-overlay";
         auto changedKind = prepared.store.publishProjectObservation(
             prepared.lease,
-            prepared.plugin,
+            prepared.project.registration,
             scope,
             schemas,
             changedKindProposal
@@ -2124,7 +1902,7 @@ namespace uf::operator_runtime
 
         auto changedScope = prepared.store.publishProjectObservation(
             prepared.lease,
-            prepared.plugin,
+            prepared.project.registration,
             runScope("run-8", 8U),
             schemas,
             observationProposal({
@@ -2157,7 +1935,7 @@ namespace uf::operator_runtime
         expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
-                prepared.plugin,
+                prepared.project.registration,
                 scope,
                 schemas,
                 invalidStatusAndName
@@ -2171,7 +1949,7 @@ namespace uf::operator_runtime
         expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
-                prepared.plugin,
+                prepared.project.registration,
                 scope,
                 schemas,
                 invalidStatus
@@ -2189,7 +1967,7 @@ namespace uf::operator_runtime
         expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
-                prepared.plugin,
+                prepared.project.registration,
                 scope,
                 schemas,
                 duplicatePrecondition
@@ -2200,7 +1978,7 @@ namespace uf::operator_runtime
         expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
-                prepared.plugin,
+                prepared.project.registration,
                 scope,
                 schemas,
                 observationProposal({
@@ -2219,7 +1997,7 @@ namespace uf::operator_runtime
         expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
-                prepared.plugin,
+                prepared.project.registration,
                 scope,
                 schemas,
                 observationProposal({
@@ -2261,7 +2039,7 @@ namespace uf::operator_runtime
         expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
-                prepared.plugin,
+                prepared.project.registration,
                 scope,
                 schemas,
                 cycleBeforeRegistration
@@ -2283,7 +2061,7 @@ namespace uf::operator_runtime
         expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
-                prepared.plugin,
+                prepared.project.registration,
                 scope,
                 schemas,
                 unregisteredBeforeBasis
@@ -2294,7 +2072,7 @@ namespace uf::operator_runtime
         expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
-                prepared.plugin,
+                prepared.project.registration,
                 scope,
                 schemas,
                 observationProposal({
@@ -2320,7 +2098,7 @@ namespace uf::operator_runtime
         expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
-                prepared.plugin,
+                prepared.project.registration,
                 runScope(),
                 schemas,
                 observationProposal({
@@ -2343,7 +2121,7 @@ namespace uf::operator_runtime
         expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
-                prepared.plugin,
+                prepared.project.registration,
                 runScope(),
                 schemas,
                 observationProposal({
@@ -2359,7 +2137,7 @@ namespace uf::operator_runtime
     {
         auto temporary     = TemporaryDirectory{};
         auto prepared      = test_support::prepareStore(temporary.path());
-        auto foreignSource = k_pluginSource;
+        auto foreignSource = k_reducerSource;
         foreignSource += "\n-- exact registration variant\n";
         auto const foreign = makeProject("fixture.alpha", foreignSource);
         auto foreignSchemas = foreign.observedInstanceIdentitySchemas;
@@ -2371,7 +2149,7 @@ namespace uf::operator_runtime
         expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
-                prepared.plugin,
+                prepared.project.registration,
                 runScope(),
                 foreignSchemas,
                 observationProposal({
@@ -2383,7 +2161,7 @@ namespace uf::operator_runtime
         expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
-                prepared.plugin,
+                prepared.project.registration,
                 runScope(),
                 foreignSchemas,
                 observationProposal({
@@ -2403,7 +2181,7 @@ namespace uf::operator_runtime
         auto const scope = runScope();
         auto first = prepared.store.publishProjectObservation(
             prepared.lease,
-            prepared.plugin,
+            prepared.project.registration,
             scope,
             schemas,
             observationProposal({
@@ -2430,7 +2208,7 @@ namespace uf::operator_runtime
         auto const scope = runScope();
         auto first = prepared.store.publishProjectObservation(
             prepared.lease,
-            prepared.plugin,
+            prepared.project.registration,
             scope,
             schemas,
             observationProposal({
@@ -2450,68 +2228,6 @@ namespace uf::operator_runtime
         );
     }
 
-    TEST_CASE("fault matrix stale instance expires without emitting input")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = test_support::prepareStore(temporary.path());
-        auto schemas   = prepared.project.observedInstanceIdentitySchemas;
-        auto const scope = runScope();
-        auto first = prepared.store.publishProjectObservation(
-            prepared.lease,
-            prepared.plugin,
-            scope,
-            schemas,
-            observationProposal({
-                observedInstanceProposal("first", "overlay.first"),
-            })
-        );
-        REQUIRE(first.has_value());
-        auto const id = first->observedInstances()[0].observedInstanceId.value();
-        auto second = prepared.store.publishProjectObservation(
-            prepared.lease,
-            prepared.plugin,
-            scope,
-            schemas,
-            observationProposal({
-                observedInstanceProposal("second", "overlay.second"),
-            })
-        );
-        REQUIRE(second.has_value());
-        auto host = test_support::deliveringHost(prepared);
-        auto const operation = test_support::createReadyOperation(
-            prepared,
-            "request-stale-instance",
-            prepared.project.toolName("command-1")
-        );
-        auto const stale = prepared.store.resolveObservedInstance(
-            prepared.lease,
-            scope,
-            *second,
-            id
-        );
-        if (stale.has_value())
-        {
-            auto const reserved = prepared.store.reserveDispatch(
-                operation.operationId,
-                operation.revision,
-                prepared.lease,
-                host->generation(),
-                AuthorityDecisionId{"authority-stale-instance"},
-                std::nullopt
-            );
-            REQUIRE(reserved.has_value());
-            static_cast<void>(host->deliverReport(reserved->authority));
-        }
-        CHECK_MESSAGE(
-            host->clicks() == 0U,
-            "an expired observed instance must emit no input"
-        );
-        expectProjectObservationError(
-            stale,
-            ProjectObservationErrorCode::ObservedInstanceStale
-        );
-    }
-
     TEST_CASE("scope mismatch precedes stale observed instance membership")
     {
         auto temporary = TemporaryDirectory{};
@@ -2520,7 +2236,7 @@ namespace uf::operator_runtime
         auto const scope = runScope();
         auto first = prepared.store.publishProjectObservation(
             prepared.lease,
-            prepared.plugin,
+            prepared.project.registration,
             scope,
             schemas,
             observationProposal({
@@ -2531,7 +2247,7 @@ namespace uf::operator_runtime
         auto const id = first->observedInstances()[0].observedInstanceId.value();
         auto second = prepared.store.publishProjectObservation(
             prepared.lease,
-            prepared.plugin,
+            prepared.project.registration,
             scope,
             schemas,
             observationProposal({
@@ -2559,7 +2275,7 @@ namespace uf::operator_runtime
             auto schemas  = prepared.project.observedInstanceIdentitySchemas;
             auto first = prepared.store.publishProjectObservation(
                 prepared.lease,
-                prepared.plugin,
+                prepared.project.registration,
                 runScope(),
                 schemas,
                 observationProposal({
@@ -2569,7 +2285,7 @@ namespace uf::operator_runtime
             REQUIRE(first.has_value());
             return std::tuple{
                 prepared.project,
-                prepared.plugin,
+                prepared.generation,
                 prepared.manifest,
                 std::string{
                     first->observedInstances()[0].observedInstanceId.value()
@@ -2613,7 +2329,7 @@ namespace uf::operator_runtime
         auto schemas = project.observedInstanceIdentitySchemas;
         auto afterReopen = reopened.publishProjectObservation(
             *lease,
-            plugin,
+            project.registration,
             runScope(),
             schemas,
             observationProposal({
@@ -2636,7 +2352,7 @@ namespace uf::operator_runtime
     TEST_CASE("observed instance authority isolates exact registrations")
     {
         auto temporary     = TemporaryDirectory{};
-        auto variantSource = k_pluginSource;
+        auto variantSource = k_reducerSource;
         variantSource += "\n-- exact registration variant\n";
         auto const observeRegistration = [](
             std::filesystem::path const& path,
@@ -2647,7 +2363,7 @@ namespace uf::operator_runtime
             auto schemas  = prepared.project.observedInstanceIdentitySchemas;
             auto observation = prepared.store.publishProjectObservation(
                 prepared.lease,
-                prepared.plugin,
+                prepared.project.registration,
                 runScope(),
                 schemas,
                 observationProposal({
@@ -2671,7 +2387,7 @@ namespace uf::operator_runtime
             firstDatabasePath
         ] = observeRegistration(
             temporary.path() / "registration-a",
-            k_pluginSource
+            k_reducerSource
         );
         auto const [
             secondPluginId,
@@ -2833,7 +2549,7 @@ namespace uf::operator_runtime
         auto schemas = prepared.project.observedInstanceIdentitySchemas;
         auto first = prepared.store.publishProjectObservation(
             prepared.lease,
-            prepared.plugin,
+            prepared.project.registration,
             scope,
             schemas,
             observationProposal({
@@ -2845,7 +2561,7 @@ namespace uf::operator_runtime
 
         REQUIRE(prepared.store.provisionProjectInstance(
             prepared.project.registration,
-            prepared.plugin,
+            prepared.generation,
             ProjectInstanceBaseline{
                 .projectInstanceKey  = "instance-2",
                 .eventId             = "baseline-2",
@@ -2887,7 +2603,7 @@ namespace uf::operator_runtime
         REQUIRE(projectLease.has_value());
         auto otherProject = prepared.store.publishProjectObservation(
             *projectLease,
-            prepared.plugin,
+            prepared.project.registration,
             scope,
             schemas,
             observationProposal({
@@ -2911,9 +2627,9 @@ namespace uf::operator_runtime
             ProjectObservationErrorCode::ObservedInstanceScopeMismatch
         );
 
-        auto const foreignSource = test_support::pluginSource("fixture.foreign");
+        auto const foreignSource = test_support::reducerSource("fixture.foreign");
         auto foreignProject = makeProject("fixture.foreign", foreignSource);
-        auto foreignPlugin  = loadPlugin(foreignProject, foreignSource);
+        auto foreignPlugin  = loadGeneration(foreignProject, foreignSource);
         auto foreignManifest = test_support::sessionManifest(
             foreignProject.registration,
             prepared.runtimeArtifactRootHash,
@@ -2967,7 +2683,7 @@ namespace uf::operator_runtime
         auto foreignSchemas = foreignProject.observedInstanceIdentitySchemas;
         auto foreignObservation = prepared.store.publishProjectObservation(
             *foreignLease,
-            foreignPlugin,
+            foreignProject.registration,
             scope,
             foreignSchemas,
             observationProposal({
@@ -2992,410 +2708,6 @@ namespace uf::operator_runtime
         );
     }
 
-    // The refusals below drive createSnapshot themselves instead of going
-    // through prepareStore's own snapshot REQUIRE: the case under test is the
-    // mint refusing, so a fixture that demands the first mint succeed cannot
-    // host it. The world is assembled up to the pinned lease and nothing more.
-    struct PinnedSourceStore final
-    {
-        OperatorCoordinator          store;
-        ProjectPluginHandle          plugin;
-        test_support::ProjectFixture project;
-        ControlLease                 lease;
-        conformance::ObservationHost observation;
-    };
-
-    [[nodiscard]]
-    auto pinSourceStore(
-        std::filesystem::path const& path,
-        std::string pluginId,
-        std::string_view source,
-        std::string_view observationSchema = test_support::k_projectObservationSchema
-    ) -> PinnedSourceStore
-    {
-        auto const release = test_support::runtimeRelease(path / "session-handoff");
-        auto storeResult = OperatorCoordinator::open(path / "production");
-        REQUIRE(storeResult.has_value());
-        auto store = *std::move(storeResult);
-        auto installed = store.installRuntimeArtifact(
-            RuntimeArtifactInstallRequest{
-                .handoffRoot                 = release.handoffRoot,
-                .expectedReleaseManifestHash = release.releaseManifestHash,
-                .expectedInstalledGeneration = 0U,
-            }
-        );
-        REQUIRE(installed.has_value());
-        auto const project = makeProject(
-            std::move(pluginId),
-            source,
-            observationSchema
-        );
-        auto const manifest = sessionManifest(
-            project.registration,
-            installed->rootHash(),
-            hashOf("agent"),
-            test_support::policyArtifactBytes()
-        );
-        auto const plugin = loadPlugin(project, source);
-        REQUIRE(store.registerProject(project.registration).has_value());
-        REQUIRE(store.provisionProjectInstance(
-            project.registration,
-            plugin,
-            ProjectInstanceBaseline{
-                .projectInstanceKey  = "instance-1",
-                .eventId             = "baseline-1",
-                .sessionManifestHash = manifest.hash(),
-                .entry = journalEntry(
-                    project,
-                    project.registration.baselineEventType(),
-                    "{\"kind\":\"baseline\"}"
-                ),
-            }
-        ).has_value());
-        auto const worldScope = ObservedInstanceWorldScope::run(
-            "target-1",
-            1
-        );
-        REQUIRE(worldScope.has_value());
-        REQUIRE(store.pinSession(
-            SessionPin{
-                .sessionId                 = "session-1",
-                .authenticatedControllerId = "controller-1",
-                .idempotencyNamespace      = "controller-1",
-                .projectRegistrationHash   = project.registration.hash(),
-                .controllerCapabilities    = {std::string{conformance::k_operateCapability}},
-                .controlledTargetId        = "target-1",
-                .projectInstanceKey        = "instance-1",
-                .mode                      = SessionMode::Write,
-                .kind                      = ControllerKind::Script,
-                .worldScope                = *worldScope,
-            },
-            manifest,
-            std::nullopt
-        ).has_value());
-        auto controller = store.bindController("session-1");
-        REQUIRE(controller.has_value());
-        auto lease = store.acquireLease(*controller);
-        REQUIRE(lease.has_value());
-        auto observation = conformance::activateObservationHost(
-            *std::move(installed),
-            test_support::umbraflowProbeFrame(),
-            FrameId{211}
-        );
-        auto const reading = conformance::observeOnce(observation);
-        conformance::requireResolvedSurface(reading, test_support::k_fixtureUiAction.surface);
-        return PinnedSourceStore{
-            .store       = std::move(store),
-            .plugin      = std::move(plugin),
-            .project     = std::move(project),
-            .lease       = *lease,
-            .observation = std::move(observation),
-        };
-    }
-
-    TEST_CASE("a derive envelope missing a required member is MalformedProposal, not a termination")
-    {
-        auto temporary = TemporaryDirectory{};
-        // The registration pins a permissive observation schema, so the derive
-        // output below is stamped -- a member the proposal contract requires is
-        // absent from a document that schema accepted. Only the proposal
-        // reader's defensive member check can refuse it; a contract check
-        // there would abort this test's process instead of returning.
-        auto const permissiveObservationSchema = std::string_view{
-            R"json({
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "$id": "https://umbraflow.dev/schema/project/observation",
-            "type": "object"
-        })json"
-        };
-        auto const malformedDerive = std::string{
-            "{ schema = \"umbraflow-project-observation-proposal/v1\","
-            " project_tool_preconditions = {}, observed_instance_proposals = {} }"
-        };
-        auto const source = test_support::pluginSource(
-            "fixture.malformed",
-            test_support::k_fixtureUiActionIntent,
-            malformedDerive
-        );
-        auto pinned = pinSourceStore(
-            temporary.path(),
-            "fixture.malformed",
-            source,
-            permissiveObservationSchema
-        );
-        auto const refused = pinned.store.createSnapshot(
-            pinned.lease,
-            pinned.plugin,
-            pinned.project.toolCatalogSchemaOwner,
-            pinned.project.observedInstanceIdentitySchemas,
-            conformance::observeOnce(pinned.observation)
-        );
-        REQUIRE_FALSE(refused.has_value());
-        CHECK(
-            projectObservationErrorCode(refused.error())
-            == ProjectObservationErrorCode::MalformedProposal
-        );
-        // The refusal names the missing member, and the case reached this line
-        // at all -- the refusal was a Result rather than an abort.
-        CHECK(refused.error().message().contains("canonical_opaque_payload"));
-    }
-
-    TEST_CASE("production mint is stable across an identical re-observation")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        auto const firstId = prepared.snapshot.observation.payload()
-            .observedInstances()[0].observedInstanceId.value();
-        CHECK(firstId.starts_with("oi1_"));
-
-        // The identical world through the identical derive: the mint answers
-        // with the same instance id because the canonical authority -- not a
-        // fresh random draw -- is what the id is minted from. Without the
-        // dedup a second observation would mint a second id and this fails.
-        auto const again = prepared.store.createSnapshot(
-            prepared.lease,
-            prepared.plugin,
-            prepared.project.toolCatalogSchemaOwner,
-            prepared.project.observedInstanceIdentitySchemas,
-            conformance::observeOnce(prepared.observation)
-        );
-        REQUIRE(again.has_value());
-        REQUIRE(again->observation.payload().observedInstances().size() == 1U);
-        CHECK(
-            again->observation.payload().observedInstances()[0]
-                .observedInstanceId.value()
-            == firstId
-        );
-    }
-
-    TEST_CASE("production mint refuses a collision between two proposals")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto const shared = std::string{test_support::k_fixtureIdentitySchemaId};
-        auto const source = test_support::pluginSource(
-            "fixture.collision",
-            test_support::k_fixtureUiActionIntent,
-            "{ schema = \"umbraflow-project-observation-proposal/v1\","
-            " canonical_opaque_payload = {}, project_tool_preconditions = {},"
-            " observed_instance_proposals = {"
-            " { local_ref = \"first\", kind = \"fixture.control\","
-            " identity_schema_id = \"" + shared + "\","
-            " semantic_identity_basis = { native_id = \"same\", surface_epoch = 1 },"
-            " opaque_project_payload = {} },"
-            " { local_ref = \"second\", kind = \"fixture.control\","
-            " identity_schema_id = \"" + shared + "\","
-            " semantic_identity_basis = { native_id = \"same\", surface_epoch = 1 },"
-            " opaque_project_payload = {} } } }"
-        );
-        auto pinned = pinSourceStore(temporary.path(), "fixture.collision", source);
-        auto const refused = pinned.store.createSnapshot(
-            pinned.lease,
-            pinned.plugin,
-            pinned.project.toolCatalogSchemaOwner,
-            pinned.project.observedInstanceIdentitySchemas,
-            conformance::observeOnce(pinned.observation)
-        );
-        expectProjectObservationError(
-            refused,
-            ProjectObservationErrorCode::ObservedInstanceCollision
-        );
-    }
-
-    TEST_CASE("production mint refuses an identity schema outside the registration closure")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto const source = test_support::pluginSource(
-            "fixture.outside",
-            test_support::k_fixtureUiActionIntent,
-            "{ schema = \"umbraflow-project-observation-proposal/v1\","
-            " canonical_opaque_payload = {}, project_tool_preconditions = {},"
-            " observed_instance_proposals = {"
-            " { local_ref = \"outside\", kind = \"fixture.control\","
-            " identity_schema_id = \"https://other.example/identity/v1\","
-            " semantic_identity_basis = { native_id = \"outside\", surface_epoch = 1 },"
-            " opaque_project_payload = {} } } }"
-        );
-        auto pinned = pinSourceStore(temporary.path(), "fixture.outside", source);
-        auto const refused = pinned.store.createSnapshot(
-            pinned.lease,
-            pinned.plugin,
-            pinned.project.toolCatalogSchemaOwner,
-            pinned.project.observedInstanceIdentitySchemas,
-            conformance::observeOnce(pinned.observation)
-        );
-        expectProjectObservationError(
-            refused,
-            ProjectObservationErrorCode::ObservedInstanceIdentitySchemaNotRegistered
-        );
-    }
-
-    TEST_CASE("production mint refuses a proposal whose parents cycle")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto const shared = std::string{test_support::k_fixtureIdentitySchemaId};
-        auto const source = test_support::pluginSource(
-            "fixture.cycle",
-            test_support::k_fixtureUiActionIntent,
-            "{ schema = \"umbraflow-project-observation-proposal/v1\","
-            " canonical_opaque_payload = {}, project_tool_preconditions = {},"
-            " observed_instance_proposals = {"
-            " { local_ref = \"first\", parent_local_ref = \"second\","
-            " kind = \"fixture.control\", identity_schema_id = \"" + shared + "\","
-            " semantic_identity_basis = { native_id = \"first\", surface_epoch = 1 },"
-            " opaque_project_payload = {} },"
-            " { local_ref = \"second\", parent_local_ref = \"first\","
-            " kind = \"fixture.control\", identity_schema_id = \"" + shared + "\","
-            " semantic_identity_basis = { native_id = \"second\", surface_epoch = 1 },"
-            " opaque_project_payload = {} } } }"
-        );
-        auto pinned = pinSourceStore(temporary.path(), "fixture.cycle", source);
-        auto const refused = pinned.store.createSnapshot(
-            pinned.lease,
-            pinned.plugin,
-            pinned.project.toolCatalogSchemaOwner,
-            pinned.project.observedInstanceIdentitySchemas,
-            conformance::observeOnce(pinned.observation)
-        );
-        expectProjectObservationError(
-            refused,
-            ProjectObservationErrorCode::ObservedInstanceParentCycle
-        );
-    }
-
-    TEST_CASE("a step naming an instance minted in another scope is refused at the gate")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        auto const firstId = prepared.snapshot.observation.payload()
-            .observedInstances()[0].observedInstanceId.value();
-
-        // A second registration whose next_step names the FIRST session's
-        // minted id back to the gate: the only way the production path can
-        // name a foreign id at all is a plugin that spells it, so the plugin
-        // differs from the fixture's and the registration with it.
-        auto const crossScopeStep = std::string{
-            "{ action = { action_id = \"fixture.press\","
-            " canonical_parameters = { value = 1 },"
-            " surface_id = \"fixture.surface\", ui_target_id = \""
-            + firstId
-            + "\" }, binding_variant_constraints = {}, delivery_class = \"delivery_safe\","
-              " expected_ui_postconditions = {}, required_ui_preconditions = {},"
-              " step_key = \"fixture.step\","
-              " timeout_policy = { maximum_elapsed_ms = 5000, on_timeout = \"reobserve\" } }"
-        };
-        auto const foreignSource = test_support::pluginSource(
-            "fixture.other",
-            crossScopeStep
-        );
-        auto foreignProject = makeProject("fixture.other", foreignSource);
-        auto foreignPlugin  = loadPlugin(foreignProject, foreignSource);
-        auto foreignManifest = test_support::sessionManifest(
-            foreignProject.registration,
-            prepared.runtimeArtifactRootHash,
-            hashOf("agent"),
-            test_support::policyArtifactBytes()
-        );
-        REQUIRE(prepared.store.registerProject(
-            foreignProject.registration
-        ).has_value());
-        REQUIRE(prepared.store.provisionProjectInstance(
-            foreignProject.registration,
-            foreignPlugin,
-            ProjectInstanceBaseline{
-                .projectInstanceKey  = "instance-other",
-                .eventId             = "baseline-other",
-                .sessionManifestHash = foreignManifest.hash(),
-                .entry = journalEntry(
-                    foreignProject,
-                    foreignProject.registration.baselineEventType(),
-                    "{\"kind\":\"baseline\"}"
-                ),
-            }
-        ).has_value());
-        auto const otherScope = ObservedInstanceWorldScope::run(
-            "target-other",
-            1
-        );
-        REQUIRE(otherScope.has_value());
-        REQUIRE(prepared.store.pinSession(
-            SessionPin{
-                .sessionId                 = "session-other",
-                .authenticatedControllerId = "controller-other",
-                .idempotencyNamespace      = "controller-other",
-                .projectRegistrationHash   = foreignProject.registration.hash(),
-                .controllerCapabilities    = {
-                    std::string{conformance::k_operateCapability},
-                },
-                .controlledTargetId = "target-other",
-                .projectInstanceKey = "instance-other",
-                .mode               = SessionMode::Write,
-                .kind               = ControllerKind::Script,
-                .worldScope         = *otherScope,
-            },
-            foreignManifest,
-            std::nullopt
-        ).has_value());
-        auto otherController = prepared.store.bindController("session-other");
-        REQUIRE(otherController.has_value());
-        auto otherLease = prepared.store.acquireLease(*otherController);
-        REQUIRE(otherLease.has_value());
-
-        // The other session mints its own world first, so the refusal below
-        // is about the id the step names and not about the observation.
-        auto otherSnapshot = prepared.store.createSnapshot(
-            *otherLease,
-            foreignPlugin,
-            foreignProject.toolCatalogSchemaOwner,
-            foreignProject.observedInstanceIdentitySchemas,
-            conformance::observeOnce(prepared.observation)
-        );
-        REQUIRE(otherSnapshot.has_value());
-
-        auto const runtimeModel = prepared.observation.host->runtimeModelBinding(
-            prepared.observation.generation
-        );
-        REQUIRE(runtimeModel.has_value());
-        auto foreignAuthority = conformance::planAuthority(
-            foreignProject.registration,
-            foreignManifest,
-            *runtimeModel,
-            "operator",
-            test_support::policyArtifactBytes(),
-            test_support::k_fixtureUiAction
-        );
-        REQUIRE(foreignAuthority.has_value());
-
-        // A mutating tool: the scope check runs in mintNextStep, which a
-        // read-only Operation never reaches because it carries no frozen plan.
-        auto operation = prepared.store.submitCommand(
-            *otherController,
-            command(*otherSnapshot, "request-other", "controller-other"),
-            toolInvocation(foreignProject, foreignProject.toolName("command-1"))
-        );
-        REQUIRE(operation.has_value());
-        auto frozen = prepared.store.freezePlan(
-            operation->operation.operationId,
-            operation->operation.revision,
-            *otherLease,
-            foreignPlugin,
-            foreignProject.toolCatalogSchemaOwner,
-            *foreignAuthority
-        );
-        REQUIRE(frozen.has_value());
-        auto const refused = prepared.store.mintNextStep(
-            frozen->operation.operationId,
-            frozen->operation.revision,
-            *otherLease,
-            foreignPlugin,
-            foreignProject.toolCatalogSchemaOwner,
-            *foreignAuthority
-        );
-        expectProjectObservationError(
-            refused,
-            ProjectObservationErrorCode::ObservedInstanceScopeMismatch
-        );
-    }
-
     // A read-only Operation never reaches mintNextStep, so the submitCommand
     // gate is the ONLY place its canonical arguments' observed instance ids
     // can be resolved. An id minted in another scope of the same registration
@@ -3406,7 +2718,7 @@ namespace uf::operator_runtime
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(
             temporary.path(),
-            k_pluginSource,
+            k_reducerSource,
             test_support::k_toolPreconditionSchemaWithInstanceIds
         );
         auto const otherId = foreignObservedInstanceId(prepared);
@@ -3448,7 +2760,7 @@ namespace uf::operator_runtime
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(
             temporary.path(),
-            k_pluginSource,
+            k_reducerSource,
             test_support::k_toolPreconditionSchemaWithInstanceIds
         );
         auto const otherId = foreignObservedInstanceId(prepared);
@@ -3478,128 +2790,10 @@ namespace uf::operator_runtime
         );
     }
 
-    // The deliver check compares the reserved step's resolved model target --
-    // the binding's local_ref -- with the target the Host's own runtime
-    // resolved for the receipt it mints. A plugin that observes two instances
-    // under one session drives both halves of the check on identical binding
-    // tables: the step naming the instance at the model's declared target
-    // delivers, and the step naming the other instance is refused at
-    // TaskHost::deliver, before the linearization point consumes anything.
-    TEST_CASE("deliver refuses a receipt whose model target the reserved step's instance lacks")
-    {
-        auto const twoInstanceDerive = std::string{
-            "{ schema = \"umbraflow-project-observation-proposal/v1\","
-            " canonical_opaque_payload = {}, project_tool_preconditions = {},"
-            " observed_instance_proposals = {"
-            " { local_ref = \"fixture.target\", kind = \"fixture.control\","
-            " identity_schema_id = \""
-            + std::string{test_support::k_fixtureIdentitySchemaId}
-            + "\", semantic_identity_basis = { native_id = \"fixture.target\","
-            " surface_epoch = 1 }, opaque_project_payload = {} },"
-            " { local_ref = \"target.B\", kind = \"fixture.control\","
-            " identity_schema_id = \""
-            + std::string{test_support::k_fixtureIdentitySchemaId}
-            + "\", semantic_identity_basis = { native_id = \"target.B\","
-            " surface_epoch = 1 }, opaque_project_payload = {} } } }"
-        };
-        auto const secondInstanceIntent = std::string{
-            "{\n        action = { action_id = \"fixture.press\","
-            " canonical_parameters = { value = 1 },"
-            " surface_id = \"fixture.surface\","
-            " ui_target_id = input.project_observation.observed_instances[2]"
-            ".observed_instance_id },"
-            "\n        binding_variant_constraints = {}, delivery_class = \"delivery_safe\","
-            "\n        expected_ui_postconditions = {}, required_ui_preconditions = {},"
-            "\n        step_key = \"fixture.step\","
-            "\n        timeout_policy = { maximum_elapsed_ms = 5000, on_timeout = \"reobserve\" },"
-            "\n    }"
-        };
-
-        // Positive control: the step names the instance whose local_ref is the
-        // model's declared target, so the reserved authority carries that
-        // target and the receipt the Host mints names it too.
-        {
-            auto temporary = TemporaryDirectory{};
-            auto prepared = prepareStore(
-                temporary.path(),
-                test_support::pluginSource(
-                    "fixture.alpha",
-                    test_support::k_fixtureUiActionIntent,
-                    twoInstanceDerive
-                )
-            );
-            auto host = deliveringHost(prepared);
-            auto const operation = createReadyOperation(
-                prepared,
-                "request-target-a",
-                prepared.project.toolName("command-1")
-            );
-            auto const reserved = prepared.store.reserveDispatch(
-                operation.operationId,
-                operation.revision,
-                prepared.lease,
-                host->generation(),
-                AuthorityDecisionId{"authority-target-a"},
-                std::nullopt
-            );
-            REQUIRE(reserved.has_value());
-            CHECK(reserved->authority.uiTarget == "fixture.target");
-            REQUIRE(host->deliver(reserved->authority).has_value());
-        }
-
-        // The negative half: the step names the other instance, whose
-        // local_ref no receipt this model can mint carries. reserveDispatch
-        // resolves it all the way to a reservation, and the deliver check --
-        // not the ledger -- is the refusal that stops the Host from acting.
-        {
-            auto temporary = TemporaryDirectory{};
-            auto prepared = prepareStore(
-                temporary.path(),
-                test_support::pluginSource(
-                    "fixture.alpha",
-                    secondInstanceIntent,
-                    twoInstanceDerive
-                )
-            );
-            auto host = deliveringHost(prepared);
-            auto const operation = createReadyOperation(
-                prepared,
-                "request-target-b",
-                prepared.project.toolName("command-1")
-            );
-            auto const reserved = prepared.store.reserveDispatch(
-                operation.operationId,
-                operation.revision,
-                prepared.lease,
-                host->generation(),
-                AuthorityDecisionId{"authority-target-b"},
-                std::nullopt
-            );
-            REQUIRE(reserved.has_value());
-            CHECK(reserved->authority.uiTarget == "target.B");
-            auto const refused = host->deliver(reserved->authority);
-            REQUIRE_FALSE(refused.has_value());
-            CHECK_MESSAGE(
-                automationErrorKind(refused.error()) == AutomationErrorKind::InvalidResource,
-                "a wrong model target is a Host-authority disagreement, not a "
-                "stale or foreign observation"
-            );
-            CHECK_MESSAGE(
-                refused.error().message().contains(
-                    "delivery receipt names a model target the reserved step's "
-                    "observed instance does not"
-                ),
-                "the refusal must name the target disagreement"
-            );
-        }
-    }
-
     TEST_CASE("the pinned world scope is immutable and survives a restart")
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
-        auto const firstId = prepared.snapshot.observation.payload()
-            .observedInstances()[0].observedInstanceId.value();
 
         // The scope is part of the immutable session tuple: the same session,
         // the same manifest, a different generation on the same target is
@@ -3634,12 +2828,12 @@ namespace uf::operator_runtime
             )
         );
 
-        // Across a restart the columns the createSnapshot path restores still
-        // name the same scope: a session pinned on the same target with the
-        // same generation mints the same canonical id, because the mint reads
-        // the scope back out of the stored tuple and not out of the caller.
-        // The first coordinator holds the runtime directory exclusively, so
-        // it is released before the reopened door can take it.
+        // Across a restart the stored columns still name the same scope: a
+        // session pinned on the same target with the same generation is
+        // admitted and composes, because the pin reads the scope back out of
+        // the stored tuple and not out of the caller. The first coordinator
+        // holds the runtime directory exclusively, so it is released before
+        // the reopened door can take it.
         {
             auto releasedStore = std::move(prepared.store);
         }
@@ -3674,18 +2868,12 @@ namespace uf::operator_runtime
         REQUIRE(afterRestartLease.has_value());
         auto afterRestartSnapshot = restarted->createSnapshot(
             *afterRestartLease,
-            prepared.plugin,
+            prepared.project.registration,
             prepared.project.toolCatalogSchemaOwner,
             prepared.project.observedInstanceIdentitySchemas,
             conformance::observeOnce(prepared.observation)
         );
-        REQUIRE(afterRestartSnapshot.has_value());
-        REQUIRE(afterRestartSnapshot->observation.payload().observedInstances().size() == 1U);
-        CHECK(
-            afterRestartSnapshot->observation.payload().observedInstances()[0]
-                .observedInstanceId.value()
-            == firstId
-        );
+        CHECK(afterRestartSnapshot.has_value());
     }
 
     TEST_CASE("PRAGMA user_version is no part of Operator schema identity")
@@ -6067,21 +5255,6 @@ namespace uf::operator_runtime
         auto const production   = temporary.path() / "production";
         auto const databasePath = production / "operator-runtime.sqlite";
         auto prepared = prepareStore(temporary.path());
-        auto const operation = createReadyOperation(
-            prepared,
-            "request-format-2-recovery",
-            prepared.project.toolName("command-1")
-        );
-        auto host = deliveringHost(prepared);
-        auto const reserved = prepared.store.reserveDispatch(
-            operation.operationId,
-            operation.revision,
-            prepared.lease,
-            host->generation(),
-            AuthorityDecisionId{"authority-format-2-recovery"},
-            std::nullopt
-        );
-        REQUIRE(reserved.has_value());
         { auto releasedStore = std::move(prepared.store); }
 
         auto sourceIdentity = std::string{};
@@ -6098,28 +5271,10 @@ namespace uf::operator_runtime
         CHECK(sourceIdentity
               == "sha256:b26344e031574f95020ed445e16e9de396f76442d98c5a3b758a91d84660237e");
 
-        auto const legacyExecutionRows = test_support::OperatorDatabaseProbe{
-            databasePath
-        }.readRows(
-            "SELECT o.state, o.revision, coalesce(d.delivery_outcome, ''), "
-            "coalesce(d.delivery_reason, ''), "
-            "(SELECT count(*) FROM ledger_events e WHERE e.subject_id=o.operation_id) "
-            "FROM operations o JOIN dispatches d ON d.operation_id=o.operation_id "
-            "WHERE o.operation_id='" + operation.operationId + "'"
-        );
-        REQUIRE(legacyExecutionRows.size() == 1U);
-
         {
             auto migrated = OperatorCoordinator::open(production);
             REQUIRE_MESSAGE(migrated.has_value(), migrated.error().message());
         }
-        CHECK(test_support::OperatorDatabaseProbe{databasePath}.readRows(
-            "SELECT o.state, o.revision, coalesce(d.delivery_outcome, ''), "
-            "coalesce(d.delivery_reason, ''), "
-            "(SELECT count(*) FROM ledger_events e WHERE e.subject_id=o.operation_id) "
-            "FROM operations o JOIN dispatches d ON d.operation_id=o.operation_id "
-            "WHERE o.operation_id='" + operation.operationId + "'"
-        ) == legacyExecutionRows);
         auto auditRows = test_support::OperatorDatabaseProbe{databasePath}.readRows(
             "SELECT registration_hash, plugin_id, plugin_identity_hash, "
             "canonical_manifest, registration_format, plugin_identity_kind "
@@ -6351,21 +5506,33 @@ namespace uf::operator_runtime
         );
     }
 
-    // The pair for the local_ref the binding gained this batch, resolving a
-    // step's ui_target_id to the model target the instance was observed at.
-    // Pre-local_ref bindings cannot have their model target reconstructed --
-    // the ruling forbids inferring one -- so the backfill is the empty-string
-    // sentinel: the NOT NULL column accepts it and reserveDispatch refuses it,
-    // leaving the instance undeliverable rather than dispatching under a
-    // model target it never had. Every other byte of the row survives. The
-    // refusal is exercised below through the reserved production dispatch
-    // path, not only asserted on the stored row.
+    // The pair for the local_ref the binding gained, which resolves an
+    // observed instance to the model target it was observed at. Pre-local_ref
+    // bindings cannot have their model target reconstructed -- the ruling
+    // forbids inferring one -- so the backfill is the empty-string sentinel:
+    // the NOT NULL column accepts it, and an instance carrying it is
+    // undeliverable rather than delivered under a model target it never had.
+    // Every other byte of the row survives.
     TEST_CASE("the binding local_ref column migrates pre-target bindings fail-closed")
     {
         auto temporary          = TemporaryDirectory{};
         auto const production   = temporary.path() / "production";
         auto const databasePath = production / "operator-runtime.sqlite";
         auto prepared = prepareStore(temporary.path());
+
+        // One published observation, so the table this pair rebuilds has a row
+        // in it. Publication is the only mint of a persistent binding, so a
+        // case about that table has to reach it.
+        REQUIRE(prepared.store.publishProjectObservation(
+            prepared.lease,
+            prepared.project.registration,
+            runScope("target-1", 1U),
+            prepared.project.observedInstanceIdentitySchemas,
+            observationProposal({
+                observedInstanceProposal("migrated", "migrated-native"),
+            })
+        ).has_value());
+
         // The fixture store holds the runtime directory exclusively, so the
         // reopened door below can only take it after this one is released.
         { auto releasedStore = std::move(prepared.store); }
@@ -6427,11 +5594,9 @@ namespace uf::operator_runtime
                 {sourceIdentity, targetIdentity},
             }
         );
-        // The walk above minted a step against the migrated binding, so the
-        // row still exists; the backfill wrote the empty sentinel, which is
-        // the only local_ref a pre-target binding can honestly carry. The
-        // successful step mint itself proves the rest of the row survived:
-        // mintNextStep resolves the very binding reserveDispatch refused.
+        // The row survives the rebuild and the backfill wrote the empty
+        // sentinel, which is the only local_ref a pre-target binding can
+        // honestly carry.
         auto const migratedBindings = target.readRows(
             "SELECT observed_instance_id, local_ref FROM observed_instance_bindings "
             "ORDER BY observed_instance_id"
@@ -6861,76 +6026,6 @@ namespace uf::operator_runtime
         );
     }
 
-    TEST_CASE("session pin refuses an in-flight dispatch until it is answered")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        auto const operation = createReadyOperation(
-            prepared,
-            "upgrade-dispatch",
-            prepared.project.toolName("command-1")
-        );
-        auto host           = deliveringHost(prepared);
-        auto const dispatch = prepared.store.reserveDispatch(
-            operation.operationId,
-            operation.revision,
-            prepared.lease,
-            host->generation(),
-            AuthorityDecisionId{"upgrade-dispatch-authority"},
-            std::nullopt
-        );
-        REQUIRE(dispatch.has_value());
-
-        auto const candidate = releaseWithModel(
-            temporary.path() / "dispatch-quiescence-upgrade",
-            "dispatch quiescence candidate runtime model\n"
-        );
-        REQUIRE(prepared.store.installRuntimeArtifact(
-            installRequest(candidate, prepared.installedGeneration)
-        ).has_value());
-        auto const manifest = sessionManifest(
-            prepared.project.registration,
-            candidate.artifactRootHash,
-            hashOf("agent"),
-            test_support::policyArtifactBytes()
-        );
-        auto const pin = additionalSessionPin(
-            prepared,
-            "session-after-dispatch"
-        );
-        auto const refused = prepared.store.pinSession(
-            pin,
-            manifest,
-            std::nullopt
-        );
-        REQUIRE_FALSE_MESSAGE(
-            refused.has_value(),
-            "an unanswered dispatch must refuse a new session pin"
-        );
-        CHECK_MESSAGE(
-            refused.error().message().contains("dispatch in flight"),
-            "the refusal must come from the dispatch quiescence guard"
-        );
-        CHECK(refused.error().message().contains(operation.operationId));
-
-        auto const answered = prepared.store.recordDeliveryOutcome(
-            prepared.lease,
-            dispatch->operationRevision,
-            host->deliverReport(dispatch->authority)
-        );
-        REQUIRE(answered.has_value());
-        auto const accepted = prepared.store.pinSession(
-            pin,
-            manifest,
-            std::nullopt
-        );
-        CHECK_MESSAGE(
-            accepted.has_value(),
-            "the same pin must succeed after its dispatch is answered: ",
-            accepted.error().message()
-        );
-    }
-
     TEST_CASE("a compatible release upgrade freezes once and pins only the new session")
     {
         auto temporary     = TemporaryDirectory{};
@@ -7234,7 +6329,7 @@ namespace uf::operator_runtime
 
     TEST_CASE("Journal schema owner prevents caller-attached payload and provenance labels")
     {
-        auto const project    = makeProject("fixture.alpha", k_pluginSource);
+        auto const project    = makeProject("fixture.alpha", k_reducerSource);
         auto const provenance = std::string{k_fixtureProvenance};
         auto const accepted = project.journalSchemaOwner.validate(
             "fixture.progress",
@@ -7381,9 +6476,9 @@ namespace uf::operator_runtime
         );
         REQUIRE(installed.has_value());
 
-        auto const project = makeProject("fixture.alpha", k_pluginSource);
+        auto const project = makeProject("fixture.alpha", k_reducerSource);
         auto const foreign = makeProject("fixture.foreign", "foreign-plugin-bytes");
-        auto const plugin = loadPlugin(project, k_pluginSource);
+        auto const plugin = loadGeneration(project, k_reducerSource);
         auto const manifest = sessionManifest(
             project.registration,
             installed->rootHash(),
@@ -7742,7 +6837,7 @@ namespace uf::operator_runtime
         CHECK(takeover->resolvedDispatches == 0U);
         CHECK_FALSE(prepared.store.createSnapshot(
             prepared.lease,
-            prepared.plugin,
+            prepared.project.registration,
             prepared.project.toolCatalogSchemaOwner,
             prepared.project.observedInstanceIdentitySchemas,
             conformance::observeOnce(prepared.observation)
@@ -7810,205 +6905,6 @@ namespace uf::operator_runtime
         ).has_value());
     }
 
-    TEST_CASE("dispatch freezes once and every Host outcome enters reconciliation")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        auto const proposed = proposedOperation(
-            prepared,
-            "request-1",
-            prepared.project.toolName("command-1")
-        );
-        auto const frozen   = freezePlanFor(prepared, proposed);
-        REQUIRE(frozen.has_value());
-        auto const step = mintStepFor(prepared, frozen->operation);
-        REQUIRE(step.has_value());
-        auto const operation = step->operation;
-
-        auto host           = deliveringHost(prepared);
-        auto const dispatch = prepared.store.reserveDispatch(
-            operation.operationId,
-            operation.revision,
-            prepared.lease,
-            host->generation(),
-            AuthorityDecisionId{"authority-1"},
-            std::nullopt
-        );
-        REQUIRE(dispatch.has_value());
-        CHECK(dispatch->authority.frozenPlanHash == frozen->planHash);
-
-        // The one pending step is now linked to that dispatch, so a second
-        // reservation finds none and refuses rather than freezing again.
-        CHECK_FALSE(prepared.store.reserveDispatch(
-            operation.operationId,
-            dispatch->operationRevision,
-            prepared.lease,
-            host->generation(),
-            AuthorityDecisionId{"authority-2"},
-            std::nullopt
-        ).has_value());
-
-        // The engine exposes one Result for the whole delivery path, not a
-        // phase result. A refused sink therefore stays transport_unknown: the
-        // same result also covers a failure after the click reached the target,
-        // so narrowing an engine error to not_delivered would claim too much.
-        host->refuseClicks();
-        auto const unknown = host->deliverReport(dispatch->authority);
-        REQUIRE(unknown.outcome() == task::DeliveryOutcome::TransportUnknown);
-        auto const reconciles = prepared.store.recordDeliveryOutcome(
-            prepared.lease,
-            dispatch->operationRevision,
-            unknown
-        );
-        REQUIRE(reconciles.has_value());
-        CHECK(reconciles->state == OperationState::Reconciling);
-        CHECK(reconciles->planFrozen);
-        auto const recovery = prepared.store.recoveredUncertainDispatches();
-        REQUIRE(recovery.has_value());
-        REQUIRE(recovery->size() == 1U);
-        CHECK(recovery->front().operationId == operation.operationId);
-        CHECK(recovery->front().deliveryReason == unknown.reason());
-        CHECK_FALSE(prepared.store.recordDeliveryOutcome(
-            prepared.lease,
-            reconciles->revision,
-            host->deliverReport(dispatch->authority)
-        ).has_value());
-
-        auto const foreign = makeProject(
-            "fixture.foreign",
-            "foreign-plugin-bytes"
-        );
-        CHECK_FALSE(prepared.store.commitReconciliation(
-            prepared.plugin,
-            ReconciliationCommit{
-                .operationId = operation.operationId,
-                .expectedOperationRevision = reconciles->revision,
-                .expectedProjectStateRevision = 0U,
-                .outcome                      = reconciliationOutcome(prepared, operation.operationId, "{\"disposition\":\"confirmed\"}"),
-                .journalEvents = {
-                    JournalAppend{
-                        .eventId = "event-foreign",
-                        .entry = journalEntry(
-                            foreign,
-                            "fixture.confirmed",
-                            "{\"value\":1}"
-                        ),
-                    },
-                },
-            }
-        ).has_value());
-
-        auto const committed = prepared.store.commitReconciliation(
-            prepared.plugin,
-            ReconciliationCommit{
-                .operationId = operation.operationId,
-                .expectedOperationRevision = reconciles->revision,
-                .expectedProjectStateRevision = 0U,
-                .outcome                      = reconciliationOutcome(prepared, operation.operationId, "{\"disposition\":\"confirmed\"}"),
-                .journalEvents = {
-                    JournalAppend{
-                        .eventId = "event-1",
-                        .entry = journalEntry(
-                            prepared.project,
-                            "fixture.confirmed",
-                            "{\"value\":1}"
-                        ),
-                    },
-                },
-            }
-        );
-        REQUIRE(committed.has_value());
-        CHECK(committed->state == OperationState::Confirmed);
-    }
-
-    TEST_CASE("release resolves its unanswered dispatch before dropping authority")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        auto const operation = createReadyOperation(
-            prepared,
-            "request-1",
-            prepared.project.toolName("command-1")
-        );
-        auto host           = deliveringHost(prepared);
-        auto const reserved = prepared.store.reserveDispatch(
-            operation.operationId,
-            operation.revision,
-            prepared.lease,
-            host->generation(),
-            AuthorityDecisionId{"authority-1"},
-            std::nullopt
-        );
-        REQUIRE(reserved.has_value());
-
-        auto const releasedFence = prepared.store.releaseLease(prepared.lease);
-        REQUIRE(releasedFence.has_value());
-        CHECK(*releasedFence > prepared.lease.fencingToken);
-
-        auto const recovery = prepared.store.recoveredUncertainDispatches();
-        REQUIRE(recovery.has_value());
-        REQUIRE(recovery->size() == 1U);
-        CHECK(recovery->front().operationId == operation.operationId);
-        CHECK(
-            recovery->front().deliveryReason
-            == "lease release found this dispatch unanswered"
-        );
-
-        // The Host may still return after release, but the in-transaction
-        // resolution already consumed the outcome CAS and the lease is gone.
-        CHECK_FALSE(prepared.store.recordDeliveryOutcome(
-            prepared.lease,
-            reserved->operationRevision,
-            host->deliverReport(reserved->authority)
-        ).has_value());
-    }
-
-    TEST_CASE("fault matrix timeout never records an unreturned action as success")
-    {
-        auto temporary   = TemporaryDirectory{};
-        auto operationId = std::string{};
-        {
-            auto prepared = prepareStore(temporary.path());
-            auto const operation = createReadyOperation(
-                prepared,
-                "request-timeout",
-                prepared.project.toolName("command-1")
-            );
-            operationId = operation.operationId;
-            auto host   = deliveringHost(prepared);
-            auto const reserved = prepared.store.reserveDispatch(
-                operation.operationId,
-                operation.revision,
-                prepared.lease,
-                host->generation(),
-                AuthorityDecisionId{"authority-timeout"},
-                std::nullopt
-            );
-            REQUIRE(reserved.has_value());
-
-            // The Host action lands, but the injected transport fault
-            // suppresses its return before the coordinator can record it.
-            auto const suppressed = host->deliverReport(reserved->authority);
-            REQUIRE(suppressed.outcome() == task::DeliveryOutcome::Delivered);
-            REQUIRE(host->clicks() == 1U);
-            REQUIRE(prepared.store.releaseLease(prepared.lease).has_value());
-        }
-
-        auto const rows = test_support::OperatorDatabaseProbe{
-            temporary.path() / "production" / "operator-runtime.sqlite"
-        }.readRows(
-            "SELECT delivery_outcome, coalesce(delivery_reason, '') FROM dispatches "
-            "WHERE operation_id='" + operationId + "'"
-        );
-        REQUIRE(rows.size() == 1U);
-        REQUIRE(rows.front().size() == 2U);
-        CHECK_MESSAGE(
-            rows.front()[0] == "transport_unknown",
-            "an unreturned Host action must be delivery-uncertain, never success"
-        );
-        CHECK(rows.front()[1] == "lease release found this dispatch unanswered");
-    }
-
     TEST_CASE("fault matrix tamper names the altered signed evidence file")
     {
         auto temporary = TemporaryDirectory{};
@@ -8049,142 +6945,6 @@ namespace uf::operator_runtime
             verified.error().message().contains(evidencePath.string()),
             "signed-evidence refusal must name the altered file"
         );
-    }
-
-    TEST_CASE("fault matrix crash recovers a sent unrecorded mutation")
-    {
-        auto const root = std::filesystem::current_path();
-        if (!std::filesystem::is_regular_file(root / "fault-root"))
-        {
-            return;
-        }
-        auto const verify = std::filesystem::is_regular_file(
-            root / "verify-mode"
-        );
-
-        if (!verify)
-        {
-            auto prepared = prepareStore(root);
-            auto const operation = createReadyOperation(
-                prepared,
-                "request-crash",
-                prepared.project.toolName("command-1")
-            );
-            auto host           = deliveringHost(prepared);
-            auto const reserved = prepared.store.reserveDispatch(
-                operation.operationId,
-                operation.revision,
-                prepared.lease,
-                host->generation(),
-                AuthorityDecisionId{"authority-crash"},
-                std::nullopt
-            );
-            REQUIRE(reserved.has_value());
-            auto const unrecorded = host->deliverReport(reserved->authority);
-            REQUIRE(unrecorded.outcome() == task::DeliveryOutcome::Delivered);
-            REQUIRE(host->clicks() == 1U);
-            test_support::writeFile(root / "operation-id", operation.operationId);
-            test_support::writeFile(root / "action-sent", "ready\n");
-
-            for (;;)
-            {
-                std::this_thread::sleep_for(std::chrono::hours{1});
-            }
-        }
-
-        auto operationStream = std::ifstream{root / "operation-id", std::ios::binary};
-        REQUIRE(operationStream.good());
-        auto const operationId = std::string{
-            std::istreambuf_iterator<char>{operationStream},
-            std::istreambuf_iterator<char>{}
-        };
-        {
-            auto reopened = OperatorCoordinator::open(root / "production");
-            REQUIRE(reopened.has_value());
-            auto const recovered = reopened->recoveredUncertainDispatches();
-            REQUIRE(recovered.has_value());
-            REQUIRE_MESSAGE(
-                recovered->size() == 1U,
-                "a sent but unrecorded mutation must restart explicitly uncertain"
-            );
-            CHECK(recovered->front().operationId == operationId);
-            CHECK_MESSAGE(
-                recovered->front().deliveryReason
-                    == "operator restart found this dispatch unanswered",
-                "a sent but unrecorded mutation must restart explicitly uncertain"
-            );
-        }
-
-        auto const audit = test_support::OperatorDatabaseProbe{
-            root / "production" / "operator-runtime.sqlite"
-        }.readRows(
-            "SELECT kind, coalesce(detail, '') FROM ledger_events "
-            "WHERE subject_id='" + operationId + "' ORDER BY sequence"
-        );
-        CHECK(std::ranges::contains(
-            audit,
-            std::vector<std::string>{
-                "delivery_outcome_recorded",
-                "transport_unknown",
-            }
-        ));
-        CHECK_MESSAGE(
-            std::ranges::contains(
-                audit,
-                std::vector<std::string>{
-                    "operation_state_changed",
-                    "reconciling",
-                }
-            ),
-            "restart recovery must preserve the audit sequence through reconciliation"
-        );
-        CHECK_FALSE(std::ranges::contains(
-            audit,
-            std::vector<std::string>{
-                "delivery_outcome_recorded",
-                "delivered",
-            }
-        ));
-    }
-
-    TEST_CASE("a restart preserves the uncertain dispatch release resolved")
-    {
-        auto temporary = TemporaryDirectory{};
-        {
-            auto prepared = prepareStore(temporary.path());
-            auto const operation = createReadyOperation(
-                prepared,
-                "request-1",
-                prepared.project.toolName("command-1")
-            );
-            auto host           = deliveringHost(prepared);
-            auto const reserved = prepared.store.reserveDispatch(
-                operation.operationId,
-                operation.revision,
-                prepared.lease,
-                host->generation(),
-                AuthorityDecisionId{"authority-1"},
-                std::nullopt
-            );
-            REQUIRE(reserved.has_value());
-            REQUIRE(host->deliver(reserved->authority).has_value());
-            REQUIRE(prepared.store.releaseLease(prepared.lease).has_value());
-        }
-
-        // Dropping the coordinator closes the database. The reopen sweep sees
-        // the release-resolved row as answered and leaves its reconciliation
-        // work intact.
-        {
-            auto restarted = OperatorCoordinator::open(
-                temporary.path() / "production"
-            );
-            REQUIRE(restarted.has_value());
-        }
-
-        // Second restart: the sweep is idempotent because the dispatch it
-        // resolved is no longer unanswered.
-        auto again = OperatorCoordinator::open(temporary.path() / "production");
-        REQUIRE(again.has_value());
     }
 
     TEST_CASE("ledger retention makes both subscription resync directions reachable")
@@ -8243,7 +7003,7 @@ namespace uf::operator_runtime
             auto prepared = prepareStore(temporary.path());
             return std::tuple{
                 prepared.project,
-                prepared.plugin,
+                prepared.generation,
                 prepared.manifest,
                 prepared.runtimeArtifactRootHash,
                 prepared.installedGeneration,
@@ -8304,7 +7064,7 @@ namespace uf::operator_runtime
             );
             auto snapshot = reopened->createSnapshot(
                 *lease,
-                plugin,
+                project.registration,
                 project.toolCatalogSchemaOwner,
                 project.observedInstanceIdentitySchemas,
                 conformance::observeOnce(observationHost)
@@ -8330,127 +7090,6 @@ namespace uf::operator_runtime
         CHECK(rows.front()[2] == "0");
     }
 
-    TEST_CASE(
-        "restart recovery reports actionable revisions after automatic session resume"
-    )
-    {
-        auto temporary = TemporaryDirectory{};
-        auto const production   = temporary.path() / "production";
-        auto const databasePath = production / "operator-runtime.sqlite";
-        auto retained = [&temporary]()
-        {
-            auto prepared = prepareStore(temporary.path());
-            auto const operation = createReadyOperation(
-                prepared,
-                "request-restart-action",
-                prepared.project.toolName("command-1")
-            );
-            auto host = deliveringHost(prepared);
-            auto const reserved = prepared.store.reserveDispatch(
-                operation.operationId,
-                operation.revision,
-                prepared.lease,
-                host->generation(),
-                AuthorityDecisionId{"authority-restart-action"},
-                std::nullopt
-            );
-            REQUIRE(reserved.has_value());
-            REQUIRE(host->deliver(reserved->authority).has_value());
-            REQUIRE(prepared.store.releaseLease(prepared.lease).has_value());
-            return std::tuple{
-                prepared.project,
-                prepared.plugin,
-                prepared.runtimeArtifactRootHash,
-                operation.operationId,
-            };
-        }();
-        auto const& [project, plugin, artifactRootHash, operationId] = retained;
-        auto const beforeRead = ledgerBytes(databasePath);
-
-        auto const artifact = OperatorCoordinator::readActiveInstalledRuntimeArtifact(
-            production,
-            artifactRootHash
-        );
-        REQUIRE(artifact.has_value());
-        CHECK_MESSAGE(
-            ledgerBytes(databasePath) == beforeRead,
-            "read-only active selection must not consume restart recovery"
-        );
-
-        auto restarted = OperatorCoordinator::open(production);
-        REQUIRE(restarted.has_value());
-        auto recovered = restarted->recoveredUncertainDispatches();
-        REQUIRE(recovered.has_value());
-        REQUIRE(recovered->size() == 1U);
-        CHECK(recovered->front().operationId == operationId);
-        CHECK(recovered->front().expectedOperationRevision > 1U);
-        CHECK(recovered->front().expectedProjectStateRevision == 0U);
-
-        auto const manifest = sessionManifest(
-            project.registration,
-            artifactRootHash,
-            hashOf("agent"),
-            test_support::policyArtifactBytes()
-        );
-        auto const budgeted = restarted->resumeSession(
-            SessionResume{
-                .authenticatedControllerId = "controller-1",
-                .controlledTargetId        = "target-1",
-                .mode                      = SessionMode::Write,
-                .kind                      = ControllerKind::Agent,
-            },
-            manifest
-        );
-        REQUIRE_FALSE(budgeted.has_value());
-        CHECK_MESSAGE(
-            budgeted.error().message().contains(
-                "cannot resume across a process epoch"
-            ),
-            "budgeted Agent sessions must not resume across a process epoch"
-        );
-
-        auto controller = restarted->resumeSession(
-            SessionResume{
-                .authenticatedControllerId = "controller-1",
-                .controlledTargetId        = "target-1",
-                .mode                      = SessionMode::Write,
-                .kind                      = ControllerKind::Script,
-            },
-            manifest
-        );
-        REQUIRE(controller.has_value());
-        CHECK(controller->sessionId() == "session-1");
-        auto lease = restarted->acquireLease(*controller);
-        REQUIRE(lease.has_value());
-
-        auto stillRecovered = restarted->recoveredUncertainDispatches();
-        REQUIRE(stillRecovered.has_value());
-        REQUIRE(stillRecovered->size() == 1U);
-        CHECK(stillRecovered->front().operationId == operationId);
-        auto const committed = restarted->commitReconciliation(
-            plugin,
-            ReconciliationCommit{
-                .operationId = operationId,
-                .expectedOperationRevision =
-                    stillRecovered->front().expectedOperationRevision,
-                .expectedProjectStateRevision =
-                    stillRecovered->front().expectedProjectStateRevision,
-                .outcome = test_support::reconcileOutcome(
-                    project,
-                    plugin,
-                    operationId,
-                    "{\"disposition\":\"ambiguous\"}"
-                ),
-                .journalEvents = {},
-            }
-        );
-        REQUIRE(committed.has_value());
-        CHECK(committed->state == OperationState::Ambiguous);
-        auto const completed = restarted->recoveredUncertainDispatches();
-        REQUIRE(completed.has_value());
-        CHECK(completed->empty());
-    }
-
     TEST_CASE("ambiguous prior sessions refuse automatic resume and remain readable")
     {
         auto temporary = TemporaryDirectory{};
@@ -8466,7 +7105,7 @@ namespace uf::operator_runtime
             );
             REQUIRE(prepared.store.provisionProjectInstance(
                 prepared.project.registration,
-                prepared.plugin,
+                prepared.generation,
                 ProjectInstanceBaseline{
                     .projectInstanceKey  = "instance-ambiguous",
                     .eventId             = "baseline-ambiguous",
@@ -8530,463 +7169,6 @@ namespace uf::operator_runtime
         ).has_value());
     }
 
-    // Only not_delivered proves an external effect absent, and only a Host that
-    // consumed its authorization and never called into the delivery path can
-    // produce it. transport_unknown deliberately under-claims, so it must not
-    // unlock the same conclusion.
-    TEST_CASE("only a proven absence unlocks Rejected")
-    {
-        auto const rejectedFor = [](task::DeliveryOutcome outcome)
-        {
-            auto temporary = TemporaryDirectory{};
-            auto prepared  = prepareStore(temporary.path());
-            auto const operation = createReadyOperation(
-                prepared,
-                "request-1",
-                prepared.project.toolName("command-1")
-            );
-            auto host           = deliveringHost(prepared);
-            auto const dispatch = prepared.store.reserveDispatch(
-                operation.operationId,
-                operation.revision,
-                prepared.lease,
-                host->generation(),
-                AuthorityDecisionId{"authority-1"},
-                std::nullopt
-            );
-            REQUIRE(dispatch.has_value());
-            if (outcome == task::DeliveryOutcome::TransportUnknown)
-            {
-                host->refuseClicks();
-            }
-            auto const report = outcome == task::DeliveryOutcome::NotDelivered
-                ? host->deliverIntoAnotherCycle(dispatch->authority)
-                : host->deliverReport(dispatch->authority);
-            REQUIRE(report.outcome() == outcome);
-
-            // The ledger's Tool-call reading of the same report, asked here
-            // because this is the one place a Host produces both outcomes.
-            // Proving absence is what unlocks a Rejected disposition below, so
-            // the two readings have to agree about which outcome proves it --
-            // and exactly one does.
-            auto const completion = toolCallCompletionFor(report);
-            REQUIRE(completion.has_value());
-            CHECK(
-                (completion->kind() == ToolCallCompletionKind::ProvenAbsent)
-                == (outcome == task::DeliveryOutcome::NotDelivered)
-            );
-
-            auto const reconciling = prepared.store.recordDeliveryOutcome(
-                prepared.lease,
-                dispatch->operationRevision,
-                report
-            );
-            REQUIRE(reconciling.has_value());
-            CHECK(host->clicks() == 0U);
-
-            return prepared.store.commitReconciliation(
-                prepared.plugin,
-                ReconciliationCommit{
-                    .operationId                  = reconciling->operationId,
-                    .expectedOperationRevision    = reconciling->revision,
-                    .expectedProjectStateRevision = 0U,
-                    .outcome                      = reconciliationOutcome(
-                        prepared,
-                        reconciling->operationId,
-                        "{\"disposition\":\"rejected\"}"
-                    ),
-                    .journalEvents                = {},
-                }
-            ).has_value();
-        };
-
-        CHECK(rejectedFor(task::DeliveryOutcome::NotDelivered));
-        CHECK_FALSE(rejectedFor(task::DeliveryOutcome::TransportUnknown));
-    }
-
-    namespace
-    {
-        // Drives one command all the way to Reconciling, which is the only
-        // state commitReconciliation accepts.
-        [[nodiscard]]
-        auto reconcilingOperation(
-            PreparedStore& prepared,
-            std::string_view clientRequestId,
-            std::string_view toolName
-        ) -> StoredOperation
-        {
-            // Every dispatch needs its own authority decision id, so it is
-            // derived from the request rather than fixed.
-            auto const authority = AuthorityDecisionId{
-                std::format("authority-{}", clientRequestId),
-            };
-            auto const operation = createReadyOperation(
-                prepared,
-                std::string{clientRequestId},
-                toolName
-            );
-            auto host           = deliveringHost(prepared);
-            auto const dispatch = prepared.store.reserveDispatch(
-                operation.operationId,
-                operation.revision,
-                prepared.lease,
-                host->generation(),
-                authority,
-                std::nullopt
-            );
-            REQUIRE(dispatch.has_value());
-            auto reconciles = prepared.store.recordDeliveryOutcome(
-                prepared.lease,
-                dispatch->operationRevision,
-                host->deliverReport(dispatch->authority)
-            );
-            REQUIRE(reconciles.has_value());
-            REQUIRE(reconciles->state == OperationState::Reconciling);
-            return *reconciles;
-        }
-
-        [[nodiscard]]
-        auto confirmedCommit(
-            PreparedStore const& prepared,
-            StoredOperation const& operation,
-            uint64 expectedProjectStateRevision,
-            std::string eventId,
-            std::string payload
-        ) -> ReconciliationCommit
-        {
-            return ReconciliationCommit{
-                .operationId                  = operation.operationId,
-                .expectedOperationRevision    = operation.revision,
-                .expectedProjectStateRevision = expectedProjectStateRevision,
-                .outcome                      = reconciliationOutcome(prepared, operation.operationId, "{\"disposition\":\"confirmed\"}"),
-                .journalEvents = {
-                    JournalAppend{
-                        .eventId = std::move(eventId),
-                        .entry   = journalEntry(
-                            prepared.project,
-                            "fixture.confirmed",
-                            std::move(payload)
-                        ),
-                    },
-                },
-            };
-        }
-    }
-
-    TEST_CASE("the reducer is handed exactly the Journal prefix that is appended")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-
-        // The baseline reduces its own creation event against no prior state.
-        CHECK(
-            prepared.project.documentInputLog->lastReduceInput()
-            == "{\"journal_events\":[{\"namespaced_event_type\":\"fixture.baseline\","
-               "\"opaque_project_payload\":{\"kind\":\"baseline\"},"
-               "\"provenance\":" + std::string{k_fixtureProvenance} + "}],"
-               "\"prior_project_state\":null}"
-        );
-
-        auto const operation = reconcilingOperation(
-            prepared,
-            "request-1",
-            prepared.project.toolName("command-1")
-        );
-        REQUIRE(prepared.store.commitReconciliation(
-            prepared.plugin,
-            confirmedCommit(prepared, operation, 0U, "event-1", "{\"value\":1}")
-        ).has_value());
-
-        // The envelope is a function of the appended events and the stored
-        // state, so a caller that wanted the reducer to see something else has
-        // nowhere to put it: the payload below is the one the Journal recorded.
-        CHECK(
-            prepared.project.documentInputLog->lastReduceInput()
-            == "{\"journal_events\":[{\"namespaced_event_type\":\"fixture.confirmed\","
-               "\"opaque_project_payload\":{\"value\":1},"
-               "\"provenance\":" + std::string{k_fixtureProvenance} + "}],"
-               "\"prior_project_state\":{\"revision\":0}}"
-        );
-    }
-
-    TEST_CASE("the snapshot project-state conjunction rejects a stale composition")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        auto const operation = reconcilingOperation(
-            prepared,
-            "request-1",
-            prepared.project.toolName("command-1")
-        );
-        REQUIRE(prepared.store.commitReconciliation(
-            prepared.plugin,
-            confirmedCommit(
-                prepared,
-                operation,
-                0U,
-                "event-1",
-                "{\"value\":1}"
-            )
-        ).has_value());
-
-        CHECK_FALSE_MESSAGE(
-            prepared.store.submitCommand(
-                prepared.controller,
-                command(prepared.snapshot, "request-stale-snapshot", "controller-1"),
-                toolInvocation(prepared.project, prepared.project.toolName("command-2"))
-            ).has_value(),
-            "both project-state clauses together must reject the stale snapshot"
-        );
-    }
-
-    TEST_CASE("a reconciliation that fails after opening its transaction writes nothing")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path(), rejectedReducePluginSource());
-        auto const operation = reconcilingOperation(
-            prepared,
-            "request-1",
-            prepared.project.toolName("command-1")
-        );
-
-        // The reducer runs inside the transaction, so this fails after the
-        // Journal insert would already have been prepared.
-        CHECK_FALSE(prepared.store.commitReconciliation(
-            prepared.plugin,
-            confirmedCommit(prepared, operation, 0U, "event-1", "{\"value\":1}")
-        ).has_value());
-
-        // Both halves of "nothing was written" are observable: the same
-        // event_id is still free, and the ProjectState is still at revision 0.
-        auto const retried = prepared.store.commitReconciliation(
-            prepared.plugin,
-            confirmedCommit(prepared, operation, 0U, "event-1", "{\"value\":1}")
-        );
-        CHECK_FALSE(retried.has_value());
-        CHECK(prepared.store.commitReconciliation(
-            prepared.plugin,
-            confirmedCommit(prepared, operation, 1U, "event-2", "{\"value\":1}")
-        ).has_value() == false);
-    }
-
-    TEST_CASE("Rejected and Ambiguous reconciliations cannot append Journal events")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        auto const operation = reconcilingOperation(
-            prepared,
-            "request-1",
-            prepared.project.toolName("command-1")
-        );
-
-        for (auto const document : {
-                 std::string_view{"{\"disposition\":\"rejected\"}"},
-                 std::string_view{"{\"disposition\":\"ambiguous\"}"},
-             })
-        {
-            auto commit    = confirmedCommit(prepared, operation, 0U, "event-1", "{\"value\":1}");
-            commit.outcome = reconciliationOutcome(
-                prepared,
-                operation.operationId,
-                std::string{document}
-            );
-            CHECK_FALSE(
-                prepared.store.commitReconciliation(prepared.plugin, commit).has_value()
-            );
-        }
-
-        // Diverged is the mirror image: it may not claim a correction without
-        // recording one.
-        auto empty          = confirmedCommit(prepared, operation, 0U, "event-1", "{\"value\":1}");
-        empty.outcome = reconciliationOutcome(
-            prepared,
-            operation.operationId,
-            "{\"disposition\":\"diverged\"}"
-        );
-        empty.journalEvents = {};
-        CHECK_FALSE(prepared.store.commitReconciliation(prepared.plugin, empty).has_value());
-    }
-
-    TEST_CASE("ApprovalToken is operation-bound and single-use")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-
-        // The awaiting state is reached by freezing a plan whose derived risk
-        // requires an approval; no caller can ask for it.
-        auto const proposed = proposedOperation(
-            prepared,
-            "request-1",
-            prepared.project.toolName("approval-plan")
-        );
-        auto const frozen   = freezePlanFor(prepared, proposed);
-        REQUIRE(frozen.has_value());
-        REQUIRE_FALSE(frozen->requiredApprovals.empty());
-        auto const step = mintStepFor(prepared, frozen->operation);
-        REQUIRE(step.has_value());
-
-        auto const request = ApprovalRequest{
-            .operationId       = proposed.operationId,
-            .lease             = prepared.lease,
-            .approverPrincipal = "human-1",
-            .approverCapability  = frozen->requiredApprovals.front(),
-            .expiresAtUnixMillis = 4'000'000'000'000U,
-        };
-        auto const approval = prepared.store.issueApproval(
-            request,
-            AuthorityDecisionId{"human-decision-1"}
-        );
-        REQUIRE(approval.has_value());
-        auto host           = deliveringHost(prepared);
-        auto const dispatch = prepared.store.reserveDispatch(
-            proposed.operationId,
-            step->operation.revision,
-            prepared.lease,
-            host->generation(),
-            AuthorityDecisionId{"dispatch-authority-1"},
-            *approval
-        );
-        REQUIRE(dispatch.has_value());
-
-        // Recording an outcome moves no fence, which is what leaves the token
-        // below differing from a usable one in the step it names and nothing
-        // else. Resolving through a takeover would refuse it for its fence
-        // instead, and the case would pass with the step binding removed.
-        auto reconciles = prepared.store.recordDeliveryOutcome(
-            prepared.lease,
-            dispatch->operationRevision,
-            host->deliverIntoAnotherCycle(dispatch->authority)
-        );
-        REQUIRE(reconciles.has_value());
-        CHECK(host->clicks() == 0U);
-        auto const waiting = mintStepFor(prepared, *reconciles);
-        REQUIRE(waiting.has_value());
-        REQUIRE(waiting->operation.state == OperationState::AwaitingApproval);
-
-        // Single use: the token the first dispatch consumed does not answer for
-        // the step that replaced it.
-        CHECK_FALSE(prepared.store.reserveDispatch(
-            proposed.operationId,
-            waiting->operation.revision,
-            prepared.lease,
-            host->generation(),
-            AuthorityDecisionId{"dispatch-authority-2"},
-            *approval
-        ).has_value());
-    }
-    TEST_CASE("plan authority is bound to its registration")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-
-        // A second registration of the same shape, complete enough to build an
-        // authority of its own. Authority is per registration, so this one must
-        // not be able to freeze the first one's Operation.
-        auto const foreignSource   = test_support::pluginSource("fixture.foreign");
-        auto const foreign         = makeProject("fixture.foreign", foreignSource);
-
-        // The same RuntimeArtifact the prepared session pinned. An authority can
-        // no longer be built against an artifact root nobody installed, so the
-        // only difference left between the two authorities is the registration
-        // -- which is the one this case is about.
-        auto const foreignManifest = sessionManifest(
-            foreign.registration,
-            prepared.runtimeArtifactRootHash,
-            hashOf("agent"),
-            test_support::policyArtifactBytes()
-        );
-        auto runtimeModel = prepared.observation.host->runtimeModelBinding(
-            prepared.observation.generation
-        );
-        REQUIRE(runtimeModel.has_value());
-        auto foreignAuthority = conformance::planAuthority(
-            foreign.registration,
-            foreignManifest,
-            *runtimeModel,
-            "operator",
-            test_support::policyArtifactBytes(),
-            test_support::k_fixtureUiAction
-        );
-        REQUIRE(foreignAuthority.has_value());
-
-        auto const proposed = proposedOperation(
-            prepared,
-            "request-1",
-            prepared.project.toolName("command-1")
-        );
-        CHECK_FALSE(prepared.store.freezePlan(
-            proposed.operationId,
-            proposed.revision,
-            prepared.lease,
-            prepared.plugin,
-            prepared.project.toolCatalogSchemaOwner,
-            *foreignAuthority
-        ).has_value());
-        CHECK(freezePlanFor(prepared, proposed).has_value());
-    }
-
-    // A plan's surface_id and action_id reach no Host: the Receipt's intent is
-    // minted by the trusted chunk out of the model, and task::DispatchAuthority
-    // carries no UI identifier. Until the step check below existed they were
-    // decoration, and a plan could name UI that exists in no RuntimeModel and
-    // still be dispatched. ui_target_id is deliberately absent from the pair:
-    // since U2b it is the minted observed instance id, whose judge is the
-    // observation gate in mintNextStep and not the model vocabulary.
-    TEST_CASE("a step naming UI the installed RuntimeModel does not define is refused")
-    {
-        struct UndefinedUi final
-        {
-            std::string_view member{};
-            std::string_view spelled{};
-            std::string_view replacement{};
-        };
-        auto const undefined = std::array{
-            UndefinedUi{
-                "surface_id",
-                R"(surface_id = "fixture.surface")",
-                R"(surface_id = "fixture.absent")",
-            },
-            UndefinedUi{
-                "action_id",
-                R"(action_id = "fixture.press")",
-                R"(action_id = "fixture.absent")",
-            },
-        };
-        for (auto const& named : undefined)
-        {
-            CAPTURE(named.member);
-            auto temporary = TemporaryDirectory{};
-            auto const source = pluginNamingUndefinedUi(
-                named.spelled,
-                named.replacement
-            );
-            auto prepared  = prepareStore(temporary.path(), source);
-            auto authority = deploymentAuthority(
-                prepared,
-                prepared.runtimeArtifactRootHash
-            );
-            REQUIRE(authority.has_value());
-            CHECK_FALSE(mintStepUnder(prepared, *authority).has_value());
-        }
-    }
-
-    // The positive control the two refusals above are worthless without: the
-    // identical route, the identical authority, and the fixture's own plan,
-    // whose surface and action this project's model does define.
-    TEST_CASE("a step naming UI the installed RuntimeModel defines is minted")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        auto authority = deploymentAuthority(
-            prepared,
-            prepared.runtimeArtifactRootHash
-        );
-        REQUIRE(authority.has_value());
-
-        auto const step = mintStepUnder(prepared, *authority);
-        REQUIRE(step.has_value());
-        CHECK(step->kind == StepKind::UiAction);
-    }
 
     TEST_CASE("a plan authority answers only for the pinned RuntimeArtifact")
     {
@@ -9005,304 +7187,4 @@ namespace uf::operator_runtime
         );
     }
 
-    // What binding the authority at creation does not close: a manifest is not a
-    // session, and two manifests of one registration may pin two RuntimeArtifacts.
-    // The authority below is honestly built -- its manifest and its model agree --
-    // and still answers for a model this Operation's session row does not name,
-    // so only the ledger's own column can refuse it.
-    TEST_CASE("a plan authority for another installed artifact cannot mint a step")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-
-        // A second model differing only by one further scene, so its declared
-        // vocabulary still contains every identifier the plan names and the
-        // artifact root is the only thing left that can decide.
-        auto const second = conformance::observationRelease(
-            temporary.path() / "second",
-            conformance::ProjectRuntimeArtifact{
-                .model  = test_support::ambiguousRuntimeModel(),
-                .assets = test_support::umbraflowRuntimeAssets(),
-            }
-        );
-        auto installed = prepared.store.installRuntimeArtifact(
-            installRequest(second, 1U)
-        );
-        REQUIRE(installed.has_value());
-        auto const secondRootHash = installed->rootHash();
-        REQUIRE(secondRootHash != prepared.runtimeArtifactRootHash);
-
-        auto secondHost = conformance::activateObservationHost(
-            *std::move(installed),
-            test_support::umbraflowProbeFrame(),
-            FrameId{909}
-        );
-        auto secondModel = secondHost.host->runtimeModelBinding(
-            secondHost.generation
-        );
-        REQUIRE(secondModel.has_value());
-
-        auto authority = OperatorPlanAuthority::create(
-            prepared.project.registration,
-            sessionManifest(
-                prepared.project.registration,
-                secondRootHash,
-                hashOf("agent"),
-                test_support::policyArtifactBytes()
-            ),
-            *secondModel,
-            "operator",
-            test_support::policyArtifactBytes(),
-            deployment::readPlanProposal,
-            deployment::readStepIntent
-        );
-        REQUIRE(authority.has_value());
-        CHECK_FALSE(mintStepUnder(prepared, *authority).has_value());
-    }
-
-    TEST_CASE("the plugin cannot widen the workflow bound")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-
-        // The bound is this tool's own descriptor and not a number compiled in
-        // beside it, so the case reads the catalog rather than a constant: a
-        // catalog that raised the tool's ceiling would raise this expectation
-        // with it, which is what makes tool_catalog_hash the single authority.
-        auto const declared = prepared.project.toolCatalogSchemaOwner.describe(
-            prepared.project.toolName("oversized-plan")
-        );
-        REQUIRE(declared.has_value());
-
-        auto const proposed = proposedOperation(
-            prepared,
-            "request-1",
-            prepared.project.toolName("oversized-plan")
-        );
-        auto const frozen   = freezePlanFor(prepared, proposed);
-        REQUIRE(frozen.has_value());
-
-        // Every bound is a minimum against the descriptor, so widening is
-        // arithmetically impossible rather than policy-checked. The proposal
-        // asks for far more than the descriptor allows on the first two.
-        CHECK(frozen->limits.maximumSteps == declared->limits.maximumSteps);
-        CHECK(frozen->limits.maximumDispatches == declared->limits.maximumDispatches);
-        CHECK(frozen->limits.maximumObservations <= declared->limits.maximumObservations);
-        CHECK(frozen->limits.maximumWaits <= declared->limits.maximumWaits);
-        CHECK(frozen->limits.maximumElapsedMillis <= declared->limits.maximumElapsedMillis);
-    }
-
-    TEST_CASE("a step cannot be replayed at another index")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-
-        // The plugin answers next_step with the identical document every time,
-        // so the two steps differ in nothing except the position they were
-        // minted at.
-        auto const proposed = proposedOperation(
-            prepared,
-            "request-1",
-            prepared.project.toolName("command-1")
-        );
-        auto const frozen   = freezePlanFor(prepared, proposed);
-        REQUIRE(frozen.has_value());
-        auto const first = mintStepFor(prepared, frozen->operation);
-        REQUIRE(first.has_value());
-
-        auto host           = deliveringHost(prepared);
-        auto const dispatch = prepared.store.reserveDispatch(
-            proposed.operationId,
-            first->operation.revision,
-            prepared.lease,
-            host->generation(),
-            AuthorityDecisionId{"authority-1"},
-            std::nullopt
-        );
-        REQUIRE(dispatch.has_value());
-        auto const reconciling = prepared.store.recordDeliveryOutcome(
-            prepared.lease,
-            dispatch->operationRevision,
-            host->deliverReport(dispatch->authority)
-        );
-        REQUIRE(reconciling.has_value());
-
-        auto const second = mintStepFor(prepared, *reconciling);
-        REQUIRE(second.has_value());
-        CHECK(second->stepKey == first->stepKey);
-        CHECK(second->stepIndex == first->stepIndex + 1U);
-        CHECK(second->stepIntentHash != first->stepIntentHash);
-    }
-
-    TEST_CASE("only one step may await dispatch")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-
-        auto const proposed = proposedOperation(
-            prepared,
-            "request-1",
-            prepared.project.toolName("command-1")
-        );
-        auto const frozen   = freezePlanFor(prepared, proposed);
-        REQUIRE(frozen.has_value());
-        auto const first = mintStepFor(prepared, frozen->operation);
-        REQUIRE(first.has_value());
-
-        // The check lives in mintNextStep alone. A partial unique index saying
-        // the same thing would keep this green after the check was deleted.
-        CHECK_FALSE(mintStepFor(prepared, first->operation).has_value());
-    }
-
-    TEST_CASE("a plan freezes once")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-
-        auto const proposed = proposedOperation(
-            prepared,
-            "request-1",
-            prepared.project.toolName("command-1")
-        );
-        auto const frozen   = freezePlanFor(prepared, proposed);
-        REQUIRE(frozen.has_value());
-        CHECK_FALSE(freezePlanFor(prepared, frozen->operation).has_value());
-
-        // The stored plan is the first one: the dispatch still reports its
-        // hash, so a second freeze did not replace the row underneath it.
-        auto const step = mintStepFor(prepared, frozen->operation);
-        REQUIRE(step.has_value());
-        auto host           = deliveringHost(prepared);
-        auto const dispatch = prepared.store.reserveDispatch(
-            proposed.operationId,
-            step->operation.revision,
-            prepared.lease,
-            host->generation(),
-            AuthorityDecisionId{"authority-1"},
-            std::nullopt
-        );
-        REQUIRE(dispatch.has_value());
-        CHECK(dispatch->authority.frozenPlanHash == frozen->planHash);
-    }
-
-    TEST_CASE("read-only Operations get no plan")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-
-        auto const readOnly = proposedOperation(
-            prepared,
-            "request-1",
-            prepared.project.toolName("observe-1")
-        );
-        CHECK_FALSE(freezePlanFor(prepared, readOnly).has_value());
-    }
-
-    TEST_CASE("the effect envelope is order-independent")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-
-        auto const first = proposedOperation(
-            prepared,
-            "request-1",
-            prepared.project.toolName("command-1")
-        );
-        auto const one   = freezePlanFor(prepared, first);
-        REQUIRE(one.has_value());
-
-        // The mutation chain is per target, so the first Operation is retired
-        // before the second is opened. `reordered-effects` declares the same
-        // effect set in the opposite order and nothing else different.
-        REQUIRE(prepared.store.transitionOperation(
-            first.operationId,
-            one->operation.revision,
-            OperationSignal::Cancelled
-        ).has_value());
-
-        auto const second = proposedOperation(
-            prepared,
-            "request-2",
-            prepared.project.toolName("reordered-effects")
-        );
-        auto const other  = freezePlanFor(prepared, second);
-        REQUIRE(other.has_value());
-
-        CHECK(other->effectEnvelopeHash == one->effectEnvelopeHash);
-        CHECK(other->risk == one->risk);
-
-        // The plans themselves still differ: the command is part of the plan.
-        CHECK(other->planHash != one->planHash);
-    }
-
-    TEST_CASE("the dispatch records the frozen basis")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-
-        auto const proposed = proposedOperation(
-            prepared,
-            "request-1",
-            prepared.project.toolName("command-1")
-        );
-        auto const frozen   = freezePlanFor(prepared, proposed);
-        REQUIRE(frozen.has_value());
-        auto const step = mintStepFor(prepared, frozen->operation);
-        REQUIRE(step.has_value());
-
-        auto host           = deliveringHost(prepared);
-        auto const dispatch = prepared.store.reserveDispatch(
-            proposed.operationId,
-            step->operation.revision,
-            prepared.lease,
-            host->generation(),
-            AuthorityDecisionId{"authority-1"},
-            std::nullopt
-        );
-        REQUIRE(dispatch.has_value());
-
-        // None of the three was the caller's to say, and each is the value the
-        // ledger derived rather than any other hash it holds.
-        CHECK(dispatch->decisionBasisHash == frozen->decisionBasisHash);
-        CHECK(dispatch->authority.frozenPlanHash == frozen->planHash);
-        CHECK(dispatch->stepIntentHash == step->stepIntentHash);
-        CHECK(dispatch->decisionBasisHash != frozen->planHash);
-    }
-
-    TEST_CASE("the caller cannot choose approval")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-
-        auto const proposed = proposedOperation(
-            prepared,
-            "request-1",
-            prepared.project.toolName("approval-plan")
-        );
-        auto const frozen   = freezePlanFor(prepared, proposed);
-        REQUIRE(frozen.has_value());
-
-        // The derived risk decided the edge. OperationSignal carries no
-        // ReadyWithoutApproval, so no caller could have taken the other one.
-        CHECK(frozen->risk == Risk::High);
-        CHECK(
-            frozen->requiredApprovals
-            == std::vector<std::string>{
-                std::string{conformance::k_approveCapability},
-            }
-        );
-        CHECK(frozen->operation.state == OperationState::AwaitingApproval);
-
-        auto const step = mintStepFor(prepared, frozen->operation);
-        REQUIRE(step.has_value());
-        auto host = deliveringHost(prepared);
-        CHECK_FALSE(prepared.store.reserveDispatch(
-            proposed.operationId,
-            step->operation.revision,
-            prepared.lease,
-            host->generation(),
-            AuthorityDecisionId{"authority-1"},
-            std::nullopt
-        ).has_value());
-    }
 }

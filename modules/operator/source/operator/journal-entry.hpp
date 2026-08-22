@@ -57,7 +57,7 @@ namespace uf::operator_runtime
     // hash.
     //
     // There is deliberately no provenance counterpart. JR:`JournalProvenance`
-    // is fixed and framework-owned -- no member of ProjectRegistrationClaims
+    // is fixed and framework-owned -- no member of ProjectGenerationClaims
     // pins a provenance schema, because nothing about its shape is a project's
     // to decide -- so validate() enforces
     // schema/umbraflow-journal-v1.schema.json itself. A project supplies
@@ -86,7 +86,7 @@ namespace uf::operator_runtime
         // whatever an arbitrary validator chose to return.
         [[nodiscard]]
         static auto create(
-            VerifiedProjectRegistration const& registration,
+            ProjectIdentity const& registration,
             std::string_view exactJournalSchemaManifestBytes,
             JournalPayloadSchemaValidator validatePayload
         ) -> Result<ProjectJournalSchemaOwner>;

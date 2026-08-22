@@ -122,29 +122,44 @@ namespace uf::operator_runtime
         constexpr auto k_observationSchemaBytes = std::string_view{"observation-schema"};
         constexpr auto k_preconditionSchemaBytes = std::string_view{"precondition"};
 
-        // One closure, five exported entries, five bound Tools.
+        // The reducer closure: the whole of the pure program type's contract,
+        // which is `plugin_id` and one entry. The dispatcher never reaches it;
+        // it is here because a ProjectInstance is provisioned from a fold, and
+        // that fold now lives in its own closure and its own program type.
+        constexpr auto k_reducerSource = std::string_view{R"LUAU(
+return {
+    plugin_id = "dispatch.project",
+
+    reduce = function(_input)
+        return { revision = 0 }
+    end,
+}
+)LUAU"};
+
+        // The tool closure: five exported entries, six bound Tools.
         //
-        // The five names are the five a ProjectPlugin exports, because the
-        // ledger still provisions a ProjectInstance from a pure plugin and a
-        // closed-graph closure admits its declared entry set EXACTLY. So this
-        // closure is registered twice against one registration: once as the
-        // pure plugin the instance is provisioned from, and once as the scoped
-        // program the dispatcher runs. The scoped modules are required inside
-        // the handler bodies rather than at module scope, which is what lets
-        // the same bytes admit under both program types -- the pure resolver
-        // never sees a scoped name because the pure program never calls a
-        // handler.
+        // The entries are named for what they answer rather than for a
+        // position in a pipeline, because a bound entry has no position: the
+        // binding table is the only thing that says which Tool reaches which
+        // one, and two Tools may reach the same entry. `handle` proves exactly
+        // that -- the read-only and the mutating catalog names are bound to it
+        // together.
         //
-        // `derive` is the handler under test. It issues one child per name its
+        // The scoped modules are required inside the handler bodies rather
+        // than at module scope. Nothing forces that now that the two closures
+        // are separate types, but it keeps each entry's capability visible at
+        // the line that spends it.
+        //
+        // `handle` is the entry under test. It issues one child per name its
         // arguments list, in order, and answers with what each child was
         // recorded as, so its child sequence is a deterministic function of the
         // canonical arguments on its own durable row -- which is the whole of
         // what makes fresh-from-1 re-derivation safe.
-        constexpr auto k_projectSource = std::string_view{R"LUAU(
+        constexpr auto k_toolSource = std::string_view{R"LUAU(
 return {
     plugin_id = "dispatch.project",
 
-    derive = function(input)
+    handle = function(input)
         local tools = require("@umbraflow/tools")
         local states = {}
         for index = 1, #input.children do
@@ -160,33 +175,45 @@ return {
         return { states = states }
     end,
 
-    plan = function(input)
+    leaf = function(input)
         return { leaf = input.step }
     end,
 
-    next_step = function(input)
+    echo = function(input)
         return { echo = input }
     end,
 
-    reconcile = function(input)
+    deliver = function(input)
         return { delivered = input.step }
     end,
 
-    reduce = function(_input)
+    fold = function(_input)
         return { revision = 0 }
     end,
 }
 )LUAU"};
 
         [[nodiscard]]
-        auto moduleBlobs() -> std::vector<ProjectModuleBlob>
+        auto modulesOf(std::string_view source) -> std::vector<ProjectModuleBlob>
         {
             auto blobs = std::vector<ProjectModuleBlob>{};
             blobs.emplace_back(ProjectModuleBlob{
                 .name   = "main",
-                .source = std::string{k_projectSource},
+                .source = std::string{source},
             });
             return blobs;
+        }
+
+        [[nodiscard]]
+        auto reducerModules() -> std::vector<ProjectModuleBlob>
+        {
+            return modulesOf(k_reducerSource);
+        }
+
+        [[nodiscard]]
+        auto toolModules() -> std::vector<ProjectModuleBlob>
+        {
+            return modulesOf(k_toolSource);
         }
 
         [[nodiscard]]
@@ -197,35 +224,46 @@ return {
             return {
                 ProjectToolBinding{
                     .toolName   = std::string{k_mutatingTool},
-                    .entryPoint = "reconcile",
+                    .entryPoint = "deliver",
                 },
                 ProjectToolBinding{
                     .toolName   = std::string{k_echoTool},
-                    .entryPoint = "next_step",
+                    .entryPoint = "echo",
                 },
                 ProjectToolBinding{
                     .toolName   = std::string{k_handlerTool},
-                    .entryPoint = "derive",
+                    .entryPoint = "handle",
                 },
                 ProjectToolBinding{
                     .toolName   = std::string{k_leafTool},
-                    .entryPoint = "plan",
+                    .entryPoint = "leaf",
                 },
                 ProjectToolBinding{
                     .toolName   = std::string{k_mutatingHandlerTool},
-                    .entryPoint = "derive",
+                    .entryPoint = "handle",
                 },
                 ProjectToolBinding{
                     .toolName   = std::string{k_reducerTool},
-                    .entryPoint = "reduce",
+                    .entryPoint = "fold",
                 },
             };
         }
 
+        // What the tool closure states it exports: the sorted, unique union of
+        // the entry points its bindings name, written out rather than derived
+        // from boundEntries() -- a declaration computed from the table it is
+        // joined against would be the table compared with itself.
         [[nodiscard]]
-        auto exportedEntries() -> std::vector<std::string>
+        auto exportedToolEntries() -> std::vector<std::string>
         {
-            return {"derive", "next_step", "plan", "reconcile", "reduce"};
+            return {"deliver", "echo", "fold", "handle", "leaf"};
+        }
+
+        // The reducer closure's whole declared export set.
+        [[nodiscard]]
+        auto exportedReducerEntries() -> std::vector<std::string>
+        {
+            return {"reduce"};
         }
 
         [[nodiscard]]
@@ -379,8 +417,54 @@ return {
             };
         }
 
+        // The seam a registration made only to provision from answers with.
+        // A scoped program is required to hold one -- a scoped program with no
+        // Tool Runtime is a pure program wearing the wrong type -- and this
+        // one refuses every call, because a setup-time registration holds no
+        // lease, controller or observation authority for a call to be admitted
+        // under. It is one value, never a branch on anything.
         [[nodiscard]]
-        auto registrationJcs(ProjectRegistrationClaims const& claims) -> std::string
+        auto refusingToolRuntime() -> script::ToolRuntimeInvoke
+        {
+            return [](
+                       std::string_view,
+                       json::Value const&,
+                       script::ToolCallCoordinate const&,
+                       std::stop_token
+                   ) -> Result<json::Value>
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "this registration dispatches no Tool call"
+                );
+            };
+        }
+
+        [[nodiscard]]
+        auto entryPointArray(std::vector<std::string> const& entries) -> json::Value
+        {
+            auto items = std::vector<json::Value>{};
+            items.reserve(entries.size());
+            for (auto const& entry : entries)
+            {
+                items.emplace_back(json::Value::ofString(entry));
+            }
+            return json::Value::ofArray(std::move(items));
+        }
+
+        [[nodiscard]]
+        auto closureValue(ProjectClosureClaims const& closure) -> json::Value
+        {
+            return json::Value::ofObject({
+                {"exported_entry_points",
+                 entryPointArray(closure.exportedEntryPoints)},
+                {"module_manifest_hash",
+                 json::Value::ofString(closure.moduleManifestHash.hex())},
+            });
+        }
+
+        [[nodiscard]]
+        auto generationJcs(ProjectGenerationClaims const& claims) -> std::string
         {
             auto bindings = std::vector<json::Value>{};
             for (auto const& binding : claims.projectToolBindings)
@@ -400,8 +484,6 @@ return {
                 {"plugin_environment_hash",
                  json::Value::ofString(claims.pluginEnvironmentHash.hex())},
                 {"plugin_id", json::Value::ofString(claims.pluginId)},
-                {"plugin_module_manifest_hash",
-                 json::Value::ofString(claims.pluginModuleManifestHash.hex())},
                 {"project_observation_schema_hash",
                  json::Value::ofString(claims.projectObservationSchemaHash.hex())},
                 {"project_registration_format",
@@ -420,27 +502,45 @@ return {
                  json::Value::ofString(
                      claims.reconcilePayloadSchemaManifestHash.hex()
                  )},
+                {"reducer_closure", closureValue(claims.reducerClosure)},
                 {"tool_catalog_hash",
                  json::Value::ofString(claims.toolCatalogHash.hex())},
+                {"tool_closure", closureValue(claims.toolClosure)},
             }));
         }
 
         [[nodiscard]]
-        auto verifiedRegistration() -> VerifiedProjectRegistration
+        auto manifestHashOf(std::vector<ProjectModuleBlob> const& modules)
+            -> ContentHash
         {
-            auto const modules            = moduleBlobs();
-            auto const moduleManifestHash =
-                derivePluginModuleManifestHash("main", modules);
-            REQUIRE(moduleManifestHash.has_value());
+            auto const hash = derivePluginModuleManifestHash("main", modules);
+            REQUIRE(hash.has_value());
+            return *hash;
+        }
+
+        // This fixture's two-closure registration generation, stated in full
+        // and read back through the same reader shape a deployment uses. The
+        // declared entry sets are the one thing stated rather than derived:
+        // every digest is taken over the bytes it describes.
+        [[nodiscard]]
+        auto verifiedGeneration() -> VerifiedProjectGeneration
+        {
             auto const environmentHash = currentProjectPluginEnvironmentHash();
             REQUIRE(environmentHash.has_value());
-            auto claims = ProjectRegistrationClaims{
-                .projectRegistrationFormat = k_projectRegistrationFormat,
+            auto claims = ProjectGenerationClaims{
+                .projectRegistrationFormat = k_projectGenerationFormat,
                 .pluginId                  = std::string{k_pluginId},
-                .pluginModuleManifestHash  = *moduleManifestHash,
-                .pluginEnvironmentHash     = *environmentHash,
-                .toolCatalogHash           = hashOf(k_toolCatalogBytes),
-                .projectStateSchemaHash    = hashOf(k_stateSchemaBytes),
+                .reducerClosure            = ProjectClosureClaims{
+                    .moduleManifestHash  = manifestHashOf(reducerModules()),
+                    .exportedEntryPoints = exportedReducerEntries(),
+                },
+                .toolClosure = ProjectClosureClaims{
+                    .moduleManifestHash  = manifestHashOf(toolModules()),
+                    .exportedEntryPoints = exportedToolEntries(),
+                },
+                .pluginEnvironmentHash  = *environmentHash,
+                .toolCatalogHash        = hashOf(k_toolCatalogBytes),
+                .projectStateSchemaHash = hashOf(k_stateSchemaBytes),
                 .projectObservationSchemaHash         =
                     hashOf(k_observationSchemaBytes),
                 .projectToolPreconditionSchemaHash    =
@@ -452,30 +552,26 @@ return {
                 .observedInstanceIdentitySchemaHashes = {},
                 .projectToolBindings                  = boundEntries(),
             };
-            auto const exactJcs = registrationJcs(claims);
-            auto owner          = ProjectRegistrationSchemaOwner::create(
+            auto const exactJcs = generationJcs(claims);
+            auto generation     = ProjectGeneration::verifyExact(
+                exactJcs,
+                hashOf(exactJcs),
                 [exactJcs = exactJcs, claims = std::move(claims)](
                     std::string_view candidate
-                ) -> Result<ProjectRegistrationClaims>
+                ) -> Result<ProjectGenerationClaims>
                 {
                     if (candidate != exactJcs)
                     {
                         return fail(
                             AutomationErrorKind::InvalidResource,
-                            "dispatch fixture registration is not exact JCS"
+                            "dispatch fixture generation is not exact JCS"
                         );
                     }
                     return claims;
                 }
             );
-            REQUIRE(owner.has_value());
-            auto registration = ProjectRegistration::verifyExact(
-                exactJcs,
-                hashOf(exactJcs),
-                *owner
-            );
-            REQUIRE(registration.has_value());
-            return *std::move(registration);
+            REQUIRE(generation.has_value());
+            return *std::move(generation);
         }
 
         // What one dispatch fixture counted. The result validator and the
@@ -532,7 +628,7 @@ return {
 
         [[nodiscard]]
         auto projectSchemaOwner(
-            VerifiedProjectRegistration const& registration
+            VerifiedProjectGeneration const& registration
         ) -> ProjectSchemaOwner
         {
             auto owner = ProjectSchemaOwner::create(
@@ -555,7 +651,7 @@ return {
 
         [[nodiscard]]
         auto toolCatalogOwner(
-            VerifiedProjectRegistration const& registration
+            VerifiedProjectGeneration const& registration
         ) -> ProjectToolCatalogSchemaOwner
         {
             auto owner = ProjectToolCatalogSchemaOwner::create(
@@ -642,7 +738,7 @@ return {
         [[nodiscard]]
         auto planAuthorityFor(
             OperatorCoordinator& store,
-            VerifiedProjectRegistration const& registration,
+            VerifiedProjectGeneration const& registration,
             SessionManifest const& manifest,
             ContentHash const& artifactRootHash
         ) -> OperatorPlanAuthority
@@ -658,13 +754,12 @@ return {
             auto const runtimeModel =
                 observation.host->runtimeModelBinding(observation.generation);
             REQUIRE(runtimeModel.has_value());
-            auto authority = conformance::planAuthority(
+            auto authority = OperatorPlanAuthority::create(
                 registration,
                 manifest,
                 *runtimeModel,
                 "operator",
-                policyBytes(),
-                test_support::k_fixtureUiAction
+                policyBytes()
             );
             REQUIRE_MESSAGE(authority.has_value(), failureText(authority));
             return *std::move(authority);
@@ -676,7 +771,7 @@ return {
         // active session epoch, lease, and fence".
         auto openSession(
             OperatorCoordinator& store,
-            VerifiedProjectRegistration const& registration,
+            VerifiedProjectGeneration const& registration,
             SessionManifest const& manifest,
             std::string_view sessionId,
             std::string_view targetId     = k_targetId,
@@ -735,7 +830,7 @@ return {
         [[nodiscard]]
         auto firstIncarnation(
             std::filesystem::path const& path,
-            VerifiedProjectRegistration const& registration
+            VerifiedProjectGeneration const& registration
         ) -> Incarnation
         {
             auto const release = test_support::runtimeRelease(path / "release");
@@ -752,15 +847,28 @@ return {
             REQUIRE_MESSAGE(installed.has_value(), failureText(installed));
             auto const artifactRootHash = installed->rootHash();
 
-            auto registrar = ProjectPluginRegistrar{};
-            auto plugin    = registrar.registerPlugin(
+            // Provisioning needs the generation's fold and nothing else, so
+            // this registration's Tool Runtime seam refuses every call: no
+            // lease, controller or observation authority exists at setup, so
+            // no scoped call could be admitted through it anyway.
+            auto registrar   = ProjectGenerationRegistrar{};
+            auto provisioned = registrar.registerGeneration(
                 registration,
-                "main",
-                moduleBlobs(),
+                toolCatalogOwner(registration),
+                projectSchemaOwner(registration),
+                ProjectGenerationRegistrar::ClosureModules{
+                    .entryModule = "main",
+                    .modules     = reducerModules(),
+                },
+                ProjectGenerationRegistrar::ClosureModules{
+                    .entryModule = "main",
+                    .modules     = toolModules(),
+                },
                 {},
-                projectSchemaOwner(registration)
+                [](std::string_view, std::string_view) -> Status { return ok(); },
+                refusingToolRuntime()
             );
-            REQUIRE_MESSAGE(plugin.has_value(), failureText(plugin));
+            REQUIRE_MESSAGE(provisioned.has_value(), failureText(provisioned));
 
             auto const manifest = test_support::sessionManifest(
                 registration,
@@ -776,9 +884,9 @@ return {
                      k_humanInstanceKey,
                  })
             {
-                auto const provisioned = store.provisionProjectInstance(
+                auto const instance = store.provisionProjectInstance(
                     registration,
-                    *plugin,
+                    *provisioned,
                     ProjectInstanceBaseline{
                         .projectInstanceKey  = std::string{instanceKey},
                         .eventId             = "",
@@ -786,7 +894,7 @@ return {
                         .entry               = std::nullopt,
                     }
                 );
-                REQUIRE_MESSAGE(provisioned.has_value(), failureText(provisioned));
+                REQUIRE_MESSAGE(instance.has_value(), failureText(instance));
             }
 
             auto session = openSession(store, registration, manifest, k_sessionId);
@@ -809,7 +917,7 @@ return {
         [[nodiscard]]
         auto nextIncarnation(
             std::filesystem::path const& path,
-            VerifiedProjectRegistration const& registration,
+            VerifiedProjectGeneration const& registration,
             ContentHash artifactRootHash,
             std::string_view sessionId
         ) -> Incarnation
@@ -838,20 +946,25 @@ return {
 
         [[nodiscard]]
         auto loadProgram(
-            VerifiedProjectRegistration const& registration,
-            ProjectToolProgramRegistrar& registrar,
+            VerifiedProjectGeneration const& registration,
+            ProjectGenerationRegistrar& registrar,
             std::shared_ptr<RunLog> const& log,
             ProjectToolDispatcher const& dispatcher
-        ) -> ProjectToolProgramHandle
+        ) -> ProjectGenerationHandle
         {
-            auto const exported = exportedEntries();
-            auto loaded         = registrar.registerProject(
+            auto loaded = registrar.registerGeneration(
                 registration,
                 toolCatalogOwner(registration),
-                "main",
-                moduleBlobs(),
+                projectSchemaOwner(registration),
+                ProjectGenerationRegistrar::ClosureModules{
+                    .entryModule = "main",
+                    .modules     = reducerModules(),
+                },
+                ProjectGenerationRegistrar::ClosureModules{
+                    .entryModule = "main",
+                    .modules     = toolModules(),
+                },
                 {},
-                exported,
                 resultValidator(log),
                 dispatcher.toolRuntimeSeam()
             );
@@ -877,7 +990,7 @@ return {
         // The environment member is the program's own, so a run that reached a
         // different scoped generation would diverge on it by name.
         [[nodiscard]]
-        auto executionIdentity(ProjectToolProgramHandle const& program)
+        auto executionIdentity(ProjectGenerationHandle const& program)
             -> ToolExecutionIdentity
         {
             return ToolExecutionIdentity{
@@ -890,7 +1003,7 @@ return {
 
         [[nodiscard]]
         auto invocationOf(
-            ProjectToolProgramHandle const& program,
+            ProjectGenerationHandle const& program,
             std::string_view toolName,
             std::string_view exactArgumentsJcs
         ) -> ValidatedToolInvocation
@@ -912,7 +1025,7 @@ return {
         // dispatcher is an ordinary one.
         [[nodiscard]]
         auto projectRootCall(
-            ProjectToolProgramHandle const& program,
+            ProjectGenerationHandle const& program,
             ToolRootRequestIdentity const& root,
             std::string_view toolName,
             std::string_view exactArgumentsJcs
@@ -931,7 +1044,7 @@ return {
 
         [[nodiscard]]
         auto rootCall(
-            ProjectToolProgramHandle const& program,
+            ProjectGenerationHandle const& program,
             ToolRootRequestIdentity const& root,
             std::string_view exactArgumentsJcs
         ) -> ToolCallPositionIdentity
@@ -965,7 +1078,7 @@ return {
         // composed/leaf cut, minted through the same issuing context.
         [[nodiscard]]
         auto frameworkToolCall(
-            ProjectToolProgramHandle const& program,
+            ProjectGenerationHandle const& program,
             ToolRootRequestIdentity const& root,
             std::string_view toolName,
             std::string_view exactArgumentsJcs
@@ -991,7 +1104,7 @@ return {
     TEST_CASE("a dispatched Project Tool runs its bound entry and records its answer")
     {
         auto temporary          = TemporaryDirectory{};
-        auto const registration = verifiedRegistration();
+        auto const registration = verifiedGeneration();
         auto prepared = firstIncarnation(temporary.path(), registration);
         auto const log = std::make_shared<RunLog>();
 
@@ -1002,7 +1115,7 @@ return {
             frameworkProvider(log)
         );
         REQUIRE_MESSAGE(dispatcher.has_value(), failureText(dispatcher));
-        auto registrar = ProjectToolProgramRegistrar{};
+        auto registrar = ProjectGenerationRegistrar{};
         auto const program =
             loadProgram(registration, registrar, log, *dispatcher);
 
@@ -1061,7 +1174,7 @@ return {
     TEST_CASE("a terminal parent returns its recorded result and never runs its handler")
     {
         auto temporary          = TemporaryDirectory{};
-        auto const registration = verifiedRegistration();
+        auto const registration = verifiedGeneration();
         auto prepared = firstIncarnation(temporary.path(), registration);
         auto const log = std::make_shared<RunLog>();
 
@@ -1072,7 +1185,7 @@ return {
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
-        auto registrar = ProjectToolProgramRegistrar{};
+        auto registrar = ProjectGenerationRegistrar{};
         auto const program =
             loadProgram(registration, registrar, log, *dispatcher);
 
@@ -1121,7 +1234,7 @@ return {
     TEST_CASE("an admitted call whose dispatch never began dispatches against empty history")
     {
         auto temporary          = TemporaryDirectory{};
-        auto const registration = verifiedRegistration();
+        auto const registration = verifiedGeneration();
         auto prepared = firstIncarnation(temporary.path(), registration);
         auto const log = std::make_shared<RunLog>();
 
@@ -1132,7 +1245,7 @@ return {
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
-        auto registrar = ProjectToolProgramRegistrar{};
+        auto registrar = ProjectGenerationRegistrar{};
         auto const program =
             loadProgram(registration, registrar, log, *dispatcher);
 
@@ -1178,7 +1291,7 @@ return {
     TEST_CASE("a handler killed mid-dispatch re-enters, numbers from one and executes only past history")
     {
         auto temporary          = TemporaryDirectory{};
-        auto const registration = verifiedRegistration();
+        auto const registration = verifiedGeneration();
         auto const root         = rootFor("dispatch-crash-restart");
         auto artifactRootHash = std::optional<ContentHash>{};
         auto callIdentity     = std::optional<ContentHash>{};
@@ -1198,7 +1311,7 @@ return {
                 frameworkProvider(log)
             );
             REQUIRE(dispatcher.has_value());
-            auto registrar = ProjectToolProgramRegistrar{};
+            auto registrar = ProjectGenerationRegistrar{};
             auto const program =
                 loadProgram(registration, registrar, log, *dispatcher);
 
@@ -1293,7 +1406,7 @@ return {
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
-        auto registrar = ProjectToolProgramRegistrar{};
+        auto registrar = ProjectGenerationRegistrar{};
         auto const program =
             loadProgram(registration, registrar, log, *dispatcher);
 
@@ -1360,7 +1473,7 @@ return {
     TEST_CASE("a handler that terminates leaving a recorded call unconsumed is stopped")
     {
         auto temporary          = TemporaryDirectory{};
-        auto const registration = verifiedRegistration();
+        auto const registration = verifiedGeneration();
         auto const root         = rootFor("dispatch-unconsumed");
         auto artifactRootHash   = std::optional<ContentHash>{};
 
@@ -1380,7 +1493,7 @@ return {
                 frameworkProvider(log)
             );
             REQUIRE(dispatcher.has_value());
-            auto registrar = ProjectToolProgramRegistrar{};
+            auto registrar = ProjectGenerationRegistrar{};
             auto const program =
                 loadProgram(registration, registrar, log, *dispatcher);
 
@@ -1439,7 +1552,7 @@ return {
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
-        auto registrar = ProjectToolProgramRegistrar{};
+        auto registrar = ProjectGenerationRegistrar{};
         auto const program =
             loadProgram(registration, registrar, log, *dispatcher);
 
@@ -1466,7 +1579,7 @@ return {
     TEST_CASE("a handler that issues a different call is stopped at the field that diverged")
     {
         auto temporary          = TemporaryDirectory{};
-        auto const registration = verifiedRegistration();
+        auto const registration = verifiedGeneration();
         auto const root         = rootFor("dispatch-divergence");
         auto artifactRootHash   = std::optional<ContentHash>{};
 
@@ -1485,7 +1598,7 @@ return {
                 frameworkProvider(log)
             );
             REQUIRE(dispatcher.has_value());
-            auto registrar = ProjectToolProgramRegistrar{};
+            auto registrar = ProjectGenerationRegistrar{};
             auto const program =
                 loadProgram(registration, registrar, log, *dispatcher);
 
@@ -1542,7 +1655,7 @@ return {
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
-        auto registrar = ProjectToolProgramRegistrar{};
+        auto registrar = ProjectGenerationRegistrar{};
         auto const program =
             loadProgram(registration, registrar, log, *dispatcher);
 
@@ -1572,7 +1685,7 @@ return {
     TEST_CASE("a fenced-out incarnation can neither re-enter its dispatch nor complete it")
     {
         auto temporary          = TemporaryDirectory{};
-        auto const registration = verifiedRegistration();
+        auto const registration = verifiedGeneration();
         auto prepared = firstIncarnation(temporary.path(), registration);
         auto const log = std::make_shared<RunLog>();
 
@@ -1583,7 +1696,7 @@ return {
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
-        auto registrar = ProjectToolProgramRegistrar{};
+        auto registrar = ProjectGenerationRegistrar{};
         auto const program =
             loadProgram(registration, registrar, log, *dispatcher);
 
@@ -1662,7 +1775,7 @@ return {
     TEST_CASE("re-entry is a Project handler's alone and cannot widen its admission")
     {
         auto temporary          = TemporaryDirectory{};
-        auto const registration = verifiedRegistration();
+        auto const registration = verifiedGeneration();
         auto prepared = firstIncarnation(temporary.path(), registration);
         auto const log = std::make_shared<RunLog>();
 
@@ -1673,7 +1786,7 @@ return {
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
-        auto registrar = ProjectToolProgramRegistrar{};
+        auto registrar = ProjectGenerationRegistrar{};
         auto const program =
             loadProgram(registration, registrar, log, *dispatcher);
 
@@ -1902,7 +2015,7 @@ return {
     TEST_CASE("a dispatcher with no Framework Tool provider is refused")
     {
         auto temporary          = TemporaryDirectory{};
-        auto const registration = verifiedRegistration();
+        auto const registration = verifiedGeneration();
         auto prepared = firstIncarnation(temporary.path(), registration);
 
         auto const refused = ProjectToolDispatcher::create(
@@ -1920,7 +2033,7 @@ return {
     TEST_CASE("an answer the result schema refuses is a failed call rather than a recorded one")
     {
         auto temporary          = TemporaryDirectory{};
-        auto const registration = verifiedRegistration();
+        auto const registration = verifiedGeneration();
         auto prepared = firstIncarnation(temporary.path(), registration);
         auto const log     = std::make_shared<RunLog>();
         log->refuseResults = true;
@@ -1932,7 +2045,7 @@ return {
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
-        auto registrar = ProjectToolProgramRegistrar{};
+        auto registrar = ProjectGenerationRegistrar{};
         auto const program =
             loadProgram(registration, registrar, log, *dispatcher);
 
@@ -1959,7 +2072,7 @@ return {
     TEST_CASE("the scoped seam resolves its run from the durable coordinate alone")
     {
         auto temporary          = TemporaryDirectory{};
-        auto const registration = verifiedRegistration();
+        auto const registration = verifiedGeneration();
         auto prepared = firstIncarnation(temporary.path(), registration);
         auto const log = std::make_shared<RunLog>();
 
@@ -1970,7 +2083,7 @@ return {
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
-        auto registrar = ProjectToolProgramRegistrar{};
+        auto registrar = ProjectGenerationRegistrar{};
         auto const program =
             loadProgram(registration, registrar, log, *dispatcher);
 
@@ -2044,7 +2157,7 @@ return {
     TEST_CASE("a mutating Project handler killed mid-dispatch repeats no effect and completes")
     {
         auto temporary          = TemporaryDirectory{};
-        auto const registration = verifiedRegistration();
+        auto const registration = verifiedGeneration();
         auto const root         = rootFor("dispatch-mutating-crash");
         constexpr auto k_children = std::string_view{
             R"({"children":["dispatch.project.leaf","framework.audit.record","dispatch.project.leaf"]})"
@@ -2068,7 +2181,7 @@ return {
                 frameworkProvider(log)
             );
             REQUIRE(dispatcher.has_value());
-            auto registrar = ProjectToolProgramRegistrar{};
+            auto registrar = ProjectGenerationRegistrar{};
             auto const program =
                 loadProgram(registration, registrar, log, *dispatcher);
 
@@ -2161,7 +2274,7 @@ return {
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
-        auto registrar = ProjectToolProgramRegistrar{};
+        auto registrar = ProjectGenerationRegistrar{};
         auto const program =
             loadProgram(registration, registrar, log, *dispatcher);
 
@@ -2227,7 +2340,7 @@ return {
     TEST_CASE("a mutating handler that re-derives a different call is stopped at the field that diverged")
     {
         auto temporary          = TemporaryDirectory{};
-        auto const registration = verifiedRegistration();
+        auto const registration = verifiedGeneration();
         auto const root         = rootFor("dispatch-mutating-divergence");
         constexpr auto k_children =
             std::string_view{R"({"children":["dispatch.project.leaf"]})"};
@@ -2245,7 +2358,7 @@ return {
                 frameworkProvider(log)
             );
             REQUIRE(dispatcher.has_value());
-            auto registrar = ProjectToolProgramRegistrar{};
+            auto registrar = ProjectGenerationRegistrar{};
             auto const program =
                 loadProgram(registration, registrar, log, *dispatcher);
 
@@ -2311,7 +2424,7 @@ return {
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
-        auto registrar = ProjectToolProgramRegistrar{};
+        auto registrar = ProjectGenerationRegistrar{};
         auto const program =
             loadProgram(registration, registrar, log, *dispatcher);
 
@@ -2376,7 +2489,7 @@ return {
     TEST_CASE("a restart classifies the mutating leaf uncertain and leaves every other dispatch re-enterable")
     {
         auto temporary          = TemporaryDirectory{};
-        auto const registration = verifiedRegistration();
+        auto const registration = verifiedGeneration();
         auto const composedRoot = rootFor("dispatch-restart-composed");
         auto const readLeafRoot = rootFor("dispatch-restart-read-leaf");
         auto const inputRoot    = rootFor("dispatch-restart-input-leaf");
@@ -2397,7 +2510,7 @@ return {
                 frameworkProvider(log)
             );
             REQUIRE(dispatcher.has_value());
-            auto registrar = ProjectToolProgramRegistrar{};
+            auto registrar = ProjectGenerationRegistrar{};
             auto const program =
                 loadProgram(registration, registrar, log, *dispatcher);
             auto const authority = prepared.planAuthority;
@@ -2511,7 +2624,7 @@ return {
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
-        auto registrar = ProjectToolProgramRegistrar{};
+        auto registrar = ProjectGenerationRegistrar{};
         auto const program =
             loadProgram(registration, registrar, log, *dispatcher);
 
@@ -2656,9 +2769,9 @@ return {
         struct AdapterWorld final
         {
             Incarnation&                       prepared;
-            VerifiedProjectRegistration const& registration;
+            VerifiedProjectGeneration const& registration;
             ProjectToolDispatcher&             dispatcher;
-            ProjectToolProgramHandle const&    program;
+            ProjectGenerationHandle const&    program;
             ToolStartCatalog const&            catalog;
             OperatorPlanAuthority const&       authority;
             ToolExecutionIdentity const&       execution;
@@ -2957,7 +3070,7 @@ return {
     )
     {
         auto temporary          = TemporaryDirectory{};
-        auto const registration = verifiedRegistration();
+        auto const registration = verifiedGeneration();
         auto databasePath  = std::filesystem::path{};
         auto starts        = std::vector<ProducedStart>{};
         auto childIdentity = std::string{};
@@ -2974,7 +3087,7 @@ return {
                 frameworkProvider(log)
             );
             REQUIRE_MESSAGE(dispatcher.has_value(), failureText(dispatcher));
-            auto registrar = ProjectToolProgramRegistrar{};
+            auto registrar = ProjectGenerationRegistrar{};
             auto const program =
                 loadProgram(registration, registrar, log, *dispatcher);
             auto const catalog =
@@ -3216,7 +3329,7 @@ return {
     )
     {
         auto temporary          = TemporaryDirectory{};
-        auto const registration = verifiedRegistration();
+        auto const registration = verifiedGeneration();
         auto databasePath = std::filesystem::path{};
         auto starts       = std::vector<ProducedStart>{};
 
@@ -3231,7 +3344,7 @@ return {
                 frameworkProvider(log)
             );
             REQUIRE_MESSAGE(dispatcher.has_value(), failureText(dispatcher));
-            auto registrar = ProjectToolProgramRegistrar{};
+            auto registrar = ProjectGenerationRegistrar{};
             auto const program =
                 loadProgram(registration, registrar, log, *dispatcher);
             auto const catalog =

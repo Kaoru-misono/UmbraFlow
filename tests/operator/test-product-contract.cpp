@@ -184,6 +184,133 @@ namespace uf::operator_runtime
                 .agentProfileHash             = hashOf("agent"),
             };
         }
+
+        // Two reducer closures that differ only in what they fold to, so a
+        // folded document read back names which project answered.
+        constexpr auto k_catalogueReducer = std::string_view{R"LUAU(
+return {
+    plugin_id = "fixture.catalogue",
+    reduce = function(_input) return { revision = 1 } end,
+}
+)LUAU"};
+
+        constexpr auto k_workflowReducer = std::string_view{R"LUAU(
+return {
+    plugin_id = "fixture.workflow",
+    reduce = function(_input) return { revision = 2 } end,
+}
+)LUAU"};
+
+        // The registrar is the caller's, because the whole point below is that
+        // two projects share one, and test_support::loadGeneration keeps its
+        // own.
+        [[nodiscard]]
+        auto loadOn(
+            ProjectGenerationRegistrar& registrar,
+            test_support::ProjectFixture const& project,
+            std::string_view reducerBytes
+        ) -> Result<ProjectGenerationHandle>
+        {
+            return registrar.registerGeneration(
+                project.generation,
+                project.toolCatalogSchemaOwner,
+                project.schemaOwner,
+                ProjectGenerationRegistrar::ClosureModules{
+                    .entryModule = "main",
+                    .modules     = test_support::closureModules(reducerBytes),
+                },
+                ProjectGenerationRegistrar::ClosureModules{
+                    .entryModule = "main",
+                    .modules     = test_support::closureModules(
+                        test_support::toolClosureSource(
+                            project.registration.pluginId()
+                        )
+                    ),
+                },
+                {},
+                [](std::string_view, std::string_view) -> Status { return ok(); },
+                test_support::refusingToolRuntime()
+            );
+        }
+
+        auto checkFold(
+            ProjectGenerationHandle const& program,
+            test_support::ProjectFixture const& project,
+            std::string_view expected
+        ) -> void
+        {
+            auto const input = program.canonicalize(
+                R"({"journal_events":[],"prior_project_state":null})"
+            );
+            REQUIRE(input.has_value());
+            auto const folded = program.reduce(*input);
+            REQUIRE(folded.has_value());
+            CHECK(folded->bytes() == expected);
+            CHECK(folded->projectRegistrationHash() == project.registration.hash());
+            CHECK(folded->function() == ProjectPluginFunction::Reduce);
+            CHECK(folded->direction() == ProjectDocumentDirection::Output);
+        }
+    }
+
+    // Two Project registrations of the same shape, deployed side by side on one
+    // registrar, each answering its own contract. That is what P-05 pins: a
+    // harness carrying real consumers rather than one, so that everything the
+    // Operator keys on a registration is shown to be keyed on THIS one.
+    //
+    // Retargeted onto the two-closure generation, with what it proves unchanged.
+    // What moved is the vehicle: the fold is the whole of the pure type's entry
+    // set now, so "each program answers its own documents" is one entry per
+    // project rather than five.
+    TEST_CASE("contract-product-p05-fixtures")
+    {
+        auto const catalogue = test_support::makeProject(
+            "fixture.catalogue",
+            k_catalogueReducer
+        );
+        auto const workflow = test_support::makeProject(
+            "fixture.workflow",
+            k_workflowReducer
+        );
+        CHECK(catalogue.registration.hash() != workflow.registration.hash());
+
+        auto       registrar         = ProjectGenerationRegistrar{};
+        auto const catalogueProgram  = loadOn(
+            registrar,
+            catalogue,
+            k_catalogueReducer
+        );
+        auto const workflowProgram = loadOn(registrar, workflow, k_workflowReducer);
+        REQUIRE(catalogueProgram.has_value());
+        REQUIRE(workflowProgram.has_value());
+
+        // Each fold answers its own project's document, stamped with its own
+        // registration root: two loaded programs, not one consulted twice.
+        checkFold(*catalogueProgram, catalogue, R"({"revision":1})");
+        checkFold(*workflowProgram, workflow, R"({"revision":2})");
+
+        // A registry entry is (plugin id, registration root) and nothing less.
+        REQUIRE(registrar
+                    .findExact(
+                        "fixture.catalogue",
+                        catalogue.registration.hash()
+                    )
+                    .has_value());
+        CHECK_FALSE(registrar
+                        .findExact(
+                            "fixture.catalogue",
+                            workflow.registration.hash()
+                        )
+                        .has_value());
+        CHECK_FALSE(registrar
+                        .findExact(
+                            "fixture.workflow",
+                            catalogue.registration.hash()
+                        )
+                        .has_value());
+
+        // A registration root is a generation, so the same root cannot be
+        // loaded twice under two pairs of closures.
+        CHECK_FALSE(loadOn(registrar, catalogue, k_catalogueReducer).has_value());
     }
 
     TEST_CASE("schema-product-p01")
@@ -283,7 +410,7 @@ namespace uf::operator_runtime
         REQUIRE(takeover.has_value());
         auto humanSnapshot = prepared.store.createSnapshot(
             takeover->lease,
-            prepared.plugin,
+            prepared.project.registration,
             prepared.project.toolCatalogSchemaOwner,
             prepared.project.observedInstanceIdentitySchemas,
             test_support::observeAgain(prepared)
@@ -336,7 +463,7 @@ namespace uf::operator_runtime
 
         REQUIRE(prepared.store.provisionProjectInstance(
             prepared.project.registration,
-            prepared.plugin,
+            prepared.generation,
             ProjectInstanceBaseline{
                 .projectInstanceKey  = "instance-3",
                 .eventId             = "baseline-instance-3",
@@ -572,7 +699,7 @@ namespace uf::operator_runtime
         REQUIRE(agentLease.has_value());
         auto const agentSnapshot = prepared.store.createSnapshot(
             *agentLease,
-            prepared.plugin,
+            prepared.project.registration,
             prepared.project.toolCatalogSchemaOwner,
             prepared.project.observedInstanceIdentitySchemas,
             test_support::observeAgain(prepared)
@@ -591,7 +718,7 @@ namespace uf::operator_runtime
         REQUIRE(humanLease.has_value());
         auto const humanSnapshot = prepared.store.createSnapshot(
             *humanLease,
-            prepared.plugin,
+            prepared.project.registration,
             prepared.project.toolCatalogSchemaOwner,
             prepared.project.observedInstanceIdentitySchemas,
             test_support::observeAgain(prepared)

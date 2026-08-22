@@ -2,7 +2,7 @@
 
 #include "effective-plan.hpp"
 #include "ledger.hpp"
-#include "project-tool-program.hpp"
+#include "project-generation.hpp"
 #include "snapshot-reference.hpp"
 #include "tool-admission-request.hpp"
 #include "tool-executor.hpp"
@@ -54,10 +54,12 @@ namespace uf::operator_runtime
     // by the field-by-field attribute comparison at the coordinate it landed
     // on.
     //
-    // Production-unreachable by construction: nothing in ProductLifecycle
-    // builds one, and the Framework Tools a scoped run reaches are answered by
-    // the provider a caller installs here rather than by a registry this module
-    // owns.
+    // Production-reachable: service::ProductLifecycle builds exactly one per
+    // run, over the session's own coordinator, observation authority and plan
+    // authority, and installs its own Framework providers into it. The
+    // Framework Tools a scoped run reaches are still answered by the provider
+    // its caller installs rather than by a registry this module owns, which is
+    // what keeps the dispatcher free of any knowledge of who is answering.
     class ProjectToolDispatcher final
     {
         class State;
@@ -70,9 +72,9 @@ namespace uf::operator_runtime
         // `coordinator` and `observations` are borrows that must outlive this
         // dispatcher and every program compiled with the seam it hands out,
         // because the seam reaches both on every child call.
-        // `frameworkTools` answers the Framework Tools a scoped run reaches;
-        // production providers are a later stage, and today only a test
-        // installs one.
+        // `frameworkTools` answers the Framework Tools a scoped run reaches. In
+        // production it is ProductLifecycle's own provider surface, bound to
+        // the same run these three borrows name.
         //
         // `observations` must be the SAME authority the Framework observation
         // and input providers mint into and spend from. It is what turns the
@@ -133,7 +135,7 @@ namespace uf::operator_runtime
         // named the Tool states none of them.
         [[nodiscard]]
         auto dispatch(
-            ProjectToolProgramHandle const& program,
+            ProjectGenerationHandle const& program,
             ToolAdmissionRequest const& request,
             std::stop_token cancellation
         ) -> Result<ToolCallReplay>;

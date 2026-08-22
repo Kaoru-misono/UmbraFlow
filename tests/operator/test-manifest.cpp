@@ -11,6 +11,7 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace uf::operator_runtime
 {
@@ -24,13 +25,24 @@ namespace uf::operator_runtime
             return *result;
         }
 
+        // The smallest complete generation: a reducer stating the one entry its
+        // type keeps, and a tool closure whose stated entry set is explicitly
+        // empty because this registration binds no Tool. Both slots are always
+        // present; there is no shorter document.
         [[nodiscard]]
-        auto claimsFor(ContentHash moduleManifestHash) -> ProjectRegistrationClaims
+        auto claimsFor(ContentHash reducerManifestHash) -> ProjectGenerationClaims
         {
-            return ProjectRegistrationClaims{
-                .projectRegistrationFormat          = k_projectRegistrationFormat,
-                .pluginId                           = "fixture.alpha",
-                .pluginModuleManifestHash           = moduleManifestHash,
+            return ProjectGenerationClaims{
+                .projectRegistrationFormat = k_projectGenerationFormat,
+                .pluginId                  = "fixture.alpha",
+                .reducerClosure            = ProjectClosureClaims{
+                    .moduleManifestHash  = reducerManifestHash,
+                    .exportedEntryPoints = {std::string{k_reducerEntryPoint}},
+                },
+                .toolClosure = ProjectClosureClaims{
+                    .moduleManifestHash  = hashOf("tool-manifest"),
+                    .exportedEntryPoints = {},
+                },
                 .pluginEnvironmentHash              = hashOf("environment"),
                 .toolCatalogHash                    = hashOf("catalogue"),
                 .projectStateSchemaHash             = hashOf("state"),
@@ -43,8 +55,26 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
-        auto registrationJcs(
-            ProjectRegistrationClaims const& claims
+        auto closureJcs(ProjectClosureClaims const& closure) -> std::string
+        {
+            auto result = std::string{R"({"exported_entry_points":[)"};
+            for (
+                auto index = std::size_t{0};
+                index < closure.exportedEntryPoints.size();
+                ++index
+            )
+            {
+                if (index != 0U) result.push_back(',');
+                result += "\"" + closure.exportedEntryPoints[index] + "\"";
+            }
+            result += "],\"module_manifest_hash\":\""
+                + closure.moduleManifestHash.hex() + "\"}";
+            return result;
+        }
+
+        [[nodiscard]]
+        auto generationJcs(
+            ProjectGenerationClaims const& claims
         ) -> std::string
         {
             auto result = std::string{
@@ -65,8 +95,6 @@ namespace uf::operator_runtime
             result += "],\"plugin_environment_hash\":\""
                 + claims.pluginEnvironmentHash.hex()
                 + "\",\"plugin_id\":\"" + claims.pluginId
-                + "\",\"plugin_module_manifest_hash\":\""
-                + claims.pluginModuleManifestHash.hex()
                 + "\",\"project_observation_schema_hash\":\""
                 + claims.projectObservationSchemaHash.hex()
                 + "\",\"project_registration_format\":"
@@ -101,76 +129,80 @@ namespace uf::operator_runtime
                 + claims.projectToolPreconditionSchemaHash.hex()
                 + "\",\"reconcile_payload_schema_manifest_hash\":\""
                 + claims.reconcilePayloadSchemaManifestHash.hex()
-                + "\",\"tool_catalog_hash\":\""
-                + claims.toolCatalogHash.hex() + "\"}";
+                + "\",\"reducer_closure\":" + closureJcs(claims.reducerClosure)
+                + ",\"tool_catalog_hash\":\""
+                + claims.toolCatalogHash.hex()
+                + "\",\"tool_closure\":" + closureJcs(claims.toolClosure) + "}";
             return result;
         }
 
+        // The reader every case here hands to verifyExact: it accepts exactly
+        // the bytes this fixture rendered and answers with the claims those
+        // bytes state. A real reader parses and validates a schema; what these
+        // cases are about is what the framework checks AFTER a reader accepted.
         [[nodiscard]]
-        auto exactOwner(
+        auto exactReader(
             std::string expectedJcs,
-            ProjectRegistrationClaims claims
-        ) -> ProjectRegistrationSchemaOwner
+            ProjectGenerationClaims claims
+        ) -> ProjectGenerationExactValidator
         {
-            auto result = ProjectRegistrationSchemaOwner::create(
-                [expectedJcs = std::move(expectedJcs), claims = std::move(claims)](
-                    std::string_view candidate
-                ) -> Result<ProjectRegistrationClaims>
+            return [expectedJcs = std::move(expectedJcs), claims = std::move(claims)](
+                       std::string_view candidate
+                   ) -> Result<ProjectGenerationClaims>
+            {
+                if (candidate != expectedJcs)
                 {
-                    if (candidate != expectedJcs)
-                    {
-                        return fail(
-                            AutomationErrorKind::InvalidResource,
-                            "fixture schema owner rejected non-exact JCS"
-                        );
-                    }
-                    return claims;
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "fixture reader rejected non-exact JCS"
+                    );
                 }
-            );
-            REQUIRE(result.has_value());
-            return *result;
+                return claims;
+            };
         }
     }
 
-    static_assert(!std::is_default_constructible_v<VerifiedProjectRegistration>);
+    static_assert(!std::is_default_constructible_v<VerifiedProjectGeneration>);
     static_assert(
         !std::is_constructible_v<
-            VerifiedProjectRegistration,
-            ProjectRegistrationClaims,
+            VerifiedProjectGeneration,
+            ProjectGenerationClaims,
             std::string,
             ContentHash
         >
     );
 
-    TEST_CASE("VerifiedProjectRegistration requires exact JCS schema and root")
+    TEST_CASE("VerifiedProjectGeneration requires exact JCS schema and root")
     {
-        auto const moduleManifestHash = hashOf("module-manifest");
-        auto const claims = claimsFor(moduleManifestHash);
-        auto const exactJcs = registrationJcs(claims);
-        auto owner = exactOwner(exactJcs, claims);
+        auto const reducerManifestHash = hashOf("reducer-manifest");
+        auto const claims   = claimsFor(reducerManifestHash);
+        auto const exactJcs = generationJcs(claims);
+        auto const reader   = exactReader(exactJcs, claims);
         auto const rootHash = hashOf(exactJcs);
 
-        auto const verified = ProjectRegistration::verifyExact(
+        auto const verified = ProjectGeneration::verifyExact(
             exactJcs,
             rootHash,
-            owner
+            reader
         );
         REQUIRE(verified.has_value());
         CHECK(verified->canonicalJcs() == exactJcs);
         CHECK(verified->hash() == rootHash);
         CHECK(verified->pluginId() == "fixture.alpha");
-        CHECK(verified->pluginModuleManifestHash() == moduleManifestHash);
+        CHECK(
+            verified->reducerClosure().moduleManifestHash == reducerManifestHash
+        );
 
         CHECK_FALSE(
-            ProjectRegistration::verifyExact(
+            ProjectGeneration::verifyExact(
                 " " + exactJcs,
                 rootHash,
-                owner
+                reader
             ).has_value()
         );
         auto const wrongRoot = hashOf("wrong-root");
         auto const rootMismatch =
-            ProjectRegistration::verifyExact(exactJcs, wrongRoot, owner);
+            ProjectGeneration::verifyExact(exactJcs, wrongRoot, reader);
         REQUIRE_FALSE(rootMismatch.has_value());
         CHECK(
             rootMismatch.error().message().contains(
@@ -185,46 +217,47 @@ namespace uf::operator_runtime
     // digest could only be reddened by decoupling the deriving loader from the
     // schema owner it handed the same local to; this one is reddened by the
     // document itself, which is what a compatibility statement is for.
-    TEST_CASE("VerifiedProjectRegistration rejects a registration generation it does not read")
+    TEST_CASE("VerifiedProjectGeneration rejects a registration generation it does not read")
     {
         auto claims                      = claimsFor(hashOf("plugin"));
-        claims.projectRegistrationFormat = k_projectRegistrationFormat + 1U;
-        auto const exactJcs = registrationJcs(claims);
-        auto owner = exactOwner(exactJcs, claims);
+        claims.projectRegistrationFormat = k_projectGenerationFormat + 1U;
+        auto const exactJcs = generationJcs(claims);
+        auto const reader   = exactReader(exactJcs, claims);
         auto const refused =
-            ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner);
+            ProjectGeneration::verifyExact(exactJcs, hashOf(exactJcs), reader);
         REQUIRE_FALSE(refused.has_value());
         // Both generations, so a reader is never left hunting the second one.
         CHECK(refused.error().message().contains(
             std::to_string(claims.projectRegistrationFormat)
         ));
         CHECK(refused.error().message().contains(
-            std::to_string(k_projectRegistrationFormat)
+            std::to_string(k_projectGenerationFormat)
         ));
     }
 
     // The forward case above proves nothing about the migration itself: a
-    // consumer that accepted any format <= 3 would keep it green. This case
-    // names the generation this framework just stopped reading, so the 2 -> 3
-    // break is red before any future format-4 document is.
-    TEST_CASE("VerifiedProjectRegistration refuses the previous generation's format")
+    // consumer that accepted any format <= 5 would keep it green. This case
+    // names the generation this framework just stopped reading -- the
+    // one-closure document, format 4 -- so the 4 -> 5 break is red before any
+    // future format-6 document is.
+    TEST_CASE("VerifiedProjectGeneration refuses the previous generation's format")
     {
         auto claims                      = claimsFor(hashOf("plugin"));
-        claims.projectRegistrationFormat = 2U;
-        auto const exactJcs = registrationJcs(claims);
-        auto owner = exactOwner(exactJcs, claims);
+        claims.projectRegistrationFormat = 4U;
+        auto const exactJcs = generationJcs(claims);
+        auto const reader   = exactReader(exactJcs, claims);
         auto const refused =
-            ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner);
+            ProjectGeneration::verifyExact(exactJcs, hashOf(exactJcs), reader);
         REQUIRE_FALSE(refused.has_value());
         // The message names the stated format and the format this framework
         // reads, so a refusal of the wrong generation cannot be green.
-        CHECK(refused.error().message().contains("2"));
+        CHECK(refused.error().message().contains("4"));
         CHECK(refused.error().message().contains(
-            std::to_string(k_projectRegistrationFormat)
+            std::to_string(k_projectGenerationFormat)
         ));
     }
 
-    TEST_CASE("VerifiedProjectRegistration rejects unordered resources")
+    TEST_CASE("VerifiedProjectGeneration rejects unordered resources")
     {
         auto claims = claimsFor(hashOf("plugin"));
         claims.projectResources = {
@@ -241,13 +274,13 @@ namespace uf::operator_runtime
                 .size = 1U,
             },
         };
-        auto const exactJcs = registrationJcs(claims);
-        auto owner = exactOwner(exactJcs, std::move(claims));
+        auto const exactJcs = generationJcs(claims);
+        auto const reader   = exactReader(exactJcs, std::move(claims));
         CHECK_FALSE(
-            ProjectRegistration::verifyExact(
+            ProjectGeneration::verifyExact(
                 exactJcs,
                 hashOf(exactJcs),
-                owner
+                reader
             ).has_value()
         );
     }
@@ -257,7 +290,7 @@ namespace uf::operator_runtime
     // own reading of the derived document, on the same terms as the artifact
     // roots above: the registration schema cannot state sortedness, so this
     // side refuses it.
-    TEST_CASE("VerifiedProjectRegistration rejects unordered or duplicate identity schema hashes")
+    TEST_CASE("VerifiedProjectGeneration rejects unordered or duplicate identity schema hashes")
     {
         auto first  = hashOf("identity-alpha");
         auto second = hashOf("identity-beta");
@@ -271,10 +304,10 @@ namespace uf::operator_runtime
         {
             auto claims                                 = claimsFor(hashOf("plugin"));
             claims.observedInstanceIdentitySchemaHashes = {second, first};
-            auto const exactJcs = registrationJcs(claims);
-            auto owner = exactOwner(exactJcs, std::move(claims));
+            auto const exactJcs = generationJcs(claims);
+            auto const reader   = exactReader(exactJcs, std::move(claims));
             auto const refused =
-                ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner);
+                ProjectGeneration::verifyExact(exactJcs, hashOf(exactJcs), reader);
             REQUIRE_FALSE(refused.has_value());
             CHECK(refused.error().message().contains(
                 "observed instance identity schema hashes must be unique and sorted"
@@ -285,10 +318,10 @@ namespace uf::operator_runtime
         {
             auto claims                                 = claimsFor(hashOf("plugin"));
             claims.observedInstanceIdentitySchemaHashes = {first, first};
-            auto const exactJcs = registrationJcs(claims);
-            auto owner = exactOwner(exactJcs, std::move(claims));
+            auto const exactJcs = generationJcs(claims);
+            auto const reader   = exactReader(exactJcs, std::move(claims));
             auto const refused =
-                ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner);
+                ProjectGeneration::verifyExact(exactJcs, hashOf(exactJcs), reader);
             REQUIRE_FALSE(refused.has_value());
             CHECK(refused.error().message().contains(
                 "observed instance identity schema hashes must be unique and sorted"
@@ -296,16 +329,16 @@ namespace uf::operator_runtime
         }
     }
 
-    TEST_CASE("VerifiedProjectRegistration enforces core routing names")
+    TEST_CASE("VerifiedProjectGeneration enforces core routing names")
     {
         SUBCASE("plugin id is namespaced")
         {
             auto claims     = claimsFor(hashOf("plugin"));
             claims.pluginId = "fixture";
-            auto const exactJcs = registrationJcs(claims);
-            auto owner = exactOwner(exactJcs, std::move(claims));
+            auto const exactJcs = generationJcs(claims);
+            auto const reader   = exactReader(exactJcs, std::move(claims));
             CHECK_FALSE(
-                ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner)
+                ProjectGeneration::verifyExact(exactJcs, hashOf(exactJcs), reader)
                     .has_value()
             );
         }
@@ -319,10 +352,10 @@ namespace uf::operator_runtime
         {
             auto claims     = claimsFor(hashOf("plugin"));
             claims.pluginId = "framework.impostor";
-            auto const exactJcs = registrationJcs(claims);
-            auto owner = exactOwner(exactJcs, std::move(claims));
+            auto const exactJcs = generationJcs(claims);
+            auto const reader   = exactReader(exactJcs, std::move(claims));
             auto const refused =
-                ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner);
+                ProjectGeneration::verifyExact(exactJcs, hashOf(exactJcs), reader);
             REQUIRE_FALSE(refused.has_value());
             CHECK(refused.error().message().contains(
                 "claims the reserved framework namespace"
@@ -336,10 +369,10 @@ namespace uf::operator_runtime
         {
             auto claims     = claimsFor(hashOf("plugin"));
             claims.pluginId = "frameworks.impostor";
-            auto const exactJcs = registrationJcs(claims);
-            auto owner = exactOwner(exactJcs, std::move(claims));
+            auto const exactJcs = generationJcs(claims);
+            auto const reader   = exactReader(exactJcs, std::move(claims));
             CHECK(
-                ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner)
+                ProjectGeneration::verifyExact(exactJcs, hashOf(exactJcs), reader)
                     .has_value()
             );
         }
@@ -348,10 +381,10 @@ namespace uf::operator_runtime
         {
             auto claims              = claimsFor(hashOf("plugin"));
             claims.baselineEventType = "Baseline";
-            auto const exactJcs = registrationJcs(claims);
-            auto owner = exactOwner(exactJcs, std::move(claims));
+            auto const exactJcs = generationJcs(claims);
+            auto const reader   = exactReader(exactJcs, std::move(claims));
             CHECK_FALSE(
-                ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner)
+                ProjectGeneration::verifyExact(exactJcs, hashOf(exactJcs), reader)
                     .has_value()
             );
         }
@@ -367,10 +400,10 @@ namespace uf::operator_runtime
                     .size = 1U,
                 },
             };
-            auto const exactJcs = registrationJcs(claims);
-            auto owner = exactOwner(exactJcs, std::move(claims));
+            auto const exactJcs = generationJcs(claims);
+            auto const reader   = exactReader(exactJcs, std::move(claims));
             CHECK_FALSE(
-                ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner)
+                ProjectGeneration::verifyExact(exactJcs, hashOf(exactJcs), reader)
                     .has_value()
             );
         }
@@ -386,10 +419,10 @@ namespace uf::operator_runtime
                     .size = 1U,
                 },
             };
-            auto const exactJcs = registrationJcs(claims);
-            auto owner = exactOwner(exactJcs, std::move(claims));
+            auto const exactJcs = generationJcs(claims);
+            auto const reader   = exactReader(exactJcs, std::move(claims));
             CHECK_FALSE(
-                ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner)
+                ProjectGeneration::verifyExact(exactJcs, hashOf(exactJcs), reader)
                     .has_value()
             );
         }
@@ -410,10 +443,10 @@ namespace uf::operator_runtime
                     .size = 1U,
                 },
             };
-            auto const exactJcs = registrationJcs(claims);
-            auto owner = exactOwner(exactJcs, std::move(claims));
+            auto const exactJcs = generationJcs(claims);
+            auto const reader   = exactReader(exactJcs, std::move(claims));
             CHECK_FALSE(
-                ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner)
+                ProjectGeneration::verifyExact(exactJcs, hashOf(exactJcs), reader)
                     .has_value()
             );
         }
@@ -439,9 +472,29 @@ namespace uf::operator_runtime
         auto rehashed = base;
         rehashed.projectResources[0].hash = hashOf("other-resource-bytes");
 
-        CHECK(hashOf(registrationJcs(base)) != hashOf(registrationJcs(renamed)));
-        CHECK(hashOf(registrationJcs(base)) != hashOf(registrationJcs(retyped)));
-        CHECK(hashOf(registrationJcs(base)) != hashOf(registrationJcs(resized)));
-        CHECK(hashOf(registrationJcs(base)) != hashOf(registrationJcs(rehashed)));
+        CHECK(hashOf(generationJcs(base)) != hashOf(generationJcs(renamed)));
+        CHECK(hashOf(generationJcs(base)) != hashOf(generationJcs(retyped)));
+        CHECK(hashOf(generationJcs(base)) != hashOf(generationJcs(resized)));
+        CHECK(hashOf(generationJcs(base)) != hashOf(generationJcs(rehashed)));
+    }
+
+    // Both closures are inside the root, so moving either one's code moves the
+    // registration identity. It is the two-closure half of the identity
+    // property above, and it is what makes "two closures, two hashes" a fact
+    // about the document rather than a comment on the loader.
+    TEST_CASE("registration identity covers both closures apart")
+    {
+        auto const base = claimsFor(hashOf("plugin"));
+        auto movedReducer                              = base;
+        movedReducer.reducerClosure.moduleManifestHash = hashOf("other-reducer");
+        auto movedTool                                 = base;
+        movedTool.toolClosure.moduleManifestHash       = hashOf("other-tool");
+
+        CHECK(hashOf(generationJcs(base)) != hashOf(generationJcs(movedReducer)));
+        CHECK(hashOf(generationJcs(base)) != hashOf(generationJcs(movedTool)));
+        CHECK(
+            hashOf(generationJcs(movedReducer))
+            != hashOf(generationJcs(movedTool))
+        );
     }
 }

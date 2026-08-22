@@ -43,10 +43,9 @@ namespace uf::operator_runtime
     // a document whose declared contract and stated code disagree, the second
     // catches stated code the shipped bytes do not honour.
     //
-    // It is also proof of the catalog join, on the same terms the one-closure
-    // Tool program registrar proves it: every Tool the pinned catalog declares
-    // is bound to an entry, and every binding names a Tool that catalog
-    // declares.
+    // It is also proof of the catalog join: every Tool the pinned catalog
+    // declares is bound to an entry, and every binding names a Tool that
+    // catalog declares.
     class ProjectGenerationHandle final
     {
         class State;
@@ -125,9 +124,9 @@ namespace uf::operator_runtime
 
         // Whether the answer a bound entry produced is one this Tool's catalog
         // entry declared it could produce. It sits beside invokeBoundTool
-        // rather than inside it for the reason the one-closure program keeps
-        // them apart: the dispatcher runs it between the program's answer and
-        // the terminal durable row, and this seam writes no row.
+        // rather than inside it because the dispatcher runs it between the
+        // program's answer and the terminal durable row, and this seam writes
+        // no row.
         [[nodiscard]]
         auto validateToolResult(
             std::string_view toolName,
@@ -142,15 +141,13 @@ namespace uf::operator_runtime
     // merely name it: a ProjectInstance row carries the reduction of its
     // complete Journal prefix, and that prefix is assembled by the Operator, so
     // no caller can be trusted to hand the answer in ready-made. What
-    // provisioning must NOT take is the whole loaded plugin -- four of that
-    // type's five entries die with the five-function contract, and a seam that
-    // named it would have to be rewritten when they went.
+    // provisioning must NOT take is the whole loaded generation: a seam that
+    // named it would be a seam every later change to the generation handle had
+    // to be walked through.
     //
     // So this is the fold and its provenance and nothing else: which
     // registration root answered, how a caller's exact envelope bytes become
-    // canonical, and the fold itself. Both loaded generations project into it
-    // implicitly, which is what keeps provisioning free of any question about
-    // which document generation a project was deployed as.
+    // canonical, and the fold itself.
     class ProjectBaselineReducer final
     {
         // The two calls together, rather than a fold that canonicalizes its own
@@ -165,10 +162,9 @@ namespace uf::operator_runtime
         Fold          m_fold;
 
     public:
-        // Both projections are implicit for the reason ProjectIdentity's are:
+        // The projection is implicit for the reason ProjectIdentity's is:
         // naming the narrowing would say only which loader the caller happens
         // to hold, which is the fact these seams must not depend on.
-        ProjectBaselineReducer(ProjectPluginHandle const& plugin);
         ProjectBaselineReducer(ProjectGenerationHandle const& generation);
 
         [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;

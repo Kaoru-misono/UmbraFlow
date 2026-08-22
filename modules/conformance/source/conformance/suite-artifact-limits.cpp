@@ -55,13 +55,22 @@ namespace uf::operator_runtime::conformance
             }
         );
 
-        auto registrar = ProjectPluginRegistrar{};
-        auto const registration = registrar.registerPlugin(
-            underTest.registration,
-            underTest.pluginEntryModule,
-            underTest.pluginModules,
+        auto registrar = ProjectGenerationRegistrar{};
+        auto const registration = registrar.registerGeneration(
+            underTest.generation,
+            underTest.toolCatalogSchemaOwner,
+            underTest.schemaOwner,
+            ProjectGenerationRegistrar::ClosureModules{
+                .entryModule = underTest.reducerClosure.entryModule,
+                .modules     = underTest.reducerClosure.modules,
+            },
+            ProjectGenerationRegistrar::ClosureModules{
+                .entryModule = underTest.toolClosure.entryModule,
+                .modules     = underTest.toolClosure.modules,
+            },
             std::move(blobs),
-            underTest.schemaOwner
+            underTest.catalog.toolResultValidator(),
+            conformanceToolRuntime()
         );
         REQUIRE_FALSE(registration.has_value());
         CHECK_MESSAGE(

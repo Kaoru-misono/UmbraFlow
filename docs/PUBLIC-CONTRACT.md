@@ -31,7 +31,6 @@ Parity for one of these is byte identity: read the file, do not copy it.
 | `https://umbraflow.dev/schema/project-attestation/v2` | v2 | -- | `schema/umbraflow-project-attestation-v2.schema.json` | `set_version`, `predecessor_set_id`, `bundle_root_hash`, `plugin_id`, `attestations` |
 | `https://umbraflow.dev/schema/project-observation-proposal/v1` | v1 | `umbraflow-project-observation-proposal/v1` | `schema/umbraflow-project-observation-proposal-v1.schema.json` | `schema`, `canonical_opaque_payload`, `project_tool_preconditions`, `observed_instance_proposals` |
 | `https://umbraflow.dev/schema/project-observation/v1` | v1 | `umbraflow-project-observation/v1` | `schema/umbraflow-project-observation-v1.schema.json` | `schema`, `canonical_opaque_payload`, `project_tool_preconditions`, `observed_instances` |
-| `https://umbraflow.local/schema/project-registration-v2` | v2 | -- | `schema/umbraflow-project-registration-v2.schema.json` | `project_registration_format`, `plugin_id`, `plugin_module_manifest_hash`, `plugin_environment_hash`, `tool_catalog_hash`, `project_state_schema_hash`, `project_observation_schema_hash`, `project_tool_precondition_schema_hash`, `reconcile_payload_schema_manifest_hash`, `journal_event_schema_manifest_hash`, `observed_instance_identity_schema_hashes`, `baseline_event_type`, `project_resources`, `project_tool_bindings` |
 | `https://umbraflow.local/schema/project-registration-v3` | v3 | -- | `schema/umbraflow-project-registration-v3.schema.json` | `project_registration_format`, `plugin_id`, `reducer_closure`, `tool_closure`, `plugin_environment_hash`, `tool_catalog_hash`, `project_state_schema_hash`, `project_observation_schema_hash`, `project_tool_precondition_schema_hash`, `reconcile_payload_schema_manifest_hash`, `journal_event_schema_manifest_hash`, `observed_instance_identity_schema_hashes`, `baseline_event_type`, `project_resources`, `project_tool_bindings` |
 | `https://umbraflow.dev/schema/project-tool-precondition/v1` | v1 | -- | `schema/umbraflow-project-tool-precondition-v1.schema.json` | `name`, `status` |
 | `https://umbraflow.dev/schema/project/directory` | v2 | `umbraflow-project/v2` | `schema/umbraflow-project-v2.schema.json` | `deployments`, `primary_deployment`, `runtime_artifact`, `schema`, `template_cuts` |
@@ -96,6 +95,7 @@ statement.
 | `umbraflow-project-declared-files/v1` |
 | `umbraflow-project-kit-artifact-manifest/v1` |
 | `umbraflow-project-kit-execution-closure/v1` |
+| `umbraflow-project-kit-execution-closure/v2` |
 | `umbraflow-reconcile-manifest/v1` |
 | `umbraflow-release/v1` |
 | `umbraflow-tool-catalog/v1` |
@@ -159,27 +159,37 @@ member below is a hash.
 | `journal_payload_schemas` |
 | `name` |
 | `observed_instance_identity_schemas` |
-| `plugin` |
 | `plugin_authoring` |
 | `plugin_id` |
 | `project_observation_schema` |
 | `project_state_schema` |
 | `reconcile_manifest` |
 | `reconcile_schema` |
+| `reducer_closure` |
 | `resources` |
 | `tool_bindings` |
 | `tool_catalog` |
+| `tool_closure` |
 | `tool_precondition_schema` |
 
 ### 2.3 Module and resource closures
 
-`plugin` is an explicit closed module graph. `entry` selects one
-logical module name; every module and resource path is confined to
-the project directory, while runtime identity retains names, kinds,
-sizes and exact byte hashes but no host path. Authored array order is
-not identity.
+A deployment states TWO closures and both are mandatory:
+`reducer_closure`, compiled on the pure program type, and
+`tool_closure`, compiled on the scoped Tool program type. There is
+no absent-means-pure reading and no registration that carries one
+closure and infers the other; a project that binds no Tool ships a
+tool closure with an explicitly empty `exported_entry_points` and an
+empty `tool_bindings`.
 
-Plugin required members: `entry`, `modules`. Module required members: `name`, `path`. Resource required members: `kind`, `name`, `path`.
+Each closure is an explicit closed module graph. `entry` selects one
+logical module name, `exported_entry_points` STATES what that graph
+exports and is never derived from the binding table, and every module
+and resource path is confined to the project directory, while runtime
+identity retains names, kinds, sizes and exact byte hashes but no host
+path. Authored array order is not identity.
+
+Closure required members: `entry`, `exported_entry_points`, `modules`. Module required members: `name`, `path`. Resource required members: `kind`, `name`, `path`.
 
 Module-name grammar: `^[a-z][a-z0-9_-]{0,63}(/[a-z][a-z0-9_-]{0,63}){0,15}$`; resource
 names use `^[a-z][a-z0-9_-]{0,63}(\.[a-z][a-z0-9_-]{0,63}){0,15}$`. Resource
@@ -475,7 +485,7 @@ project build path is not a directory: "{}"
 cannot create project build directory "{}": {}
 declared project input must be a relative file path: "{}"
 declared project input leaves the source tree: "{}"
-generated Project module "{}" must map to generated/adapters/<plugin>/<tool>.luau
+generated Project module "{}" must map to generated/adapters/<plugin>/<tool>/<closure>.luau
 declared project input "{}" is missing at "{}"
 cannot inspect declared project input "{}" at "{}": {}
 declared project input "{}" is not a regular file at "{}"
@@ -496,10 +506,10 @@ generated template "{}" requires at least one source hash
 generated template "{}" cannot resolve source {}: {}
 resolved template source {} has content hash {}
 generated template path appears more than once: "{}"
-project deployment {} appears more than once
-project deployment {} uses module path "{}" more than once
+project deployment {} uses module path "{}" more than once in its {} closure
 project module {} names missing generated adapter "{}"
 project module {} names undeclared source input "{}"
+project deployment {} appears more than once
 project resource {} names undeclared source input "{}"
 project deployment {} names resource {} more than once
 project deployment {} uses resource path "{}" more than once
@@ -594,8 +604,8 @@ Unicode-derived data is distributed under `modules/task/runtime/UNICODE-LICENSE.
 Reserved SCOPED Framework modules: `@umbraflow/audit`, `@umbraflow/screen`, `@umbraflow/tools`, `@umbraflow/workflow`.
 These are a DIFFERENT contract from the pure modules above and are
 not interchangeable with them. A pure module loads in every Project
-program: the five-function ProjectPlugin path and the Journal reducer
-included. A scoped module loads only inside a scoped Tool execution
+program, the Journal reducer included. A scoped module loads only
+inside a scoped Tool execution
 program, and `require` of one of these names from any other program
 fails in the resolver naming the module, because the scoped set is a
 property of the program type rather than of a runtime flag. They are

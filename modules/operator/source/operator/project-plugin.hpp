@@ -149,7 +149,6 @@ namespace uf::operator_runtime
     {
         class State;
 
-        friend class ProjectPluginHandle;
         friend class ProjectGenerationHandle;
 
         std::shared_ptr<State const> m_state;
@@ -203,86 +202,14 @@ namespace uf::operator_runtime
         [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;
     };
 
-    // Immutable handle to precompiled plugin bytecode and verified artifact
-    // blobs. Every data call creates a fresh pure VM; no VM, callback registry,
-    // native handle, Host, Receipt, database, clock, RNG, loader, or path is
-    // exposed.
-    class ProjectPluginHandle final
-    {
-        class State;
-
-        friend class ProjectPluginRegistrar;
-
-        std::shared_ptr<State const> m_state;
-
-        explicit ProjectPluginHandle(std::shared_ptr<State const> p_state) noexcept;
-
-        [[nodiscard]]
-        auto invoke(
-            ProjectPluginFunction function,
-            CanonicalJson const& input
-        ) const
-            -> Result<ValidatedDocument>;
-
-    public:
-        ProjectPluginHandle(ProjectPluginHandle const&) noexcept = default;
-        ProjectPluginHandle(ProjectPluginHandle&&) noexcept = default;
-        auto operator=(ProjectPluginHandle const&) noexcept -> ProjectPluginHandle& = default;
-        auto operator=(ProjectPluginHandle&&) noexcept -> ProjectPluginHandle& = default;
-        ~ProjectPluginHandle() = default;
-
-        [[nodiscard]] auto pluginId() const -> std::string;
-        [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;
-        [[nodiscard]] auto pluginModuleManifestHash() const -> ContentHash;
-
-        // The resource identities this registration pinned, in the
-        // manifest's own order -- resource names sorted by UTF-8 bytes, so
-        // the sequence is determined and a JCS array of it is too. Trusted
-        // Operator code needs them because it assembles the derive envelope
-        // itself rather than accepting one; they are already public in the
-        // registration this handle was built from.
-        [[nodiscard]]
-        auto projectResourceHashes() const -> std::vector<ContentHash>;
-
-        // The observation schema this registration pinned. The Operator records
-        // it beside every derived reading so a stored observation names the
-        // schema that judged it; project_registrations carries no column for
-        // it, and the handle is already checked against that row.
-        [[nodiscard]] auto projectObservationSchemaHash() const -> ContentHash;
-
-        // Mints canonical bytes through this plugin's pinned schema owner.
-        // Trusted Operator code needs it because it assembles the reduce
-        // envelope itself rather than accepting one from a caller; it grants no
-        // authority beyond proving the bytes are exact JCS.
-        [[nodiscard]]
-        auto canonicalize(std::string exactJcs) const -> Result<CanonicalJson>;
-
-        [[nodiscard]]
-        auto derive(CanonicalJson const& input) const -> Result<ValidatedDocument>;
-
-        [[nodiscard]]
-        auto plan(CanonicalJson const& input) const -> Result<ValidatedDocument>;
-
-        [[nodiscard]]
-        auto nextStep(CanonicalJson const& input) const -> Result<ValidatedDocument>;
-
-        [[nodiscard]]
-        auto reconcile(CanonicalJson const& input) const -> Result<ValidatedDocument>;
-
-        [[nodiscard]]
-        auto reduce(CanonicalJson const& input) const -> Result<ValidatedDocument>;
-    };
-
     // One authored module of a Project closure, and one blob of the resource
     // closure a registration pinned, as they are handed to a loader.
     //
-    // They live at namespace scope rather than inside a registrar because they
-    // are the vocabulary of the loader layer and not of one loader: the
-    // one-closure registrar, the two-closure generation registrar, the Tool
-    // program registrar, the manifest derivation and the deployment that reads
-    // the bytes off disk all name them. Nesting them in the registrar that
-    // happened to be written first would have made every other consumer spell
-    // a superseded type's name to say "a module".
+    // They live at namespace scope rather than inside the registrar because
+    // they are the vocabulary of the loader layer and not of one loader: the
+    // generation registrar, the manifest derivation and the deployment that
+    // reads the bytes off disk all name them. Nesting them inside the registrar
+    // would make every other consumer spell a loader's name to say "a module".
     struct ProjectModuleBlob final
     {
         std::string name{};
@@ -294,31 +221,6 @@ namespace uf::operator_runtime
         ProjectResourceKind kind{ProjectResourceKind::Json};
         std::string         name{};
         std::string         bytes{};
-    };
-
-    // Startup-only exact registry. Registration accepts only an already verified
-    // registration, the exact module and resource closures pinned by it, and a
-    // schema owner bound to the same root.
-    class ProjectPluginRegistrar final
-    {
-        std::map<std::pair<std::string, ContentHash>, ProjectPluginHandle> m_plugins{};
-
-    public:
-        [[nodiscard]]
-        auto registerPlugin(
-            VerifiedProjectRegistration const& registration,
-            std::string entryModule,
-            std::vector<ProjectModuleBlob> exactModules,
-            std::vector<ProjectResourceBlob> exactResources,
-            ProjectSchemaOwner schemaOwner
-        ) -> Result<ProjectPluginHandle>;
-
-        [[nodiscard]]
-        auto findExact(
-            std::string const& pluginId,
-            ContentHash projectRegistrationHash
-        ) const
-            -> Result<ProjectPluginHandle>;
     };
 
     [[nodiscard]]
@@ -342,11 +244,10 @@ namespace uf::operator_runtime
     // did this project register", and only one of them would be inside
     // project_registration_hash.
     //
-    // It takes the pinned rows rather than a registration for the same reason:
-    // the one-closure and two-closure documents both state them, and a
-    // parameter naming one of the two document types would have forced the
-    // second copy this comment refuses. `pinnedResources` is a call-scoped
-    // borrow of the document's own rows; nothing here retains it.
+    // It takes the pinned rows rather than a registration so that the check
+    // names the rows it judges and not the document that happens to carry
+    // them. `pinnedResources` is a call-scoped borrow of the document's own
+    // rows; nothing here retains it.
     [[nodiscard]]
     auto verifyProjectResourceClosure(
         std::span<ProjectResource const> pinnedResources,

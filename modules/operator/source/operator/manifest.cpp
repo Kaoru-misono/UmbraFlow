@@ -156,17 +156,17 @@ namespace uf::operator_runtime
             );
         }
 
-        // Everything the one-closure and two-closure documents state
-        // identically. It is a template over the two claim types rather than
-        // one function each because the two are one reading of one member set;
-        // the instantiation set is those two and is closed in this file.
+        // Everything a registration document states about its registrant
+        // rather than about its closures: the namespace it owns, the event
+        // type its baseline carries, and the ordering rules its arrays obey.
         //
-        // The format member is deliberately NOT read here: a shared function
-        // that judged it would be one place that understands both generations,
-        // which is the selector this cut refuses.
-        template <typename Claims>
+        // The format member is deliberately NOT read here. It is the one
+        // member that identifies which document this is, so the reader that
+        // owns the format is the one place that decides whether these bytes
+        // are readable at all; a shared function that judged it too would be a
+        // second opinion about a document's identity.
         [[nodiscard]]
-        auto validateSharedClaims(Claims const& claims) -> Status
+        auto validateSharedClaims(ProjectGenerationClaims const& claims) -> Status
         {
             UF_TRY(validateDottedName(claims.pluginId, "plugin_id", true));
 
@@ -332,20 +332,11 @@ namespace uf::operator_runtime
             return ok();
         }
 
-        [[nodiscard]]
-        auto validateClaims(ProjectRegistrationClaims const& claims) -> Status
-        {
-            UF_TRY(validateFormat(
-                claims.projectRegistrationFormat,
-                k_projectRegistrationFormat
-            ));
-            return validateSharedClaims(claims);
-        }
-
-        // The two-closure reader. It accepts k_projectGenerationFormat and
-        // refuses every other number, including the one-closure generation's:
-        // the one-closure document is not a degraded generation this reader
-        // could fall back to reading, it is a document with another reader.
+        // The one reader. It accepts k_projectGenerationFormat and refuses
+        // every other number, including the one-closure generation the flip
+        // deleted: a document stating another format is not a degraded
+        // generation this reader falls back to, it is a document this
+        // framework does not read.
         [[nodiscard]]
         auto validateGenerationClaims(
             ProjectGenerationClaims const& claims
@@ -398,177 +389,6 @@ namespace uf::operator_runtime
             );
         }
         return ok();
-    }
-
-    ProjectRegistrationSchemaOwner::ProjectRegistrationSchemaOwner(
-        ProjectRegistrationExactValidator validate
-    )
-        : m_validate{std::move(validate)}
-    {
-    }
-
-    auto ProjectRegistrationSchemaOwner::create(
-        ProjectRegistrationExactValidator validate
-    ) -> Result<ProjectRegistrationSchemaOwner>
-    {
-        if (!validate)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "ProjectRegistration schema owner requires an exact validator"
-            );
-        }
-        return ProjectRegistrationSchemaOwner{std::move(validate)};
-    }
-
-    auto ProjectRegistrationSchemaOwner::validate(
-        std::string_view exactJcs
-    ) const -> Result<ProjectRegistrationClaims>
-    {
-        return m_validate(exactJcs);
-    }
-
-    VerifiedProjectRegistration::VerifiedProjectRegistration(
-        ProjectRegistrationClaims claims,
-        std::string canonicalJcs,
-        ContentHash rootHash
-    )
-        : m_claims{std::move(claims)}
-        , m_canonicalJcs{std::move(canonicalJcs)}
-        , m_rootHash{rootHash}
-    {
-    }
-
-    auto VerifiedProjectRegistration::canonicalJcs() const noexcept
-        -> std::string const&
-    {
-        return m_canonicalJcs;
-    }
-
-    auto VerifiedProjectRegistration::hash() const -> ContentHash
-    {
-        return m_rootHash;
-    }
-
-    auto VerifiedProjectRegistration::pluginId() const -> std::string
-    {
-        return m_claims.pluginId;
-    }
-
-    auto VerifiedProjectRegistration::pluginModuleManifestHash() const -> ContentHash
-    {
-        return m_claims.pluginModuleManifestHash;
-    }
-
-    auto VerifiedProjectRegistration::pluginEnvironmentHash() const -> ContentHash
-    {
-        return m_claims.pluginEnvironmentHash;
-    }
-
-    auto VerifiedProjectRegistration::projectStateSchemaHash() const
-        -> ContentHash
-    {
-        return m_claims.projectStateSchemaHash;
-    }
-
-    auto VerifiedProjectRegistration::toolCatalogHash() const -> ContentHash
-    {
-        return m_claims.toolCatalogHash;
-    }
-
-    auto VerifiedProjectRegistration::projectToolBindings() const noexcept
-        -> std::vector<ProjectToolBinding> const&
-    {
-        return m_claims.projectToolBindings;
-    }
-
-    auto VerifiedProjectRegistration::projectObservationSchemaHash() const
-        -> ContentHash
-    {
-        return m_claims.projectObservationSchemaHash;
-    }
-
-    auto VerifiedProjectRegistration::projectToolPreconditionSchemaHash() const
-        -> ContentHash
-    {
-        return m_claims.projectToolPreconditionSchemaHash;
-    }
-
-    auto VerifiedProjectRegistration::reconcilePayloadSchemaManifestHash() const
-        -> ContentHash
-    {
-        return m_claims.reconcilePayloadSchemaManifestHash;
-    }
-
-    auto VerifiedProjectRegistration::journalEventSchemaManifestHash() const
-        -> ContentHash
-    {
-        return m_claims.journalEventSchemaManifestHash;
-    }
-
-    auto VerifiedProjectRegistration::baselineEventType() const -> std::string
-    {
-        return m_claims.baselineEventType;
-    }
-
-    auto VerifiedProjectRegistration::projectResources() const noexcept
-        -> std::vector<ProjectResource> const&
-    {
-        return m_claims.projectResources;
-    }
-
-    auto VerifiedProjectRegistration::observedInstanceIdentitySchemaHashes()
-        const noexcept -> std::vector<ContentHash> const&
-    {
-        return m_claims.observedInstanceIdentitySchemaHashes;
-    }
-
-    auto ProjectRegistration::verifyExact(
-        std::string canonicalJcs,
-        ContentHash expectedRootHash,
-        ProjectRegistrationSchemaOwner const& schemaOwner
-    ) -> Result<VerifiedProjectRegistration>
-    {
-        if (
-            canonicalJcs.empty()
-            || canonicalJcs.size() > k_maximumRegistrationBytes
-            || !isValidUtf8(canonicalJcs)
-        )
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "ProjectRegistration must be non-empty bounded UTF-8 JCS"
-            );
-        }
-
-        UF_TRY_VALUE(
-            actualRootHash,
-            sha256(std::as_bytes(std::span{canonicalJcs}))
-        );
-        if (actualRootHash != expectedRootHash)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "ProjectRegistration bytes do not match the expected root "
-                    "hash: expected {}, computed {}",
-                    expectedRootHash.hex(),
-                    actualRootHash.hex()
-                )
-            );
-        }
-
-        UF_TRY_VALUE_CONTEXT(
-            claims,
-            schemaOwner.validate(canonicalJcs),
-            "validating exact ProjectRegistration JCS"
-        );
-        UF_TRY(validateClaims(claims));
-        return VerifiedProjectRegistration{
-            std::move(claims),
-            std::move(canonicalJcs),
-            actualRootHash,
-        };
     }
 
     VerifiedProjectGeneration::VerifiedProjectGeneration(
@@ -687,26 +507,6 @@ namespace uf::operator_runtime
         };
     }
 
-    ProjectIdentity::ProjectIdentity(
-        VerifiedProjectRegistration const& registration
-    )
-        : m_projectRegistrationHash{registration.m_rootHash}
-        , m_pluginId{registration.m_claims.pluginId}
-        , m_canonicalJcs{registration.m_canonicalJcs}
-        , m_moduleIdentityHash{registration.m_claims.pluginModuleManifestHash}
-        , m_toolCatalogHash{registration.m_claims.toolCatalogHash}
-        , m_projectStateSchemaHash{registration.m_claims.projectStateSchemaHash}
-        , m_projectObservationSchemaHash{
-              registration.m_claims.projectObservationSchemaHash
-          }
-        , m_projectToolPreconditionSchemaHash{
-              registration.m_claims.projectToolPreconditionSchemaHash
-          }
-        , m_baselineEventType{registration.m_claims.baselineEventType}
-        , m_projectToolBindings{registration.m_claims.projectToolBindings}
-    {
-    }
-
     ProjectIdentity::ProjectIdentity(VerifiedProjectGeneration const& generation)
         : m_projectRegistrationHash{generation.m_rootHash}
         , m_pluginId{generation.m_claims.pluginId}
@@ -722,7 +522,16 @@ namespace uf::operator_runtime
         , m_projectToolPreconditionSchemaHash{
               generation.m_claims.projectToolPreconditionSchemaHash
           }
+        , m_reconcilePayloadSchemaManifestHash{
+              generation.m_claims.reconcilePayloadSchemaManifestHash
+          }
+        , m_journalEventSchemaManifestHash{
+              generation.m_claims.journalEventSchemaManifestHash
+          }
         , m_baselineEventType{generation.m_claims.baselineEventType}
+        , m_observedInstanceIdentitySchemaHashes{
+              generation.m_claims.observedInstanceIdentitySchemaHashes
+          }
         , m_projectToolBindings{generation.m_claims.projectToolBindings}
     {
     }
@@ -767,9 +576,25 @@ namespace uf::operator_runtime
         return m_projectToolPreconditionSchemaHash;
     }
 
+    auto ProjectIdentity::reconcilePayloadSchemaManifestHash() const -> ContentHash
+    {
+        return m_reconcilePayloadSchemaManifestHash;
+    }
+
+    auto ProjectIdentity::journalEventSchemaManifestHash() const -> ContentHash
+    {
+        return m_journalEventSchemaManifestHash;
+    }
+
     auto ProjectIdentity::baselineEventType() const -> std::string
     {
         return m_baselineEventType;
+    }
+
+    auto ProjectIdentity::observedInstanceIdentitySchemaHashes() const noexcept
+        -> std::vector<ContentHash> const&
+    {
+        return m_observedInstanceIdentitySchemaHashes;
     }
 
     auto ProjectIdentity::projectToolBindings() const noexcept

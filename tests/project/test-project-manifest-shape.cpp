@@ -123,6 +123,34 @@ namespace uf::project
                 : std::string{message.substr(at)};
         }
 
+        // The module a case names is the TOOL closure's, and the reducer beside
+        // it is the one its authoring form ships: a generated deployment's
+        // reducer is the second closure its declaration renders, a hand-written
+        // one's is the fixture reducer.
+        inline constexpr auto k_handWrittenTool = std::string_view{
+            "plugin/dream.luau"
+        };
+        inline constexpr auto k_handWrittenReducer = std::string_view{
+            "plugin/dream-reducer.luau"
+        };
+        inline constexpr auto k_generatedTool = std::string_view{
+            "generated/adapters/acme.tool/do-work/tool.luau"
+        };
+        inline constexpr auto k_generatedReducer = std::string_view{
+            "generated/adapters/acme.tool/do-work/reducer.luau"
+        };
+        inline constexpr auto k_generatedAdapterPrefix = std::string_view{
+            "generated/adapters/"
+        };
+
+        [[nodiscard]]
+        auto reducerFor(std::string_view toolModule) -> std::string_view
+        {
+            return toolModule.starts_with(k_generatedAdapterPrefix)
+                ? k_generatedReducer
+                : k_handWrittenReducer;
+        }
+
         // One deployment block, with the three members under test spliced in.
         // Everything else is a manifest whose shape the loader accepts.
         [[nodiscard]]
@@ -135,7 +163,14 @@ namespace uf::project
             auto block = std::string{R"json({"name":"dream",)json"};
             block += R"json("plugin_id":"chaos.dream",)json";
             block += R"json("baseline_event_type":"project.baseline_created",)json";
-            block += R"json("plugin":{"entry":"main","modules":[{"name":"main","path":")json";
+            block += R"json("reducer_closure":{"entry":"main",)json"
+                R"json("exported_entry_points":["reduce"],)json"
+                R"json("modules":[{"name":"main","path":")json";
+            block += reducerFor(plugin);
+            block += R"json("}]},)json";
+            block += R"json("tool_closure":{"entry":"main",)json"
+                R"json("exported_entry_points":[],)json"
+                R"json("modules":[{"name":"main","path":")json";
             block += plugin;
             block += R"json("}]},)json";
             block += R"json("plugin_authoring":")json";
@@ -194,7 +229,7 @@ namespace uf::project
         auto acceptedManifest() -> std::string
         {
             return oneDeployment(
-                "plugin/dream.luau",
+                k_handWrittenTool,
                 "hand-written",
                 statedJustification()
             );
@@ -244,11 +279,15 @@ namespace uf::project
             auto const source    = workspace.path() / "source";
             auto const build     = workspace.path() / "build";
             writeFile(source / "dummy.txt", "dummy\n");
-            writeFile(source / "plugin/dream.luau", "return {}\n");
+            writeFile(source / k_handWrittenTool, "return {}\n");
+            writeFile(
+                source / k_handWrittenReducer,
+                "return {plugin_id = \"chaos.dream\", reduce = function() end}\n"
+            );
             writeFile(source / "umbraflow-project.json", manifest);
 
             auto inputs = std::vector<std::filesystem::path>{"dummy.txt"};
-            if (manifest.contains("generated/adapters/acme.tool/do-work.luau"))
+            if (manifest.contains(k_generatedTool))
             {
                 auto const declaration = std::filesystem::path{
                     "declarative-tools/acme.tool/do-work.json"
@@ -306,24 +345,17 @@ namespace uf::project
         [[nodiscard]]
         auto shapeCases() -> std::array<ShapeCase, 9>
         {
-            auto const numericName = std::string{
-                R"json([{"name":7,"plugin_id":"chaos.dream",)json"
-                R"json("baseline_event_type":"project.baseline_created",)json"
-                R"json("plugin":{"entry":"main","modules":[{"name":"main","path":"plugin/dream.luau"}]},)json"
-                R"json("plugin_authoring":"hand-written",)json"
-            }
-                + statedJustification()
-                + R"json("project_state_schema":"schema/state.json",)json"
-                R"json("project_observation_schema":"schema/observation.json",)json"
-                R"json("tool_precondition_schema":"schema/precondition.json",)json"
-                R"json("reconcile_schema":"schema/reconcile.json",)json"
-                R"json("tool_catalog":"schema/catalog.json",)json"
-                R"json("journal_event_schema_manifest":"schema/journal.json",)json"
-                R"json("reconcile_manifest":"schema/reconcile-manifest.json",)json"
-                R"json("journal_payload_schemas":["schema/journal-0.json"],)json"
-                R"json("effect_payload_schemas":[],)json"
-                R"json("observed_instance_identity_schemas":[],)json"
-                R"json("resources":[]}])json";
+            // Everything but the name is the accepted block, so what either
+            // reader refuses here is the number where a deployment name goes.
+            constexpr auto k_statedName = std::string_view{R"json({"name":"dream",)json"};
+            auto numericBlock           = deploymentBlock(
+                k_handWrittenTool,
+                "hand-written",
+                statedJustification()
+            );
+            REQUIRE(numericBlock.starts_with(k_statedName));
+            numericBlock.replace(0U, k_statedName.size(), R"json({"name":7,)json");
+            auto const numericName = "[" + numericBlock + "]";
 
             auto unknownMember = acceptedManifest();
             unknownMember.insert(1U, R"json("invented_member":1,)json");
@@ -344,7 +376,7 @@ namespace uf::project
                 ShapeCase{
                     .label    = "a generated adapter stating none",
                     .manifest = oneDeployment(
-                        "generated/adapters/acme.tool/do-work.luau",
+                        k_generatedTool,
                         "generated",
                         ""
                     ),
@@ -353,7 +385,7 @@ namespace uf::project
                 ShapeCase{
                     .label    = "a hand-written plugin stating none",
                     .manifest = oneDeployment(
-                        "plugin/dream.luau",
+                        k_handWrittenTool,
                         "hand-written",
                         ""
                     ),
@@ -362,7 +394,7 @@ namespace uf::project
                 ShapeCase{
                     .label    = "a generated adapter stating one",
                     .manifest = oneDeployment(
-                        "generated/adapters/acme.tool/do-work.luau",
+                        k_generatedTool,
                         "generated",
                         statedJustification()
                     ),
@@ -462,14 +494,14 @@ namespace uf::project
     TEST_CASE("the justification pattern refuses ASCII whitespace and says so")
     {
         auto const blank = oneDeployment(
-            "plugin/dream.luau",
+            k_handWrittenTool,
             "hand-written",
             R"json("plugin_justification":" \t\n ",)json"
         );
         // Written as the JSON escape rather than as the byte pair, so what
         // the document carries is unambiguous in this source file too.
         auto const noBreakSpace = oneDeployment(
-            "plugin/dream.luau",
+            k_handWrittenTool,
             "hand-written",
             R"json("plugin_justification":" ",)json"
         );

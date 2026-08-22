@@ -118,12 +118,10 @@ namespace uf::operator_runtime::conformance::expedition
             UF_TRY(project::buildProject(spec, {}));
             UF_TRY(project::checkProject(spec, {}));
             constexpr auto expected = std::array{
-                std::string_view{"generated/modules/expedition/main.luau"},
-                std::string_view{"generated/modules/expedition/plans.luau"},
-                std::string_view{"generated/modules/expedition/state/reducer.luau"},
-                std::string_view{"generated/modules/rival/main.luau"},
-                std::string_view{"generated/modules/rival/plans.luau"},
-                std::string_view{"generated/modules/rival/state/reducer.luau"},
+                std::string_view{"generated/modules/expedition/reducer/main.luau"},
+                std::string_view{"generated/modules/expedition/tool/main.luau"},
+                std::string_view{"generated/modules/rival/reducer/main.luau"},
+                std::string_view{"generated/modules/rival/tool/main.luau"},
                 std::string_view{"generated/resources/expedition/map.blob"},
                 std::string_view{"generated/resources/rival/map.blob"},
                 std::string_view{"generated/registrations/expedition.json"},

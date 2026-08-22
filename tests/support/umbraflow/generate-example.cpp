@@ -117,8 +117,10 @@ namespace uf::operator_runtime::test_support
             UF_TRY(project::buildProject(spec, {}));
             UF_TRY(project::checkProject(spec, {}));
             constexpr auto expected = std::array{
-                std::string_view{"generated/modules/alpha/main.luau"},
-                std::string_view{"generated/modules/foreign/main.luau"},
+                std::string_view{"generated/modules/alpha/reducer/main.luau"},
+                std::string_view{"generated/modules/alpha/tool/main.luau"},
+                std::string_view{"generated/modules/foreign/reducer/main.luau"},
+                std::string_view{"generated/modules/foreign/tool/main.luau"},
                 std::string_view{"generated/registrations/alpha.json"},
                 std::string_view{"generated/registrations/foreign.json"},
             };

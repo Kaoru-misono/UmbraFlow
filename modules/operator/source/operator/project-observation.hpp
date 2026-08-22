@@ -232,7 +232,7 @@ namespace uf::operator_runtime
 
         [[nodiscard]]
         static auto create(
-            VerifiedProjectRegistration const& registration,
+            ProjectIdentity const& registration,
             std::vector<ObservedInstanceIdentitySchema> schemas
         ) -> Result<ObservedInstanceIdentitySchemas>;
 

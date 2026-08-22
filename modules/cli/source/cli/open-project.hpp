@@ -77,8 +77,9 @@ namespace uf::cli
 
     // Loads the directory the way the product starts it, verifies the
     // RuntimeArtifact it names the way the Operator's installer verifies it,
-    // registers every deployment's plugin through ProjectPluginRegistrar, and
-    // reports all three. The registrar is local to the call: this verb answers
+    // registers every deployment's two closures through
+    // ProjectGenerationRegistrar, and reports all three. The registrar is local
+    // to the call: this verb answers
     // whether the directory registers, and a registry that outlived the answer
     // would be a session, which is the next verb's job rather than this one's.
     //

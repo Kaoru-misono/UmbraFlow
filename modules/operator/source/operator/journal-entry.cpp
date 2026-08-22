@@ -294,7 +294,7 @@ namespace uf::operator_runtime
     }
 
     auto ProjectJournalSchemaOwner::create(
-        VerifiedProjectRegistration const& registration,
+        ProjectIdentity const& registration,
         std::string_view exactJournalSchemaManifestBytes,
         JournalPayloadSchemaValidator validatePayload
     ) -> Result<ProjectJournalSchemaOwner>

@@ -256,7 +256,7 @@ namespace uf::operator_runtime
             REQUIRE(installed.has_value());
             auto const artifactRootHash    = installed->rootHash();
             auto const installedGeneration = installed->installedGeneration();
-            auto const source  = test_support::pluginSource("fixture.nested");
+            auto const source  = test_support::reducerSource("fixture.nested");
             auto const project = test_support::makeProject(
                 "fixture.nested",
                 source
@@ -267,11 +267,11 @@ namespace uf::operator_runtime
                 hashOf("agent"),
                 policy
             );
-            auto const projectPlugin = test_support::loadPlugin(project, source);
+            auto const projectGeneration = test_support::loadGeneration(project, source);
             REQUIRE(store.registerProject(project.registration).has_value());
             REQUIRE(store.provisionProjectInstance(
                 project.registration,
-                projectPlugin,
+                projectGeneration,
                 ProjectInstanceBaseline{
                     .projectInstanceKey  = "instance-1",
                     .eventId             = "baseline-1",
@@ -319,7 +319,7 @@ namespace uf::operator_runtime
             );
             auto snapshot = store.createSnapshot(
                 *lease,
-                projectPlugin,
+                project.registration,
                 project.toolCatalogSchemaOwner,
                 project.observedInstanceIdentitySchemas,
                 reading
@@ -329,18 +329,17 @@ namespace uf::operator_runtime
                 observation.generation
             );
             REQUIRE(runtimeModel.has_value());
-            auto planAuthority = conformance::planAuthority(
+            auto planAuthority = OperatorPlanAuthority::create(
                 project.registration,
                 manifest,
                 *runtimeModel,
                 "operator",
-                policy,
-                test_support::k_fixtureUiAction
+                policy
             );
             REQUIRE(planAuthority.has_value());
             return test_support::PreparedStore{
                 .store                   = std::move(store),
-                .plugin                  = projectPlugin,
+                .generation              = projectGeneration,
                 .project                 = project,
                 .manifest                = manifest,
                 .planAuthority           = *std::move(planAuthority),
@@ -373,7 +372,7 @@ namespace uf::operator_runtime
         {
             REQUIRE(prepared.store.provisionProjectInstance(
                 prepared.project.registration,
-                prepared.plugin,
+                prepared.generation,
                 ProjectInstanceBaseline{
                     .projectInstanceKey  = projectInstanceKey,
                     .eventId             = "baseline-" + projectInstanceKey,
@@ -885,7 +884,7 @@ namespace uf::operator_runtime
         {
             auto const foreign = test_support::makeProject(
                 "fixture.foreign",
-                test_support::pluginSource("fixture.foreign")
+                test_support::reducerSource("fixture.foreign")
             );
             // The foreign registration owns its own namespace, so its Tool
             // cannot be the same name at all: what the case shows is that a

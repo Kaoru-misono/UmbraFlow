@@ -2,7 +2,12 @@
 
 #include <deployment/project-directory.hpp>
 
+#include <operator/project-generation.hpp>
 #include <operator/runtime-installation.hpp>
+
+#include <script/scoped-tool-program.hpp>
+
+#include <json/value.hpp>
 
 #include <task/runtime-model-file.hpp>
 
@@ -39,6 +44,7 @@ namespace uf::operator_runtime::conformance
             return s_directory;
         }
 
+
         [[nodiscard]]
         auto roleOf(
             deployment::ConformanceProject const& project UF_LIFETIME_BOUND,
@@ -49,6 +55,22 @@ namespace uf::operator_runtime::conformance
                 ? project.underTest
                 : project.foreign;
         }
+    }
+
+    auto conformanceToolRuntime() -> script::ToolRuntimeInvoke
+    {
+        return [](
+                   std::string_view,
+                   json::Value const&,
+                   script::ToolCallCoordinate const&,
+                   std::stop_token
+               ) -> Result<json::Value>
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "a conformance run dispatches no Tool call"
+            );
+        };
     }
 
     auto setProjectDirectory(std::filesystem::path directory) -> void
@@ -183,42 +205,31 @@ namespace uf::operator_runtime::conformance
         return *result;
     }
 
-    auto loadPlugin(
+    auto loadGeneration(
         deployment::ConformanceProject const& project,
         ProjectRole role
-    ) -> ProjectPluginHandle
+    ) -> ProjectGenerationHandle
     {
         auto const& one = deploymentFor(project, role);
-        auto registrar  = ProjectPluginRegistrar{};
-        auto result     = registrar.registerPlugin(
-            one.registration,
-            one.pluginEntryModule,
-            one.pluginModules,
+        auto registrar  = ProjectGenerationRegistrar{};
+        auto result     = registrar.registerGeneration(
+            one.generation,
+            one.toolCatalogSchemaOwner,
+            one.schemaOwner,
+            ProjectGenerationRegistrar::ClosureModules{
+                .entryModule = one.reducerClosure.entryModule,
+                .modules     = one.reducerClosure.modules,
+            },
+            ProjectGenerationRegistrar::ClosureModules{
+                .entryModule = one.toolClosure.entryModule,
+                .modules     = one.toolClosure.modules,
+            },
             one.projectResources,
-            one.schemaOwner
+            one.catalog.toolResultValidator(),
+            conformanceToolRuntime()
         );
         REQUIRE(result.has_value());
         return *result;
-    }
-
-    auto reconcileOutcome(
-        deployment::ConformanceProject const& project,
-        ProjectRole role,
-        ProjectPluginHandle const& plugin,
-        std::string operationId,
-        std::string input
-    ) -> ValidatedReconcileOutcome
-    {
-        auto proposal = plugin.reconcile(
-            canonical(project, role, std::move(input))
-        );
-        REQUIRE(proposal.has_value());
-        auto outcome = deploymentFor(project, role).reconcileSchemaOwner.validate(
-            std::move(operationId),
-            *std::move(proposal)
-        );
-        REQUIRE(outcome.has_value());
-        return *outcome;
     }
 
     auto policyArtifact(
@@ -251,7 +262,7 @@ namespace uf::operator_runtime::conformance
     }
 
     auto sessionManifest(
-        VerifiedProjectRegistration const& registration,
+        ProjectIdentity const& registration,
         ContentHash const& runtimeArtifactRootHash,
         std::string_view exactPolicyArtifactBytes
     ) -> SessionManifest
@@ -281,7 +292,7 @@ namespace uf::operator_runtime::conformance
         // directory rather than the Operator.
         REQUIRE(
             vocabulary.baselineEntry.eventType
-            == underTest.registration.baselineEventType()
+            == ProjectIdentity{underTest.generation}.baselineEventType()
         );
 
         auto const release = observationRelease(
@@ -304,15 +315,15 @@ namespace uf::operator_runtime::conformance
 
         auto const policy   = policyArtifact(underTest, vocabulary);
         auto const manifest = sessionManifest(
-            underTest.registration,
+            ProjectIdentity{underTest.generation},
             installed->rootHash(),
             policy
         );
-        auto const plugin = loadPlugin(project, ProjectRole::UnderTest);
-        REQUIRE(store.registerProject(underTest.registration).has_value());
+        auto const generation = loadGeneration(project, ProjectRole::UnderTest);
+        REQUIRE(store.registerProject(underTest.generation).has_value());
         REQUIRE(store.provisionProjectInstance(
-            underTest.registration,
-            plugin,
+            ProjectIdentity{underTest.generation},
+            generation,
             ProjectInstanceBaseline{
                 .projectInstanceKey  = "instance-1",
                 .eventId             = "baseline-1",
@@ -334,7 +345,7 @@ namespace uf::operator_runtime::conformance
                 .sessionId                 = "session-1",
                 .authenticatedControllerId = "controller-1",
                 .idempotencyNamespace      = "controller-1",
-                .projectRegistrationHash   = underTest.registration.hash(),
+                .projectRegistrationHash   = underTest.generation.hash(),
                 .controllerCapabilities    = {std::string{k_operateCapability}},
                 .controlledTargetId        = "target-1",
                 .projectInstanceKey        = "instance-1",
@@ -370,7 +381,7 @@ namespace uf::operator_runtime::conformance
 
         auto snapshot = store.createSnapshot(
             *lease,
-            plugin,
+            ProjectIdentity{underTest.generation},
             deploymentFor(project, ProjectRole::UnderTest).toolCatalogSchemaOwner,
             deploymentFor(project, ProjectRole::UnderTest).observedInstanceIdentitySchemas,
             reading
@@ -390,18 +401,17 @@ namespace uf::operator_runtime::conformance
             observation.generation
         );
         REQUIRE(runtimeModel.has_value());
-        auto authority = planAuthority(
-            underTest.registration,
+        auto authority = OperatorPlanAuthority::create(
+            ProjectIdentity{underTest.generation},
             manifest,
             *runtimeModel,
             "operator",
-            policy,
-            uiActionOf(vocabulary)
+            policy
         );
         REQUIRE(authority.has_value());
         return PreparedStore{
             .store                   = std::move(store),
-            .plugin                  = plugin,
+            .generation              = generation,
             .project                 = std::move(project),
             .manifest                = manifest,
             .planAuthority           = *std::move(authority),
@@ -449,7 +459,7 @@ namespace uf::operator_runtime::conformance
     {
         auto snapshot = prepared.store.createSnapshot(
             prepared.lease,
-            prepared.plugin,
+            ProjectIdentity{deploymentFor(prepared.project, ProjectRole::UnderTest).generation},
             deploymentFor(
                 prepared.project,
                 ProjectRole::UnderTest
@@ -473,122 +483,6 @@ namespace uf::operator_runtime::conformance
             .snapshotToken        = snapshot.token,
             .idempotencyNamespace = "controller-1",
             .clientRequestId      = std::move(clientRequestId),
-        };
-    }
-
-    auto frozenPlan(
-        PreparedStore& prepared,
-        StoredOperation const& operation
-    ) -> Result<FrozenPlan>
-    {
-        return prepared.store.freezePlan(
-            operation.operationId,
-            operation.revision,
-            prepared.lease,
-            prepared.plugin,
-            deploymentFor(prepared.project, ProjectRole::UnderTest).toolCatalogSchemaOwner,
-            prepared.planAuthority
-        );
-    }
-
-    auto plannedStep(
-        PreparedStore& prepared,
-        StoredOperation const& operation
-    ) -> Result<PlannedStep>
-    {
-        return prepared.store.mintNextStep(
-            operation.operationId,
-            operation.revision,
-            prepared.lease,
-            prepared.plugin,
-            deploymentFor(prepared.project, ProjectRole::UnderTest).toolCatalogSchemaOwner,
-            prepared.planAuthority
-        );
-    }
-
-    auto readyOperation(
-        PreparedStore& prepared,
-        std::string clientRequestId,
-        std::string toolName
-    ) -> StoredOperation
-    {
-        auto operation = prepared.store.submitCommand(
-            prepared.controller,
-            command(prepared.snapshot, std::move(clientRequestId)),
-            toolInvocation(
-                prepared.project,
-                ProjectRole::UnderTest,
-                std::move(toolName)
-            )
-        );
-        REQUIRE(operation.has_value());
-        auto const frozen = frozenPlan(prepared, operation->operation);
-        REQUIRE(frozen.has_value());
-        auto const step = plannedStep(prepared, frozen->operation);
-        REQUIRE(step.has_value());
-        return step->operation;
-    }
-
-    auto reconcilingOperation(
-        PreparedStore& prepared,
-        std::string clientRequestId,
-        std::string toolName
-    ) -> StoredOperation
-    {
-        // Every dispatch needs its own authority decision id, so it is derived
-        // from the request rather than fixed: two Operations in one store
-        // otherwise collide on the second one's reservation.
-        auto const authority = AuthorityDecisionId{"authority-" + clientRequestId};
-        auto const ready     = readyOperation(
-            prepared,
-            std::move(clientRequestId),
-            std::move(toolName)
-        );
-        auto host           = deliveringHost(prepared);
-        auto const dispatch = prepared.store.reserveDispatch(
-            ready.operationId,
-            ready.revision,
-            prepared.lease,
-            host->generation(),
-            authority,
-            std::nullopt
-        );
-        REQUIRE(dispatch.has_value());
-        auto const reconciling = deliverAndRecord(prepared, *host, *dispatch);
-        REQUIRE(reconciling.has_value());
-        REQUIRE(host->clicks() == 1U);
-        return *reconciling;
-    }
-
-    auto confirmedCommit(
-        PreparedStore const& prepared,
-        StoredOperation const& operation,
-        uint64 expectedProjectStateRevision,
-        std::string eventId,
-        deployment::ProjectJournalDocument const& entry
-    ) -> ReconciliationCommit
-    {
-        return ReconciliationCommit{
-            .operationId                  = operation.operationId,
-            .expectedOperationRevision    = operation.revision,
-            .expectedProjectStateRevision = expectedProjectStateRevision,
-            .outcome                      = reconcileOutcome(
-                prepared.project,
-                ProjectRole::UnderTest,
-                prepared.plugin,
-                operation.operationId,
-                prepared.project.underTest.vocabulary.confirmedInput
-            ),
-            .journalEvents = {
-                JournalAppend{
-                    .eventId = std::move(eventId),
-                    .entry   = journalEntry(
-                        prepared.project,
-                        ProjectRole::UnderTest,
-                        entry
-                    ),
-                },
-            },
         };
     }
 

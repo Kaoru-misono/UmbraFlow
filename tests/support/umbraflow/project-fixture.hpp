@@ -12,10 +12,15 @@
 #include <operator/journal-entry.hpp>
 #include <operator/ledger.hpp>
 #include <operator/manifest.hpp>
+#include <operator/project-generation.hpp>
 #include <operator/project-plugin.hpp>
 #include <operator/reconcile-outcome.hpp>
 #include <operator/runtime-installation.hpp>
 #include <operator/tool-invocation.hpp>
+
+#include <script/scoped-tool-program.hpp>
+
+#include <json/value.hpp>
 
 #include <task/host-delivery.hpp>
 #include <task/runtime-model-file.hpp>
@@ -43,6 +48,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -173,7 +179,14 @@ namespace uf::operator_runtime::test_support
 {
     struct ProjectFixture final
     {
-        VerifiedProjectRegistration   registration;
+        // The verified two-closure document, and the projection of it every
+        // durable seam takes. Both, because they answer different questions: a
+        // loader is handed the document -- it compiles the closures the
+        // document pinned -- while the ledger, the schema owners and the
+        // session manifest are handed the identity, which is all that outlives
+        // the document.
+        VerifiedProjectGeneration     generation;
+        ProjectIdentity               registration;
         ProjectSchemaOwner            schemaOwner;
         ProjectJournalSchemaOwner     journalSchemaOwner;
         ProjectToolCatalogSchemaOwner toolCatalogSchemaOwner;
@@ -251,110 +264,6 @@ namespace uf::operator_runtime::test_support
         },
     };
 
-    // The payload schema identity every fixture effect names: the sha256 of
-    // k_effectPayloadSchema's own bytes, so the deployment can find the schema
-    // the effect claims and judge the payload against it.
-    [[nodiscard]]
-    inline auto effectPayloadSchemaHex() -> std::string
-    {
-        return schemaHashHex(k_effectPayloadSchema);
-    }
-
-    // The OP:`PlanProposal` the fixture plugin returns for each mutating tool,
-    // and the OP:`UIActionIntent` it returns for every next_step. They are
-    // plugin source -- the plugin is what produces them, and prepareStore
-    // installs the plugin -- so they are spelled once here and read nowhere
-    // else in C++.
-    //
-    // Luau table literals rather than JSON text: a plugin exchanges decoded
-    // values now, so what it returns is a value it constructs rather than bytes
-    // it spells. Nothing here has to agree with a serializer any more, which is
-    // the point -- the fixture cannot emit a non-canonical proposal because it
-    // no longer emits a proposal's bytes at all.
-    [[nodiscard]]
-    inline auto fixturePlanProposal(
-        std::string_view toolName,
-        std::string_view effects,
-        std::string_view limits
-    ) -> std::string
-    {
-        auto proposal = std::string{"{\n            allowed_ui_actions = { \"fixture.step\" },"};
-        proposal += "\n            canonical_args = { value = 1 },";
-        proposal += "\n            effects = ";
-        proposal += effects;
-        proposal += ",\n            tool_name = \"";
-        proposal += toolName;
-        proposal += "\",\n            tool_version = \"1\",";
-        proposal += "\n            workflow_limits = ";
-        proposal += limits;
-        proposal += ",\n        }";
-        return proposal;
-    }
-
-    [[nodiscard]]
-    inline auto fixtureEffect(
-        std::string_view scopeKey,
-        std::string_view risk
-    ) -> std::string
-    {
-        auto effect = std::string{"{ namespaced_type = \"fixture.write\", "};
-        effect += "opaque_project_payload = { value = 1 }, ";
-        effect += "payload_schema_hash = \"";
-        effect += effectPayloadSchemaHex();
-        effect += "\", risk = \"";
-        effect += risk;
-        effect += "\", scope_key = \"";
-        effect += scopeKey;
-        effect += "\", scope_kind = \"instance\" }";
-        return effect;
-    }
-
-    [[nodiscard]]
-    inline auto fixtureWorkflowLimits(
-        std::string_view maximumSteps,
-        std::string_view maximumDispatches
-    ) -> std::string
-    {
-        auto limits = std::string{"{ maximum_dispatches = "};
-        limits += maximumDispatches;
-        limits += ", maximum_elapsed_ms = 60000, maximum_observations = 16, ";
-        limits += "maximum_steps = ";
-        limits += maximumSteps;
-        limits += ", maximum_waits = 4 }";
-        return limits;
-    }
-
-    // The default UI-action intent every prepared store's plugin returns. The
-    // step's ui_target_id is the observed instance id the mint composed into
-    // the observation the envelope carries: since U2b a step names an instance
-    // the Operator minted, not a model target, and the U2c gate in
-    // mintNextStep resolves this very member. The envelope's first
-    // observed_instances entry is the one the default derive proposes, so the
-    // default fixture plugin spells one step that mints.
-    inline auto const k_fixtureUiActionIntent = std::string{
-        "{\n        action = { action_id = \"fixture.press\","
-        " canonical_parameters = { value = 1 },"
-        " surface_id = \"fixture.surface\","
-        " ui_target_id = input.project_observation.observed_instances[1]"
-        ".observed_instance_id },"
-        "\n        binding_variant_constraints = {}, delivery_class = \"delivery_safe\","
-        "\n        expected_ui_postconditions = {}, required_ui_preconditions = {},"
-        "\n        step_key = \"fixture.step\","
-        "\n        timeout_policy = { maximum_elapsed_ms = 5000, on_timeout = \"reobserve\" },"
-        "\n    }"
-    };
-
-    inline auto const k_fixtureWaitIntent = std::string{
-        "{\n        condition = { settled = true }, observation_budget = 4,"
-        "\n        step_key = \"fixture.step\","
-        "\n        timeout_policy = { maximum_elapsed_ms = 5000, on_timeout = \"reobserve\" },"
-        "\n    }"
-    };
-
-    inline auto const k_fixtureUiThenWaitIntent = std::string{
-        "input.step_index == 1 and " + k_fixtureUiActionIntent + " or " + k_fixtureWaitIntent
-    };
-
     [[nodiscard]]
     inline auto hashOf(std::string_view value) -> ContentHash
     {
@@ -378,7 +287,7 @@ namespace uf::operator_runtime::test_support
     // constraint is spelled once rather than once per test file.
     [[nodiscard]]
     inline auto observedInstanceIdentitySchemas(
-        VerifiedProjectRegistration const& registration
+        ProjectIdentity const& registration
     ) -> ObservedInstanceIdentitySchemas
     {
         auto schemas = ObservedInstanceIdentitySchemas::create(
@@ -419,9 +328,9 @@ namespace uf::operator_runtime::test_support
 
     // The Tool binding table a fixture project declares, rendered as the
     // registration's own member. It renders what it is given and sorts nothing:
-    // makeProject below puts the rows in the one order validateClaims accepts,
-    // and the claims it hands out must carry that same order, so the sort
-    // happens once where both readings are minted.
+    // fixtureToolBindings below puts the rows in the one order the claims check
+    // accepts, and the claims makeProject hands out carry that same order, so
+    // the sort happens once where both readings are minted.
     [[nodiscard]]
     inline auto toolBindingsJcs(
         std::span<ProjectToolBinding const> bindings
@@ -441,25 +350,133 @@ namespace uf::operator_runtime::test_support
         return rendered;
     }
 
+    // One closure slot of the two-closure registration document.
+    [[nodiscard]]
+    inline auto closureJcs(
+        ContentHash const& moduleManifestHash,
+        std::span<std::string const> exportedEntryPoints
+    ) -> std::string
+    {
+        auto rendered = std::string{R"({"exported_entry_points":[)"};
+        for (
+            auto index = std::size_t{0};
+            index < exportedEntryPoints.size();
+            ++index
+        )
+        {
+            rendered += index == 0U ? "" : ",";
+            rendered += std::format(R"("{}")", exportedEntryPoints[index]);
+        }
+        rendered += std::format(
+            R"(],"module_manifest_hash":"{}"}})",
+            moduleManifestHash.hex()
+        );
+        return rendered;
+    }
+
+    // Every fixture closure is one module named `main`, so the blob list and
+    // the digest taken over it are derived from the bytes rather than spelled
+    // per closure.
+    [[nodiscard]]
+    inline auto closureModules(std::string_view source)
+        -> std::vector<ProjectModuleBlob>
+    {
+        return {
+            ProjectModuleBlob{
+                .name   = "main",
+                .source = std::string{source},
+            },
+        };
+    }
+
+    [[nodiscard]]
+    inline auto closureManifestHash(std::string_view source) -> ContentHash
+    {
+        auto const hash = derivePluginModuleManifestHash(
+            "main",
+            closureModules(source)
+        );
+        REQUIRE(hash.has_value());
+        return *hash;
+    }
+
+    // Every entry this fixture's tool closure exports, in the JCS order a
+    // closure declaration states them in. The entry a Tool binds to is its
+    // local name: a Tool's namespace is its registrant's, so the local half is
+    // already unique inside one closure and needs no second spelling.
+    [[nodiscard]]
+    inline auto fixtureToolEntryPoints() -> std::vector<std::string>
+    {
+        auto entries = std::vector<std::string>{};
+        entries.reserve(k_toolSources.size());
+        for (auto const& tool : k_toolSources)
+        {
+            entries.emplace_back(tool.localName);
+        }
+        std::ranges::sort(entries);
+        return entries;
+    }
+
+    // The binding table this fixture's registration states: one row per Tool
+    // its pinned catalog declares. It is derived rather than passed in because
+    // a generation is admitted only when the table covers exactly the Tools the
+    // catalog declares, and this fixture's catalog is k_toolSources.
+    [[nodiscard]]
+    inline auto fixtureToolBindings(
+        std::string_view pluginId
+    ) -> std::vector<ProjectToolBinding>
+    {
+        auto bindings = std::vector<ProjectToolBinding>{};
+        bindings.reserve(k_toolSources.size());
+        for (auto const& tool : k_toolSources)
+        {
+            bindings.emplace_back(ProjectToolBinding{
+                .toolName   = fixtureToolName(pluginId, tool.localName),
+                .entryPoint = std::string{tool.localName},
+            });
+        }
+        std::ranges::sort(bindings, {}, &ProjectToolBinding::toolName);
+        return bindings;
+    }
+
+    // The tool closure this fixture ships: one entry per bound Tool and
+    // nothing else. Nothing in tests/operator dispatches through it -- the Tool
+    // Runtime's own suites compile their own closures against a live seam --
+    // so each entry answers with its own name, which is all the bridge needs to
+    // admit the closure against the entry set the registration declared.
+    [[nodiscard]]
+    inline auto toolClosureSource(std::string_view pluginId) -> std::string
+    {
+        auto source = std::string{"return {\n    plugin_id = \""};
+        source += pluginId;
+        source += "\",\n";
+        for (auto const& entry : fixtureToolEntryPoints())
+        {
+            source += "    [\"";
+            source += entry;
+            source += "\"] = function(_input) return { entry = \"";
+            source += entry;
+            source += "\" } end,\n";
+        }
+        source += "}\n";
+        return source;
+    }
+
     // `observationSchema` and `preconditionSchema` default to the exemplar's;
-    // a case that pins a laxer one -- e.g. a project whose derive output is
-    // refused only by the proposal reader, or whose tool arguments admit the
-    // observed_instance_id the submitCommand gate resolves -- states it
+    // a case that pins a laxer one -- e.g. a project whose tool arguments admit
+    // the observed_instance_id the submitCommand gate resolves -- states it
     // explicitly. Every hash and every validator must see the same bytes.
     //
-    // `toolBindings` is the fixture project's own join of contract to code. An
-    // empty table is the whole statement "this project binds no Tool to an
-    // entry", which is what a fixture whose plugin only answers the five pure
-    // functions declares; a case that needs a Project Tool program states the
-    // rows here rather than hand-building a registration beside this one.
+    // `reducerBytes` is the caller's, because what the fold answers is what a
+    // case varies. The tool closure is this fixture's own and is derived from
+    // the catalog above.
     [[nodiscard]]
     inline auto makeProject(
         std::string pluginId,
-        std::string_view pluginBytes,
+        std::string_view reducerBytes,
         std::string_view observationSchema = k_projectObservationSchema,
         std::string_view preconditionSchema = k_toolPreconditionSchema,
-        std::optional<ContentHash> environmentOverride = std::nullopt,
-        std::vector<ProjectToolBinding> toolBindings = {}
+        std::optional<ContentHash> environmentOverride = std::nullopt
     ) -> ProjectFixture
     {
         auto const bundle = DeploymentBundle{pluginId};
@@ -474,14 +491,10 @@ namespace uf::operator_runtime::test_support
             REQUIRE(deployed.has_value());
         }
 
-        auto const modules = std::vector<ProjectModuleBlob>{
-            ProjectModuleBlob{
-                .name   = "main",
-                .source = std::string{pluginBytes},
-            },
-        };
-        auto const moduleManifestHash = derivePluginModuleManifestHash("main", modules);
-        REQUIRE(moduleManifestHash.has_value());
+        auto const reducerManifestHash = closureManifestHash(reducerBytes);
+        auto const toolManifestHash    = closureManifestHash(
+            toolClosureSource(pluginId)
+        );
         auto environmentHash = currentProjectPluginEnvironmentHash();
         REQUIRE(environmentHash.has_value());
         if (environmentOverride)
@@ -494,13 +507,17 @@ namespace uf::operator_runtime::test_support
         auto const preconditionSchemaHash = hashOf(preconditionSchema);
         auto const reconcileSchemaHash    = hashOf(bundle.reconcileManifest());
         auto const journalSchemaHash      = hashOf(bundle.journalEventManifest());
-        std::ranges::sort(toolBindings, {}, &ProjectToolBinding::toolName);
+        auto const bindings               = fixtureToolBindings(pluginId);
+        auto const toolEntryPoints        = fixtureToolEntryPoints();
+        auto const reducerEntryPoints     = std::vector<std::string>{
+            std::string{k_reducerEntryPoint},
+        };
         auto const exactJcs = std::format(
             "{{\"baseline_event_type\":\"fixture.baseline\","
             "\"journal_event_schema_manifest_hash\":\"{}\","
             "\"observed_instance_identity_schema_hashes\":[\"{}\"],"
             "\"plugin_environment_hash\":\"{}\","
-            "\"plugin_id\":\"{}\",\"plugin_module_manifest_hash\":\"{}\","
+            "\"plugin_id\":\"{}\","
             "\"project_observation_schema_hash\":\"{}\","
             "\"project_registration_format\":{},"
             "\"project_resources\":[],"
@@ -508,24 +525,34 @@ namespace uf::operator_runtime::test_support
             "\"project_tool_bindings\":{},"
             "\"project_tool_precondition_schema_hash\":\"{}\","
             "\"reconcile_payload_schema_manifest_hash\":\"{}\","
-            "\"tool_catalog_hash\":\"{}\"}}",
+            "\"reducer_closure\":{},"
+            "\"tool_catalog_hash\":\"{}\","
+            "\"tool_closure\":{}}}",
             journalSchemaHash.hex(),
             hashOf(k_observedIdentitySchema).hex(),
             environmentHash->hex(),
             pluginId,
-            moduleManifestHash->hex(),
             observationSchemaHash.hex(),
-            k_projectRegistrationFormat,
+            k_projectGenerationFormat,
             stateSchemaHash.hex(),
-            toolBindingsJcs(toolBindings),
+            toolBindingsJcs(bindings),
             preconditionSchemaHash.hex(),
             reconcileSchemaHash.hex(),
-            toolCatalogHash.hex()
+            closureJcs(reducerManifestHash, reducerEntryPoints),
+            toolCatalogHash.hex(),
+            closureJcs(toolManifestHash, toolEntryPoints)
         );
-        auto const claims = ProjectRegistrationClaims{
-            .projectRegistrationFormat            = k_projectRegistrationFormat,
-            .pluginId                             = pluginId,
-            .pluginModuleManifestHash             = *moduleManifestHash,
+        auto const claims = ProjectGenerationClaims{
+            .projectRegistrationFormat = k_projectGenerationFormat,
+            .pluginId                  = pluginId,
+            .reducerClosure            = ProjectClosureClaims{
+                .moduleManifestHash  = reducerManifestHash,
+                .exportedEntryPoints = reducerEntryPoints,
+            },
+            .toolClosure = ProjectClosureClaims{
+                .moduleManifestHash  = toolManifestHash,
+                .exportedEntryPoints = toolEntryPoints,
+            },
             .pluginEnvironmentHash                = *environmentHash,
             .toolCatalogHash                      = toolCatalogHash,
             .projectStateSchemaHash               = stateSchemaHash,
@@ -534,16 +561,19 @@ namespace uf::operator_runtime::test_support
             .reconcilePayloadSchemaManifestHash   = reconcileSchemaHash,
             .journalEventSchemaManifestHash       = journalSchemaHash,
             .baselineEventType                    = "fixture.baseline",
+            .projectResources                     = {},
             .observedInstanceIdentitySchemaHashes = {hashOf(k_observedIdentitySchema)},
-            .projectToolBindings                  = toolBindings,
+            .projectToolBindings                  = bindings,
         };
-        auto owner = ProjectRegistrationSchemaOwner::create(
+        auto registration = ProjectGeneration::verifyExact(
+            exactJcs,
+            hashOf(exactJcs),
             // Init-captures rather than [exactJcs, claims]: both locals are
             // const, and capturing a const entity by name gives the closure a
             // const member its move constructor must copy rather than move.
             [exactJcs = exactJcs, claims = claims](
                 std::string_view candidate
-            ) -> Result<ProjectRegistrationClaims>
+            ) -> Result<ProjectGenerationClaims>
             {
                 if (candidate != exactJcs)
                 {
@@ -555,13 +585,13 @@ namespace uf::operator_runtime::test_support
                 return claims;
             }
         );
-        REQUIRE(owner.has_value());
-        auto registration = ProjectRegistration::verifyExact(
-            exactJcs,
-            hashOf(exactJcs),
-            *owner
-        );
-        REQUIRE(registration.has_value());
+        {
+            auto const why = registration.has_value()
+                ? std::string{}
+                : std::string{registration.error().message()};
+            INFO(why);
+            REQUIRE(registration.has_value());
+        }
 
         auto documentInputLog =
             std::make_shared<deployment::ProjectDocumentInputLog>();
@@ -617,6 +647,7 @@ namespace uf::operator_runtime::test_support
         REQUIRE(reconcileSchemaOwner.has_value());
 
         return ProjectFixture{
+            .generation             = *registration,
             .registration           = *registration,
             .schemaOwner            = *schemaOwner,
             .journalSchemaOwner     = *journalSchemaOwner,
@@ -656,28 +687,6 @@ namespace uf::operator_runtime::test_support
         );
         REQUIRE(result.has_value());
         return *result;
-    }
-
-    // Runs the plugin's reconcile and reads its conclusion through the
-    // authority, which is the only way a ReconciliationCommit can name one.
-    [[nodiscard]]
-    inline auto reconcileOutcome(
-        ProjectFixture const& project,
-        ProjectPluginHandle const& plugin,
-        std::string operationId,
-        std::string document
-    ) -> ValidatedReconcileOutcome
-    {
-        auto proposal = plugin.reconcile(
-            canonical(project.schemaOwner, std::move(document))
-        );
-        REQUIRE(proposal.has_value());
-        auto outcome = project.reconcileSchemaOwner.validate(
-            std::move(operationId),
-            *std::move(proposal)
-        );
-        REQUIRE(outcome.has_value());
-        return *outcome;
     }
 
     [[nodiscard]]
@@ -724,26 +733,65 @@ namespace uf::operator_runtime::test_support
         return routineToolEffect(project, project.toolName("command-1"));
     }
 
+    // The Tool Runtime seam this fixture's tool closure is compiled against. It
+    // refuses every call: a scoped program is required to hold a seam -- one
+    // without it is a pure program wearing the wrong type -- and a registration
+    // loaded so that an instance can be provisioned from its fold holds no
+    // lease, controller or observation authority for a call to be admitted
+    // under. It is one value and never a branch on anything.
     [[nodiscard]]
-    inline auto loadPlugin(
-        ProjectFixture const& project,
-        std::string_view pluginBytes
-    ) -> ProjectPluginHandle
+    inline auto refusingToolRuntime() -> script::ToolRuntimeInvoke
     {
-        auto registrar = ProjectPluginRegistrar{};
-        auto result = registrar.registerPlugin(
-            project.registration,
-            "main",
-            {
-                ProjectModuleBlob{
-                    .name   = "main",
-                    .source = std::string{pluginBytes},
-                },
+        return [](
+                   std::string_view,
+                   json::Value const&,
+                   script::ToolCallCoordinate const&,
+                   std::stop_token
+               ) -> Result<json::Value>
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "this fixture registration dispatches no Tool call"
+            );
+        };
+    }
+
+    // The loaded generation both closures of this fixture's registration were
+    // compiled into. Provisioning needs it because a ProjectInstance row
+    // carries the reduction of its complete Journal prefix, and only a loaded
+    // generation can perform that fold.
+    [[nodiscard]]
+    inline auto loadGeneration(
+        ProjectFixture const& project,
+        std::string_view reducerBytes
+    ) -> ProjectGenerationHandle
+    {
+        auto registrar = ProjectGenerationRegistrar{};
+        auto result = registrar.registerGeneration(
+            project.generation,
+            project.toolCatalogSchemaOwner,
+            project.schemaOwner,
+            ProjectGenerationRegistrar::ClosureModules{
+                .entryModule = "main",
+                .modules     = closureModules(reducerBytes),
+            },
+            ProjectGenerationRegistrar::ClosureModules{
+                .entryModule = "main",
+                .modules     = closureModules(
+                    toolClosureSource(project.registration.pluginId())
+                ),
             },
             {},
-            project.schemaOwner
+            [](std::string_view, std::string_view) -> Status { return ok(); },
+            refusingToolRuntime()
         );
-        REQUIRE(result.has_value());
+        {
+            auto const why = result.has_value()
+                ? std::string{}
+                : std::string{result.error().message()};
+            INFO(why);
+            REQUIRE(result.has_value());
+        }
         return *result;
     }
 
@@ -857,7 +905,7 @@ namespace uf::operator_runtime::test_support
 
     [[nodiscard]]
     inline auto sessionManifest(
-        VerifiedProjectRegistration const& project,
+        ProjectIdentity const& project,
         ContentHash const& runtimeArtifactRootHash,
         ContentHash const& agentProfileHash,
         std::string_view exactPolicyArtifactBytes
@@ -1105,161 +1153,20 @@ identity = ["fixture.panel.anchor"]
         return conformance::observationRelease(root, umbraflowRuntimeArtifact());
     }
 
-    // The proposal envelope the default fixture derive answers: one observed
-    // instance whose semantic basis the identity schema above accepts. The
-    // mint composes the final observation from it, and the default next_step
-    // names the minted id back to the U2c gate, so a prepared store's first
-    // step already stands on the production observe path.
-    [[nodiscard]]
-    inline auto k_fixtureObservedProposalEnvelope() -> std::string
-    {
-        return "{ schema = \"umbraflow-project-observation-proposal/v1\","
-            " canonical_opaque_payload = {}, project_tool_preconditions = {},"
-            " observed_instance_proposals = { { local_ref = \"fixture.target\","
-            " kind = \"fixture.control\", identity_schema_id = \""
-            + std::string{k_fixtureIdentitySchemaId}
-            + "\", semantic_identity_basis = { native_id = \"fixture.target\","
-            " surface_epoch = 1 }, opaque_project_payload = {} } } }";
-    }
-
-    // The empty envelope in the proposal vocabulary: zero observed instances,
-    // zero tool preconditions, an empty opaque payload. A case that wants a
-    // snapshot to mint no instance names this explicitly rather than relying
-    // on the default above.
-    inline constexpr auto k_fixtureEmptyProposalEnvelope = std::string_view{
-        "{ schema = \"umbraflow-project-observation-proposal/v1\","
-        " canonical_opaque_payload = {}, project_tool_preconditions = {},"
-        " observed_instance_proposals = {} }"
-    };
-
-    // The trusted plugin a prepared store registers. plugin_id must equal the
+    // The reducer closure a prepared store registers. plugin_id must equal the
     // registration's, so the id is inserted rather than fixed.
     //
-    // `plan` reads the tool name out of the envelope the Operator assembled and
-    // answers with a different proposal for each one. That is what lets one
-    // registration -- one module-manifest identity, one session -- reach the clamp, the
-    // bound, the approval edge and the tool mismatch: a proposal chosen by the
-    // suite instead would be a proposal no plugin produced.
-    //
-    // `derive` and `next_step` are expressions, not bodies, so a case can
-    // substitute a proposal envelope or a step intent without rewriting the
-    // module. The snapshot's mint reads what derive returns, and a case that
-    // wants the mint to see something proposes it here rather than through a
-    // second parser.
+    // The fold is the whole of the pure type's contract now: it reads the
+    // Journal prefix the Operator assembled and answers a ProjectState the
+    // pinned schema accepts. `fixture.confirmed` in that prefix is what moves
+    // the revision, so a case makes the fold answer differently by writing an
+    // entry rather than by substituting an expression.
     [[nodiscard]]
-    inline auto pluginSource(
-        std::string_view pluginId,
-        std::string_view nextStepExpression = k_fixtureUiActionIntent,
-        std::string_view deriveExpression = k_fixtureObservedProposalEnvelope()
-    ) -> std::string
+    inline auto reducerSource(std::string_view pluginId) -> std::string
     {
-        auto const ordinaryEffects = "{ " + fixtureEffect("alpha", "low") + ", "
-            + fixtureEffect("beta", "medium") + " }";
-        auto const reorderedEffects = "{ " + fixtureEffect("beta", "medium") + ", "
-            + fixtureEffect("alpha", "low") + " }";
-        auto const highRiskEffects = "{ " + fixtureEffect("alpha", "high") + " }";
-        auto const ordinaryLimits  = fixtureWorkflowLimits("8", "8");
-
-        // The proposals are a module-local table rather than a field of the
-        // returned module: a pure data module may export plugin_id and its
-        // declared entry points and nothing else.
-        auto source = std::string{"local proposals = {\n"};
-        // Both names are the LOCAL half of a Tool name; pluginSource spells
-        // each under the namespace this plugin's own registration owns, so one
-        // table serves every fixture plugin id.
-        struct ProposalCase final
-        {
-            std::string_view invokedLocalName{};
-            std::string_view proposedLocalName{};
-            std::string_view effects{};
-            std::string_view limits{};
-        };
-        auto const oversizedLimits = fixtureWorkflowLimits("4096", "4096");
-        auto const twoStepLimits   = fixtureWorkflowLimits("2", "2");
-        auto const cases           = std::array{
-            ProposalCase{"command-1", "command-1", ordinaryEffects, ordinaryLimits},
-            ProposalCase{"command-2", "command-2", ordinaryEffects, ordinaryLimits},
-            ProposalCase{
-                "different-command",
-                "different-command",
-                ordinaryEffects,
-                ordinaryLimits,
-            },
-            // The proposal names the tool the Operation was NOT created for.
-            ProposalCase{"mismatched-plan", "command-1", ordinaryEffects, ordinaryLimits},
-            ProposalCase{
-                "oversized-plan",
-                "oversized-plan",
-                ordinaryEffects,
-                oversizedLimits,
-            },
-            ProposalCase{"two-step-plan", "two-step-plan", ordinaryEffects, twoStepLimits},
-            ProposalCase{
-                "approval-plan",
-                "approval-plan",
-                highRiskEffects,
-                ordinaryLimits,
-            },
-            ProposalCase{
-                "reordered-effects",
-                "reordered-effects",
-                reorderedEffects,
-                ordinaryLimits,
-            },
-            // The read-only tool has a plan too. Without it the plugin refuses
-            // for want of an entry, and "read-only Operations carry no plan"
-            // would be proved by the fixture rather than by the Operator.
-            ProposalCase{"observe-1", "observe-1", ordinaryEffects, ordinaryLimits},
-            ProposalCase{
-                "raw-coordinate-click",
-                "raw-coordinate-click",
-                ordinaryEffects,
-                ordinaryLimits,
-            },
-            // Two tools whose plans are ordinary and whose descriptors are not:
-            // one declares it cannot be redelivered safely, the other allows
-            // less elapsed time than the step this plugin proposes. Each
-            // reaches mintStep and is refused by one clause of the descriptor.
-            ProposalCase{
-                "strict-delivery",
-                "strict-delivery",
-                ordinaryEffects,
-                ordinaryLimits,
-            },
-            ProposalCase{"brief-timeout", "brief-timeout", ordinaryEffects, ordinaryLimits},
-            // Its plan allows the step key every other plan allows, which is
-            // the one its own descriptor's ui_action_bounds does not name.
-            ProposalCase{"stray-action", "stray-action", ordinaryEffects, ordinaryLimits},
-        };
-        for (auto const& proposal : cases)
-        {
-            source += "        [\"";
-            source += fixtureToolName(pluginId, proposal.invokedLocalName);
-            source += "\"] = ";
-            source += fixturePlanProposal(
-                fixtureToolName(pluginId, proposal.proposedLocalName),
-                proposal.effects,
-                proposal.limits
-            );
-            source += ",\n";
-        }
-        source += "}\n\nreturn {\n    plugin_id = \"";
+        auto source = std::string{"return {\n    plugin_id = \""};
         source += pluginId;
         source += R"LUAU(",
-    derive = function(_input) return )LUAU";
-        source += deriveExpression;
-        source += R"LUAU( end,
-    plan = function(input)
-        local proposal = proposals[input.tool_name]
-        if proposal == nil then
-            error("fixture plugin has no plan for " .. tostring(input.tool_name))
-        end
-        return proposal
-    end,
-    next_step = function(input) return )LUAU";
-        source += nextStepExpression;
-        source += R"LUAU( end,
-    reconcile = function(input) return input end,
     reduce = function(input)
         for _, event in ipairs(input.journal_events) do
             if event.namespaced_event_type == "fixture.confirmed" then
@@ -1317,11 +1224,11 @@ identity = ["fixture.panel.anchor"]
     // same one.
     struct PreparedStore final
     {
-        OperatorCoordinator   store;
-        ProjectPluginHandle   plugin;
-        ProjectFixture        project;
-        SessionManifest       manifest;
-        OperatorPlanAuthority planAuthority;
+        OperatorCoordinator     store;
+        ProjectGenerationHandle generation;
+        ProjectFixture          project;
+        SessionManifest         manifest;
+        OperatorPlanAuthority   planAuthority;
 
         // The authenticated controller every entry point is reached through.
         // bindController is its only mint, so a case cannot assert its own
@@ -1464,7 +1371,7 @@ identity = ["fixture.panel.anchor"]
     {
         auto snapshot = prepared.store.createSnapshot(
             prepared.lease,
-            prepared.plugin,
+            prepared.project.registration,
             prepared.project.toolCatalogSchemaOwner,
             prepared.project.observedInstanceIdentitySchemas,
             observeAgain(prepared)
@@ -1476,9 +1383,7 @@ identity = ["fixture.panel.anchor"]
     [[nodiscard]]
     inline auto prepareStore(
         std::filesystem::path const& path,
-        std::string const& pluginId = "fixture.control",
-        std::string_view nextStepExpression = k_fixtureUiActionIntent,
-        std::string_view deriveExpression = k_fixtureObservedProposalEnvelope()
+        std::string const& pluginId = "fixture.control"
     ) -> PreparedStore
     {
         auto const release = runtimeRelease(path / "session-handoff");
@@ -1501,11 +1406,7 @@ identity = ["fixture.panel.anchor"]
         REQUIRE_MESSAGE(installed.has_value(), installMessage);
         auto const artifactRootHash    = installed->rootHash();
         auto const installedGeneration = installed->installedGeneration();
-        auto const source = pluginSource(
-            pluginId,
-            nextStepExpression,
-            deriveExpression
-        );
+        auto const source  = reducerSource(pluginId);
         auto const project = makeProject(pluginId, source);
         auto const manifest = sessionManifest(
             project.registration,
@@ -1513,11 +1414,11 @@ identity = ["fixture.panel.anchor"]
             hashOf("agent"),
             policyArtifactBytes()
         );
-        auto const projectPlugin = loadPlugin(project, source);
+        auto const generation = loadGeneration(project, source);
         REQUIRE(store.registerProject(project.registration).has_value());
         REQUIRE(store.provisionProjectInstance(
             project.registration,
-            projectPlugin,
+            generation,
             ProjectInstanceBaseline{
                 .projectInstanceKey  = "instance-1",
                 .eventId             = "baseline-1",
@@ -1563,7 +1464,7 @@ identity = ["fixture.panel.anchor"]
         conformance::requireResolvedSurface(reading, k_fixtureUiAction.surface);
         auto snapshot = store.createSnapshot(
             *lease,
-            projectPlugin,
+            project.registration,
             project.toolCatalogSchemaOwner,
             project.observedInstanceIdentitySchemas,
             reading
@@ -1577,18 +1478,17 @@ identity = ["fixture.panel.anchor"]
             observation.generation
         );
         REQUIRE(runtimeModel.has_value());
-        auto planAuthority = conformance::planAuthority(
+        auto planAuthority = OperatorPlanAuthority::create(
             project.registration,
             manifest,
             *runtimeModel,
             "operator",
-            policyArtifactBytes(),
-            k_fixtureUiAction
+            policyArtifactBytes()
         );
         REQUIRE(planAuthority.has_value());
         return PreparedStore{
             .store                   = std::move(store),
-            .plugin                  = projectPlugin,
+            .generation              = generation,
             .project                 = project,
             .manifest                = manifest,
             .planAuthority           = *std::move(planAuthority),
@@ -1644,7 +1544,7 @@ identity = ["fixture.panel.anchor"]
     {
         REQUIRE(prepared.store.provisionProjectInstance(
             prepared.project.registration,
-            prepared.plugin,
+            prepared.generation,
             ProjectInstanceBaseline{
                 .projectInstanceKey  = projectInstanceKey,
                 .eventId             = "baseline-" + projectInstanceKey,
@@ -1693,21 +1593,6 @@ identity = ["fixture.panel.anchor"]
     }
 
     [[nodiscard]]
-    inline auto reconciliationOutcome(
-        PreparedStore const& prepared,
-        std::string operationId,
-        std::string document
-    ) -> ValidatedReconcileOutcome
-    {
-        return reconcileOutcome(
-            prepared.project,
-            prepared.plugin,
-            std::move(operationId),
-            std::move(document)
-        );
-    }
-
-    [[nodiscard]]
     inline auto proposedOperation(
         PreparedStore& prepared,
         std::string clientRequestId,
@@ -1721,108 +1606,5 @@ identity = ["fixture.panel.anchor"]
         );
         REQUIRE(operation.has_value());
         return operation->operation;
-    }
-
-    [[nodiscard]]
-    inline auto freezePlanFor(
-        PreparedStore& prepared,
-        StoredOperation const& operation
-    ) -> Result<FrozenPlan>
-    {
-        return prepared.store.freezePlan(
-            operation.operationId,
-            operation.revision,
-            prepared.lease,
-            prepared.plugin,
-            prepared.project.toolCatalogSchemaOwner,
-            prepared.planAuthority
-        );
-    }
-
-    [[nodiscard]]
-    inline auto mintStepFor(
-        PreparedStore& prepared,
-        StoredOperation const& operation
-    ) -> Result<PlannedStep>
-    {
-        return prepared.store.mintNextStep(
-            operation.operationId,
-            operation.revision,
-            prepared.lease,
-            prepared.plugin,
-            prepared.project.toolCatalogSchemaOwner,
-            prepared.planAuthority
-        );
-    }
-
-    // One Operation carried to the point a dispatch may be reserved: proposed,
-    // plan frozen by the Operator, first step minted from the plugin's own
-    // next_step. No caller states a hash anywhere along it.
-    [[nodiscard]]
-    inline auto createReadyOperation(
-        PreparedStore& prepared,
-        std::string clientRequestId,
-        std::string_view toolName
-    ) -> StoredOperation
-    {
-        auto const proposed = proposedOperation(
-            prepared,
-            std::move(clientRequestId),
-            toolName
-        );
-        auto const frozen = freezePlanFor(prepared, proposed);
-        REQUIRE(frozen.has_value());
-        auto const step = mintStepFor(prepared, frozen->operation);
-        REQUIRE(step.has_value());
-        return step->operation;
-    }
-
-    // Drives one mutating Operation through a real dispatch to the reconciling
-    // state, so a reconciliation contract starts where a reconciliation starts.
-    //
-    // The outcome is not a parameter any more and cannot be: only a TaskHost
-    // mints a HostDeliveryReport, so the fixture asks for the delivery it wants
-    // and reads back what the Host concluded. NotDelivered is reached by
-    // presenting the Receipt to a context that does not hold its cycle, which
-    // consumes it and posts nothing.
-    [[nodiscard]]
-    inline auto reconcilingOperation(
-        PreparedStore& prepared,
-        std::string clientRequestId,
-        task::DeliveryOutcome expected
-    ) -> StoredOperation
-    {
-        auto const authority = AuthorityDecisionId{"authority-" + clientRequestId};
-        auto const ready     = createReadyOperation(
-            prepared,
-            std::move(clientRequestId),
-            prepared.project.toolName("command-1")
-        );
-        auto host           = deliveringHost(prepared);
-        auto const dispatch = prepared.store.reserveDispatch(
-            ready.operationId,
-            ready.revision,
-            prepared.lease,
-            host->generation(),
-            authority,
-            std::nullopt
-        );
-        REQUIRE(dispatch.has_value());
-        if (expected == task::DeliveryOutcome::TransportUnknown)
-        {
-            host->refuseClicks();
-        }
-        auto const report = expected == task::DeliveryOutcome::NotDelivered
-            ? host->deliverIntoAnotherCycle(dispatch->authority)
-            : host->deliverReport(dispatch->authority);
-        REQUIRE(report.outcome() == expected);
-        auto const reconciling = prepared.store.recordDeliveryOutcome(
-            prepared.lease,
-            dispatch->operationRevision,
-            report
-        );
-        REQUIRE(reconciling.has_value());
-        REQUIRE(reconciling->state == OperationState::Reconciling);
-        return *reconciling;
     }
 }

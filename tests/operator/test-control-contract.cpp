@@ -172,7 +172,6 @@ namespace uf::operator_runtime
         auto heldLease   = std::optional<ControlLease>{};
         auto manifest    = std::optional<SessionManifest>{};
         auto project     = std::optional<test_support::ProjectFixture>{};
-        auto heldPlugin  = std::optional<ProjectPluginHandle>{};
         auto heldReading = std::optional<task::UiObservationSnapshot>{};
         auto heldBinding = std::optional<ControllerBinding>{};
         auto heldRequest = std::optional<CommandRequest>{};
@@ -183,7 +182,7 @@ namespace uf::operator_runtime
             // working for as long as the process holds it.
             CHECK(prepared.store.createSnapshot(
                 prepared.lease,
-                prepared.plugin,
+                prepared.project.registration,
                 prepared.project.toolCatalogSchemaOwner,
                 prepared.project.observedInstanceIdentitySchemas,
                 test_support::observeAgain(prepared)
@@ -197,7 +196,6 @@ namespace uf::operator_runtime
             );
             manifest    = prepared.manifest;
             project     = prepared.project;
-            heldPlugin  = prepared.plugin;
             heldReading = test_support::observeAgain(prepared);
         }
 
@@ -237,7 +235,7 @@ namespace uf::operator_runtime
         CHECK_FALSE(restarted->bindController("session-1").has_value());
         CHECK_FALSE(restarted->createSnapshot(
             *heldLease,
-            *heldPlugin,
+            project->registration,
             project->toolCatalogSchemaOwner,
             project->observedInstanceIdentitySchemas,
             *heldReading
@@ -274,186 +272,6 @@ namespace uf::operator_runtime
         // new epoch's first token cannot collide with a token the old one may
         // still be presenting somewhere.
         CHECK(fresh->fencingToken > heldLease->fencingToken);
-    }
-
-    // Host::deliver is the only linearization point for an external effect: the
-    // ledger learns that one happened, or provably did not, only from the call
-    // that could have caused it. Every marker below sits on the assertion that
-    // now validates that authority field against the ledger's own rows.
-    TEST_CASE("contract-control-c03")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = test_support::prepareStore(temporary.path());
-        auto host      = test_support::deliveringHost(prepared);
-
-        auto const proposed = test_support::proposedOperation(
-            prepared,
-            "request-1",
-            prepared.project.toolName("command-1")
-        );
-        auto const frozen = test_support::freezePlanFor(prepared, proposed);
-        REQUIRE(frozen.has_value());
-        auto const step = test_support::mintStepFor(prepared, frozen->operation);
-        REQUIRE(step.has_value());
-        auto const operation = step->operation;
-        auto const reserved  = prepared.store.reserveDispatch(
-            operation.operationId,
-            operation.revision,
-            prepared.lease,
-            host->generation(),
-            AuthorityDecisionId{"authority-1"},
-            std::nullopt
-        );
-        REQUIRE(reserved.has_value());
-        auto const authority = reserved->authority;
-
-        // Every field is the ledger's own, read out of the rows the reservation
-        // wrote. A caller states none of them.
-        // HOST_VALIDATION_TEST(DeliveryAuthority.controlled_target_id)
-        CHECK(authority.controlledTargetId == prepared.lease.controlledTargetId);
-        // HOST_VALIDATION_TEST(DeliveryAuthority.lease_id)
-        CHECK(authority.leaseId == prepared.lease.leaseId);
-        // HOST_VALIDATION_TEST(DeliveryAuthority.session_epoch)
-        CHECK(authority.sessionEpoch == prepared.lease.sessionEpoch);
-        // HOST_VALIDATION_TEST(DeliveryAuthority.fencing_token)
-        CHECK(authority.fencingToken == prepared.lease.fencingToken);
-        // HOST_VALIDATION_TEST(DeliveryAuthority.operation_id)
-        CHECK(authority.operationId == operation.operationId);
-        // HOST_VALIDATION_TEST(DeliveryAuthority.dispatch_seq)
-        CHECK(authority.dispatchSequence == 1U);
-        // HOST_VALIDATION_TEST(DeliveryAuthority.authority_decision_id)
-        CHECK(authority.authorityDecisionId == "authority-1");
-        // HOST_VALIDATION_TEST(DeliveryAuthority.frozen_plan_hash)
-        CHECK(authority.frozenPlanHash == frozen->planHash);
-        // The generation of the world the snapshot was composed over, not the
-        // Host's own. It is the one authority field the Host cannot read, so
-        // only the ledger can prove what it means.
-        // HOST_VALIDATION_TEST(DeliveryAuthority.target_generation)
-        CHECK(
-            authority.targetGeneration
-            == test_support::observeAgain(prepared).targetGeneration()
-        );
-
-        // Four forgeries the Host cannot see through, because it checks only
-        // the target, the epoch, the fence and its own generation. Each is
-        // refused by one clause of the ledger's predicate and by nothing else:
-        // the dispatch is still unanswered after all of them, which is what the
-        // successful record below proves.
-        auto forgedDecision                = authority;
-        forgedDecision.authorityDecisionId = "authority-nobody-reserved";
-        CHECK_FALSE(prepared.store.recordDeliveryOutcome(
-            prepared.lease,
-            reserved->operationRevision,
-            host->deliverReport(forgedDecision)
-        ).has_value());
-
-        auto forgedPlan           = authority;
-        forgedPlan.frozenPlanHash = test_support::hashOf("not-the-frozen-plan");
-        CHECK_FALSE(prepared.store.recordDeliveryOutcome(
-            prepared.lease,
-            reserved->operationRevision,
-            host->deliverReport(forgedPlan)
-        ).has_value());
-
-        auto forgedGeneration             = authority;
-        forgedGeneration.targetGeneration = TargetGeneration::fromValue(
-            authority.targetGeneration.value() + 1U
-        );
-        CHECK_FALSE(prepared.store.recordDeliveryOutcome(
-            prepared.lease,
-            reserved->operationRevision,
-            host->deliverReport(forgedGeneration)
-        ).has_value());
-
-        // A report authorized by a lease it does not name, presented under the
-        // live one. Every row the statement reads is the honest lease's, so the
-        // only thing separating this from the delivery below is the C++
-        // pre-check that compares the report to the lease it was presented with.
-        auto strayLease    = authority;
-        strayLease.leaseId = "another-lease";
-        CHECK_FALSE(prepared.store.recordDeliveryOutcome(
-            prepared.lease,
-            reserved->operationRevision,
-            host->deliverReport(strayLease)
-        ).has_value());
-
-        // An honest report presented under a lease value that is not the live
-        // row. The report and the lease agree, so the C++ pre-check passes and
-        // only the statement refuses.
-        auto ghostLease        = prepared.lease;
-        ghostLease.leaseId     = "ghost-lease";
-        auto ghostAuthority    = authority;
-        ghostAuthority.leaseId = ghostLease.leaseId;
-        CHECK_FALSE(prepared.store.recordDeliveryOutcome(
-            ghostLease,
-            reserved->operationRevision,
-            host->deliverReport(ghostAuthority)
-        ).has_value());
-
-        auto staleRevisionLease     = prepared.lease;
-        staleRevisionLease.revision = prepared.lease.revision + 1U;
-        CHECK_FALSE(prepared.store.recordDeliveryOutcome(
-            staleRevisionLease,
-            reserved->operationRevision,
-            host->deliverReport(authority)
-        ).has_value());
-
-        // A Host fenced past the ledger's live row. Its report is honest about
-        // the fence it acted under, and that fence is exactly what the ledger
-        // refuses: this is the displaced controller, one transaction early.
-        auto movedFence              = prepared.lease;
-        movedFence.fencingToken      = prepared.lease.fencingToken + 1U;
-        auto fencedAuthority         = authority;
-        fencedAuthority.fencingToken = movedFence.fencingToken;
-        {
-            auto installed = prepared.store.openInstalledRuntimeArtifact(
-                prepared.installedGeneration,
-                prepared.runtimeArtifactRootHash
-            );
-            REQUIRE(installed.has_value());
-            auto fencedHost = conformance::DeliveringHost{
-                *std::move(installed),
-                controlFence(movedFence),
-                test_support::k_fixtureUiAction,
-                test_support::umbraflowProbeFrame(),
-            };
-            fencedAuthority.runtimeGeneration = fencedHost.generation();
-            CHECK_FALSE(prepared.store.recordDeliveryOutcome(
-                movedFence,
-                reserved->operationRevision,
-                fencedHost.deliverReport(fencedAuthority)
-            ).has_value());
-        }
-
-        // A report the Host really produced, under the live lease, at the
-        // revision the reservation left behind.
-        CHECK_FALSE(prepared.store.recordDeliveryOutcome(
-            prepared.lease,
-            reserved->operationRevision + 1U,
-            host->deliverReport(authority)
-        ).has_value());
-
-        auto const report = host->deliverReport(authority);
-        CHECK(report.outcome() == task::DeliveryOutcome::Delivered);
-        CHECK(report.reason().empty());
-        // HOST_VALIDATION_TEST(DeliveryAuthority.receipt_ref)
-        CHECK(report.receiptId() != 0U);
-        auto const recorded = prepared.store.recordDeliveryOutcome(
-            prepared.lease,
-            reserved->operationRevision,
-            report
-        );
-        REQUIRE(recorded.has_value());
-        CHECK(recorded->state == OperationState::Reconciling);
-        CHECK(recorded->hasDispatched);
-
-        // Immutable once recorded: a second report about the same dispatch is
-        // refused by the outcome compare-and-swap, independently of the lease.
-        CHECK_FALSE(prepared.store.recordDeliveryOutcome(
-            prepared.lease,
-            recorded->revision,
-            host->deliverReport(authority)
-        ).has_value());
     }
 
     TEST_CASE("schema-control-c03")
@@ -518,7 +336,7 @@ namespace uf::operator_runtime
         auto const foreignId = std::string{"fixture.foreign"};
         auto const foreign   = makeProject(
             foreignId,
-            test_support::pluginSource(foreignId)
+            test_support::reducerSource(foreignId)
         );
         CHECK(
             foreign.registration.hash()
@@ -666,137 +484,5 @@ namespace uf::operator_runtime
         CHECK(machine.mutationLocked());
         CHECK_FALSE(machine.transition(OperationEvent::Cancelled).has_value());
         CHECK_FALSE(machine.transition(OperationEvent::DeadlineExpired).has_value());
-    }
-    // The plugin describes and the Operator decides. Every EffectivePlan member
-    // the Operator derives is computed from bytes the ledger already held, and
-    // an ordinary caller submits a tool and arguments and nothing else.
-    TEST_CASE("contract-control-c05")
-    {
-        auto temporary = test_support::TemporaryDirectory{};
-        auto prepared  = test_support::prepareStore(temporary.path());
-
-        // The proposal must be about the command the Operation was created for.
-        // This plugin answers `mismatched-plan` with a plan naming another tool.
-        auto const mismatched = test_support::proposedOperation(
-            prepared,
-            "request-mismatch",
-            prepared.project.toolName("mismatched-plan")
-        );
-        CHECK_FALSE(test_support::freezePlanFor(prepared, mismatched).has_value());
-        REQUIRE(prepared.store.transitionOperation(
-            mismatched.operationId,
-            mismatched.revision,
-            OperationSignal::Cancelled
-        ).has_value());
-
-        prepared.snapshot   = test_support::freshSnapshot(prepared);
-        auto const proposed = test_support::proposedOperation(
-            prepared,
-            "request-1",
-            prepared.project.toolName("command-1")
-        );
-        auto const frozen = test_support::freezePlanFor(prepared, proposed);
-        REQUIRE(frozen.has_value());
-
-        // Derived, not echoed: the decision basis comes from the snapshot row
-        // the Operation names, and the risk is the maximum of the declared
-        // effects rather than anything the proposal stated about itself.
-        CHECK(frozen->decisionBasisHash == prepared.snapshot.decisionBasisHash);
-        CHECK(frozen->risk == Risk::Medium);
-        CHECK(frozen->requiredApprovals.empty());
-        CHECK(frozen->operation.state == OperationState::Ready);
-
-        // A plan freezes once. operation_plans is keyed by operation_id, so the
-        // second attempt is a constraint violation and not a policy check.
-        CHECK_FALSE(test_support::freezePlanFor(prepared, frozen->operation).has_value());
-
-        // A read-only Operation declares no effect and authorises no dispatch,
-        // so it carries no plan at all.
-        auto const readOnly = test_support::proposedOperation(
-            prepared,
-            "request-read",
-            prepared.project.toolName("observe-1")
-        );
-        CHECK_FALSE(test_support::freezePlanFor(prepared, readOnly).has_value());
-    }
-
-    // One Operation runs a bounded multi-step workflow: the number of steps is
-    // fixed when the plan freezes, running out stops the workflow, and stopping
-    // never terminates the Operation or releases the mutation chain.
-    TEST_CASE("contract-control-c08")
-    {
-        auto temporary = test_support::TemporaryDirectory{};
-        auto prepared  = test_support::prepareStore(temporary.path());
-
-        auto const proposed = test_support::proposedOperation(
-            prepared,
-            "request-1",
-            prepared.project.toolName("two-step-plan")
-        );
-        auto const frozen = test_support::freezePlanFor(prepared, proposed);
-        REQUIRE(frozen.has_value());
-        CHECK(frozen->limits.maximumSteps == 2U);
-
-        auto current         = frozen->operation;
-        auto lastStepIntent = std::optional<ContentHash>{};
-        auto host           = test_support::deliveringHost(prepared);
-        for (auto index = uint64{1}; index <= 2U; ++index)
-        {
-            auto const step = test_support::mintStepFor(prepared, current);
-            REQUIRE(step.has_value());
-            CHECK(step->stepIndex == index);
-            if (lastStepIntent.has_value())
-            {
-                // Identity carries the index, so the same document minted at
-                // another position is another step.
-                CHECK(step->stepIntentHash != *lastStepIntent);
-            }
-            lastStepIntent = step->stepIntentHash;
-
-            // A second step while this one still awaits its dispatch is refused.
-            CHECK_FALSE(test_support::mintStepFor(prepared, step->operation).has_value());
-
-            auto const dispatch = prepared.store.reserveDispatch(
-                current.operationId,
-                step->operation.revision,
-                prepared.lease,
-                host->generation(),
-                AuthorityDecisionId{std::format("authority-{}", index)},
-                std::nullopt
-            );
-            REQUIRE(dispatch.has_value());
-            CHECK(dispatch->stepIntentHash == step->stepIntentHash);
-            CHECK(dispatch->stepIndex == index);
-            CHECK(dispatch->authority.dispatchSequence == index);
-
-            // The outcome lands on the dispatch the report names rather than on
-            // the first one: the second pass would lose its CAS against an
-            // already-answered row if the sequence came from anywhere else.
-            auto const reconciling = prepared.store.recordDeliveryOutcome(
-                prepared.lease,
-                dispatch->operationRevision,
-                host->deliverReport(dispatch->authority)
-            );
-            REQUIRE(reconciling.has_value());
-            REQUIRE(reconciling->state == OperationState::Reconciling);
-            CHECK(host->clicks() == index);
-            current = *reconciling;
-        }
-
-        // The third step is past the frozen bound.
-        CHECK_FALSE(test_support::mintStepFor(prepared, current).has_value());
-
-        // And the refusal left everything where it was: still reconciling, plan
-        // still frozen, mutation chain still held against a second command.
-        CHECK(current.state == OperationState::Reconciling);
-        CHECK(current.planFrozen);
-        CHECK_FALSE(prepared.store.submitCommand(
-            prepared.controller,
-            test_support::command(prepared.snapshot, "request-2"),
-            test_support::toolInvocation(
-                prepared.project,
-                prepared.project.toolName("command-1")
-            )
-        ).has_value());
     }
 }

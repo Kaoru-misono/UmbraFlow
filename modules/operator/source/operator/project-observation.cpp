@@ -325,7 +325,7 @@ namespace uf::operator_runtime
     }
 
     auto ObservedInstanceIdentitySchemas::create(
-        VerifiedProjectRegistration const& registration,
+        ProjectIdentity const& registration,
         std::vector<ObservedInstanceIdentitySchema> schemas
     ) -> Result<ObservedInstanceIdentitySchemas>
     {

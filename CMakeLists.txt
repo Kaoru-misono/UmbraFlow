@@ -73,7 +73,7 @@ cpp_embed_framework_schemas(
     umbraflow-project-attestation-v2.schema.json
     umbraflow-project-observation-v1.schema.json
     umbraflow-project-observation-proposal-v1.schema.json
-    umbraflow-project-registration-v2.schema.json
+    umbraflow-project-registration-v3.schema.json
     umbraflow-project-tool-precondition-v1.schema.json
     umbraflow-project-v2.schema.json
 )
@@ -149,10 +149,11 @@ if(PROJECT_IS_TOP_LEVEL)
         # Operator this repository ships; every other run is a consumer's single
         # aggregate gate.
         #
-        # C-09 through C-13 are here because their store behaviour is here. Only
-        # their schema shape stayed in tests/operator, where it is registered
-        # under the schema- name, so the contract- name belongs to the case that
-        # goes red when the ledger stops enforcing them.
+        # C-09 through C-13 drove an Operation through freezePlan, mintNextStep
+        # and commitReconciliation -- the three doors the two-closure generation
+        # leaves without a project entry to call. They are not registered here
+        # while their subject has no vehicle; the Tool Runtime coverage that
+        # replaces them belongs to the same change that deletes those doors.
         uf_add_conformance_run(
             PROJECT   umbraflow
             DIRECTORY "${UF_STAGED_UMBRAFLOW_PROJECT}"
@@ -160,11 +161,6 @@ if(PROJECT_IS_TOP_LEVEL)
             CASES
                 contract-control-c01
                 contract-control-c06
-                contract-control-c09
-                contract-control-c10
-                contract-control-c11
-                contract-control-c12
-                contract-control-c13
         )
 
         # Everything a consuming repository writes to run the suite, in full: one

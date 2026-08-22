@@ -11,57 +11,22 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
-#include <filesystem>
 #include <optional>
 #include <string>
-#include <vector>
 
 namespace uf::service
 {
     namespace
     {
-        using operator_runtime::AuthorityDecisionId;
         using operator_runtime::ProjectInstanceBaseline;
         using operator_runtime::SessionMode;
         using operator_runtime::SessionPin;
         using operator_runtime::ControllerKind;
-        using operator_runtime::test_support::createReadyOperation;
         using operator_runtime::test_support::addController;
         using operator_runtime::test_support::k_unconstrainedAgentBudget;
         using operator_runtime::test_support::observeAgain;
         using operator_runtime::test_support::prepareStore;
         using operator_runtime::test_support::TemporaryDirectory;
-
-        [[nodiscard]]
-        auto recoverUnfinishedDispatch(std::filesystem::path const& root)
-            -> std::vector<operator_runtime::RecoveredUncertainDispatch>
-        {
-            {
-                auto prepared = prepareStore(root);
-                auto const ready = createReadyOperation(
-                    prepared,
-                    "lifecycle-restart",
-                    prepared.project.toolName("command-1")
-                );
-                auto const reserved = prepared.store.reserveDispatch(
-                    ready.operationId,
-                    ready.revision,
-                    prepared.lease,
-                    prepared.observation.generation,
-                    AuthorityDecisionId{"lifecycle-restart-authority"},
-                    std::nullopt
-                );
-                REQUIRE(reserved.has_value());
-            }
-
-            auto restarted = operator_runtime::OperatorCoordinator::open(
-                root / "production"
-            );
-            REQUIRE(restarted.has_value());
-            auto recoveries = restarted->recoveredUncertainDispatches();
-            REQUIRE(recoveries.has_value());
-            return *std::move(recoveries);
-        }
     }
 
     TEST_CASE("a failed close does not displace the failure a caller must act on")
@@ -120,18 +85,6 @@ namespace uf::service
         CHECK(*clean == "the observation succeeded");
     }
 
-    TEST_CASE("lifecycle restart with unfinished state is read-only")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto const recoveries = recoverUnfinishedDispatch(temporary.path());
-        REQUIRE_FALSE(recoveries.empty());
-        CHECK_MESSAGE(
-            lifecycleAccessAfterRestart(recoveries)
-                == LifecycleAccess::ReadOnly,
-            "unfinished restart recovery must expose read-only access"
-        );
-    }
-
     TEST_CASE("lifecycle no-baseline ruling reduces an empty Journal to first state")
     {
         auto temporary = TemporaryDirectory{};
@@ -140,7 +93,7 @@ namespace uf::service
         REQUIRE(prepared.store.releaseLease(prepared.lease).has_value());
         auto const provisioned = prepared.store.provisionProjectInstance(
             prepared.project.registration,
-            prepared.plugin,
+            prepared.generation,
             ProjectInstanceBaseline{
                 .projectInstanceKey  = "instance-without-baseline",
                 .eventId             = {},
@@ -183,7 +136,7 @@ namespace uf::service
         REQUIRE(lease.has_value());
         auto snapshot = prepared.store.createSnapshot(
             *lease,
-            prepared.plugin,
+            prepared.project.registration,
             prepared.project.toolCatalogSchemaOwner,
             prepared.project.observedInstanceIdentitySchemas,
             observeAgain(prepared)
@@ -212,7 +165,7 @@ namespace uf::service
         REQUIRE(lease.has_value());
         auto const snapshot = prepared.store.createSnapshot(
             *lease,
-            prepared.plugin,
+            prepared.project.registration,
             prepared.project.toolCatalogSchemaOwner,
             prepared.project.observedInstanceIdentitySchemas,
             observeAgain(prepared)

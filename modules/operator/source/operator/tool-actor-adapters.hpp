@@ -37,9 +37,10 @@ namespace uf::operator_runtime
     // that cannot be expressed as a translation into ToolAdmissionRequest is a
     // finding about the design and not a reason for a second path.
     //
-    // Production-unreachable by construction: nothing outside a test builds
-    // one. See
-    // docs/decisions/2026-08-22-production-reachability-is-the-cut-invariant.md.
+    // Production-reachable: service::ProductLifecycle holds one adapter of each
+    // class and exposes one transport door per class. They are the production
+    // entry's only way to start a run at the top, beside the Framework door
+    // that translates its own envelope through the same producer.
 
     // What every adapter is handed and none of them may state for itself: the
     // authenticated session this actor acts in, the run's pinned execution

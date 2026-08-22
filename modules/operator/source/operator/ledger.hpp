@@ -332,41 +332,6 @@ namespace uf::operator_runtime
         ToolIdentityLookup lookup{ToolIdentityLookup::Created};
     };
 
-    // What one frozen plan settled. Every member is derived inside freezePlan's
-    // transaction from bytes the ledger already held, so a caller reads them
-    // here and can no longer state them anywhere.
-    //
-    // No in-class initializer for the hashes: ContentHash has no default state.
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
-    struct FrozenPlan final
-    {
-        StoredOperation operation;
-        ContentHash     planHash;
-        ContentHash     decisionBasisHash;
-        ContentHash     effectEnvelopeHash;
-
-        // The artifact that ruled this plan, and the approver capabilities it
-        // ruled. Empty means the policy allowed the plan outright, and it is
-        // the only statement of that fact: there is no separate flag that could
-        // say otherwise.
-        ContentHash              policyHash;
-        std::vector<std::string> requiredApprovals{};
-
-        WorkflowLimits limits{};
-        Risk           risk{Risk::Critical};
-    };
-
-    // One minted workflow step. stepIntentHash covers the frozen plan hash and
-    // the decimal index, so the same document at another index is another step.
-    struct PlannedStep final
-    {
-        StoredOperation operation;
-        ContentHash     stepIntentHash;
-        std::string     stepKey{};
-        uint64          stepIndex{};
-        StepKind        kind{StepKind::Wait};
-    };
-
     // What the dispatch was authorised against. The three hashes were caller
     // parameters until W2 and are now results: the Operation has at most one
     // pending UI-action step, so a dispatch names nothing and either finds that
@@ -547,31 +512,37 @@ namespace uf::operator_runtime
         ValidatedJournalEntryData entry;
     };
 
-    struct ReconciliationCommit final
+    // What one refold of a ProjectInstance's baseline found: the ProjectState
+    // the database stores for it, and the ProjectState its complete retained
+    // Journal prefix folds to when that prefix is read back out of the
+    // database and run through the registration's own reducer.
+    //
+    // Both sides are carried, hashes and bytes, because the answer to "did the
+    // fold move" is the comparison and not a flag: a caller that was handed
+    // only a verdict could not say what differed, and a stored verdict would
+    // be a third value agreeing with the two it was derived from.
+    //
+    // No in-class initializer for the hashes: ContentHash has no default state.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+    struct RefoldedProjectState final
     {
-        std::string operationId{};
-        uint64      expectedOperationRevision{};
-        uint64      expectedProjectStateRevision{};
+        std::string projectInstanceKey{};
 
-        // The reconcile output and the disposition read out of it by the
-        // authority bound to this registration. They travel together because
-        // they are one conclusion: a separate caller-set disposition would let
-        // a proposal that concluded Rejected be committed as Confirmed.
-        ValidatedReconcileOutcome outcome;
+        // How many Journal events the prefix held. It is reported because an
+        // equality over an empty prefix is a weaker fact than one over a
+        // prefix with events in it, and only the count says which happened.
+        uint64 journalEventCount{};
 
-        // The events this reconciliation appends to the Project Journal. There
-        // is deliberately no reducer input beside them: the Operator derives
-        // the reducer's envelope from these entries and the ProjectState the
-        // database currently holds, so that a caller cannot record event A and
-        // materialize a state reduced from event B.
-        std::vector<JournalAppend> journalEvents{};
+        ContentHash storedStateHash;
+        ContentHash refoldedStateHash;
+        std::string storedCanonicalPayload{};
+        std::string refoldedCanonicalPayload{};
     };
 
     // Actionable recovery work retained in the ledger until reconciliation
-    // leaves the reconciling state. The revision names match the two CAS
-    // inputs ReconciliationCommit consumes. deliveryReason is the ledger's
-    // stored account of why the Host outcome was uncertain; exposing it here
-    // keeps dispatches.delivery_reason from being write-only audit text.
+    // leaves the reconciling state. deliveryReason is the ledger's stored
+    // account of why the Host outcome was uncertain; exposing it here keeps
+    // dispatches.delivery_reason from being write-only audit text.
     struct RecoveredUncertainDispatch final
     {
         std::string operationId{};
@@ -642,7 +613,7 @@ namespace uf::operator_runtime
             ObservedInstanceContext const& context,
             ObservedInstanceWorldScope const& worldScope,
             ObservedInstanceIdentitySchemas const& identitySchemas,
-            ProjectPluginHandle const& plugin,
+            ProjectIdentity const& project,
             ProjectObservationProposal const& proposal
         ) -> Result<ProjectObservation>;
 
@@ -747,7 +718,7 @@ namespace uf::operator_runtime
 
         // Reports the Operations a restart moved to reconciliation. The query
         // is persistent and repeatable, so a caller crash cannot consume the
-        // only copy of the work needed by commitReconciliation.
+        // only copy of the work the recovery still owes.
         [[nodiscard]]
         auto recoveredUncertainDispatches()
             -> Result<std::vector<RecoveredUncertainDispatch>>;
@@ -808,6 +779,32 @@ namespace uf::operator_runtime
             ProjectBaselineReducer const& reducer,
             ProjectInstanceBaseline const& baseline
         ) -> Status;
+
+        // Re-derives one ProjectInstance's baseline from the Journal prefix the
+        // database still holds, and hands back that answer beside the baseline
+        // the database stored, so a caller can compare the two.
+        //
+        // Every input comes from a row. The events are read in `sequence`
+        // order and re-validated through the journal owner this registration
+        // pinned, the envelope is assembled by the same private builder
+        // provisioning uses, and the fold runs on the reducer of the
+        // registration the instance row names. Nothing a caller supplies
+        // reaches the computation, which is what makes a disagreement between
+        // the two answers a fact about the stored bytes rather than about the
+        // call.
+        //
+        // It deliberately returns both answers rather than a verdict. A method
+        // that returned `bool equal` would be the only reader of its own
+        // comparison, and a test asserting that bool could not tell a real
+        // match from a comparison that stopped being made; with both hashes
+        // and both payloads in hand, the assertion lives where it can be read.
+        [[nodiscard]]
+        auto refoldProjectState(
+            ProjectIdentity const& project,
+            ProjectJournalSchemaOwner const& journal,
+            ProjectBaselineReducer const& reducer,
+            std::string const& projectInstanceKey
+        ) -> Result<RefoldedProjectState>;
 
         // The trusted setup door, and the only place an Agent's ceilings are
         // established. agentProfile is required for exactly the kinds whose
@@ -870,27 +867,28 @@ namespace uf::operator_runtime
         ) -> Result<uint64>;
 
         // The Snapshot Coordinator. It reads every owner's revision under one
-        // BEGIN IMMEDIATE, runs the project's derive against what it read, and
-        // publishes one complete record before returning a token.
+        // BEGIN IMMEDIATE and publishes one complete record before returning a
+        // token.
         //
-        // There is no identity parameter and nothing replaces it: a caller that
-        // supplied one could pin a snapshot to a world the ledger never held.
-        // The four values it does take cannot be fabricated either -- a
-        // ProjectPluginHandle comes only from ProjectPluginRegistrar::findExact,
-        // a ProjectToolCatalogSchemaOwner only from the registered catalog,
-        // ObservedInstanceIdentitySchemas only from the deployment that loaded
-        // the pinned registration, and a UiObservationSnapshot only from
-        // TaskHost.
+        // It runs no project code. Under the two-closure generation the
+        // reducer exports `reduce` and nothing else, and a Project's reading of
+        // its own world is a bound Project Tool the actors call -- so the
+        // observation this composes is the empty proposal, and a Project that
+        // wants to propose observed instances publishes them through
+        // publishProjectObservation from inside such a call.
         //
-        // The derived observation is a proposal envelope and the observed
-        // instances it proposes are minted by the same canonical mint
-        // publishProjectObservation uses, under the session's pinned world
-        // scope and this identity-schema authority; the stored observation is
-        // the final closed envelope, not the proposal bytes.
+        // There is no identity parameter beyond the registration's own and
+        // nothing replaces it: a caller that supplied one could pin a snapshot
+        // to a world the ledger never held. The values it does take cannot be
+        // fabricated either -- a ProjectIdentity comes only from a verified
+        // registration document, a ProjectToolCatalogSchemaOwner only from the
+        // registered catalog, ObservedInstanceIdentitySchemas only from the
+        // deployment that loaded the pinned registration, and a
+        // UiObservationSnapshot only from TaskHost.
         [[nodiscard]]
         auto createSnapshot(
             ControlLease const& lease,
-            ProjectPluginHandle const& plugin,
+            ProjectIdentity const& project,
             ProjectToolCatalogSchemaOwner const& catalog,
             ObservedInstanceIdentitySchemas const& identitySchemas,
             task::UiObservationSnapshot const& observation
@@ -903,7 +901,7 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto publishProjectObservation(
             ControlLease const& lease,
-            ProjectPluginHandle const& plugin,
+            ProjectIdentity const& project,
             ObservedInstanceWorldScope const& worldScope,
             ObservedInstanceIdentitySchemas const& identitySchemas,
             ProjectObservationProposal const& proposal
@@ -1185,42 +1183,6 @@ namespace uf::operator_runtime
             OperationSignal signal
         ) -> Result<StoredOperation>;
 
-        // The plan is minted here rather than by the caller because the command
-        // fingerprint and the decision basis are the ledger's: they come from
-        // the operations row and the snapshot row it names, and a plan that
-        // stated its own would be a plan about a world nobody observed. The
-        // Operation's own state moves to Ready or AwaitingApproval according to
-        // what the policy ruled, so no caller chooses which.
-        //
-        // The catalog owner is required because the bounds a proposal is judged
-        // against are the descriptor's. It is asked again here rather than
-        // remembered from the submission: the descriptor is a function of the
-        // catalog bytes this session pinned and the tool name the operations
-        // row holds, so re-deriving it keeps one authority instead of storing a
-        // copy that could disagree with the catalog it came from.
-        [[nodiscard]]
-        auto freezePlan(
-            std::string const& operationId,
-            uint64 expectedRevision,
-            ControlLease const& lease,
-            ProjectPluginHandle const& plugin,
-            ProjectToolCatalogSchemaOwner const& catalog,
-            OperatorPlanAuthority const& planAuthority
-        ) -> Result<FrozenPlan>;
-
-        // The next step of a frozen plan, at MAX(step_index) + 1 read inside the
-        // same transaction that inserts it. It refuses past the frozen step
-        // bound and while a UI-action step is still awaiting its dispatch.
-        [[nodiscard]]
-        auto mintNextStep(
-            std::string const& operationId,
-            uint64 expectedRevision,
-            ControlLease const& lease,
-            ProjectPluginHandle const& plugin,
-            ProjectToolCatalogSchemaOwner const& catalog,
-            OperatorPlanAuthority const& planAuthority
-        ) -> Result<PlannedStep>;
-
         // The single mint of dispatch authority: the returned
         // task::DispatchAuthority is the only one a Host will act on, because
         // every field of it is matched against these rows again when the report
@@ -1260,11 +1222,5 @@ namespace uf::operator_runtime
             ApprovalRequest const& request,
             AuthorityDecisionId const& authorityDecisionId
         ) -> Result<ApprovalGrant>;
-
-        [[nodiscard]]
-        auto commitReconciliation(
-            ProjectPluginHandle const& plugin,
-            ReconciliationCommit const& commit
-        ) -> Result<StoredOperation>;
     };
 }

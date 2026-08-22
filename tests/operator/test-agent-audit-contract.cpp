@@ -148,222 +148,7 @@ namespace uf::operator_runtime
         using test_support::k_fixtureProvenance;
         using test_support::k_fixtureProvenanceViolations;
         using test_support::prepareStore;
-        using test_support::reconciliationOutcome;
-        using test_support::reconcilingOperation;
         using test_support::TemporaryDirectory;
-    }
-
-    // A human takeover and a Host delivery share one linearization, and the
-    // acceptance text names the two things that buys. First: once a takeover
-    // has returned, the fence it displaced cannot begin a dispatch -- the
-    // ledger will not reserve one for it, and a Host still holding it will not
-    // act on one that was reserved for someone else. Second: whatever was
-    // already in flight is reported rather than guessed at. The takeover cannot
-    // un-click what may already have landed; what it does is close the window
-    // in which the ledger could still be told the effect did not happen.
-    TEST_CASE("contract-agent-a07")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-
-        // The Host the displaced controller keeps. It is built before the
-        // takeover, so it carries the fence the takeover is about to supersede
-        // and nothing ever tells it otherwise -- which is the state a displaced
-        // controller is really in.
-        auto staleHost = test_support::deliveringHost(prepared);
-
-        auto const operation = test_support::createReadyOperation(
-            prepared,
-            "request-1",
-            prepared.project.toolName("command-1")
-        );
-
-        // A takeover with nothing in flight moves the fence and nothing else,
-        // which is what leaves the clause below testing the lease alone.
-        auto const takeoverBeforeDispatch = prepared.store.takeoverLease(
-            prepared.controller,
-            "a human takeover before anything was dispatched"
-        );
-        REQUIRE(takeoverBeforeDispatch.has_value());
-        CHECK(takeoverBeforeDispatch->resolvedDispatches == 0U);
-
-        auto const staleLease = prepared.lease;
-        prepared.lease        = takeoverBeforeDispatch->lease;
-        CHECK(staleLease.fencingToken < prepared.lease.fencingToken);
-
-        auto host = test_support::deliveringHost(prepared);
-
-        // A Host numbers its own generations, so these two name the same
-        // GenerationId over the same installed artifact. That is what leaves
-        // the fencing token as the single field separating the Host-side
-        // refusal below from the delivery further down: without it the
-        // authority would be foreign for a second reason and the refusal would
-        // prove nothing about the fence.
-        REQUIRE(staleHost->generation() == host->generation());
-
-        // The first clause, ledger side. The Operation, its revision and the
-        // Host generation are the three the reservation below succeeds with, so
-        // the only thing this attempt is missing is a live lease.
-        CHECK_FALSE(prepared.store.reserveDispatch(
-            operation.operationId,
-            operation.revision,
-            staleLease,
-            host->generation(),
-            AuthorityDecisionId{"authority-displaced"},
-            std::nullopt
-        ).has_value());
-
-        // Its positive control is the rest of this case: the same reservation
-        // under the lease the takeover minted is what the in-flight half below
-        // is built on, so the refusal above cannot be a takeover freezing the
-        // target.
-        auto const reserved = prepared.store.reserveDispatch(
-            operation.operationId,
-            operation.revision,
-            prepared.lease,
-            host->generation(),
-            AuthorityDecisionId{"authority-1"},
-            std::nullopt
-        );
-        REQUIRE(reserved.has_value());
-
-        // The first clause, Host side. The displaced Host mints a Receipt of
-        // its own and is handed a real authority, and still cannot begin this
-        // dispatch: the fence it holds is the one the takeover replaced. Err
-        // rather than a report, so nothing was consumed and nothing was posted.
-        CHECK_FALSE(staleHost->deliver(reserved->authority).has_value());
-        CHECK(staleHost->clicks() == 0U);
-
-        // The Host acts. The click has landed and nothing in the ledger says so
-        // yet: this is the whole of the race.
-        auto const inFlight = host->deliverReport(reserved->authority);
-        REQUIRE(inFlight.outcome() == task::DeliveryOutcome::Delivered);
-        CHECK(host->clicks() == 1U);
-
-        auto const takeover = prepared.store.takeoverLease(
-            prepared.controller,
-            "human takeover while a dispatch was in flight"
-        );
-        REQUIRE(takeover.has_value());
-        CHECK(takeover->lease.fencingToken > prepared.lease.fencingToken);
-
-        // The takeover found the dispatch unanswered and resolved it in the
-        // transaction that bumped the fence. The count is the difference
-        // between "nothing was in flight" and "one effect may already have
-        // landed", and the caller is told which.
-        CHECK(takeover->resolvedDispatches == 1U);
-
-        // The displaced controller still holds a real report. It is refused
-        // twice over -- the lease it names is no longer the live row, and the
-        // dispatch is no longer unanswered.
-        CHECK_FALSE(prepared.store.recordDeliveryOutcome(
-            prepared.lease,
-            reserved->operationRevision,
-            inFlight
-        ).has_value());
-
-        // What the ledger recorded instead is transport_unknown, which is not
-        // proof of absence, so no reconciliation may conclude Rejected for this
-        // Operation. Asserted through the one path that reads the column.
-        auto const displacedLease = prepared.lease;
-        prepared.lease            = takeover->lease;
-        auto const resolved       = StoredOperation{
-            .operationId = operation.operationId,
-            .lookup      = CommandLookup::Existing,
-            .state       = OperationState::Reconciling,
-            .revision      = reserved->operationRevision + 1U,
-            .planFrozen    = true,
-            .hasDispatched = true,
-        };
-        CHECK_FALSE(prepared.store.commitReconciliation(
-            prepared.plugin,
-            ReconciliationCommit{
-                .operationId                  = resolved.operationId,
-                .expectedOperationRevision    = resolved.revision,
-                .expectedProjectStateRevision = 0U,
-                .outcome                      = reconciliationOutcome(
-                    prepared,
-                    resolved.operationId,
-                    "{\"disposition\":\"rejected\"}"
-                ),
-                .journalEvents                = {},
-            }
-        ).has_value());
-
-        // The positive control for the revision above: the same Operation, the
-        // same revision, a disposition transport_unknown does not forbid.
-        REQUIRE(prepared.store.commitReconciliation(
-            prepared.plugin,
-            ReconciliationCommit{
-                .operationId                  = resolved.operationId,
-                .expectedOperationRevision    = resolved.revision,
-                .expectedProjectStateRevision = 0U,
-                .outcome                      = reconciliationOutcome(
-                    prepared,
-                    resolved.operationId,
-                    "{\"disposition\":\"confirmed\"}"
-                ),
-                .journalEvents                = {
-                    JournalAppend{
-                        .eventId = "event-1",
-                        .entry   = journalEntry(
-                            prepared.project,
-                            "fixture.confirmed",
-                            "{\"value\":1}"
-                        ),
-                    },
-                },
-            }
-        ).has_value());
-        CHECK(displacedLease.fencingToken < prepared.lease.fencingToken);
-    }
-
-    // The reverse schedule. A recorded outcome is not re-opened by a takeover
-    // that arrives after it, so "resolve what is unanswered" cannot become
-    // "overwrite what was answered".
-    TEST_CASE("a takeover after the outcome was recorded resolves nothing")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        auto const operation = reconcilingOperation(
-            prepared,
-            "request-1",
-            task::DeliveryOutcome::Delivered
-        );
-
-        auto const takeover = prepared.store.takeoverLease(
-            prepared.controller,
-            "human takeover after the outcome was recorded"
-        );
-        REQUIRE(takeover.has_value());
-        CHECK(takeover->resolvedDispatches == 0U);
-
-        // The Operation is exactly where the recorded outcome left it: the
-        // takeover neither advanced its revision nor moved its state.
-        prepared.lease = takeover->lease;
-        REQUIRE(prepared.store.commitReconciliation(
-            prepared.plugin,
-            ReconciliationCommit{
-                .operationId                  = operation.operationId,
-                .expectedOperationRevision    = operation.revision,
-                .expectedProjectStateRevision = 0U,
-                .outcome                      = reconciliationOutcome(
-                    prepared,
-                    operation.operationId,
-                    "{\"disposition\":\"confirmed\"}"
-                ),
-                .journalEvents                = {
-                    JournalAppend{
-                        .eventId = "event-1",
-                        .entry   = journalEntry(
-                            prepared.project,
-                            "fixture.confirmed",
-                            "{\"value\":1}"
-                        ),
-                    },
-                },
-            }
-        ).has_value());
     }
 
     TEST_CASE("schema-agent-a01")
@@ -458,7 +243,7 @@ namespace uf::operator_runtime
         REQUIRE(elsewhereLease.has_value());
         auto const elsewhereSnapshot = prepared.store.createSnapshot(
             *elsewhereLease,
-            prepared.plugin,
+            prepared.project.registration,
             prepared.project.toolCatalogSchemaOwner,
             prepared.project.observedInstanceIdentitySchemas,
             test_support::observeAgain(prepared)
@@ -582,11 +367,6 @@ namespace uf::operator_runtime
             OperationSignal::ReadCompleted
         );
         REQUIRE(confirmed.has_value());
-        auto const operation = test_support::reconcilingOperation(
-            eventStore,
-            "request-event-stream",
-            task::DeliveryOutcome::Delivered
-        );
 
         auto const eventRead = eventStore.store.subscribe(
             eventStore.controller,
@@ -615,42 +395,6 @@ namespace uf::operator_runtime
         CHECK_MESSAGE(
             *confirmedDetail == OperationState::Confirmed,
             "state event detail must be the Operation state committed by the transition"
-        );
-        auto const delivery = std::ranges::find(
-            eventBatch->events,
-            LedgerEventKind::DeliveryOutcomeRecorded,
-            &LedgerEvent::kind
-        );
-        REQUIRE_MESSAGE(
-            delivery != eventBatch->events.end(),
-            "recordDeliveryOutcome must publish its delivery outcome"
-        );
-        CHECK(delivery->subjectId == operation.operationId);
-        auto const* outcome = std::get_if<task::DeliveryOutcome>(&delivery->detail);
-        REQUIRE(outcome != nullptr);
-        CHECK_MESSAGE(
-            *outcome == task::DeliveryOutcome::Delivered,
-            "delivery event detail must be the outcome committed to the dispatch"
-        );
-
-        auto const state = std::ranges::find_if(
-            std::next(delivery),
-            eventBatch->events.end(),
-            [&operation](LedgerEvent const& event)
-            {
-                return event.kind == LedgerEventKind::OperationStateChanged
-                    && event.subjectId == operation.operationId;
-            }
-        );
-        REQUIRE_MESSAGE(
-            state != eventBatch->events.end(),
-            "recordDeliveryOutcome must publish the resulting Operation state"
-        );
-        auto const* operationState = std::get_if<OperationState>(&state->detail);
-        REQUIRE(operationState != nullptr);
-        CHECK_MESSAGE(
-            *operationState == OperationState::Reconciling,
-            "state event detail must be the Operation state committed with the outcome"
         );
     }
 
@@ -691,7 +435,7 @@ namespace uf::operator_runtime
         // exactly what masked all three of these when they named instance-1.
         REQUIRE(prepared.store.provisionProjectInstance(
             prepared.project.registration,
-            prepared.plugin,
+            prepared.generation,
             ProjectInstanceBaseline{
                 .projectInstanceKey  = "instance-pins",
                 .eventId             = "baseline-pins",
@@ -766,7 +510,7 @@ namespace uf::operator_runtime
         {
             return prepared.store.createSnapshot(
                 lease,
-                prepared.plugin,
+                prepared.project.registration,
                 prepared.project.toolCatalogSchemaOwner,
                 prepared.project.observedInstanceIdentitySchemas,
                 test_support::observeAgain(prepared)
@@ -904,74 +648,10 @@ namespace uf::operator_runtime
             == AutomationErrorKind::ActionRejected
         );
 
-        // RISK. The fixture's command-1 declares low and medium effects, so the
-        // Operator derives medium, which the table prices at three units. Two
-        // units is not enough and three is exactly enough, which is what pins
-        // the table entry rather than merely the existence of a charge.
-        auto const riskCase = [&](
-            std::string const& suffix,
-            uint64 riskCeiling
-        )
-        {
-            auto const binding = test_support::addController(
-                prepared,
-                ControllerKind::Agent,
-                SessionMode::Write,
-                "session-risk-" + suffix,
-                "instance-risk-" + suffix,
-                "target-risk-" + suffix,
-                AgentBudget{
-                    .maximumToolCalls    = 8U,
-                    .maximumMutations    = 8U,
-                    .maximumObservations = 8U,
-                    .maximumElapsedMillis = 600'000U,
-                    .maximumRiskUnits     = riskCeiling,
-                }
-            );
-            auto const lease    = leaseFor(binding);
-            auto const snapshot = snapshotFor(lease);
-            REQUIRE(snapshot.has_value());
-            auto const operation = submit(binding, *snapshot, "request-1", commandTool);
-            REQUIRE(operation.has_value());
-            struct RiskAttempt final
-            {
-                ControllerBinding binding;
-                Result<FrozenPlan> plan;
-            };
-            return RiskAttempt{
-                .binding = binding,
-                .plan    = prepared.store.freezePlan(
-                    operation->operation.operationId,
-                    operation->operation.revision,
-                    lease,
-                    prepared.plugin,
-                    prepared.project.toolCatalogSchemaOwner,
-                    prepared.planAuthority
-                ),
-            };
-        };
-        auto const underfunded = riskCase("short", 2U);
-        REQUIRE_FALSE(underfunded.plan.has_value());
-        CHECK(
-            automationErrorKind(underfunded.plan.error())
-            == AutomationErrorKind::ActionRejected
-        );
-        auto const exact = riskCase("exact", 3U);
-        CHECK(exact.plan.has_value());
-
-        // Read back what the two charges actually spent. Three risk units is
-        // exactly one medium plan, and one mutating command is exactly one
-        // mutation -- the counters are columns, so this is the database
-        // answering rather than the call that wrote them.
-        auto const exactRemaining = prepared.store.remainingBudget(exact.binding);
-        REQUIRE(exactRemaining.has_value());
-        CHECK(exactRemaining->riskUnits == 0U);
-        CHECK(exactRemaining->mutations == 7U);
-        auto const underfundedRemaining = prepared.store.remainingBudget(
-            underfunded.binding
-        );
-        REQUIRE(underfundedRemaining.has_value());
-        CHECK(underfundedRemaining->riskUnits == 2U);
+        // RISK. The dimension survives on the ledger and its charge is the Tool
+        // Runtime's: the Operation path that priced a frozen plan's derived
+        // risk went with freezePlan, and what charges risk units now is Tool
+        // admission, which tests/operator/test-ledger.cpp exercises.
 
         // TIME. Compared and never decremented, against the Operator's own
         // steady clock: a caller-supplied instant would be a caller-supplied
@@ -1005,16 +685,6 @@ namespace uf::operator_runtime
         auto const lateSubmit = submit(timed, *timedSnapshot, "request-2", observeTool);
         REQUIRE_FALSE(lateSubmit.has_value());
         CHECK(automationErrorKind(lateSubmit.error()) == AutomationErrorKind::Timeout);
-        auto const latePlan = prepared.store.freezePlan(
-            timedOperation->operation.operationId,
-            timedOperation->operation.revision,
-            timedLease,
-            prepared.plugin,
-            prepared.project.toolCatalogSchemaOwner,
-            prepared.planAuthority
-        );
-        REQUIRE_FALSE(latePlan.has_value());
-        CHECK(automationErrorKind(latePlan.error()) == AutomationErrorKind::Timeout);
         auto const timedRemaining = prepared.store.remainingBudget(timed);
         REQUIRE(timedRemaining.has_value());
         CHECK(timedRemaining->elapsedMillisRemaining == 0U);
@@ -1082,7 +752,7 @@ namespace uf::operator_runtime
         );
         auto const moved = prepared.store.createSnapshot(
             stuckLease,
-            prepared.plugin,
+            prepared.project.registration,
             prepared.project.toolCatalogSchemaOwner,
             prepared.project.observedInstanceIdentitySchemas,
             conformance::observeOnce(unresolvedHost)
@@ -1127,7 +797,7 @@ namespace uf::operator_runtime
             REQUIRE(lease.has_value());
             auto const snapshot = prepared.store.createSnapshot(
                 *lease,
-                prepared.plugin,
+                prepared.project.registration,
                 prepared.project.toolCatalogSchemaOwner,
                 prepared.project.observedInstanceIdentitySchemas,
                 test_support::observeAgain(prepared)
@@ -1259,7 +929,7 @@ namespace uf::operator_runtime
 
         // Provenance is neither optional nor the caller's to invent, and the
         // schema that judges it is the framework's: JR:`JournalProvenance` is
-        // fixed, so no ProjectRegistrationClaims member pins it and no project
+        // fixed, so no ProjectGenerationClaims member pins it and no project
         // supplies a validator for it. Each document below is exact JCS the
         // project's canonical validator accepts, and each violates exactly one
         // of that schema's rules -- enum, required, additionalProperties, the
@@ -1292,73 +962,29 @@ namespace uf::operator_runtime
             canonical(prepared.project.schemaOwner, std::string{k_fixtureProvenance})
         ).has_value());
 
-        auto const operation = reconcilingOperation(
-            prepared,
-            "request-1",
-            task::DeliveryOutcome::Delivered
-        );
-        auto const progressEvent = [&prepared]
-        {
-            auto events = std::vector<JournalAppend>{};
-            events.emplace_back(
-                JournalAppend{
-                    .eventId = "event-1",
-                    .entry = journalEntry(
-                        prepared.project,
-                        "fixture.progress",
-                        "{\"value\":1}"
-                    ),
-                }
-            );
-            return events;
-        };
-        auto attempt = [&prepared, &operation](
-            std::string document,
-            std::vector<JournalAppend> events
-        )
-        {
-            return prepared.store.commitReconciliation(
-                prepared.plugin,
-                ReconciliationCommit{
-                    .operationId                  = operation.operationId,
-                    .expectedOperationRevision    = operation.revision,
-                    .expectedProjectStateRevision = 0U,
-                    .outcome                      = reconciliationOutcome(
-                        prepared,
-                        operation.operationId,
-                        std::move(document)
-                    ),
-                    .journalEvents                = std::move(events),
-                }
-            ).has_value();
-        };
-
-        // Rejected asserts the world did not change, and a delivered dispatch
-        // is standing proof that it may have.
-        CHECK_FALSE(attempt("{\"disposition\":\"rejected\"}", {}));
-
-        // Ambiguous never established an outcome, so it may not write one.
-        CHECK_FALSE(attempt("{\"disposition\":\"ambiguous\"}", progressEvent()));
-
-        // Diverged must carry the correction that proves the divergence.
-        CHECK_FALSE(attempt("{\"disposition\":\"diverged\"}", {}));
-
-        // Continue is the one that proved something, and it is the one that
-        // reaches the Journal.
-        CHECK(attempt("{\"disposition\":\"continue\"}", progressEvent()));
+        // What a disposition may write alongside itself was proved through
+        // commitReconciliation, which the two-closure generation leaves with no
+        // project entry to call. The provenance and payload rules above are the
+        // half that never depended on it, and they are the half that decides
+        // whether a fact may be minted at all.
     }
 
     TEST_CASE("schema-agent-a05")
     {
         auto const workspaceSchema    = readSchema("umbraflow-annotation-workspace-v2.schema.json");
-        auto const registrationSchema = readSchema("umbraflow-project-registration-v2.schema.json");
+        auto const registrationSchema = readSchema("umbraflow-project-registration-v3.schema.json");
         auto const attestationSchema = readSchema("umbraflow-project-attestation-v2.schema.json");
         auto const replayGate         = definition(workspaceSchema, "ReplayGate");
         checkStrictObject(replayGate);
         CHECK(replayGate.find("\"ui_model_replay\"") != std::string::npos);
         CHECK(replayGate.find("\"project_operation_replay\"") != std::string::npos);
         CHECK(replayGate.find("\"passed\"") != std::string::npos);
-        CHECK(registrationSchema.find("\"plugin_module_manifest_hash\"") != std::string::npos);
+        // The registration document states the code it was deployed as, once
+        // per closure, and never its own root: a document that named the digest
+        // of its own bytes would be attesting to itself.
+        CHECK(registrationSchema.find("\"reducer_closure\"") != std::string::npos);
+        CHECK(registrationSchema.find("\"tool_closure\"") != std::string::npos);
+        CHECK(registrationSchema.find("\"module_manifest_hash\"") != std::string::npos);
         CHECK(registrationSchema.find("\"plugin_environment_hash\"") != std::string::npos);
         CHECK(registrationSchema.find("\"project_registration_hash\"") == std::string::npos);
 

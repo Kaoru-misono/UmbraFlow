@@ -148,8 +148,6 @@ namespace uf::operator_runtime
         using test_support::journalEntry;
         using test_support::makeProject;
         using test_support::prepareStore;
-        using test_support::reconciliationOutcome;
-        using test_support::reconcilingOperation;
         using test_support::TemporaryDirectory;
         using test_support::toolInvocation;
 
@@ -239,23 +237,13 @@ namespace uf::operator_runtime
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
-        REQUIRE(prepared.project.documentInputLog != nullptr);
-
-        // The UI observation and the ProjectState reach the plugin as two
-        // separate members. Project state is not writable back as UI evidence
-        // because neither member is a caller's to supply.
-        auto const reading     = test_support::observeAgain(prepared);
-        auto const deriveInput = prepared.project.documentInputLog->lastDeriveInput();
-        CHECK(deriveInput.find("\"ui_snapshot\":" + reading.canonicalJcs()) != std::string::npos);
-        CHECK(deriveInput.find("\"project_state\":{\"revision\":0}") != std::string::npos);
-        CHECK(deriveInput.find("\"prior_project_observation\":null") != std::string::npos);
-        CHECK(deriveInput.find(reading.observationId()) == std::string::npos);
+        auto const reading = test_support::observeAgain(prepared);
 
         // Its own revision line: an identical reading of an identical world
         // stays on one revision, so a recapture does not invent a state change.
         auto const first = prepared.store.createSnapshot(
             prepared.lease,
-            prepared.plugin,
+            prepared.project.registration,
             prepared.project.toolCatalogSchemaOwner,
             prepared.project.observedInstanceIdentitySchemas,
             test_support::observeAgain(prepared)
@@ -266,55 +254,33 @@ namespace uf::operator_runtime
         CHECK(first->observation.projectStateRevision() == 0U);
         CHECK(first->observation.projectStateHash() == first->projectStateHash);
 
-        // A committed reconciliation moves ProjectState, which is one of the
-        // derive fingerprint's inputs, so the next reading is a new revision.
-        auto const operation = reconcilingOperation(
+        // A world that resolves differently is a different reading, so the
+        // revision line advances without anything the Operator owns having
+        // moved. It is the positive control the equality above needs: a
+        // revision that never advanced would satisfy it too.
+        auto unresolvedHost = test_support::secondObservationHost(
             prepared,
-            "request-1",
-            task::DeliveryOutcome::Delivered
+            test_support::umbraflowUnresolvedProbeFrame(),
+            FrameId{717}
         );
-        REQUIRE(prepared.store.commitReconciliation(
-            prepared.plugin,
-            ReconciliationCommit{
-                .operationId                  = operation.operationId,
-                .expectedOperationRevision    = operation.revision,
-                .expectedProjectStateRevision = 0U,
-                .outcome                      = reconciliationOutcome(
-                    prepared,
-                    operation.operationId,
-                    "{\"disposition\":\"confirmed\"}"
-                ),
-                .journalEvents                = {
-                    JournalAppend{
-                        .eventId = "event-1",
-                        .entry   = journalEntry(
-                            prepared.project,
-                            "fixture.progress",
-                            "{\"value\":1}"
-                        ),
-                    },
-                },
-            }
-        ).has_value());
         auto const moved = prepared.store.createSnapshot(
             prepared.lease,
-            prepared.plugin,
+            prepared.project.registration,
             prepared.project.toolCatalogSchemaOwner,
             prepared.project.observedInstanceIdentitySchemas,
-            test_support::observeAgain(prepared)
+            conformance::observeOnce(unresolvedHost)
         );
         REQUIRE(moved.has_value());
         CHECK(moved->observation.revision() == first->observation.revision() + 1U);
-        CHECK(moved->observation.projectStateRevision() == 1U);
+        CHECK(moved->observation.projectStateRevision() == 0U);
 
         // The reading is bound to the registration that produced it. A handle
         // for another registration is valid on its own and still refused here.
-        auto const foreignSource  = test_support::pluginSource("fixture.foreign");
+        auto const foreignSource  = test_support::reducerSource("fixture.foreign");
         auto const foreignProject = makeProject("fixture.foreign", foreignSource);
-        auto const foreignPlugin  = test_support::loadPlugin(foreignProject, foreignSource);
         CHECK_FALSE(prepared.store.createSnapshot(
             prepared.lease,
-            foreignPlugin,
+            foreignProject.registration,
             foreignProject.toolCatalogSchemaOwner,
             prepared.project.observedInstanceIdentitySchemas,
             test_support::observeAgain(prepared)
@@ -356,61 +322,11 @@ namespace uf::operator_runtime
         CHECK(otherReading.artifactRootHash() != reading.artifactRootHash());
         CHECK_FALSE(prepared.store.createSnapshot(
             prepared.lease,
-            prepared.plugin,
+            prepared.project.registration,
             prepared.project.toolCatalogSchemaOwner,
             prepared.project.observedInstanceIdentitySchemas,
             otherReading
         ).has_value());
-    }
-
-    // DecisionBasis has four members and exactly one of them stands for the
-    // world the plugin was shown. That member is a digest over the WHOLE
-    // ui_snapshot document rather than over a list of its parts, which is what
-    // lets the resolver put a new member -- an observed reading -- inside that
-    // document without a second hash having to be remembered.
-    //
-    // The property is that the two are the same bytes. Nothing enforces it
-    // today except that ledger.cpp reads canonicalJcs() for one and
-    // stateResolutionHash() for the other, and a later member added to the
-    // envelope beside ui_snapshot, or a ui_snapshot assembled from more than the
-    // observation, would be a plugin input that no replay is checked against and
-    // would raise no error anywhere.
-    TEST_CASE("the derive input's world is the exact document the decision basis digests")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        REQUIRE(prepared.project.documentInputLog != nullptr);
-
-        auto const envelope = prepared.project.documentInputLog->lastDeriveInput();
-        auto const at       = envelope.find("\"ui_snapshot\":");
-        REQUIRE(at != std::string::npos);
-
-        // ui_snapshot sorts last of the five members, so it runs to the closing
-        // brace of the envelope. Taking it by position rather than by parsing is
-        // deliberate: a parse would agree with a re-serialization, and what has
-        // to hold is that these BYTES are the hashed ones.
-        constexpr auto member = std::string_view{"\"ui_snapshot\":"};
-        auto const opened     = at + member.size();
-        REQUIRE(envelope.size() > opened);
-        REQUIRE(envelope.back() == '}');
-        auto const uiSnapshot = envelope.substr(opened, envelope.size() - opened - 1U);
-        REQUIRE_FALSE(uiSnapshot.empty());
-        CHECK(uiSnapshot.front() == '{');
-
-        CHECK(hashOf(uiSnapshot) == prepared.snapshot.stateResolutionHash);
-        CHECK(
-            prepared.snapshot.canonicalParts.find(
-                "\"state_resolution_hash\":\"" + hashOf(uiSnapshot).hex() + "\""
-            )
-            != std::string::npos
-        );
-
-        // And the same document reached the ProjectObservation the basis's other
-        // world member covers, so the two agree about one reading rather than
-        // about two.
-        CHECK(
-            prepared.snapshot.observation.stateResolutionHash() == hashOf(uiSnapshot)
-        );
     }
 
     // s02: one complete record, published atomically, whose identity the
@@ -460,7 +376,7 @@ namespace uf::operator_runtime
 
         auto const again = prepared.store.createSnapshot(
             prepared.lease,
-            prepared.plugin,
+            prepared.project.registration,
             prepared.project.toolCatalogSchemaOwner,
             prepared.project.observedInstanceIdentitySchemas,
             test_support::observeAgain(prepared)
@@ -499,7 +415,7 @@ namespace uf::operator_runtime
         CHECK(unresolved.stateResolutionHash() != prepared.snapshot.stateResolutionHash);
         auto const different = prepared.store.createSnapshot(
             prepared.lease,
-            prepared.plugin,
+            prepared.project.registration,
             prepared.project.toolCatalogSchemaOwner,
             prepared.project.observedInstanceIdentitySchemas,
             unresolved
@@ -512,65 +428,21 @@ namespace uf::operator_runtime
         CHECK(different->identityHash != prepared.snapshot.identityHash);
         CHECK(different->decisionBasisHash != prepared.snapshot.decisionBasisHash);
 
-        // A token is a reference to a composition. A reconciliation that moved
-        // ProjectState therefore ends every token taken before it, and a token
-        // taken after it opens an Operation.
-        auto const operation = reconcilingOperation(
-            prepared,
-            "request-1",
-            task::DeliveryOutcome::Delivered
-        );
-        REQUIRE(prepared.store.commitReconciliation(
-            prepared.plugin,
-            ReconciliationCommit{
-                .operationId                  = operation.operationId,
-                .expectedOperationRevision    = operation.revision,
-                .expectedProjectStateRevision = 0U,
-                .outcome                      = reconciliationOutcome(
-                    prepared,
-                    operation.operationId,
-                    "{\"disposition\":\"confirmed\"}"
-                ),
-                .journalEvents                = {
-                    JournalAppend{
-                        .eventId = "event-1",
-                        .entry   = journalEntry(
-                            prepared.project,
-                            "fixture.progress",
-                            "{\"value\":1}"
-                        ),
-                    },
-                },
-            }
-        ).has_value());
-        CHECK_FALSE(prepared.store.submitCommand(
-            prepared.controller,
-            command(prepared.snapshot, "request-stale"),
-            toolInvocation(prepared.project, prepared.project.toolName("observe-1"))
-        ).has_value());
-
-        auto const afterCommit = prepared.store.createSnapshot(
-            prepared.lease,
-            prepared.plugin,
-            prepared.project.toolCatalogSchemaOwner,
-            prepared.project.observedInstanceIdentitySchemas,
-            test_support::observeAgain(prepared)
-        );
-        REQUIRE(afterCommit.has_value());
-        CHECK(afterCommit->projectStateRevision == 1U);
-        CHECK(afterCommit->identityHash != prepared.snapshot.identityHash);
-
-        // The revision moved and the CONTENT did not -- this project's reducer
-        // answers with the same bytes -- so the decision basis is unchanged.
-        // That is the requirement rather than a gap: the basis covers the four
-        // content hashes and no counter, so a world that re-materialized
-        // identically does not force a re-plan or a re-approval. The unresolved
-        // reading above is the positive control that it can move at all.
-        CHECK(afterCommit->projectStateHash == prepared.snapshot.projectStateHash);
-        CHECK(afterCommit->decisionBasisHash == prepared.snapshot.decisionBasisHash);
+        // A token is a reference to a composition, so a token names a
+        // composition this store published and opens an Operation on it. What
+        // made an EARLIER token stale was a committed reconciliation advancing
+        // ProjectState, and that door went with the five-function contract; the
+        // token's own binding to a published composition is what survives.
         CHECK(prepared.store.submitCommand(
             prepared.controller,
-            command(*afterCommit, "request-fresh"),
+            command(*again, "request-fresh"),
+            toolInvocation(prepared.project, prepared.project.toolName("observe-1"))
+        ).has_value());
+        auto unpublished = prepared.snapshot;
+        unpublished.token += "-never-published";
+        CHECK_FALSE(prepared.store.submitCommand(
+            prepared.controller,
+            command(unpublished, "request-unpublished"),
             toolInvocation(prepared.project, prepared.project.toolName("observe-1"))
         ).has_value());
     }
@@ -806,7 +678,7 @@ namespace uf::operator_runtime
         // line of a key that snapshots and Operations already name.
         CHECK_FALSE(prepared.store.provisionProjectInstance(
             registration,
-            prepared.plugin,
+            prepared.generation,
             baseline("instance-1", "baseline-again")
         ).has_value());
 
@@ -837,71 +709,9 @@ namespace uf::operator_runtime
         // revision line starting at zero, side by side with the old one.
         REQUIRE(prepared.store.provisionProjectInstance(
             registration,
-            prepared.plugin,
+            prepared.generation,
             baseline("instance-0", "baseline-0")
         ).has_value());
-
-        auto const operation = reconcilingOperation(
-            prepared,
-            "request-1",
-            task::DeliveryOutcome::Delivered
-        );
-        auto const progressed = prepared.store.commitReconciliation(
-            prepared.plugin,
-            ReconciliationCommit{
-                .operationId                  = operation.operationId,
-                .expectedOperationRevision    = operation.revision,
-                .expectedProjectStateRevision = 0U,
-                .outcome                      = reconciliationOutcome(
-                    prepared,
-                    operation.operationId,
-                    "{\"disposition\":\"continue\"}"
-                ),
-                .journalEvents                = {
-                    JournalAppend{
-                        .eventId = "event-1",
-                        .entry = journalEntry(
-                            prepared.project,
-                            "fixture.progress",
-                            "{\"value\":1}"
-                        ),
-                    },
-                },
-            }
-        );
-        REQUIRE(progressed.has_value());
-
-        // The ABA itself: instance-0 really is at revision 0, and that does not
-        // make revision 0 current for the instance this session is pinned to.
-        CHECK_FALSE(prepared.store.commitReconciliation(
-            prepared.plugin,
-            ReconciliationCommit{
-                .operationId                  = operation.operationId,
-                .expectedOperationRevision    = progressed->revision,
-                .expectedProjectStateRevision = 0U,
-                .outcome                      = reconciliationOutcome(
-                    prepared,
-                    operation.operationId,
-                    "{\"disposition\":\"confirmed\"}"
-                ),
-            }
-        ).has_value());
-
-        auto const confirmed = prepared.store.commitReconciliation(
-            prepared.plugin,
-            ReconciliationCommit{
-                .operationId                  = operation.operationId,
-                .expectedOperationRevision    = progressed->revision,
-                .expectedProjectStateRevision = 1U,
-                .outcome                      = reconciliationOutcome(
-                    prepared,
-                    operation.operationId,
-                    "{\"disposition\":\"confirmed\"}"
-                ),
-            }
-        );
-        REQUIRE(confirmed.has_value());
-        CHECK(confirmed->state == OperationState::Confirmed);
     }
     // The decision basis is a property of the observed world, not of the
     // request and not of the authority holding it. T4, T5 and T6 of the W2
@@ -926,7 +736,7 @@ namespace uf::operator_runtime
 
         auto const after = prepared.store.createSnapshot(
             prepared.lease,
-            prepared.plugin,
+            prepared.project.registration,
             prepared.project.toolCatalogSchemaOwner,
             prepared.project.observedInstanceIdentitySchemas,
             test_support::observeAgain(prepared)
@@ -942,49 +752,25 @@ namespace uf::operator_runtime
             "lease churn must not masquerade as an availability-set revision"
         );
 
-        // The positive control. A committed reconciliation moves ProjectState,
-        // which is one of the four inputs, so the basis must move with it --
-        // without this a derivation returning a constant passes the two checks
-        // above.
+        // The positive control. A world that resolves differently moves the
+        // state resolution, which is one of the four inputs, so the basis must
+        // move with it -- without this a derivation returning a constant passes
+        // the two checks above.
         prepared.snapshot    = *after;
-        auto const operation = reconcilingOperation(
+        auto unresolvedHost  = test_support::secondObservationHost(
             prepared,
-            "request-1",
-            task::DeliveryOutcome::Delivered
+            test_support::umbraflowUnresolvedProbeFrame(),
+            FrameId{727}
         );
-        REQUIRE(prepared.store.commitReconciliation(
-            prepared.plugin,
-            ReconciliationCommit{
-                .operationId                  = operation.operationId,
-                .expectedOperationRevision    = operation.revision,
-                .expectedProjectStateRevision = 0U,
-                .outcome                      = reconciliationOutcome(
-                    prepared,
-                    operation.operationId,
-                    "{\"disposition\":\"confirmed\"}"
-                ),
-                .journalEvents                = {
-                    JournalAppend{
-                        .eventId = "event-1",
-                        .entry   = journalEntry(
-                            prepared.project,
-                            "fixture.confirmed",
-                            "{\"value\":1}"
-                        ),
-                    },
-                },
-            }
-        ).has_value());
-
         auto const moved = prepared.store.createSnapshot(
             prepared.lease,
-            prepared.plugin,
+            prepared.project.registration,
             prepared.project.toolCatalogSchemaOwner,
             prepared.project.observedInstanceIdentitySchemas,
-            test_support::observeAgain(prepared)
+            conformance::observeOnce(unresolvedHost)
         );
         REQUIRE(moved.has_value());
-        CHECK(moved->projectStateHash != after->projectStateHash);
+        CHECK(moved->stateResolutionHash != after->stateResolutionHash);
         CHECK(moved->decisionBasisHash != after->decisionBasisHash);
 
         // And the basis is recomputable from the row: canonical_parts carries
@@ -1016,7 +802,7 @@ namespace uf::operator_runtime
         {
             REQUIRE(availabilityStore.store.provisionProjectInstance(
                 availabilityStore.project.registration,
-                availabilityStore.plugin,
+                availabilityStore.generation,
                 ProjectInstanceBaseline{
                     .projectInstanceKey  = instanceId,
                     .eventId             = "baseline-" + instanceId,
@@ -1056,7 +842,7 @@ namespace uf::operator_runtime
             REQUIRE(lease.has_value());
             auto snapshot = availabilityStore.store.createSnapshot(
                 *lease,
-                availabilityStore.plugin,
+                availabilityStore.project.registration,
                 availabilityStore.project.toolCatalogSchemaOwner,
                 availabilityStore.project.observedInstanceIdentitySchemas,
                 test_support::observeAgain(availabilityStore)

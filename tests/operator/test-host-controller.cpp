@@ -17,7 +17,6 @@ namespace uf::operator_runtime
 {
     namespace
     {
-        using test_support::createReadyOperation;
         using test_support::journalEntry;
         using test_support::prepareStore;
         using test_support::TemporaryDirectory;
@@ -28,7 +27,7 @@ namespace uf::operator_runtime
         {
             REQUIRE(prepared.store.provisionProjectInstance(
                 prepared.project.registration,
-                prepared.plugin,
+                prepared.generation,
                 ProjectInstanceBaseline{
                     .projectInstanceKey  = "instance-2",
                     .eventId             = "baseline-2",
@@ -101,11 +100,6 @@ namespace uf::operator_runtime
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
-        auto ready     = createReadyOperation(
-            prepared,
-            "request-production-owner",
-            prepared.project.toolName("command-1")
-        );
         auto owner     = OperatorTaskHost::create(
             std::move(prepared.store),
             "target-1"
@@ -126,44 +120,6 @@ namespace uf::operator_runtime
             task::TaskHostTestAccess::fence(owner->host()).fencingToken
             == takeover->lease.fencingToken
         );
-
-        auto installed = owner->coordinator().openInstalledRuntimeArtifact(
-            prepared.installedGeneration,
-            prepared.runtimeArtifactRootHash
-        );
-        REQUIRE(installed.has_value());
-        auto const generation = conformance::activateDeliveringGeneration(
-            owner->host(),
-            *std::move(installed)
-        );
-        auto const fingerprint = conformance::declaredFingerprint(
-            owner->host(),
-            generation
-        );
-        auto runtime = conformance::ObservationRuntime{
-            test_support::umbraflowProbeFrame(),
-            fingerprint,
-            FrameId{901}
-        };
-        auto minted = task::TaskHostTestAccess::run(
-            owner->host(),
-            generation,
-            runtime.context(),
-            task::authorizeActionSource(test_support::k_fixtureUiAction)
-        );
-        REQUIRE(minted.has_value());
-        auto delivered = owner->dispatch(
-            ready.operationId,
-            ready.revision,
-            takeover->lease,
-            generation,
-            AuthorityDecisionId{"authority-production-owner"},
-            std::nullopt,
-            runtime.context()
-        );
-        REQUIRE(delivered.has_value());
-        CHECK(delivered->delivery.outcome() == task::DeliveryOutcome::Delivered);
-        CHECK(runtime.actions().clicks() == 1U);
     }
 
     // The Tool-call-native delivery seam, end to end and without an Operation.
@@ -368,6 +324,57 @@ namespace uf::operator_runtime
         REQUIRE_FALSE(unauthorized.has_value());
         CHECK(runtime.actions().clicks() == 0U);
 
+        // The authority this door mints, field by field, out of the ledger's
+        // own rows. Every one is read from the pinned lease and the recorded
+        // admission; a caller states none of them.
+        //
+        // Every field of OP:`DeliveryAuthority` is validated here, including
+        // the three an Operation dispatch would fill and this door does not.
+        // Leaving operation_id, authority_decision_id and target_generation
+        // unasserted would have been the weaker choice: emptiness is what makes
+        // a Tool-call report unanswerable as an Operation, so it is a value
+        // this door states rather than a gap in it, and something has to hold
+        // the door to stating it.
+        auto const reserved = owner->coordinator().reserveToolCallDispatch(
+            *call,
+            lease,
+            generation,
+            intent.uiTarget
+        );
+        auto const reservedWhy = reserved.has_value()
+            ? std::string{}
+            : std::string{reserved.error().message()};
+        REQUIRE_MESSAGE(reserved.has_value(), reservedWhy);
+        // HOST_VALIDATION_TEST(DeliveryAuthority.controlled_target_id)
+        CHECK(reserved->authority.controlledTargetId == lease.controlledTargetId);
+        // HOST_VALIDATION_TEST(DeliveryAuthority.lease_id)
+        CHECK(reserved->authority.leaseId == lease.leaseId);
+        // HOST_VALIDATION_TEST(DeliveryAuthority.session_epoch)
+        CHECK(reserved->authority.sessionEpoch == lease.sessionEpoch);
+        // HOST_VALIDATION_TEST(DeliveryAuthority.fencing_token)
+        CHECK(reserved->authority.fencingToken == lease.fencingToken);
+        // The attempt number the admission recorded. A Tool call is dispatched
+        // once per admitted attempt, so this is the sequence for this door.
+        // HOST_VALIDATION_TEST(DeliveryAuthority.dispatch_seq)
+        CHECK(reserved->authority.dispatchSequence == 1U);
+        // The call identity, which is what this door pins a delivery to: a
+        // Tool call has no frozen plan, and the field carries the immutable
+        // coordinate the admission was recorded at instead.
+        // HOST_VALIDATION_TEST(DeliveryAuthority.frozen_plan_hash)
+        CHECK(reserved->authority.frozenPlanHash == call->identity());
+
+        // The three Operation-shaped fields, asserted EMPTY rather than
+        // skipped. recordDeliveryOutcome joins a report to a dispatch on
+        // operation_id, so a Tool-call report presented to it matches no row
+        // and is refused; filling any of these would make this door mint an
+        // authority an Operation could be answered with.
+        // HOST_VALIDATION_TEST(DeliveryAuthority.operation_id)
+        CHECK(reserved->authority.operationId.empty());
+        // HOST_VALIDATION_TEST(DeliveryAuthority.authority_decision_id)
+        CHECK(reserved->authority.authorityDecisionId.empty());
+        // HOST_VALIDATION_TEST(DeliveryAuthority.target_generation)
+        CHECK(reserved->authority.targetGeneration == TargetGeneration{});
+
         auto const delivered = owner->deliverToolCallInput(
             *call,
             lease,
@@ -380,6 +387,11 @@ namespace uf::operator_runtime
             : std::string{delivered.error().message()};
         REQUIRE_MESSAGE(delivered.has_value(), deliveredWhy);
         CHECK(delivered->outcome() == task::DeliveryOutcome::Delivered);
+        // The engine receipt the Host acted under. It is minted by TaskHost and
+        // by nothing else, so a report carrying one is proof a real delivery
+        // path ran.
+        // HOST_VALIDATION_TEST(DeliveryAuthority.receipt_ref)
+        CHECK(delivered->receiptId() != 0U);
         CHECK(runtime.actions().clicks() == 1U);
 
         // The classification is derived from what the Host reported and from
@@ -421,88 +433,5 @@ namespace uf::operator_runtime
         );
         REQUIRE_FALSE(stale.has_value());
         CHECK(stale.error().message().contains("lease was superseded"));
-    }
-
-    TEST_CASE(
-        "fault matrix lease takeover reports in-flight dispatch and fences "
-        "the displaced controller"
-    )
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        auto ready     = createReadyOperation(
-            prepared,
-            "request-target-1",
-            prepared.project.toolName("command-1")
-        );
-        auto targetTwo = bindSecondTarget(prepared);
-
-        auto owner = OperatorTaskHost::create(
-            std::move(prepared.store),
-            "target-1"
-        );
-        REQUIRE(owner.has_value());
-
-        // The target-bound owner cannot move its Host fence for another
-        // target, and refuses before the Coordinator transaction begins.
-        CHECK_FALSE(owner->takeoverLease(targetTwo, "foreign target").has_value());
-
-        // The second target is real rather than a mismatched string: its own
-        // takeover succeeds independently.
-        auto targetTwoTakeover = owner->coordinator().takeoverLease(
-            targetTwo,
-            "target-2 takeover"
-        );
-        REQUIRE(targetTwoTakeover.has_value());
-        CHECK(targetTwoTakeover->resolvedDispatches == 0U);
-
-        auto targetOneBeforeDispatch = owner->takeoverLease(
-            prepared.controller,
-            "target-1 takeover before dispatch"
-        );
-        REQUIRE(targetOneBeforeDispatch.has_value());
-        CHECK(targetOneBeforeDispatch->resolvedDispatches == 0U);
-
-        // The fence displaced by that takeover cannot begin the dispatch.
-        CHECK_FALSE_MESSAGE(
-            owner->coordinator().reserveDispatch(
-                ready.operationId,
-                ready.revision,
-                prepared.lease,
-                prepared.observation.generation,
-                AuthorityDecisionId{"authority-displaced"},
-                std::nullopt
-            ).has_value(),
-            "the displaced fence must not begin another dispatch"
-        );
-        auto unanswered = owner->coordinator().reserveDispatch(
-            ready.operationId,
-            ready.revision,
-            targetOneBeforeDispatch->lease,
-            prepared.observation.generation,
-            AuthorityDecisionId{"authority-target-1"},
-            std::nullopt
-        );
-        REQUIRE(unanswered.has_value());
-
-        // Another target-2 takeover does not resolve target-1's unanswered
-        // dispatch. With one target this distinction is unobservable.
-        auto targetTwoAgain = owner->coordinator().takeoverLease(
-            targetTwo,
-            "target-2 takeover while target-1 is in flight"
-        );
-        REQUIRE(targetTwoAgain.has_value());
-        CHECK(targetTwoAgain->resolvedDispatches == 0U);
-
-        // Taking over target-1 afterwards still finds its own dispatch.
-        auto targetOneTakeover = owner->takeoverLease(
-            prepared.controller,
-            "target-1 takeover while its dispatch is in flight"
-        );
-        REQUIRE(targetOneTakeover.has_value());
-        CHECK_MESSAGE(
-            targetOneTakeover->resolvedDispatches == 1U,
-            "takeover must report the dispatch already in flight"
-        );
     }
 }

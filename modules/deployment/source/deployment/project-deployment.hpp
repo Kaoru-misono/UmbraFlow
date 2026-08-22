@@ -25,30 +25,6 @@ namespace uf::deployment
     [[nodiscard]]
     auto canonicalJsonValidator() -> operator_runtime::CanonicalJsonValidator;
 
-    // The two documents a ProjectPlugin returns that the Operator itself acts
-    // on: OP:`PlanProposal`, and OP:`UIActionIntent` or OP:`WaitIntent`. They
-    // are free functions for the reason canonicalJsonValidator is one: the
-    // operator protocol is the Operator's own schema and is the same for every
-    // project, so neither reader consults anything a ProjectRegistration
-    // pinned.
-    //
-    // Each is a whole PlanProposalReader or StepIntentReader
-    // (operator/effective-plan.hpp): it reads a document the schema owner that
-    // minted it has already held to exact RFC 8785 and to the complete
-    // definition, so it refuses only what the ValidatedDocument type cannot
-    // state -- that the document was stamped as this function's output.
-    [[nodiscard]]
-    auto readPlanProposal(operator_runtime::ValidatedDocument const& proposal)
-        -> Result<operator_runtime::PlanProposalClaims>;
-
-    // The two intents carry no discriminator, so the schema told them apart by
-    // their complete member sets under oneOf: a document satisfying both would
-    // be a step of two kinds and was refused rather than read as either. What
-    // is left here is reading back which branch matched.
-    [[nodiscard]]
-    auto readStepIntent(operator_runtime::ValidatedDocument const& intent)
-        -> Result<operator_runtime::StepIntentClaims>;
-
     // The $id each project schema document must declare. The Operator-owned
     // envelope schemas this module carries reference the project's documents by
     // these identities, so a document that declares another one is refused when
@@ -109,7 +85,7 @@ namespace uf::deployment
         // effect itself carries, and an effect naming a hash no schema in this
         // set has is refused.
         //
-        // No member of ProjectRegistrationClaims pins one directly. What puts
+        // No member of ProjectGenerationClaims pins one directly. What puts
         // their bytes inside a registration is the Tool Catalog's
         // effect_payload_sha256s, which create() holds to this set both ways --
         // so editing a pinned effect payload schema moves tool_catalog_hash and

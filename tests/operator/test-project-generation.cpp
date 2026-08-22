@@ -6,7 +6,10 @@
 
 #include "project-fixture.hpp"
 
+#include <script/pure-data-program.hpp>
 #include <script/scoped-tool-program.hpp>
+
+#include <task/framework-bundle.hpp>
 
 #include <json/schema.hpp>
 #include <json/value.hpp>
@@ -18,6 +21,8 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -29,26 +34,30 @@
 #include <utility>
 #include <vector>
 
-// Stage A of the two-closure cut: the registration shape a generation will one
-// day be deployed as, landed with no production producer at all.
+// The two-closure registration generation, which is now the only one there is:
+// modules/deployment writes this document, the CLI and ProductLifecycle load
+// it, and the one-closure reader it replaced is gone rather than kept beside
+// it. Nothing inspects a document to decide which reader gets it, because
+// there is one reader.
 //
-// Everything here is production-unreachable by construction. The document is
-// written by the builder in this file's anonymous namespace and by nothing
-// else -- modules/deployment writes the one-closure v2 document and has never
-// heard of this one -- and ProjectGenerationRegistrar has no caller outside
-// these cases. Two shapes exist in the tree; neither reader has both behind
-// it, and no code inspects a document to decide which reader gets it.
-//
-// What these cases have to prove is what a successful load cannot show: that
-// both closure slots are mandatory, that `exported_entry_points` is mandatory
-// inside each of them, and that the export join fails on each of its legs
-// independently -- a declaration that overstates, a declaration that
-// understates, and a closure whose real exports disagree with a declaration
-// that looked accurate.
+// The builder in this file's anonymous namespace writes the document by hand so
+// that a case can state a claim no authoring path would produce. What these
+// cases have to prove is what a successful load cannot show: that both closure
+// slots are mandatory, that `exported_entry_points` is mandatory inside each of
+// them, and that the export join fails on each of its legs independently -- a
+// declaration that overstates, a declaration that understates, and a closure
+// whose real exports disagree with a declaration that looked accurate.
 namespace uf::operator_runtime
 {
     namespace
     {
+        // The format the one-closure registration document stated. It is a
+        // number here rather than a constant because the constant that named
+        // it died with its reader; keeping the number is what makes "this
+        // reader accepts its own generation and nothing else" red against the
+        // document generation the flip replaced.
+        constexpr auto k_oneClosureRegistrationFormat = uint64{4U};
+
         constexpr auto k_pluginId     = std::string_view{"chaos.project"};
         constexpr auto k_dismissTool  = std::string_view{"chaos.project.dismiss"};
         constexpr auto k_sweepTool    = std::string_view{"chaos.project.sweep"};
@@ -265,14 +274,14 @@ return {
 
         // The reader of the two-closure document, and the only one there is.
         // It accepts exactly what schema/umbraflow-project-registration-v3
-        // describes and refuses everything else; the one-closure document is
-        // not a degraded form it falls back to, it is a document with another
-        // reader in modules/deployment that this one never consults.
+        // describes and refuses everything else; the one-closure document has
+        // no reader at all any more.
         //
-        // It lives in a test translation unit's anonymous namespace, which is
-        // what makes the whole two-closure generation dark: no production
-        // translation unit can name this function, and nothing in
-        // ProductLifecycle mints a VerifiedProjectGeneration.
+        // It is this file's own rather than modules/deployment's because these
+        // cases must hand the reader documents no authoring path writes. The
+        // production reader lives in modules/deployment and is exercised
+        // through it; what is compiled against the same schema bytes here is
+        // the shape both must agree on.
         [[nodiscard]]
         auto readTwoClosureDocument(
             std::string_view exactJcs
@@ -663,14 +672,15 @@ return {
         // proves they hash to what the generation pinned, and what it does
         // with a document arrives through the validator.
         //
-        // `refuseOutput` is what a case aims at the fold. A generation whose
-        // reduced baseline nothing judged would be a generation whose
-        // ProjectState schema is decoration, and the only way to show the
-        // judgement happens is to make it refuse.
+        // `refuseOutput` and `refuseInput` are what a case aims at the fold. A
+        // generation whose reduced baseline nothing judged would be a
+        // generation whose ProjectState schema is decoration, and the only way
+        // to show each judgement happens is to make it refuse.
         [[nodiscard]]
         auto schemaOwnerOver(
             VerifiedProjectGeneration const& generation,
-            std::string_view refuseOutput = {}
+            std::string_view refuseOutput = {},
+            std::string_view refuseInput = {}
         ) -> ProjectSchemaOwner
         {
             auto owner = ProjectSchemaOwner::create(
@@ -685,16 +695,20 @@ return {
                     UF_TRY(json::requireExactCanonical(exactJcs));
                     return json::parse(exactJcs);
                 },
-                [refusal = std::string{refuseOutput}](
+                [
+                    outputRefusal = std::string{refuseOutput},
+                    inputRefusal  = std::string{refuseInput}
+                ](
                     ProjectPluginFunction,
                     ProjectDocumentDirection direction,
                     std::string_view
                 ) -> Status
                 {
-                    if (
+                    auto const& refusal =
                         direction == ProjectDocumentDirection::Output
-                        && !refusal.empty()
-                    )
+                            ? outputRefusal
+                            : inputRefusal;
+                    if (!refusal.empty())
                     {
                         return fail(
                             AutomationErrorKind::ActionRejected,
@@ -706,6 +720,42 @@ return {
             );
             REQUIRE(owner.has_value());
             return *std::move(owner);
+        }
+
+        // Artifact bytes for the resource-closure legs below. Every blob is
+        // valid JSON even where the closure rule is what must refuse it: a blob
+        // that is not JSON is refused at admission, which would leave each of
+        // those cases red for a reason it does not name.
+        constexpr auto k_contentRoot = std::string_view{R"({"root":"content"})"};
+        constexpr auto k_otherRoot = std::string_view{R"({"root":"different"})"};
+        constexpr auto k_sameSizeWrongRoot = std::string_view{R"({"root":"changed"})"};
+
+        [[nodiscard]]
+        auto pinnedResource(
+            std::string name,
+            std::string_view exactBytes
+        ) -> ProjectResource
+        {
+            return ProjectResource{
+                .kind = ProjectResourceKind::Json,
+                .name = std::move(name),
+                .hash = hashOf(exactBytes),
+                .size = static_cast<uint64>(exactBytes.size()),
+            };
+        }
+
+        [[nodiscard]]
+        auto resourceBlob(
+            std::string name,
+            std::string_view bytes,
+            ProjectResourceKind kind = ProjectResourceKind::Json
+        ) -> ProjectResourceBlob
+        {
+            return ProjectResourceBlob{
+                .kind  = kind,
+                .name  = std::move(name),
+                .bytes = std::string{bytes},
+            };
         }
 
         // These cases are about the closures and the joins, so the result
@@ -1129,7 +1179,7 @@ return {
                 healthy,
                 "project_registration_format",
                 json::Value::ofNumber(
-                    static_cast<double>(k_projectRegistrationFormat)
+                    static_cast<double>(k_oneClosureRegistrationFormat)
                 )
             );
             auto const refused = verifiedGeneration(stale);
@@ -1154,7 +1204,7 @@ return {
                 [](std::string_view) -> Result<ProjectGenerationClaims>
                 {
                     return ProjectGenerationClaims{
-                        .projectRegistrationFormat = k_projectRegistrationFormat,
+                        .projectRegistrationFormat = k_oneClosureRegistrationFormat,
                         .pluginId                  = std::string{k_pluginId},
                         .reducerClosure = ProjectClosureClaims{
                             .moduleManifestHash  = hashOf("reducer"),
@@ -1501,13 +1551,12 @@ return {
 
     // Provisioning and session pinning, reached from a two-closure generation.
     //
-    // This is the dark half of the provisioning rekey, and what it proves is
-    // not that a signature was renamed. The Operator's registration row, its
-    // instance row, the reduced baseline it stores and the session that chains
-    // to it are all written here from a generation whose document generation
-    // the ledger has no way to name: the same doors, the same rows, and no
-    // branch anywhere that asks which registration document a project was
-    // deployed as.
+    // What it proves is not that a signature was renamed. The Operator's
+    // registration row, its instance row, the reduced baseline it stores and
+    // the session that chains to it are all written here from a generation
+    // whose document generation the ledger has no way to name: the same doors,
+    // the same rows, and no branch anywhere that asks which registration
+    // document a project was deployed as.
     TEST_CASE("a two-closure generation provisions an instance and pins a session")
     {
         auto const directory = test_support::TemporaryDirectory{};
@@ -1689,6 +1738,295 @@ return {
             CHECK(refused.error().message().contains(
                 "requires an existing ProjectInstance"
             ));
+        }
+    }
+
+    // The pure and scoped environment identities, each naming what its own
+    // program type may reach. Retargeted here from the deleted five-function
+    // and one-closure Tool program suites: neither accessor belonged to those
+    // contracts, and a registration of either type is admitted only against
+    // the digest of exactly these bytes.
+    TEST_CASE("the two environment identities name what each program type reaches")
+    {
+        auto const material = currentProjectPluginEnvironmentMaterial();
+        auto const digest   = currentProjectPluginEnvironmentHash();
+        REQUIRE(material.has_value());
+        REQUIRE(digest.has_value());
+        auto const parsed = json::parse(*material);
+        REQUIRE(parsed.has_value());
+        CHECK(json::canonicalBytes(*parsed) == *material);
+        REQUIRE(parsed->find("framework_module_freeze") != nullptr);
+        REQUIRE(parsed->find("framework_module_budget") != nullptr);
+        CHECK(
+            parsed->find("framework_module_freeze")->string()
+            == "deep-keys-and-values-v1"
+        );
+        CHECK(
+            parsed->find("framework_module_budget")->string()
+            == "separate-release-owned-quota-v1"
+        );
+
+        // Every reserved pure module, joined row by row against the SDK the
+        // framework actually ships. A preimage over names alone would leave a
+        // build that changed what a module RETURNS with an unmoved digest.
+        auto const* const modules = parsed->find("framework_pure_modules");
+        REQUIRE(modules != nullptr);
+        REQUIRE(modules->items().size() == 8U);
+        auto const sdk = task::pureFrameworkScriptModules();
+        REQUIRE(sdk.has_value());
+        for (auto const& row : modules->items())
+        {
+            auto const* const name = row.find("name");
+            REQUIRE(name != nullptr);
+            auto const reservedName = name->string();
+            REQUIRE(reservedName.starts_with("@umbraflow/"));
+            auto const module = std::ranges::find(
+                *sdk,
+                reservedName,
+                &script::FrameworkModule::name
+            );
+            REQUIRE(module != sdk->end());
+            CHECK(row.find("project_visible")->boolean() == module->projectVisible);
+            auto const sourceHash = sha256(
+                std::as_bytes(std::span{module->source})
+            );
+            REQUIRE(sourceHash.has_value());
+            CHECK(row.find("source_hash")->string() == sourceHash->hex());
+        }
+        CHECK(*digest == hashOf(*material));
+
+        // The scoped identity is its own, and the two sets of module names are
+        // disjoint: that disjointness is the executable half of "two types, not
+        // two spellings", and the resolver refusal that enforces it lives in
+        // tests/script/test-scoped-tool-program.cpp.
+        auto const scopedMaterial = currentScopedToolEnvironmentMaterial();
+        auto const scopedDigest   = currentScopedToolEnvironmentHash();
+        REQUIRE(scopedMaterial.has_value());
+        REQUIRE(scopedDigest.has_value());
+        CHECK(*scopedDigest != *digest);
+        CHECK(*scopedDigest == hashOf(*scopedMaterial));
+        for (auto const scopedName : script::ScopedToolProgram::scopedModuleNames())
+        {
+            INFO("scoped module: ", scopedName);
+            CHECK(scopedMaterial->contains(scopedName));
+            CHECK_FALSE(material->contains(scopedName));
+        }
+    }
+
+    // The module closure digest both closures are held to. It is a free
+    // function over authored blobs and belongs to neither program type, so it
+    // is retargeted here rather than deleted with the registrar that used to
+    // call it first.
+    TEST_CASE("module manifest identity admits only runtime-canonical names")
+    {
+        auto tooManySegments = std::string{"a"};
+        for (auto index = std::size_t{1U}; index < 17U; ++index)
+        {
+            tooManySegments += "/a";
+        }
+        for (auto const& invalidName : std::array{
+                 std::string(65U, 'a'),
+                 std::move(tooManySegments),
+                 std::string{"../main"},
+             })
+        {
+            auto const modules = std::array{
+                ProjectModuleBlob{
+                    .name   = invalidName,
+                    .source = "return {}\n",
+                },
+            };
+            CHECK_FALSE(
+                derivePluginModuleManifestHash(invalidName, modules).has_value()
+            );
+        }
+    }
+
+    // The resource closure join, which is the Operator's own and not the
+    // script layer's: the pinned rows and the supplied blobs must agree name
+    // by name, kind by kind, size by size and digest by digest. A registration
+    // pins ONE closure and both program types read it, so this is one function
+    // and these are its legs.
+    TEST_CASE("a pinned resource closure is verified blob by blob")
+    {
+        SUBCASE("a missing blob is refused by name")
+        {
+            // Two roots with one supplied, because a refusal that said only
+            // "the closure is incomplete" would leave the reader to find which
+            // of them is absent.
+            auto const pinned = std::array{
+                pinnedResource("attestations", k_otherRoot),
+                pinnedResource("content", k_contentRoot),
+            };
+            auto const refused = verifyProjectResourceClosure(
+                pinned,
+                {resourceBlob("content", k_contentRoot)}
+            );
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(
+                refused.error().message()
+                == "Project resource is missing for registered name "
+                   "'attestations'"
+            );
+        }
+
+        SUBCASE("a blob no registration pinned is refused")
+        {
+            CHECK_FALSE(
+                verifyProjectResourceClosure(
+                    {},
+                    {resourceBlob("extra", k_contentRoot)}
+                ).has_value()
+            );
+        }
+
+        SUBCASE("a blob whose bytes are not the pinned ones is refused")
+        {
+            auto const pinned = std::array{pinnedResource("content", k_contentRoot)};
+
+            // Same size, different bytes: only the digest can refuse it.
+            CHECK_FALSE(
+                verifyProjectResourceClosure(
+                    pinned,
+                    {resourceBlob("content", k_sameSizeWrongRoot)}
+                ).has_value()
+            );
+
+            // A different size, which the size column refuses ahead of it.
+            CHECK_FALSE(
+                verifyProjectResourceClosure(
+                    pinned,
+                    {resourceBlob("content", "{}")}
+                ).has_value()
+            );
+        }
+
+        SUBCASE("a blob offered under another kind is refused")
+        {
+            auto const pinned = std::array{pinnedResource("content", k_contentRoot)};
+            CHECK_FALSE(
+                verifyProjectResourceClosure(
+                    pinned,
+                    {
+                        resourceBlob(
+                            "content",
+                            k_contentRoot,
+                            ProjectResourceKind::Utf8
+                        ),
+                    }
+                ).has_value()
+            );
+        }
+
+        SUBCASE("one name offered twice is refused")
+        {
+            auto const pinned = std::array{pinnedResource("content", k_contentRoot)};
+            CHECK_FALSE(
+                verifyProjectResourceClosure(
+                    pinned,
+                    {
+                        resourceBlob("content", k_contentRoot),
+                        resourceBlob("content", k_contentRoot),
+                    }
+                ).has_value()
+            );
+        }
+
+        SUBCASE("the exact closure is admitted in the registration's own order")
+        {
+            auto const pinned = std::array{
+                pinnedResource("attestations", k_otherRoot),
+                pinnedResource("content", k_contentRoot),
+            };
+            auto const admitted = verifyProjectResourceClosure(
+                pinned,
+                {
+                    resourceBlob("content", k_contentRoot),
+                    resourceBlob("attestations", k_otherRoot),
+                }
+            );
+            REQUIRE(admitted.has_value());
+            REQUIRE(admitted->size() == 2U);
+            CHECK((*admitted)[0].name == "attestations");
+            CHECK((*admitted)[1].name == "content");
+        }
+    }
+
+    // The fold runs between two judgements by the authority this generation
+    // pinned, and neither may be skipped: a document the input schema refuses
+    // never reaches the VM, and an answer the output schema refuses never
+    // becomes a stamped ValidatedDocument. Retargeted from the five-function
+    // suite onto the one entry the pure type keeps.
+    TEST_CASE("the fold is judged before it runs and after it answers")
+    {
+        auto const generation = generationOver(
+            k_reducerSource,
+            reducerEntry(),
+            k_toolSource,
+            bothEntries(),
+            bothBindings()
+        );
+
+        SUBCASE("an input the pinned schema refuses never reaches the VM")
+        {
+            auto       registrar = ProjectGenerationRegistrar{};
+            auto const loaded    = registrar.registerGeneration(
+                generation,
+                catalogOver(generation, bothTools()),
+                schemaOwnerOver(generation, {}, "input schema refused document"),
+                closureModules(k_reducerSource),
+                closureModules(k_toolSource),
+                {},
+                acceptingResults(),
+                acceptingRuntime()
+            );
+            REQUIRE(loaded.has_value());
+            auto const input = loaded->canonicalize(R"({"event":"admitted"})");
+            REQUIRE(input.has_value());
+            auto const refused = loaded->reduce(*input);
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(refused.error().message().contains(
+                "input schema refused document"
+            ));
+        }
+
+        SUBCASE("an answer the pinned schema refuses is not a stamped document")
+        {
+            auto       registrar = ProjectGenerationRegistrar{};
+            auto const loaded    = registrar.registerGeneration(
+                generation,
+                catalogOver(generation, bothTools()),
+                schemaOwnerOver(generation, "output schema refused document"),
+                closureModules(k_reducerSource),
+                closureModules(k_toolSource),
+                {},
+                acceptingResults(),
+                acceptingRuntime()
+            );
+            REQUIRE(loaded.has_value());
+            auto const input = loaded->canonicalize(R"({"event":"admitted"})");
+            REQUIRE(input.has_value());
+            auto const refused = loaded->reduce(*input);
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(refused.error().message().contains(
+                "output schema refused document"
+            ));
+        }
+
+        SUBCASE("bytes that are not exact JCS never become an input at all")
+        {
+            auto       registrar = ProjectGenerationRegistrar{};
+            auto const loaded    = loadOn(
+                registrar,
+                generation,
+                k_reducerSource,
+                k_toolSource,
+                bothTools()
+            );
+            REQUIRE(loaded.has_value());
+            CHECK_FALSE(
+                loaded->canonicalize(R"({ "event":"spaced" })").has_value()
+            );
         }
     }
 }

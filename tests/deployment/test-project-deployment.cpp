@@ -1381,14 +1381,14 @@ namespace uf::deployment
         CHECK(valueOf(policy).identity == "https://umbraflow.local/schema/policy-v1");
 
         auto const registration = framework_schema::findFrameworkSchema(
-            "schema/umbraflow-project-registration-v2.schema.json"
+            "schema/umbraflow-project-registration-v3.schema.json"
         );
         REQUIRE_MESSAGE(
             registration.has_value(),
             "framework schema catalog must include project registration"
         );
         CHECK(valueOf(registration).identity
-              == "https://umbraflow.local/schema/project-registration-v2");
+              == "https://umbraflow.local/schema/project-registration-v3");
 
         // umbraflow-project.json's shape, published because two readers that
         // cannot link one another both compile it: the runtime loader and the
@@ -1840,10 +1840,10 @@ namespace uf::deployment
 
         // The one refusal that did not move, stated as the positive result it
         // is: the definition bounds each workflow limit from below and none
-        // from above, so this document is canonical and conforming and only
-        // readPlanProposal's own uint32 range refuses it. Nothing asserts that
-        // refusal any more -- reaching it needs a ValidatedDocument carrying
-        // this number, and only a plugin can produce one.
+        // from above, so this document is canonical and conforming, and the
+        // reader whose own uint32 range refused it went with the plan
+        // proposal. Nothing asserts that refusal any more, and nothing can:
+        // the document type it read no longer has a producer.
         auto const overflowing = substituted(
             exact,
             "\"maximum_steps\":8",

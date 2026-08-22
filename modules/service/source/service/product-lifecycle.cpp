@@ -6,12 +6,17 @@
 #include <operator/effective-plan.hpp>
 #include <operator/manifest.hpp>
 #include <operator/policy.hpp>
+#include <operator/project-generation.hpp>
 #include <operator/project-plugin.hpp>
+#include <operator/project-tool-dispatch.hpp>
 #include <operator/snapshot-reference.hpp>
+#include <operator/tool-actor-adapters.hpp>
 #include <operator/tool-admission-request.hpp>
 #include <operator/tool-descriptor.hpp>
 #include <operator/tool-executor.hpp>
 #include <operator/tool-root-producer.hpp>
+
+#include <script/scoped-tool-program.hpp>
 
 #include <task/platform/confined-file.hpp>
 #include <task/runtime-model-file.hpp>
@@ -181,6 +186,33 @@ namespace uf::service
             return *document;
         }
 
+        // The Tool Runtime seam a release upgrade compiles its generation
+        // against. An upgrade session holds no lease, no controller binding and
+        // no observation authority, so it has nothing a Tool call could be
+        // admitted under; it registers a generation only to reduce a
+        // ProjectInstance baseline through its reducer.
+        //
+        // It refuses rather than being absent, because a scoped program with no
+        // Tool Runtime is a pure program wearing the wrong type. The refusal is
+        // a value this seam always answers with and never a branch on which
+        // generation is running.
+        [[nodiscard]]
+        auto quiescentToolRuntime() -> script::ToolRuntimeInvoke
+        {
+            return [](
+                       std::string_view,
+                       json::Value const&,
+                       script::ToolCallCoordinate const&,
+                       std::stop_token
+                   ) -> Result<json::Value>
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "a release upgrade session dispatches no Tool call"
+                );
+            };
+        }
+
         [[nodiscard]]
         auto confirmedToolResult(json::Value value)
             -> Result<operator_runtime::ToolCallCompletion>
@@ -295,18 +327,16 @@ namespace uf::service
         deployment::LoadedProject loaded;
         std::size_t               deploymentIndex;
 
-        // The registrar is NOT held. registerPlugin returns the handle by value
-        // and the handle owns its own state through a shared_ptr, so keeping the
-        // registrar alive anchors nothing: measured 2026-08-14, the field was
-        // written once and never read, and findExact -- the only thing its map
-        // serves -- has no production caller. Holding it also gave Impl a
-        // std::map, whose move this standard library does not declare noexcept,
-        // which was the sole reason two types here could throw while being
-        // constructed.
-        operator_runtime::ProjectPluginHandle   plugin;
+        // The registrar is NOT held. registerGeneration returns the handle by
+        // value and the handle owns its own state through a shared_ptr, so
+        // keeping the registrar alive anchors nothing: measured 2026-08-14, the
+        // field was written once and never read, and findExact -- the only
+        // thing its map serves -- has no production caller. Holding it also
+        // gave Impl a std::map, whose move this standard library does not
+        // declare noexcept, which was the sole reason two types here could
+        // throw while being constructed.
         operator_runtime::OperatorTaskHost      operatorHost;
         operator_runtime::OperatorPlanAuthority planAuthority;
-        operator_runtime::ControllerBinding     controller;
         static_assert(
             std::is_nothrow_move_constructible_v<
                 operator_runtime::ControlLease
@@ -314,6 +344,34 @@ namespace uf::service
             "ControlLease must transfer into its RAII owner without failure"
         );
         std::optional<operator_runtime::ControlLease> activeLease{};
+
+        // The three values start() cannot have before this object exists,
+        // because each of them needs a stable address for this one.
+        //
+        // The dispatcher's Framework provider is a callable bound to THIS Impl,
+        // and the compiled tool closure holds the dispatcher's seam for as long
+        // as the generation lives -- so the generation cannot be registered
+        // until the dispatcher exists, and the dispatcher cannot be built until
+        // its provider has something to point at. Provisioning then needs the
+        // registered generation's reducer, and the session pin needs the
+        // provisioned instance, so the controller binding is the last of the
+        // four rather than the first.
+        //
+        // Each is written exactly once, by start(), before anything can reach
+        // it: the accessors below refuse rather than answer for an unfinished
+        // lifecycle, on the same terms as controlLease().
+        std::optional<operator_runtime::ProjectGenerationHandle> loadedGeneration{};
+        std::optional<operator_runtime::ProjectToolDispatcher>   toolDispatcher{};
+        std::optional<operator_runtime::ToolStartCatalog>        startCatalog{};
+        std::optional<operator_runtime::ControllerBinding>       boundController{};
+
+        // One adapter per actor class, each with its own root-request contexts.
+        // They are per-lifecycle rather than per-call because an actor's call
+        // ordinals belong to the seam that issues them: a producer rebuilt per
+        // call would hand every start of one root the ordinal 1.
+        operator_runtime::AgentToolAdapter         agentAdapter{};
+        operator_runtime::HumanToolAdapter         humanAdapter{};
+        operator_runtime::ProjectAutomationAdapter automationAdapter{};
 
         GenerationId              generation;
         LifecycleAccess           access;
@@ -342,10 +400,8 @@ namespace uf::service
         Impl(
             deployment::LoadedProject ownedLoaded,
             std::size_t ownedDeploymentIndex,
-            operator_runtime::ProjectPluginHandle ownedPlugin,
             operator_runtime::OperatorTaskHost ownedOperatorHost,
             operator_runtime::OperatorPlanAuthority ownedPlanAuthority,
-            operator_runtime::ControllerBinding ownedController,
             GenerationId ownedGeneration,
             LifecycleAccess ownedAccess,
             task::RuntimeModelBinding ownedRuntimeModel,
@@ -356,10 +412,8 @@ namespace uf::service
         )
             : loaded{std::move(ownedLoaded)}
             , deploymentIndex{ownedDeploymentIndex}
-            , plugin{std::move(ownedPlugin)}
             , operatorHost{std::move(ownedOperatorHost)}
             , planAuthority{std::move(ownedPlanAuthority)}
-            , controller{std::move(ownedController)}
             , generation{ownedGeneration}
             , access{ownedAccess}
             , runtimeModel{std::move(ownedRuntimeModel)}
@@ -389,7 +443,7 @@ namespace uf::service
         [[nodiscard]] auto acquireControl() -> Status
         {
             UF_CHECK(!activeLease.has_value());
-            UF_TRY_VALUE(lease, operatorHost.acquireLease(controller));
+            UF_TRY_VALUE(lease, operatorHost.acquireLease(controller()));
             activeLease.emplace(std::move(lease));
             return ok();
         }
@@ -413,10 +467,135 @@ namespace uf::service
             return *activeLease;
         }
 
+        [[nodiscard]] auto controller() const
+            -> operator_runtime::ControllerBinding const&
+        {
+            UF_CHECK(boundController.has_value());
+            return *boundController;
+        }
+
+        [[nodiscard]] auto generationHandle() const
+            -> operator_runtime::ProjectGenerationHandle const&
+        {
+            UF_CHECK(loadedGeneration.has_value());
+            return *loadedGeneration;
+        }
+
+        [[nodiscard]] auto dispatcher()
+            -> operator_runtime::ProjectToolDispatcher&
+        {
+            UF_CHECK(toolDispatcher.has_value());
+            return *toolDispatcher;
+        }
+
+        [[nodiscard]] auto catalog() const
+            -> operator_runtime::ToolStartCatalog const&
+        {
+            UF_CHECK(startCatalog.has_value());
+            return *startCatalog;
+        }
+
         [[nodiscard]] auto deployment() -> deployment::LoadedDeployment&
         {
             return loaded.deployments[deploymentIndex];
         }
+
+        // What names this run inside the Tool Runtime. Every hash is read from
+        // what this lifecycle already holds -- the pinned session manifest, the
+        // installed artifact, and the compiled generation's own scoped
+        // environment -- so no actor can state any of it.
+        [[nodiscard]] auto executionIdentity() const
+            -> operator_runtime::ToolExecutionIdentity
+        {
+            return operator_runtime::ToolExecutionIdentity{
+                .runIdentity              = sessionManifestHash,
+                .frameworkReleaseIdentity = runtimeModel.artifactRootHash(),
+                .toolRuntimeProtocolIdentity =
+                    generationHandle().frameworkToolCatalogHash(),
+                .environmentIdentity = generationHandle().environmentIdentity(),
+            };
+        }
+
+        // The context of the call currently running under this lifecycle. A
+        // ToolProvider is stored for as long as the compiled generation lives
+        // and is handed nothing but a call coordinate, so it cannot carry the
+        // TaskContext of the call it is answering; the Tool Runtime is
+        // single-threaded by contract -- one scoped run is synchronous on the
+        // thread that dispatched it -- so the running call's context is
+        // unambiguous while it is set. It is a borrow of a caller's object for
+        // exactly the extent of one call, established and withdrawn by
+        // ActiveContext below and by nothing else.
+        task::TaskContext* p_activeContext{};
+
+        class ActiveContext final
+        {
+            Impl* m_owner;
+
+        public:
+            ActiveContext(Impl& owner, task::TaskContext& context) noexcept
+                : m_owner{&owner}
+            {
+                UF_ASSERT(m_owner->p_activeContext == nullptr);
+                m_owner->p_activeContext = &context;
+            }
+
+            ActiveContext(ActiveContext const&) = delete;
+            auto operator=(ActiveContext const&) -> ActiveContext& = delete;
+            ActiveContext(ActiveContext&&) = delete;
+            auto operator=(ActiveContext&&) -> ActiveContext& = delete;
+
+            ~ActiveContext() noexcept { m_owner->p_activeContext = nullptr; }
+        };
+
+        [[nodiscard]] auto activeContext() const -> task::TaskContext&
+        {
+            UF_CHECK(p_activeContext != nullptr);
+            return *p_activeContext;
+        }
+
+        // The Framework provider surface. One function per Tool the Framework
+        // answers, all reached from one dispatch below, and every one of them
+        // handed nothing but the immutable call position the Coordinator
+        // already crossed the durable dispatch boundary for.
+        [[nodiscard]]
+        auto observe(task::TaskContext& context) -> Result<ProductObservation>;
+
+        [[nodiscard]]
+        auto answerFrameworkTool(
+            operator_runtime::ToolCallPositionIdentity const& call
+        ) -> Result<operator_runtime::ToolCallCompletion>;
+
+        [[nodiscard]]
+        auto answerObserveTool(
+            operator_runtime::ToolCallPositionIdentity const& call
+        ) -> Result<operator_runtime::ToolCallCompletion>;
+
+        [[nodiscard]]
+        auto answerStatusTool()
+            -> Result<operator_runtime::ToolCallCompletion>;
+
+        // Section 6's input-authority boundary. It resolves the observation the
+        // call was issued against -- spending it, once -- against this run's own
+        // controlled target, Project registration, RuntimeArtifact, Host
+        // generation and issuing coordinate, never against anything the
+        // arguments state, and judges the named snapshot-local semantic target
+        // and UI action on the observation's own bounds before delivery, then
+        // posts it through the one Host delivery seam and records the
+        // classification the ledger derived from what the Host reported.
+        [[nodiscard]]
+        auto answerSemanticInputTool(
+            operator_runtime::ToolCallPositionIdentity const& call
+        ) -> Result<operator_runtime::ToolCallCompletion>;
+
+        // The one place an admitted request becomes a durable answer,
+        // whichever transport built it. A Tool this generation bound runs on
+        // the dispatcher's scoped program; every other admitted name is a
+        // Framework Tool this Impl answers itself.
+        [[nodiscard]]
+        auto runAdmitted(
+            operator_runtime::ToolAdmissionRequest const& request,
+            task::TaskContext& context
+        ) -> Result<operator_runtime::ToolCallReplay>;
     };
 
     ProductLifecycle::ProductLifecycle(std::unique_ptr<Impl> implementation)
@@ -491,18 +670,6 @@ namespace uf::service
         );
         UF_TRY_VALUE(binding, operatorHost.host().runtimeModelBinding(generation));
 
-        auto registrar = operator_runtime::ProjectPluginRegistrar{};
-        UF_TRY_VALUE(
-            plugin,
-            registrar.registerPlugin(
-                selected.registration,
-                selected.pluginEntryModule,
-                selected.pluginModules,
-                selected.projectResources,
-                selected.schemaOwner
-            )
-        );
-
         UF_TRY_VALUE(operatorSchema, publishedSchema(k_operatorSchemaPath));
         UF_TRY_VALUE(operatorSchemaHash, hashOf(operatorSchema.exactBytes));
         auto policyBytes = loaded.policyArtifactBytes.value_or(
@@ -511,13 +678,14 @@ namespace uf::service
         UF_TRY_VALUE(policyHash, hashOf(policyBytes));
         UF_TRY_VALUE(noAgentProfileHash, hashOf(k_noAgentProfile));
 
+        auto const project = operator_runtime::ProjectIdentity{selected.generation};
         UF_TRY_VALUE(
             sessionManifest,
             operator_runtime::SessionManifest::create(
                 operator_runtime::SessionManifestSpec{
                     .runtimeModelArtifactRootHash = binding.artifactRootHash(),
                     .operatorProtocolSchemaHash   = operatorSchemaHash,
-                    .projectRegistrationHash      = selected.registration.hash(),
+                    .projectRegistrationHash      = project.hash(),
                     .policyArtifactHash           = policyHash,
                     .agentProfileHash             = noAgentProfileHash,
                 }
@@ -526,34 +694,13 @@ namespace uf::service
         UF_TRY_VALUE(
             planAuthority,
             operator_runtime::OperatorPlanAuthority::create(
-                selected.registration,
+                project,
                 sessionManifest,
                 binding,
                 operatorSchema.exactBytes,
-                policyBytes,
-                deployment::readPlanProposal,
-                deployment::readStepIntent
+                policyBytes
             )
         );
-        auto& store = operatorHost.coordinator();
-        UF_TRY(store.registerProject(selected.registration));
-        UF_TRY_VALUE(
-            projectInstanceKey,
-            internalProjectInstanceKey(
-                selected.registration.hash(),
-                start.controlledTargetId
-            )
-        );
-        UF_TRY(store.provisionProjectInstance(
-            selected.registration,
-            plugin,
-            operator_runtime::ProjectInstanceBaseline{
-                .projectInstanceKey  = projectInstanceKey,
-                .eventId             = {},
-                .sessionManifestHash = sessionManifest.hash(),
-                .entry               = std::nullopt,
-            }
-        ));
         UF_TRY_VALUE(
             sessionId,
             internalSessionId(
@@ -562,12 +709,96 @@ namespace uf::service
                 start.controlledTargetId
             )
         );
+
+        // The lifecycle is allocated before the generation it drives, because
+        // the generation's Tool Runtime seam is this lifecycle's dispatcher and
+        // the dispatcher's Framework provider is this lifecycle's own. See the
+        // four late-bound members on Impl for why the order cannot be reversed.
+        auto implementation = std::make_unique<Impl>(
+            std::move(loaded),
+            deploymentIndex,
+            std::move(operatorHost),
+            std::move(planAuthority),
+            generation,
+            access,
+            binding,
+            installedGeneration,
+            std::move(sessionId),
+            sessionManifest.hash(),
+            std::move(recoveries)
+        );
+        auto& deployed = implementation->deployment();
+
+        // The provider is bound to the Impl rather than to any handle onto it.
+        // Impl is heap-allocated and neither copyable nor movable, and the
+        // dispatcher that stores this callable is a member of that same object,
+        // so the pointer cannot outlive what it names.
+        auto* const p_implementation = implementation.get();
+        UF_TRY_VALUE(
+            dispatcher,
+            operator_runtime::ProjectToolDispatcher::create(
+                implementation->operatorHost.coordinator(),
+                implementation->observations,
+                implementation->planAuthority,
+                [p_implementation](
+                    operator_runtime::ToolCallPositionIdentity const& call
+                ) -> Result<operator_runtime::ToolCallCompletion>
+                { return p_implementation->answerFrameworkTool(call); }
+            )
+        );
+        implementation->toolDispatcher.emplace(std::move(dispatcher));
+
+        auto registrar = operator_runtime::ProjectGenerationRegistrar{};
+        UF_TRY_VALUE(
+            loadedGeneration,
+            registrar.registerGeneration(
+                deployed.generation,
+                deployed.toolCatalogSchemaOwner,
+                deployed.schemaOwner,
+                operator_runtime::ProjectGenerationRegistrar::ClosureModules{
+                    .entryModule = deployed.reducerClosure.entryModule,
+                    .modules     = deployed.reducerClosure.modules,
+                },
+                operator_runtime::ProjectGenerationRegistrar::ClosureModules{
+                    .entryModule = deployed.toolClosure.entryModule,
+                    .modules     = deployed.toolClosure.modules,
+                },
+                deployed.projectResources,
+                deployed.catalog.toolResultValidator(),
+                implementation->dispatcher().toolRuntimeSeam()
+            )
+        );
+        implementation->loadedGeneration.emplace(std::move(loadedGeneration));
+        UF_TRY_VALUE(
+            startCatalog,
+            operator_runtime::ToolStartCatalog::create(
+                deployed.toolCatalogSchemaOwner
+            )
+        );
+        implementation->startCatalog.emplace(std::move(startCatalog));
+
+        auto& store = implementation->operatorHost.coordinator();
+        UF_TRY(store.registerProject(project));
+        UF_TRY_VALUE(
+            projectInstanceKey,
+            internalProjectInstanceKey(project.hash(), start.controlledTargetId)
+        );
+        UF_TRY(store.provisionProjectInstance(
+            project,
+            implementation->generationHandle(),
+            operator_runtime::ProjectInstanceBaseline{
+                .projectInstanceKey  = projectInstanceKey,
+                .eventId             = {},
+                .sessionManifestHash = sessionManifest.hash(),
+                .entry               = std::nullopt,
+            }
+        ));
         UF_TRY(store.pinSession(
             operator_runtime::SessionPin{
-                .sessionId                 = sessionId,
+                .sessionId                 = implementation->sessionId,
                 .authenticatedControllerId = start.authenticatedControllerId,
                 .idempotencyNamespace      = start.authenticatedControllerId,
-                .projectRegistrationHash   = selected.registration.hash(),
+                .projectRegistrationHash   = project.hash(),
                 .controllerCapabilities    = start.controllerCapabilities,
                 .controlledTargetId        = start.controlledTargetId,
                 .projectInstanceKey        = projectInstanceKey,
@@ -580,25 +811,10 @@ namespace uf::service
             sessionManifest,
             std::nullopt
         ));
-        UF_TRY_VALUE(controller, store.bindController(sessionId));
+        UF_TRY_VALUE(controller, store.bindController(implementation->sessionId));
+        implementation->boundController.emplace(std::move(controller));
 
-        // Allocate and fully construct the RAII owner before taking control.
         // Once acquireControl succeeds, no fallible ownership transfer remains.
-        auto implementation = std::make_unique<Impl>(
-            std::move(loaded),
-            deploymentIndex,
-            std::move(plugin),
-            std::move(operatorHost),
-            std::move(planAuthority),
-            std::move(controller),
-            generation,
-            access,
-            binding,
-            installedGeneration,
-            std::move(sessionId),
-            sessionManifest.hash(),
-            std::move(recoveries)
-        );
         UF_TRY(implementation->acquireControl());
         return ProductLifecycle{std::move(implementation)};
     }
@@ -615,8 +831,8 @@ namespace uf::service
             .projectDirectory     = m_impl->loaded.directory,
             .runtimeArtifactRoot  = m_impl->loaded.runtimeArtifactRoot,
             .deployment           = deployed.name,
-            .pluginId             = m_impl->plugin.pluginId(),
-            .registrationHash     = deployed.registration.hash(),
+            .pluginId             = m_impl->generationHandle().pluginId(),
+            .registrationHash     = m_impl->generationHandle().projectRegistrationHash(),
             .runtimeModel         = m_impl->runtimeModel,
             .installedGeneration  = m_impl->installedGeneration,
             .sessionId            = m_impl->sessionId,
@@ -633,17 +849,23 @@ namespace uf::service
     auto ProductLifecycle::observe(task::TaskContext& context)
         -> Result<ProductObservation>
     {
+        return m_impl->observe(context);
+    }
+
+    auto ProductLifecycle::Impl::observe(task::TaskContext& context)
+        -> Result<ProductObservation>
+    {
         UF_TRY_VALUE(
             observation,
-            m_impl->operatorHost.host().observe(m_impl->generation, context)
+            operatorHost.host().observe(generation, context)
         );
         UF_TRY_VALUE(
             snapshot,
-            m_impl->operatorHost.coordinator().createSnapshot(
-                m_impl->controlLease(),
-                m_impl->plugin,
-                m_impl->deployment().toolCatalogSchemaOwner,
-                m_impl->deployment().observedInstanceIdentitySchemas,
+            operatorHost.coordinator().createSnapshot(
+                controlLease(),
+                deployment().generation,
+                deployment().toolCatalogSchemaOwner,
+                deployment().observedInstanceIdentitySchemas,
                 observation
             )
         );
@@ -653,19 +875,17 @@ namespace uf::service
         };
     }
 
-    auto ProductLifecycle::answerObserveTool(
-        operator_runtime::ToolCallPositionIdentity const& call,
-        task::TaskContext& context
+    auto ProductLifecycle::Impl::answerObserveTool(
+        operator_runtime::ToolCallPositionIdentity const& call
     ) -> Result<operator_runtime::ToolCallCompletion>
     {
-        UF_TRY_VALUE(observed, observe(context));
+        UF_TRY_VALUE(observed, observe(activeContext()));
         UF_TRY_VALUE(
             stateResolution,
             operator_runtime::CanonicalJson::parseExact(
                 observed.ui.canonicalJcs()
             )
         );
-        auto const& deployed = m_impl->deployment();
 
         // The observation authority section 6 requires, bound to all six of
         // the things it names. Every binding is read from what this run holds
@@ -683,12 +903,12 @@ namespace uf::service
         // frame identity and model-scoped by its target vocabulary.
         UF_TRY_VALUE(
             reference,
-            m_impl->observations.mint(
+            observations.mint(
                 operator_runtime::SnapshotObservationSpec{
                     .controlledTargetId =
-                        m_impl->controller.controlledTargetId(),
+                        controller().controlledTargetId(),
                     .runtimeArtifactRootHash = observed.ui.artifactRootHash(),
-                    .projectRegistrationHash = deployed.registration.hash(),
+                    .projectRegistrationHash = generationHandle().projectRegistrationHash(),
                     .frameIdentityHash       = observed.snapshot.identityHash,
                     .hostGeneration          = observed.ui.generation().value(),
                     .rootIdentity            = call.rootIdentity(),
@@ -696,9 +916,9 @@ namespace uf::service
                     .expiresAtUnixMillis =
                         unixMillisNow() + k_observationAuthorityMillis,
                     .localSemanticTargets =
-                        m_impl->runtimeModel.declaredUi().uiTargets,
+                        runtimeModel.declaredUi().uiTargets,
                     .authorizedUiActions =
-                        m_impl->runtimeModel.declaredUi().actions,
+                        runtimeModel.declaredUi().actions,
                 }
             )
         );
@@ -706,7 +926,7 @@ namespace uf::service
             {"artifact_root_hash",
              json::Value::ofString(observed.ui.artifactRootHash().hex())},
             {"controlled_target_id",
-             json::Value::ofString(m_impl->controller.controlledTargetId())},
+             json::Value::ofString(controller().controlledTargetId())},
             {"decision_basis_hash",
              json::Value::ofString(observed.snapshot.decisionBasisHash.hex())},
             {"host_generation",
@@ -715,7 +935,7 @@ namespace uf::service
             {std::string{operator_runtime::k_observationReferenceArgument},
              reference.wire().value()},
             {"project_registration_hash",
-             json::Value::ofString(deployed.registration.hash().hex())},
+             json::Value::ofString(generationHandle().projectRegistrationHash().hex())},
             {"snapshot_identity_hash",
              json::Value::ofString(observed.snapshot.identityHash.hex())},
             {"snapshot_ref", json::Value::ofString(observed.snapshot.token)},
@@ -727,7 +947,7 @@ namespace uf::service
         }));
     }
 
-    auto ProductLifecycle::answerStatusTool()
+    auto ProductLifecycle::Impl::answerStatusTool()
         -> Result<operator_runtime::ToolCallCompletion>
     {
         // Run and call-tree status: what this run is, and whether it may still
@@ -736,22 +956,21 @@ namespace uf::service
         return confirmedToolResult(json::Value::ofObject({
             {"access",
              json::Value::ofString(
-                 m_impl->access == LifecycleAccess::Writable
+                 access == LifecycleAccess::Writable
                      ? "writable"
                      : "read_only"
              )},
             {"controlled_target_id",
-             json::Value::ofString(m_impl->controller.controlledTargetId())},
-            {"installed_generation", counterMember(m_impl->installedGeneration)},
-            {"session_id", json::Value::ofString(m_impl->sessionId)},
+             json::Value::ofString(controller().controlledTargetId())},
+            {"installed_generation", counterMember(installedGeneration)},
+            {"session_id", json::Value::ofString(sessionId)},
             {"unreconciled_dispatches",
-             counterMember(static_cast<uint64>(m_impl->recoveries.size()))},
+             counterMember(static_cast<uint64>(recoveries.size()))},
         }));
     }
 
-    auto ProductLifecycle::answerSemanticInputTool(
-        operator_runtime::ToolCallPositionIdentity const& call,
-        task::TaskContext& context
+    auto ProductLifecycle::Impl::answerSemanticInputTool(
+        operator_runtime::ToolCallPositionIdentity const& call
     ) -> Result<operator_runtime::ToolCallCompletion>
     {
         UF_TRY_VALUE(
@@ -780,11 +999,11 @@ namespace uf::service
         // checked.
         auto const consumption = operator_runtime::SnapshotObservationConsumption{
             .exactReferenceJcs       = json::canonicalBytes(*p_reference),
-            .controlledTargetId      = m_impl->controller.controlledTargetId(),
-            .runtimeArtifactRootHash = m_impl->runtimeModel.artifactRootHash(),
+            .controlledTargetId      = controller().controlledTargetId(),
+            .runtimeArtifactRootHash = runtimeModel.artifactRootHash(),
             .projectRegistrationHash =
-                m_impl->deployment().registration.hash(),
-            .hostGeneration        = m_impl->generation.value(),
+                generationHandle().projectRegistrationHash(),
+            .hostGeneration        = generation.value(),
             .rootIdentity          = call.rootIdentity(),
             .issuingParentIdentity = call.parentIdentity(),
             .localSemanticTarget   = semanticTarget,
@@ -796,28 +1015,28 @@ namespace uf::service
         // and the verdict is recorded by name. A refusal spends nothing, so an
         // action refused on its bounds leaves the authority available to the
         // call that is entitled to it.
-        if (auto const refusal = m_impl->observations.refuse(consumption))
+        if (auto const refusal = observations.refuse(consumption))
         {
             return absentInputResult(
                 operator_runtime::observationRefusalWireName(*refusal),
                 operator_runtime::observationRefusalDiagnostic(*refusal)
             );
         }
-        UF_TRY_VALUE(resolved, m_impl->observations.resolve(consumption));
+        UF_TRY_VALUE(resolved, observations.resolve(consumption));
 
         // The Host delivery seam. Nothing about what to deliver is stated
         // here: the target and the action are the ones the authority resolved,
         // the lease and the generation are this run's own, and the call is the
         // coordinate the Coordinator already crossed the dispatch boundary for.
-        auto delivered = m_impl->operatorHost.deliverToolCallInput(
+        auto delivered = operatorHost.deliverToolCallInput(
             call,
-            m_impl->controlLease(),
-            m_impl->generation,
+            controlLease(),
+            generation,
             operator_runtime::OperatorTaskHost::ToolCallInputIntent{
                 .uiTarget = resolved.localSemanticTarget(),
                 .uiAction = resolved.uiAction(),
             },
-            context
+            activeContext()
         );
 
         // An Err from the seam is a refusal that posted nothing, and that is a
@@ -845,15 +1064,14 @@ namespace uf::service
         return operator_runtime::toolCallCompletionFor(*delivered);
     }
 
-    auto ProductLifecycle::answerFrameworkTool(
-        operator_runtime::ToolCallPositionIdentity const& call,
-        task::TaskContext& context
+    auto ProductLifecycle::Impl::answerFrameworkTool(
+        operator_runtime::ToolCallPositionIdentity const& call
     ) -> Result<operator_runtime::ToolCallCompletion>
     {
         auto const& toolName = call.toolName();
         if (toolName == k_observeTool)
         {
-            return answerObserveTool(call, context);
+            return answerObserveTool(call);
         }
         if (toolName == k_statusTool)
         {
@@ -861,7 +1079,7 @@ namespace uf::service
         }
         if (toolName == k_semanticInputTool)
         {
-            return answerSemanticInputTool(call, context);
+            return answerSemanticInputTool(call);
         }
         if (toolName == k_waitTool)
         {
@@ -873,8 +1091,8 @@ namespace uf::service
                 waitArguments.value().find("duration_ms");
             UF_CHECK(p_duration != nullptr);
             auto const durationMillis = static_cast<uint64>(p_duration->number());
-            context.settle(std::chrono::milliseconds{durationMillis});
-            if (context.cancellationRequested())
+            activeContext().settle(std::chrono::milliseconds{durationMillis});
+            if (activeContext().cancellationRequested())
             {
                 return fail(
                     AutomationErrorKind::Cancelled,
@@ -937,7 +1155,7 @@ namespace uf::service
                     "boundary, and nothing measured the point it names on the "
                     "frame it would be posted into",
                     action,
-                    m_impl->controller.controlledTargetId()
+                    controller().controlledTargetId()
                 )
             );
         }
@@ -945,6 +1163,47 @@ namespace uf::service
             AutomationErrorKind::InternalInvariant,
             "Framework Tool Catalog admitted a Tool with no provider"
         );
+    }
+
+    auto ProductLifecycle::Impl::runAdmitted(
+        operator_runtime::ToolAdmissionRequest const& request,
+        task::TaskContext& context
+    ) -> Result<operator_runtime::ToolCallReplay>
+    {
+        auto const active = ActiveContext{*this, context};
+
+        // Which code answers a call is decided by the name's owner and by
+        // nothing else. A Tool this generation bound runs on its own scoped
+        // program through the dispatcher; every other admitted name belongs to
+        // the Framework namespace, which this lifecycle answers itself. That is
+        // two owners of two disjoint name spaces rather than two generations of
+        // one job: no value here decides which generation a project is, and the
+        // binding table cannot claim a `framework` name because the reader
+        // refuses a registrant whose plugin_id falls inside that namespace.
+        if (
+            generationHandle()
+                .bindingTable()
+                .entryPointFor(request.call.toolName())
+                .has_value()
+        )
+        {
+            return dispatcher().dispatch(
+                generationHandle(),
+                request,
+                context.cancellation()
+            );
+        }
+
+        auto executor = operator_runtime::ToolRuntimeExecutor{
+            operatorHost.coordinator(),
+        };
+        auto* const p_self = this;
+        auto provider = [p_self](
+                            operator_runtime::ToolCallPositionIdentity const&
+                                admittedCall
+                        ) -> Result<operator_runtime::ToolCallCompletion>
+        { return p_self->answerFrameworkTool(admittedCall); };
+        return executor.invoke(request, provider);
     }
 
     auto ProductLifecycle::invokeFrameworkTool(
@@ -989,7 +1248,7 @@ namespace uf::service
         // so this seam cannot state any of them differently from an actor
         // adapter.
         auto const start = operator_runtime::ToolRootStart{
-            .controller      = m_impl->controller,
+            .controller      = m_impl->controller(),
             .lease           = m_impl->controlLease(),
             .execution       = request.executionIdentity,
             .planAuthority   = m_impl->planAuthority,
@@ -1015,158 +1274,76 @@ namespace uf::service
                 ? m_impl->rootProducer.startAgainstObservation(start, *presented)
                 : m_impl->rootProducer.start(start)
         );
-
-        auto executor = operator_runtime::ToolRuntimeExecutor{
-            m_impl->operatorHost.coordinator(),
-        };
-        auto provider = [this, &context](
-                            operator_runtime::ToolCallPositionIdentity const&
-                                admittedCall
-                        ) -> Result<operator_runtime::ToolCallCompletion>
-        { return answerFrameworkTool(admittedCall, context); };
-
-        return executor.invoke(admission, provider);
+        return m_impl->runAdmitted(admission, context);
     }
 
-    auto ProductLifecycle::execute(
-        operator_runtime::SnapshotRecord const& snapshot,
-        std::string toolName,
-        std::string exactArgumentsJcs,
-        std::string clientRequestId,
+    auto ProductLifecycle::invokeAgentTool(
+        operator_runtime::AgentToolUse const& use,
         task::TaskContext& context
-    ) -> Result<ProductExecution>
+    ) -> Result<operator_runtime::ToolCallReplay>
     {
-        if (m_impl->access != LifecycleAccess::Writable)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "recovery is unfinished, so this lifecycle is read-only"
-            );
-        }
-        auto& deployed = m_impl->deployment();
-        UF_TRY_VALUE(
-            arguments,
-            deployed.schemaOwner.canonicalize(std::move(exactArgumentsJcs))
-        );
-        UF_TRY_VALUE(
-            invocation,
-            deployed.toolCatalogSchemaOwner.validate(
-                std::move(toolName),
-                std::move(arguments)
-            )
-        );
-        auto const mutability = invocation.descriptor().mutability;
-        UF_TRY_VALUE(
-            accepted,
-            m_impl->operatorHost.coordinator().submitCommand(
-                m_impl->controller,
-                operator_runtime::CommandRequest{
-                    .snapshotToken        = snapshot.token,
-                    .idempotencyNamespace = m_impl->controller.controllerId(),
-                    .clientRequestId      = std::move(clientRequestId),
-                },
-                invocation
-            )
-        );
-        if (accepted.operation.lookup == operator_runtime::CommandLookup::Existing)
-        {
-            return ProductExecution{.operation = accepted.operation};
-        }
-        if (mutability == operator_runtime::ToolMutability::ReadOnly)
-        {
-            UF_TRY_VALUE(
-                completed,
-                m_impl->operatorHost.coordinator().transitionOperation(
-                    accepted.operation.operationId,
-                    accepted.operation.revision,
-                    operator_runtime::OperationSignal::ReadCompleted
-                )
-            );
-            return ProductExecution{.operation = std::move(completed)};
-        }
-        UF_TRY_VALUE(
-            frozen,
-            m_impl->operatorHost.coordinator().freezePlan(
-                accepted.operation.operationId,
-                accepted.operation.revision,
-                m_impl->controlLease(),
-                m_impl->plugin,
-                deployed.toolCatalogSchemaOwner,
-                m_impl->planAuthority
-            )
-        );
-        if (frozen.operation.state == operator_runtime::OperationState::AwaitingApproval)
-        {
-            return ProductExecution{.operation = std::move(frozen.operation)};
-        }
-        UF_TRY_VALUE(
-            step,
-            m_impl->operatorHost.coordinator().mintNextStep(
-                frozen.operation.operationId,
-                frozen.operation.revision,
-                m_impl->controlLease(),
-                m_impl->plugin,
-                deployed.toolCatalogSchemaOwner,
-                m_impl->planAuthority
-            )
-        );
-        if (step.kind == operator_runtime::StepKind::Wait)
-        {
-            return ProductExecution{.operation = std::move(step.operation)};
-        }
-        auto const authority = operator_runtime::AuthorityDecisionId{
-            "authority-" + step.operation.operationId
+        auto const execution = m_impl->executionIdentity();
+        auto const run       = operator_runtime::ToolActorRun{
+                  .controller    = m_impl->controller(),
+                  .lease         = m_impl->controlLease(),
+                  .execution     = execution,
+                  .planAuthority = m_impl->planAuthority,
+                  .catalog       = m_impl->catalog(),
         };
-        UF_TRY_VALUE(
-            dispatched,
-            m_impl->operatorHost.dispatch(
-                step.operation.operationId,
-                step.operation.revision,
-                m_impl->controlLease(),
-                m_impl->generation,
-                authority,
-                std::nullopt,
-                context
-            )
-        );
-        return ProductExecution{
-            .operation = std::move(dispatched.operation),
-            .delivery  = std::move(dispatched.delivery),
-        };
+        UF_TRY_VALUE(admission, m_impl->agentAdapter.translate(run, use));
+        return m_impl->runAdmitted(admission, context);
     }
 
+    auto ProductLifecycle::invokeHumanTool(
+        operator_runtime::HumanToolCommand const& command,
+        task::TaskContext& context
+    ) -> Result<operator_runtime::ToolCallReplay>
+    {
+        auto const execution = m_impl->executionIdentity();
+        auto const run       = operator_runtime::ToolActorRun{
+                  .controller    = m_impl->controller(),
+                  .lease         = m_impl->controlLease(),
+                  .execution     = execution,
+                  .planAuthority = m_impl->planAuthority,
+                  .catalog       = m_impl->catalog(),
+        };
+        UF_TRY_VALUE(admission, m_impl->humanAdapter.translate(run, command));
+        return m_impl->runAdmitted(admission, context);
+    }
+
+    auto ProductLifecycle::startProjectAutomation(
+        operator_runtime::ProjectAutomationStart const& start,
+        task::TaskContext& context
+    ) -> Result<operator_runtime::ToolCallReplay>
+    {
+        auto const execution = m_impl->executionIdentity();
+        auto const run       = operator_runtime::ToolActorRun{
+                  .controller    = m_impl->controller(),
+                  .lease         = m_impl->controlLease(),
+                  .execution     = execution,
+                  .planAuthority = m_impl->planAuthority,
+                  .catalog       = m_impl->catalog(),
+        };
+        UF_TRY_VALUE(
+            admission,
+            m_impl->automationAdapter.translate(
+                run,
+                m_impl->generationHandle().bindingTable(),
+                start
+            )
+        );
+        return m_impl->runAdmitted(admission, context);
+    }
     auto ProductLifecycle::wait(
         operator_runtime::SubscriptionCursor after,
         uint32 maximumEvents
     ) -> Result<operator_runtime::SubscriptionRead>
     {
         return m_impl->operatorHost.coordinator().subscribe(
-            m_impl->controller,
+            m_impl->controller(),
             after,
             maximumEvents
         );
-    }
-
-    auto ProductLifecycle::reconcile(
-        operator_runtime::ReconciliationCommit const& commit
-    ) -> Result<operator_runtime::StoredOperation>
-    {
-        auto result = m_impl->operatorHost.coordinator().commitReconciliation(
-            m_impl->plugin,
-            commit
-        );
-        if (!result.has_value())
-        {
-            return std::unexpected{result.error().clone()};
-        }
-        std::erase_if(
-            m_impl->recoveries,
-            [&commit](operator_runtime::RecoveredUncertainDispatch const& recovery)
-            {
-                return recovery.operationId == commit.operationId;
-            }
-        );
-        return result;
     }
 
     auto reclaimRuntimeArtifacts(std::filesystem::path const& runtimeDirectory)
@@ -1218,15 +1395,25 @@ namespace uf::service
             active ? active->installedGeneration : uint64{0}
         );
 
-        auto registrar = operator_runtime::ProjectPluginRegistrar{};
+        auto const project = operator_runtime::ProjectIdentity{selected.generation};
+        auto registrar = operator_runtime::ProjectGenerationRegistrar{};
         UF_TRY_VALUE(
-            plugin,
-            registrar.registerPlugin(
-                selected.registration,
-                selected.pluginEntryModule,
-                selected.pluginModules,
+            generation,
+            registrar.registerGeneration(
+                selected.generation,
+                selected.toolCatalogSchemaOwner,
+                selected.schemaOwner,
+                operator_runtime::ProjectGenerationRegistrar::ClosureModules{
+                    .entryModule = selected.reducerClosure.entryModule,
+                    .modules     = selected.reducerClosure.modules,
+                },
+                operator_runtime::ProjectGenerationRegistrar::ClosureModules{
+                    .entryModule = selected.toolClosure.entryModule,
+                    .modules     = selected.toolClosure.modules,
+                },
                 selected.projectResources,
-                selected.schemaOwner
+                selected.catalog.toolResultValidator(),
+                quiescentToolRuntime()
             )
         );
 
@@ -1244,23 +1431,23 @@ namespace uf::service
                 operator_runtime::SessionManifestSpec{
                     .runtimeModelArtifactRootHash = upgrade.artifactRootHash,
                     .operatorProtocolSchemaHash   = operatorSchemaHash,
-                    .projectRegistrationHash      = selected.registration.hash(),
+                    .projectRegistrationHash      = project.hash(),
                     .policyArtifactHash           = policyHash,
                     .agentProfileHash             = noAgentProfileHash,
                 }
             )
         );
-        UF_TRY(coordinator.registerProject(selected.registration));
+        UF_TRY(coordinator.registerProject(project));
         UF_TRY_VALUE(
             projectInstanceKey,
             internalProjectInstanceKey(
-                selected.registration.hash(),
+                project.hash(),
                 k_upgradeTargetId
             )
         );
         UF_TRY(coordinator.provisionProjectInstance(
-            selected.registration,
-            plugin,
+            project,
+            generation,
             operator_runtime::ProjectInstanceBaseline{
                 .projectInstanceKey  = projectInstanceKey,
                 .eventId             = {},
@@ -1292,7 +1479,7 @@ namespace uf::service
             .sessionId                 = sessionId,
             .authenticatedControllerId = std::string{k_upgradeControllerId},
             .idempotencyNamespace      = std::string{k_upgradeControllerId},
-            .projectRegistrationHash   = selected.registration.hash(),
+            .projectRegistrationHash   = project.hash(),
             .controllerCapabilities    = upgrade.controllerCapabilities,
             .controlledTargetId        = std::string{k_upgradeTargetId},
             .projectInstanceKey        = projectInstanceKey,
