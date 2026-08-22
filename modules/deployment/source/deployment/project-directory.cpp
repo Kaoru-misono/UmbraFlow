@@ -475,6 +475,12 @@ namespace uf::deployment
                 identityHashes.emplace_back(hash(identityHash));
             }
 
+            // The Tool binding table. No project declares a handler entry yet,
+            // so every registration this loader derives states the empty table
+            // -- which is the whole statement "this registration binds no Tool
+            // to an entry" and not an absence a reader fills in.
+            auto bindings = std::vector<json::Value>{};
+
             return json::canonicalBytes(json::Value::ofObject({
                 {"baseline_event_type",
                  json::Value::ofString(derived.baselineEventType)},
@@ -494,6 +500,7 @@ namespace uf::deployment
                      )
                  )},
                 {"project_state_schema_hash", hash(derived.projectStateSchemaHash)},
+                {"project_tool_bindings", json::Value::ofArray(std::move(bindings))},
                 {"project_tool_precondition_schema_hash",
                  hash(derived.projectToolPreconditionSchemaHash)},
                 {"project_resources", json::Value::ofArray(std::move(resources))},
@@ -605,6 +612,19 @@ namespace uf::deployment
                     });
                 }
 
+                auto toolBindings =
+                    std::vector<operator_runtime::ProjectToolBinding>{};
+                for (auto const& binding :
+                     member(document, "project_tool_bindings").items())
+                {
+                    toolBindings.emplace_back(
+                        operator_runtime::ProjectToolBinding{
+                            .toolName   = text(binding, "tool_name"),
+                            .entryPoint = text(binding, "entry_point"),
+                        }
+                    );
+                }
+
                 auto identityHashes = std::vector<ContentHash>{};
                 for (auto const& identityHash :
                      member(document, "observed_instance_identity_schema_hashes").items())
@@ -635,6 +655,7 @@ namespace uf::deployment
                     .baselineEventType                    = text(document, "baseline_event_type"),
                     .projectResources                     = std::move(resources),
                     .observedInstanceIdentitySchemaHashes = std::move(identityHashes),
+                    .projectToolBindings                  = std::move(toolBindings),
                 };
             };
         }

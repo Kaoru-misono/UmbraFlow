@@ -15,8 +15,22 @@ namespace uf::project
 {
     struct DeclaredTool final
     {
-        std::string                      name{};
-        std::string                      argumentSchema{};
+        std::string name{};
+
+        // The definitions of this project's tool precondition schema that
+        // judge one call of this tool. Both are required and neither has an
+        // absent spelling: a tool that answers nothing still answers a value,
+        // and a declaration that could omit its result schema would be a tool
+        // whose answer nothing is entitled to judge.
+        //
+        // They are names rather than inline documents for the same reason the
+        // effect bounds name a payload digest: the documents' bytes are pinned
+        // by project_tool_precondition_schema_hash, and the names are pinned by
+        // tool_catalog_hash, so neither can move without moving a registration
+        // digest.
+        std::string argumentSchema{};
+        std::string resultSchema{};
+
         operator_runtime::ToolDescriptor descriptor{};
     };
 

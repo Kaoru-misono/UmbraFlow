@@ -569,6 +569,7 @@ namespace uf::deployment
                     "mutability",
                     "name",
                     "required_capabilities",
+                    "result_schema",
                     "surface",
                     "timeout_policy",
                     "ui_action_bounds",
@@ -632,6 +633,10 @@ namespace uf::deployment
                         "items": {
                             "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
                         }
+                    },
+                    "result_schema": {
+                        "$comment": "The definition of this project's tool precondition schema that judges what one call of this tool answers with. It is required for the same reason argument_schema is: a handler's answer is validated against the schema its own entry declared, and a tool that could omit it would answer bytes nothing is entitled to judge.",
+                        "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
                     },
                     "surface": {"enum": ["semantic", "privileged"]},
                     "timeout_policy": {
@@ -2036,6 +2041,15 @@ namespace uf::deployment
                     "the Tool Catalog names argument schema {}, which the tool "
                     "precondition schema does not declare",
                     definition
+                ));
+            }
+            auto const resultDefinition = member(tool, "result_schema").string();
+            if (!state->toolPrecondition.hasDefinition(resultDefinition))
+            {
+                return refuse(std::format(
+                    "the Tool Catalog names result schema {}, which the tool "
+                    "precondition schema does not declare",
+                    resultDefinition
                 ));
             }
             auto const mutability = std::ranges::find(

@@ -393,14 +393,22 @@ namespace uf::deployment
         }
     }
 
-    // The specification states three documents by worked example, and this is
+    // The design document states three documents by worked example, and this is
     // what keeps an example a document the framework accepts. Without it the
     // examples are prose beside a C++ string constant, which is the arrangement
     // that had one consumer writing CamelCase for `mutating` and `semantic`.
-    TEST_CASE("the specification's worked documents are documents this accepts")
+    //
+    // The examples used to be read out of the archived plan that first stated
+    // them. That made a frozen document a live specification: a schema change
+    // could only stay green by editing an archived file, which the archive rule
+    // forbids. The examples were what that plan still owed, so they were lifted
+    // into the live design document below and it owns them now. The archived
+    // copy keeps its bytes and nothing asserts against it.
+    TEST_CASE("the design document's worked documents are documents this accepts")
     {
-        constexpr auto k_specification =
-            std::string_view{"docs/archive/plans/2026-08-11-project-as-data.md"};
+        constexpr auto k_specification = std::string_view{
+            "docs/design/2026-08-22-framework-document-formats.md"
+        };
         auto const root = json::repositoryRoot(k_specification);
         REQUIRE_FALSE(root.empty());
 

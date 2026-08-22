@@ -10,6 +10,14 @@
             "properties": {
                 "value": {"type": "integer", "minimum": 1, "maximum": 8}
             }
+        },
+        "FixtureResult": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["outcome"],
+            "properties": {
+                "outcome": {"type": "string"}
+            }
         }
     }
 }

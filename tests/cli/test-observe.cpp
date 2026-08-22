@@ -326,6 +326,17 @@ namespace uf::cli
             return *hashed;
         }
 
+        // The result bytes of the three Framework Tool calls one run issues,
+        // named by the position each one occupies rather than by its tool: the
+        // two observes are deliberately the same request, and what separates
+        // them is only the ordinal the seam gave them.
+        struct FrameworkToolPayloads final
+        {
+            std::string firstObserve{};
+            std::string secondObserve{};
+            std::string waited{};
+        };
+
         // The exemplar copied out of the repository, its RuntimeArtifact
         // installed into a production Operator root beside it, and the capture
         // the project published.
@@ -587,63 +598,13 @@ namespace uf::cli
     )
     {
         auto const world     = RecordedWorld{};
-        auto const args      = world.args("framework-tools.jsonl");
         auto const delivered = std::make_shared<uint32>();
-        auto sources = world.sources(
-            delivered,
-            std::make_unique<PresentReader>()
-        );
-        auto const liveFingerprint = sources.liveFingerprint;
 
         auto const scope = operator_runtime::ObservedInstanceWorldScope::run(
             "recorded-tool-target",
             1
         );
         REQUIRE(scope.has_value());
-        auto lifecycle = service::ProductLifecycle::start(
-            service::ProductStart{
-                .projectDirectory          = args.project,
-                .runtimeDirectory          = args.runtime,
-                .authenticatedControllerId = "framework-tool-adapter",
-                .controllerCapabilities    = {},
-                .controlledTargetId        = "recorded-tool-target",
-                .worldScope                = *scope,
-            }
-        );
-        auto const lifecycleWhy = lifecycle.has_value()
-            ? std::string{}
-            : lifecycle.error().message();
-        REQUIRE_MESSAGE(
-            lifecycle.has_value(),
-            lifecycleWhy
-        );
-        auto const identity = lifecycle->identity();
-
-        auto sink = trace::FileTraceSink::createNew(args.trace);
-        REQUIRE(sink.has_value());
-        auto recorder = trace::TraceRecorder::create(
-            std::move(*sink),
-            trace::TraceStreamSpec{
-                .sessionId           = identity.sessionId,
-                .sessionManifestHash = identity.sessionManifestHash,
-                .producer            = "framework-tool-adapter-test",
-            }
-        );
-        REQUIRE(recorder.has_value());
-        auto session = engine::EngineSession::create(
-            std::move(sources.frameSource),
-            std::move(sources.actionSink),
-            *recorder,
-            engine::EngineSessionConfig{
-                .liveFingerprint         = liveFingerprint,
-                .projectFingerprint      = identity.runtimeModel.fingerprint(),
-                .maximumPixelComparisons = args.budget,
-                .recognitionTimeout      = args.recognitionTimeout,
-            },
-            std::move(sources.ocrEngine)
-        );
-        REQUIRE(session.has_value());
-        auto context = task::TaskContext{std::move(*session), *recorder};
 
         auto const executionIdentity = operator_runtime::ToolExecutionIdentity{
             .runIdentity = frameworkToolIdentity("framework-tool-run"),
@@ -657,34 +618,122 @@ namespace uf::cli
                 "native-adapter-environment"
             ),
         };
-        auto observeCall = [&executionIdentity]()
+        auto const frameworkCall = [&executionIdentity](
+                                       std::string_view toolName,
+                                       std::string_view exactArgumentsJcs
+                                   )
         {
             return service::FrameworkReadOnlyToolCall{
                 .requestKey                 = "recorded-observe-and-wait",
                 .exactRootRequestPreimageJcs =
                     R"({"objective":"observe and wait"})",
-                .sequence          = 1U,
                 .executionIdentity = executionIdentity,
-                .toolName          = "framework.screen.observe",
-                .exactArgumentsJcs = "{}",
+                .toolName          = std::string{toolName},
+                .exactArgumentsJcs = std::string{exactArgumentsJcs},
             };
         };
 
-        auto const first = lifecycle->invokeFrameworkReadOnlyTool(
-            observeCall(),
-            context
-        );
-        auto const firstWhy = first.has_value()
-            ? std::string{}
-            : first.error().message();
-        REQUIRE_MESSAGE(
-            first.has_value(),
-            firstWhy
-        );
-        REQUIRE(first->state == operator_runtime::ToolCallState::Confirmed);
-        REQUIRE(first->payload.has_value());
-        auto const firstPayload = first->payload->bytes();
-        auto const parsedPayload = json::parse(firstPayload);
+        // One whole run over the recorded world -- its own lifecycle, its own
+        // TaskContext, and the three calls it issues under one root request.
+        //
+        // It is a lambda called twice because the caller no longer names a
+        // coordinate: the ordinal is the seam's, so a repeated request inside
+        // one run is a NEW position rather than the earlier one's address. A
+        // recorded outcome is therefore reachable only by restarting, which is
+        // the durability contract the Tool Runtime actually offers.
+        auto runFrameworkTools = [&](std::string_view trace)
+        {
+            auto const args = world.args(trace);
+            auto sources = world.sources(
+                delivered,
+                std::make_unique<PresentReader>()
+            );
+            auto const liveFingerprint = sources.liveFingerprint;
+            auto lifecycle = service::ProductLifecycle::start(
+                service::ProductStart{
+                    .projectDirectory          = args.project,
+                    .runtimeDirectory          = args.runtime,
+                    .authenticatedControllerId = "framework-tool-adapter",
+                    .controllerCapabilities    = {},
+                    .controlledTargetId        = "recorded-tool-target",
+                    .worldScope                = *scope,
+                }
+            );
+            auto const lifecycleWhy = lifecycle.has_value()
+                ? std::string{}
+                : lifecycle.error().message();
+            REQUIRE_MESSAGE(
+                lifecycle.has_value(),
+                lifecycleWhy
+            );
+            auto const identity = lifecycle->identity();
+
+            auto sink = trace::FileTraceSink::createNew(args.trace);
+            REQUIRE(sink.has_value());
+            auto recorder = trace::TraceRecorder::create(
+                std::move(*sink),
+                trace::TraceStreamSpec{
+                    .sessionId           = identity.sessionId,
+                    .sessionManifestHash = identity.sessionManifestHash,
+                    .producer            = "framework-tool-adapter-test",
+                }
+            );
+            REQUIRE(recorder.has_value());
+            auto session = engine::EngineSession::create(
+                std::move(sources.frameSource),
+                std::move(sources.actionSink),
+                *recorder,
+                engine::EngineSessionConfig{
+                    .liveFingerprint         = liveFingerprint,
+                    .projectFingerprint      = identity.runtimeModel.fingerprint(),
+                    .maximumPixelComparisons = args.budget,
+                    .recognitionTimeout      = args.recognitionTimeout,
+                },
+                std::move(sources.ocrEngine)
+            );
+            REQUIRE(session.has_value());
+            auto context = task::TaskContext{std::move(*session), *recorder};
+
+            auto issued = [&lifecycle, &context, &frameworkCall](
+                              std::string_view toolName,
+                              std::string_view exactArgumentsJcs
+                          )
+            {
+                auto const replay = lifecycle->invokeFrameworkReadOnlyTool(
+                    frameworkCall(toolName, exactArgumentsJcs),
+                    context
+                );
+                auto const replayWhy = replay.has_value()
+                    ? std::string{}
+                    : replay.error().message();
+                REQUIRE_MESSAGE(
+                    replay.has_value(),
+                    replayWhy
+                );
+                CHECK(
+                    replay->state == operator_runtime::ToolCallState::Confirmed
+                );
+                REQUIRE(replay->payload.has_value());
+                return std::string{replay->payload->bytes()};
+            };
+
+            // Braced initialization, so the three calls are issued in the
+            // declaration order their ordinals follow.
+            auto payloads = FrameworkToolPayloads{
+                .firstObserve  = issued("framework.screen.observe", "{}"),
+                .secondObserve = issued("framework.screen.observe", "{}"),
+                .waited        = issued(
+                    "framework.workflow.wait",
+                    R"({"duration_ms":0})"
+                ),
+            };
+            CHECK(lifecycle->shutdown().has_value());
+            return payloads;
+        };
+
+        auto const executed = runFrameworkTools("framework-tools.jsonl");
+
+        auto const parsedPayload = json::parse(executed.firstObserve);
         REQUIRE(parsedPayload.has_value());
         auto const* const p_snapshotRef = parsedPayload->find("snapshot_ref");
         REQUIRE(p_snapshotRef != nullptr);
@@ -697,37 +746,25 @@ namespace uf::cli
             parsedPayload->find("controlled_target_id");
         REQUIRE(p_target != nullptr);
         CHECK(p_target->string() == "recorded-tool-target");
+        CHECK(executed.waited == R"({"completed":true,"duration_ms":0})");
 
-        // The recorded source returns the same frame repeatedly, but a second
-        // provider execution would still mint a new observation id. Exact
-        // replay must return the first result bytes unchanged.
-        auto const replayed = lifecycle->invokeFrameworkReadOnlyTool(
-            observeCall(),
-            context
-        );
-        REQUIRE(replayed.has_value());
-        REQUIRE(replayed->payload.has_value());
-        CHECK(replayed->state == operator_runtime::ToolCallState::Confirmed);
-        CHECK(replayed->payload->bytes() == firstPayload);
+        // The two observes are byte-identical requests, and they still differ:
+        // the second one got its own ordinal, executed on its own and minted
+        // its own observation. That is what stops a caller from addressing a
+        // position it was never granted and collecting its recorded outcome.
+        CHECK(executed.firstObserve != executed.secondObserve);
 
-        auto const waited = lifecycle->invokeFrameworkReadOnlyTool(
-            service::FrameworkReadOnlyToolCall{
-                .requestKey                 = "recorded-observe-and-wait",
-                .exactRootRequestPreimageJcs =
-                    R"({"objective":"observe and wait"})",
-                .sequence          = 2U,
-                .executionIdentity = executionIdentity,
-                .toolName          = "framework.workflow.wait",
-                .exactArgumentsJcs = R"({"duration_ms":0})",
-            },
-            context
-        );
-        REQUIRE(waited.has_value());
-        REQUIRE(waited->payload.has_value());
-        CHECK(waited->state == operator_runtime::ToolCallState::Confirmed);
-        CHECK(waited->payload->bytes() == R"({"completed":true,"duration_ms":0})");
+        // Restart. The run reissues the same three calls, its fresh issuing
+        // context numbers from 1 again, and every coordinate lands on a
+        // recorded outcome. The recorded source returns the same frame, but a
+        // re-executed provider would mint a new observation id under a new
+        // host nonce -- so byte equality is what proves nothing ran.
+        auto const replayed = runFrameworkTools("framework-tools-restart.jsonl");
+        CHECK(replayed.firstObserve == executed.firstObserve);
+        CHECK(replayed.secondObserve == executed.secondObserve);
+        CHECK(replayed.waited == executed.waited);
+
         CHECK(*delivered == 0U);
-        CHECK(lifecycle->shutdown().has_value());
     }
 
     TEST_CASE("observe restarts through Coordinator and remains repeatable")

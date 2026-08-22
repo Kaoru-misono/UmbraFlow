@@ -73,6 +73,14 @@ namespace uf::operator_runtime::conformance::expedition
             "properties": {
                 "steps": {"type": "integer", "minimum": 1, "maximum": 8}
             }
+        },
+        "MarchResult": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["leagues"],
+            "properties": {
+                "leagues": {"type": "integer", "minimum": 0, "maximum": 8}
+            }
         }
     }
 })json"};
@@ -240,6 +248,7 @@ namespace uf::operator_runtime::conformance::expedition
             tools.emplace_back(project::DeclaredTool{
                 .name           = std::string{tool.name},
                 .argumentSchema = "MarchArguments",
+                .resultSchema   = "MarchResult",
                 .descriptor     = ToolDescriptor{
                     .toolVersion          = std::string{tool.version},
                     .requiredCapabilities = {},

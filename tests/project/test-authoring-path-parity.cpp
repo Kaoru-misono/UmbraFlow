@@ -152,6 +152,14 @@ namespace uf::project
             "properties": {
                 "observed_instance_id": {"type": "string", "minLength": 1}
             }
+        },
+        "DismissResult": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["dismissed"],
+            "properties": {
+                "dismissed": {"type": "boolean"}
+            }
         }
     }
 })json"};
@@ -618,6 +626,7 @@ return {
                     DeclaredTool{
                         .name           = std::string{k_toolName},
                         .argumentSchema = "DismissArguments",
+                        .resultSchema   = "DismissResult",
                         .descriptor     = operator_runtime::ToolDescriptor{
                             .toolVersion          = "1",
                             .requiredCapabilities = {},
@@ -689,6 +698,14 @@ return {
             {
                 identityHashes.emplace_back(json::Value::ofString(hash.hex()));
             }
+            auto bindings = std::vector<json::Value>{};
+            for (auto const& binding : claims.projectToolBindings)
+            {
+                bindings.emplace_back(json::Value::ofObject({
+                    {"entry_point", json::Value::ofString(binding.entryPoint)},
+                    {"tool_name", json::Value::ofString(binding.toolName)},
+                }));
+            }
             return json::canonicalBytes(json::Value::ofObject({
                 {
                     "baseline_event_type",
@@ -727,6 +744,10 @@ return {
                 {
                     "project_state_schema_hash",
                     json::Value::ofString(claims.projectStateSchemaHash.hex()),
+                },
+                {
+                    "project_tool_bindings",
+                    json::Value::ofArray(std::move(bindings)),
                 },
                 {
                     "project_tool_precondition_schema_hash",

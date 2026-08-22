@@ -463,6 +463,7 @@ namespace uf::operator_runtime::test_support
             "\"project_registration_format\":{},"
             "\"project_resources\":[],"
             "\"project_state_schema_hash\":\"{}\","
+            "\"project_tool_bindings\":[],"
             "\"project_tool_precondition_schema_hash\":\"{}\","
             "\"reconcile_payload_schema_manifest_hash\":\"{}\","
             "\"tool_catalog_hash\":\"{}\"}}",

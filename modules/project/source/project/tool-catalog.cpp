@@ -181,6 +181,7 @@ namespace uf::project
             if (
                 tool.name.empty()
                 || tool.argumentSchema.empty()
+                || tool.resultSchema.empty()
                 || tool.descriptor.toolVersion.empty()
             )
             {
@@ -240,6 +241,7 @@ namespace uf::project
                     }),
                 },
                 {"name", json::Value::ofString(tool.name)},
+                {"result_schema", json::Value::ofString(tool.resultSchema)},
                 {
                     "required_capabilities",
                     json::Value::ofArray(std::move(requiredCapabilities)),
@@ -776,6 +778,7 @@ namespace uf::project
                     "mutability",
                     "name",
                     "required_capabilities",
+                    "result_schema",
                     "surface",
                     "timeout_policy",
                     "ui_action_bounds",
@@ -786,6 +789,7 @@ namespace uf::project
             ));
             UF_TRY_VALUE(name, stringMember(tool, "name", where));
             UF_TRY_VALUE(argumentSchema, stringMember(tool, "argument_schema", where));
+            UF_TRY_VALUE(resultSchema, stringMember(tool, "result_schema", where));
             UF_TRY_VALUE(version, stringMember(tool, "version", where));
             UF_TRY_VALUE(
                 mutability,
@@ -828,6 +832,7 @@ namespace uf::project
             return DeclaredTool{
                 .name           = std::string{name},
                 .argumentSchema = std::string{argumentSchema},
+                .resultSchema   = std::string{resultSchema},
                 .descriptor      = operator_runtime::ToolDescriptor{
                     .toolVersion          = std::string{version},
                     .requiredCapabilities = std::move(requiredCapabilities),

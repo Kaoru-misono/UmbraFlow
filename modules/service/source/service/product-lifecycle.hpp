@@ -85,12 +85,22 @@ namespace uf::service
     // hashes are fixed before dispatch by the adapter generation that invokes
     // this internal API; public actor envelopes will derive them rather than
     // accepting them from untrusted wire input.
+    //
+    // The call ordinal is deliberately absent too, and is not an omission a
+    // later envelope may repair: per R4 the sequence is a monotone child index
+    // assigned exclusively by the issuing seam, because a caller that could
+    // name one could alias another call's position and inherit its recorded
+    // outcome without authorisation. ProductLifecycle assigns it.
+    //
+    // executionIdentity describes the run, not the call. The first call under
+    // one root request opens that root's issuing context and fixes it there,
+    // and every later call under the same root is stamped with what the
+    // context holds.
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
     struct FrameworkReadOnlyToolCall final
     {
         std::string                             requestKey{};
         std::string                             exactRootRequestPreimageJcs{};
-        uint64                                  sequence{};
         operator_runtime::ToolExecutionIdentity executionIdentity;
         std::string                             toolName{};
         std::string                             exactArgumentsJcs{};

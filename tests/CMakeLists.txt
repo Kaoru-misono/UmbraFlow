@@ -510,8 +510,12 @@ if(TARGET ${PROJECT_NAME}_operator)
             operator/test-lifecycle-facade.cpp
             operator/test-manifest.cpp
             operator/test-operation.cpp
+            operator/test-project-tool-program.cpp
             operator/test-tool-authority.cpp
+            operator/test-tool-binding.cpp
             operator/test-tool-executor.cpp
+            operator/test-tool-nested-calls.cpp
+            operator/test-tool-snapshot-reference.cpp
         LIBS
             ${PROJECT_NAME}_operator
             ${PROJECT_NAME}_service
@@ -1210,6 +1214,7 @@ if(TARGET ${PROJECT_NAME}_script)
             script/test-adversarial-substrate.cpp
             script/test-environments.cpp
             script/test-pure-data-boundary.cpp
+            script/test-scoped-tool-program.cpp
             script/test-veto-suite.cpp
         LIBS
             ${PROJECT_NAME}_script
@@ -1225,7 +1230,11 @@ if(TARGET ${PROJECT_NAME}_task)
             task/test-exploration-verbs.cpp
             task/test-task-binding.cpp
             task/test-framework-bundle.cpp
+            task/test-scoped-framework-modules.cpp
             task/test-script-validator.cpp
+            task/test-sdk-canonical-equality.cpp
+            task/test-sdk-host-independence.cpp
+            task/test-unicode-normalization-conformance.cpp
         LIBS
             ${PROJECT_NAME}_task
             ${PROJECT_NAME}_image

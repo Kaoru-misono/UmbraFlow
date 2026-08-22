@@ -149,6 +149,14 @@ namespace uf::operator_runtime::test_support
             "properties": {
                 "value": {"type": "integer", "minimum": 1, "maximum": 8}
             }
+        },
+        "FixtureResult": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["outcome"],
+            "properties": {
+                "outcome": {"type": "string"}
+            }
         }
     }
 })json"};
@@ -174,6 +182,14 @@ namespace uf::operator_runtime::test_support
                     "type": "string",
                     "pattern": "^oi1_[0-9a-f]{64}$"
                 }
+            }
+        },
+        "FixtureResult": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["outcome"],
+            "properties": {
+                "outcome": {"type": "string"}
             }
         }
     }
@@ -606,6 +622,7 @@ namespace uf::operator_runtime::test_support
             tools.emplace_back(project::DeclaredTool{
                 .name           = std::string{tool.name},
                 .argumentSchema = "FixtureArguments",
+                .resultSchema   = "FixtureResult",
                 .descriptor     = ToolDescriptor{
                     .toolVersion          = std::string{k_toolVersion},
                     .requiredCapabilities = std::move(requiredCapabilities),

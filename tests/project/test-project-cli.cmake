@@ -106,6 +106,7 @@ file(WRITE "${DECLARED_CATALOG}" [=[{
     {
       "name": "chaos.dismiss_known_overlay",
       "argument_schema": "observed_instance_id",
+      "result_schema": "tool_result",
       "version": "1.0.0",
       "mutability": "read_only",
       "surface": "semantic",
@@ -131,7 +132,9 @@ file(WRITE "${DECLARED_CATALOG}" [=[{
 # The deployment declaration's other named files: the four schemas, the two
 # manifests and the journal payload schema. The declared-file read pins their
 # bytes without validating their content, so these documents are minimal;
-# what they must be is stable from build to check.
+# what they must be is stable from build to check. The tool precondition
+# schema is the exception: a catalog entry's argument_schema and
+# result_schema each name one of its definitions, so it declares both.
 file(WRITE "${SOURCE_DIRECTORY}/schema/state.json" [=[{
   "type": "object"
 }]=])
@@ -139,6 +142,10 @@ file(WRITE "${SOURCE_DIRECTORY}/schema/observation.json" [=[{
   "type": "object"
 }]=])
 file(WRITE "${SOURCE_DIRECTORY}/schema/precondition.json" [=[{
+  "$defs": {
+    "observed_instance_id": {"type": "string"},
+    "tool_result": {"type": "object"}
+  },
   "type": "object"
 }]=])
 file(WRITE "${SOURCE_DIRECTORY}/schema/reconcile.json" [=[{
@@ -502,6 +509,7 @@ file(WRITE "${DECLARED_CATALOG}" [=[{
     {
       "name": "chaos.dismiss_known_overlay",
       "argument_schema": "observed_instance_id",
+      "result_schema": "tool_result",
       "version": "1.0.0",
       "mutability": "read_only",
       "surface": "semantic",
@@ -713,6 +721,7 @@ file(WRITE "${CUT_SOURCE}/schema/catalog.json" [=[{
     {
       "name": "chaos.dismiss_known_overlay",
       "argument_schema": "observed_instance_id",
+      "result_schema": "tool_result",
       "version": "1.0.0",
       "mutability": "read_only",
       "surface": "semantic",
@@ -744,6 +753,10 @@ file(WRITE "${CUT_SOURCE}/schema/observation.json" [=[{
   "type": "object"
 }]=])
 file(WRITE "${CUT_SOURCE}/schema/precondition.json" [=[{
+  "$defs": {
+    "observed_instance_id": {"type": "string"},
+    "tool_result": {"type": "object"}
+  },
   "type": "object"
 }]=])
 file(WRITE "${CUT_SOURCE}/schema/reconcile.json" [=[{

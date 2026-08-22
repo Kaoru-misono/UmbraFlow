@@ -27,6 +27,7 @@
 #include <atomic>
 #include <chrono>
 #include <format>
+#include <map>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -185,6 +186,28 @@ namespace uf::service
 
         std::vector<operator_runtime::RecoveredUncertainDispatch> recoveries;
 
+        // One issuing context per Tool root request. Per R4 the call ordinal is
+        // a monotone child index assigned exclusively by this seam, so the
+        // calls one root issues have to advance one counter: a context built
+        // per call would hand every call ordinal 1, and a second call would
+        // then land on the first call's coordinate and inherit its recorded
+        // outcome -- exactly the aliasing R4 forbids a caller from performing.
+        //
+        // The key is the root identity, which ToolRootRequestIdentity derives
+        // from the caller namespace, the request key and the exact request
+        // preimage. Two distinct root requests therefore never share a counter,
+        // and a restart re-derives the same key with a fresh context that
+        // numbers from 1 again, which is what makes the recorded outcomes
+        // replay rather than re-execute.
+        //
+        // An entry is released only when this Impl is destroyed. Nothing
+        // releases one earlier because this seam is never told a root is
+        // finished: a request names its root and there is no termination
+        // signal to seal the context on. The map is therefore bounded by the
+        // number of distinct root requests one lifecycle serves.
+        std::map<ContentHash, operator_runtime::ToolCallIssuingContext>
+            issuingContexts{};
+
         Impl(
             deployment::LoadedProject ownedLoaded,
             std::size_t ownedDeploymentIndex,
@@ -262,6 +285,33 @@ namespace uf::service
         [[nodiscard]] auto deployment() -> deployment::LoadedDeployment&
         {
             return loaded.deployments[deploymentIndex];
+        }
+
+        // Assigns the coordinate of one root-positioned call under root,
+        // opening that root's issuing context on first use. The context is
+        // never handed out: it stays owned here and only the position it
+        // minted leaves, so no caller can hold a counter or read the next
+        // ordinal.
+        [[nodiscard]]
+        auto issueRootToolCall(
+            operator_runtime::ToolRootRequestIdentity const& root,
+            operator_runtime::ToolExecutionIdentity const& executionIdentity,
+            operator_runtime::ValidatedToolInvocation const& invocation
+        ) -> Result<operator_runtime::ToolCallPositionIdentity>
+        {
+            auto const opened = issuingContexts.find(root.identity());
+            if (opened != issuingContexts.end())
+            {
+                return opened->second.issue(invocation);
+            }
+            auto const created = issuingContexts.emplace(
+                root.identity(),
+                operator_runtime::ToolCallIssuingContext::forRoot(
+                    root,
+                    executionIdentity
+                )
+            );
+            return created.first->second.issue(invocation);
         }
     };
 
@@ -531,10 +581,8 @@ namespace uf::service
         );
         UF_TRY_VALUE(
             call,
-            operator_runtime::ToolCallPositionIdentity::create(
+            m_impl->issueRootToolCall(
                 root,
-                std::nullopt,
-                request.sequence,
                 request.executionIdentity,
                 invocation
             )
@@ -633,11 +681,15 @@ namespace uf::service
                 "Framework Tool Catalog admitted a Tool with no provider"
             );
         };
+        // No delegation grant: these are the root-positioned calls this run's
+        // own context issues, and a grant exists only for a child call under a
+        // dispatching handler.
         return executor.invokeReadOnly(
             m_impl->controller,
             m_impl->controlLease(),
             root,
             call,
+            nullptr,
             provider
         );
     }

@@ -387,6 +387,10 @@ namespace uf::project
                             "required_capabilities",
                             json::Value::ofArray({}),
                         },
+                        {
+                            "result_schema",
+                            json::Value::ofString("tool_result"),
+                        },
                         {"surface", json::Value::ofString("semantic")},
                         {
                             "timeout_policy",
@@ -2969,6 +2973,12 @@ namespace uf::project
                         "observed_instance_id",
                         json::Value::ofObject({
                             {"type", json::Value::ofString("string")},
+                        }),
+                    },
+                    {
+                        "tool_result",
+                        json::Value::ofObject({
+                            {"type", json::Value::ofString("object")},
                         }),
                     },
                 }),

@@ -431,6 +431,7 @@ namespace uf::project
                     DeclaredTool{
                         .name           = "chaos.dismiss_known_overlay",
                         .argumentSchema = "DismissArguments",
+                        .resultSchema   = "DismissResult",
                         .descriptor     = operator_runtime::ToolDescriptor{
                             .toolVersion          = "7",
                             .requiredCapabilities = {"overlay"},
