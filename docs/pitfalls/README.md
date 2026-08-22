@@ -32,3 +32,5 @@ Each entry should contain the symptom, root cause, fix, and a regression check. 
 - [Trusted Framework module resolution](trusted-framework-module-resolution.md)
   — why exact reserved imports can work in PureDataProgram yet fail during a
   full Engine boot, and the ordering/isolation rules the two loaders must keep.
+  Also why a projected framework name spelled like a standard-library global
+  replaces that library for every project script.

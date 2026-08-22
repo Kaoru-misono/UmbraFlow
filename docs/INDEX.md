@@ -10,7 +10,10 @@ could only be kept true by hand.
   authority; no prose here restates them.
 - [`docs/design/`](design/) — what things currently *are*. The
   [runtime model contract](design/2026-08-09-runtime-model-contract.md) explains
-  `schema/umbraflow-runtime-v3.schema.json`.
+  `schema/umbraflow-runtime-v3.schema.json`;
+  [framework document formats](design/2026-08-22-framework-document-formats.md)
+  owns the worked examples the deployment tests hold to the embedded schema
+  bytes.
 - [Architecture](ARCHITECTURE.md) — module ownership, dependency direction, and
   the deliberate absences.
 - [Domain glossary](../CONTEXT.md) — terminology authority.
