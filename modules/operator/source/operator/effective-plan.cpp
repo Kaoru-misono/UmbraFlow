@@ -127,7 +127,7 @@ namespace uf::operator_runtime
         };
     }
 
-    OperatorPlanAuthority::OperatorPlanAuthority(
+    OperatorPolicyAuthority::OperatorPolicyAuthority(
         ContentHash projectRegistrationHash,
         VerifiedPolicyArtifact policy
     )
@@ -136,13 +136,13 @@ namespace uf::operator_runtime
     {
     }
 
-    auto OperatorPlanAuthority::create(
+    auto OperatorPolicyAuthority::create(
         ProjectIdentity const& registration,
         SessionManifest const& sessionManifest,
         task::RuntimeModelBinding const& runtimeModel,
         std::string_view exactOperatorProtocolSchemaBytes,
         std::string_view exactPolicyArtifactBytes
-    ) -> Result<OperatorPlanAuthority>
+    ) -> Result<OperatorPolicyAuthority>
     {
         if (sessionManifest.projectRegistrationHash() != registration.hash())
         {
@@ -177,15 +177,15 @@ namespace uf::operator_runtime
                 exactPolicyArtifactBytes
             )
         );
-        return OperatorPlanAuthority{registration.hash(), std::move(policy)};
+        return OperatorPolicyAuthority{registration.hash(), std::move(policy)};
     }
 
-    auto OperatorPlanAuthority::projectRegistrationHash() const -> ContentHash
+    auto OperatorPolicyAuthority::projectRegistrationHash() const -> ContentHash
     {
         return m_projectRegistrationHash;
     }
 
-    auto OperatorPlanAuthority::policyHash() const -> ContentHash
+    auto OperatorPolicyAuthority::policyHash() const -> ContentHash
     {
         return m_policy.hash();
     }

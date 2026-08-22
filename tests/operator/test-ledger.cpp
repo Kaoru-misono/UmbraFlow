@@ -217,6 +217,158 @@ namespace uf::operator_runtime
             return separators;
         }
 
+        // The five tables the Operation dispatch spine owned, restored with the
+        // exact stored CREATE text the generation before this one wrote. It is
+        // pasted rather than derived because that generation no longer exists in
+        // the tree to derive it from, and the historical identity IS the DDL
+        // text: one changed byte of indentation or of the comment inside
+        // `approvals` reproduces a schema that generation never had.
+        auto restoreOperationDispatchSchema(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void
+        {
+            database.execute(R"sql(
+                    CREATE TABLE IF NOT EXISTS operation_plans(
+                        operation_id TEXT PRIMARY KEY
+                            REFERENCES operations(operation_id),
+                        plan_hash TEXT NOT NULL,
+                        command_fingerprint TEXT NOT NULL,
+                        decision_basis_hash TEXT NOT NULL,
+                        effect_envelope_hash TEXT NOT NULL,
+                        project_registration_hash TEXT NOT NULL
+                            REFERENCES project_registrations(registration_hash),
+                        risk TEXT NOT NULL CHECK(risk IN (
+                            'read_only', 'low', 'medium', 'high', 'critical'
+                        )),
+                        policy_hash TEXT NOT NULL,
+                        required_approvals TEXT NOT NULL,
+                        maximum_steps INTEGER NOT NULL CHECK(maximum_steps > 0),
+                        maximum_dispatches INTEGER NOT NULL
+                            CHECK(maximum_dispatches > 0),
+                        maximum_observations INTEGER NOT NULL
+                            CHECK(maximum_observations > 0),
+                        maximum_waits INTEGER NOT NULL CHECK(maximum_waits >= 0),
+                        maximum_elapsed_ms INTEGER NOT NULL
+                            CHECK(maximum_elapsed_ms > 0),
+                        canonical_plan TEXT NOT NULL
+                    ) STRICT;
+
+                    CREATE TABLE IF NOT EXISTS authority_decisions(
+                        authority_decision_id TEXT PRIMARY KEY,
+                        operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+                        dispatch_sequence INTEGER NOT NULL CHECK(dispatch_sequence > 0),
+                        session_id TEXT NOT NULL REFERENCES sessions(session_id),
+                        controller_id TEXT NOT NULL,
+                        lease_id TEXT NOT NULL,
+                        session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),
+                        fencing_token INTEGER NOT NULL CHECK(fencing_token > 0),
+                        decision_basis_hash TEXT NOT NULL,
+                        frozen_plan_hash TEXT NOT NULL,
+                        step_intent_hash TEXT NOT NULL,
+                        approval_token TEXT,
+                        UNIQUE(operation_id, dispatch_sequence)
+                    ) STRICT;
+
+                    -- The outcome vocabulary is a database fact rather than a
+                    -- C++ string comparison, because commitReconciliation's
+                    -- proof of absence is spelled delivery_outcome
+                    -- <>'not_delivered' and a fourth spelling would silently
+                    -- read as "an effect may have happened". delivery_reason is
+                    -- required for exactly the two values that are not
+                    -- delivered, which is the schema's own DeliveryOutcome rule
+                    -- and closes the gap where the Host's reason for refusing to
+                    -- act was discarded.
+                    CREATE TABLE IF NOT EXISTS dispatches(
+                        operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+                        dispatch_sequence INTEGER NOT NULL CHECK(dispatch_sequence > 0),
+                        decision_basis_hash TEXT NOT NULL,
+                        frozen_plan_hash TEXT NOT NULL,
+                        authority_decision_id TEXT NOT NULL
+                            REFERENCES authority_decisions(authority_decision_id),
+                        delivery_outcome TEXT
+                            CHECK(delivery_outcome IN (
+                                'not_delivered', 'delivered', 'transport_unknown'
+                            )),
+                        delivery_reason TEXT,
+                        CHECK(
+                            (delivery_outcome IS NULL AND delivery_reason IS NULL)
+                            OR (delivery_outcome = 'delivered'
+                                AND delivery_reason IS NULL)
+                            OR (delivery_outcome IN ('not_delivered',
+                                                     'transport_unknown')
+                                AND delivery_reason IS NOT NULL)
+                        ),
+                        PRIMARY KEY(operation_id, dispatch_sequence)
+                    ) STRICT;
+
+                    -- step_index is dense and monotone because it comes from
+                    -- MAX(step_index) + 1 read inside the inserting
+                    -- transaction, so there is no gap to slip a step into.
+                    -- dispatch_sequence is NULL until reserveDispatch links the
+                    -- step to its dispatch, and "at most one UI-action step
+                    -- awaiting dispatch" is deliberately enforced only by
+                    -- mintNextStep: a partial unique index beside that check
+                    -- would keep its test green after the check was deleted.
+                    CREATE TABLE IF NOT EXISTS operation_steps(
+                        operation_id TEXT NOT NULL
+                            REFERENCES operation_plans(operation_id),
+                        step_index INTEGER NOT NULL CHECK(step_index > 0),
+                        step_kind TEXT NOT NULL
+                            CHECK(step_kind IN ('ui_action', 'wait')),
+                        step_key TEXT NOT NULL,
+                        step_intent_hash TEXT NOT NULL,
+                        canonical_step TEXT NOT NULL,
+                        dispatch_sequence INTEGER,
+                        PRIMARY KEY(operation_id, step_index),
+                        FOREIGN KEY(operation_id, dispatch_sequence)
+                            REFERENCES dispatches(operation_id, dispatch_sequence)
+                    ) STRICT;
+
+                    CREATE TABLE IF NOT EXISTS approvals(
+                        token TEXT PRIMARY KEY,
+                        operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+                        session_id TEXT NOT NULL REFERENCES sessions(session_id),
+                        controller_id TEXT NOT NULL,
+                        controlled_target_id TEXT NOT NULL,
+                        lease_id TEXT NOT NULL,
+                        session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),
+                        fencing_token INTEGER NOT NULL CHECK(fencing_token > 0),
+                        command_fingerprint TEXT NOT NULL,
+                        frozen_plan_hash TEXT NOT NULL,
+                        step_intent_hash TEXT NOT NULL,
+                        decision_basis_hash TEXT NOT NULL,
+                        effect_envelope_hash TEXT NOT NULL,
+                        policy_hash TEXT NOT NULL,
+                        approver_principal TEXT NOT NULL,
+                        -- The capability the approver presented, matched
+                        -- against the plan's own required_approvals. A hash of
+                        -- an unnamed profile could not be matched against
+                        -- anything, so an approval was recorded rather than
+                        -- ruled.
+                        approver_capability TEXT NOT NULL,
+                        authority_decision_id TEXT NOT NULL,
+                        expires_at_unix_millis INTEGER NOT NULL CHECK(expires_at_unix_millis > 0),
+                        consumed INTEGER NOT NULL DEFAULT 0 CHECK(consumed IN (0, 1)),
+                        consumed_by_dispatch INTEGER,
+                        UNIQUE(authority_decision_id)
+                    ) STRICT;
+
+            )sql");
+
+            // ledger_events carried a delivery_outcome_recorded arm in its
+            // CHECK for as long as a dispatch could record one.
+            database.execute(R"sql(
+                PRAGMA writable_schema=ON;
+                UPDATE sqlite_schema SET sql=replace(
+                    sql,
+                    '''diverged'')))',
+                    '''diverged'')) OR (kind=''delivery_outcome_recorded'''
+                    || ' AND detail IN (''not_delivered'', ''delivered'', '
+                    || '''transport_unknown'')))'
+                ) WHERE type='table' AND name='ledger_events';
+                PRAGMA writable_schema=OFF;
+            )sql");
+        }
         auto restorePriorSnapshotIdentityComment(
             test_support::OperatorDatabaseProbe& database
         ) -> void
@@ -984,7 +1136,6 @@ namespace uf::operator_runtime
         // its owner, and a public constructor would make the owner optional.
         static_assert(!std::is_aggregate_v<ValidatedJournalEntryData>);
         static_assert(!std::is_aggregate_v<ValidatedToolInvocation>);
-        static_assert(!std::is_aggregate_v<ValidatedReconcileOutcome>);
         static_assert(!std::is_aggregate_v<ValidatedDocument>);
         static_assert(!std::is_aggregate_v<CanonicalJson>);
         static_assert(
@@ -996,15 +1147,6 @@ namespace uf::operator_runtime
                 std::string,
                 CanonicalJson,
                 ToolMutability
-            >
-        );
-        static_assert(
-            !std::is_constructible_v<
-                ValidatedReconcileOutcome,
-                ContentHash,
-                ContentHash,
-                ValidatedDocument,
-                ReconcileDisposition
             >
         );
         static_assert(
@@ -1024,7 +1166,7 @@ namespace uf::operator_runtime
             ProjectGenerationHandle      generation;
             test_support::ProjectFixture project;
             SessionManifest              manifest;
-            OperatorPlanAuthority        planAuthority;
+            OperatorPolicyAuthority      policyAuthority;
 
             // The authenticated controller every entry point is reached
             // through. bindController is its only mint.
@@ -1071,7 +1213,6 @@ namespace uf::operator_runtime
             auto const project = makeProject(
                 "fixture.alpha",
                 reducerBytes,
-                test_support::k_projectObservationSchema,
                 preconditionSchema
             );
             auto const manifest = sessionManifest(
@@ -1138,20 +1279,20 @@ namespace uf::operator_runtime
                 observation.generation
             );
             REQUIRE(runtimeModel.has_value());
-            auto planAuthority = OperatorPlanAuthority::create(
+            auto policyAuthority = OperatorPolicyAuthority::create(
                 project.registration,
                 manifest,
                 *runtimeModel,
                 "operator",
                 test_support::policyArtifactBytes()
             );
-            REQUIRE(planAuthority.has_value());
+            REQUIRE(policyAuthority.has_value());
             return PreparedStore{
                 .store                   = std::move(store),
                 .generation              = projectGeneration,
                 .project                 = project,
                 .manifest                = manifest,
-                .planAuthority           = *std::move(planAuthority),
+                .policyAuthority         = *std::move(policyAuthority),
                 .controller              = *controller,
                 .lease                   = *lease,
                 .snapshot                = *std::move(snapshot),
@@ -1261,13 +1402,13 @@ namespace uf::operator_runtime
         auto deploymentAuthority(
             PreparedStore& prepared,
             ContentHash const& runtimeArtifactRootHash
-        ) -> Result<OperatorPlanAuthority>
+        ) -> Result<OperatorPolicyAuthority>
         {
             auto runtimeModel = prepared.observation.host->runtimeModelBinding(
                 prepared.observation.generation
             );
             REQUIRE(runtimeModel.has_value());
-            return OperatorPlanAuthority::create(
+            return OperatorPolicyAuthority::create(
                 prepared.project.registration,
                 sessionManifest(
                     prepared.project.registration,
@@ -2467,7 +2608,7 @@ namespace uf::operator_runtime
                 ObservedInstanceIdentitySchema{
                     .schemaId   = "https://fixture.example/identity/overlay/v1",
                     .schemaHash = test_support::schemaHash(
-                        test_support::k_projectObservationSchema
+                        test_support::k_projectStateSchema
                     ),
                     .validate   = [](json::Value const&) -> Status
                     {
@@ -2480,7 +2621,7 @@ namespace uf::operator_runtime
         auto const wrongMessage = std::string{wrong.error().message()};
         CHECK(
             wrongMessage.find(
-                test_support::schemaHashHex(test_support::k_projectObservationSchema)
+                test_support::schemaHashHex(test_support::k_projectStateSchema)
             )
             != std::string::npos
         );
@@ -3264,6 +3405,7 @@ namespace uf::operator_runtime
         auto auditRows      = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationDispatchSchema(prior);
             auditRows = prior.readRows(
                 "SELECT operation_id, client_request_id, tool_name, state "
                 "FROM operations WHERE operation_id='" + operationId + "'"
@@ -3284,7 +3426,7 @@ namespace uf::operator_runtime
         auto const targetIdentity = exactSchemaIdentity(target);
         CHECK(
             targetIdentity
-            == "sha256:5c0e9a22691b36600cf861157a8b08385e4ec546a86ad0c29849adc5584014ee"
+            == "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235fa0a077598f8016fb11c02"
         );
         CHECK(
             target.readRows(
@@ -3731,8 +3873,8 @@ namespace uf::operator_runtime
                 .root       = *root,
                 .call       = *call,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
             }
         );
@@ -3791,8 +3933,8 @@ namespace uf::operator_runtime
                 .root       = *secondRoot,
                 .call       = *secondCall,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
             }
         );
@@ -3853,8 +3995,8 @@ namespace uf::operator_runtime
                 .root       = *secondRoot,
                 .call       = *secondCall,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
             }
         );
@@ -4068,8 +4210,8 @@ namespace uf::operator_runtime
                 .root       = *root,
                 .call       = *readOnlyCall,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
             }
         );
@@ -4138,8 +4280,8 @@ namespace uf::operator_runtime
                 .root       = *firstRoot,
                 .call       = *firstCall,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
             }
         );
@@ -4157,8 +4299,8 @@ namespace uf::operator_runtime
                 .root       = *firstRoot,
                 .call       = *firstCall,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
             }
         );
@@ -4203,8 +4345,8 @@ namespace uf::operator_runtime
                 .root       = *secondRoot,
                 .call       = *secondCall,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
             }
         );
@@ -4263,8 +4405,8 @@ namespace uf::operator_runtime
                 .root       = *root,
                 .call       = *call,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
             }
         );
@@ -4279,8 +4421,8 @@ namespace uf::operator_runtime
                 .root       = *root,
                 .call       = *call,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = changedEffects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = changedEffects,
                 },
             }
         );
@@ -4358,8 +4500,8 @@ namespace uf::operator_runtime
                 .root       = *root,
                 .call       = *call,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
             }
         );
@@ -4375,7 +4517,7 @@ namespace uf::operator_runtime
             prepared.controller,
             *root,
             *call,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             effects,
             ToolApprovalRequest{
                 .approverCapability = "approve",
@@ -4405,7 +4547,7 @@ namespace uf::operator_runtime
             unprivilegedApprover,
             *root,
             *call,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             effects,
             ToolApprovalRequest{
                 .approverCapability = "approve",
@@ -4426,7 +4568,7 @@ namespace uf::operator_runtime
             approver,
             *root,
             *call,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             effects,
             ToolApprovalRequest{
                 .approverCapability = "not-an-approver",
@@ -4450,7 +4592,7 @@ namespace uf::operator_runtime
             approver,
             *root,
             *call,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             effects,
             ToolApprovalRequest{
                 .approverCapability = "approve",
@@ -4477,9 +4619,9 @@ namespace uf::operator_runtime
                 .root       = *root,
                 .call       = *call,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
-                    .approvals     = forged,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
+                    .approvals       = forged,
                 },
             }
         );
@@ -4496,9 +4638,9 @@ namespace uf::operator_runtime
                 .root       = *root,
                 .call       = *call,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
-                    .approvals     = approvals,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
+                    .approvals       = approvals,
                 },
             }
         );
@@ -4510,9 +4652,9 @@ namespace uf::operator_runtime
                 .root       = *root,
                 .call       = *call,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
-                    .approvals     = approvals,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
+                    .approvals       = approvals,
                 },
             }
         );
@@ -4552,9 +4694,9 @@ namespace uf::operator_runtime
                 .root       = *secondRoot,
                 .call       = *secondCall,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
-                    .approvals     = approvals,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
+                    .approvals       = approvals,
                 },
             }
         );
@@ -4569,7 +4711,7 @@ namespace uf::operator_runtime
             approver,
             *secondRoot,
             *secondCall,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             effects,
             ToolApprovalRequest{
                 .approverCapability = "approve",
@@ -4591,9 +4733,9 @@ namespace uf::operator_runtime
                 .root       = *secondRoot,
                 .call       = *secondCall,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
-                    .approvals     = leaseBoundApprovals,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
+                    .approvals       = leaseBoundApprovals,
                 },
             }
         );
@@ -4660,6 +4802,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationDispatchSchema(prior);
             oldRows = prior.readRows(
                 "SELECT call_identity, attempt_number, root_identity, "
                 "policy_hash, budget_snapshot_hash FROM tool_admission_attempts"
@@ -4679,7 +4822,7 @@ namespace uf::operator_runtime
         auto target = test_support::OperatorDatabaseProbe{databasePath};
         CHECK(
             exactSchemaIdentity(target)
-            == "sha256:5c0e9a22691b36600cf861157a8b08385e4ec546a86ad0c29849adc5584014ee"
+            == "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235fa0a077598f8016fb11c02"
         );
         CHECK(
             target.readRows(
@@ -4702,7 +4845,7 @@ namespace uf::operator_runtime
             ) == std::vector<std::vector<std::string>>{
                 {
                     sourceIdentity,
-                    "sha256:5c0e9a22691b36600cf861157a8b08385e4ec546a86ad0c29849adc5584014ee",
+                    "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235fa0a077598f8016fb11c02",
                 },
             }
         );
@@ -4762,7 +4905,7 @@ namespace uf::operator_runtime
             approver,
             *root,
             *call,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             effects,
             ToolApprovalRequest{
                 .approverCapability  = "approve",
@@ -4779,9 +4922,9 @@ namespace uf::operator_runtime
                 .root       = *root,
                 .call       = *call,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
-                    .approvals     = approvals,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
+                    .approvals       = approvals,
                 },
             }
         );
@@ -4844,8 +4987,8 @@ namespace uf::operator_runtime
                     .root       = *root,
                     .call       = *call,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .planAuthority = prepared.planAuthority,
-                        .effects       = effects,
+                        .policyAuthority = prepared.policyAuthority,
+                        .effects         = effects,
                     },
                 }
             );
@@ -4857,6 +5000,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior   = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationDispatchSchema(prior);
             positionRows = prior.readRows(
                 "SELECT call_identity, root_identity, call_sequence, "
                 "canonical_args FROM tool_call_positions"
@@ -4969,8 +5113,8 @@ namespace uf::operator_runtime
                     .root       = *root,
                     .call       = *call,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .planAuthority = prepared.planAuthority,
-                        .effects       = effects,
+                        .policyAuthority = prepared.policyAuthority,
+                        .effects         = effects,
                     },
                 }
             );
@@ -4981,6 +5125,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationDispatchSchema(prior);
             authorityRows = prior.readRows(
                 "SELECT call_identity, attempt_number, effect_envelope, "
                 "effect_envelope_hash, required_approvals FROM "
@@ -5073,6 +5218,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationDispatchSchema(prior);
             identityRows = prior.readRows(
                 "SELECT call_identity, root_identity, call_sequence, "
                 "canonical_args FROM tool_call_positions"
@@ -5102,7 +5248,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:5c0e9a22691b36600cf861157a8b08385e4ec546a86ad0c29849adc5584014ee"
+                == "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235fa0a077598f8016fb11c02"
             );
             CHECK(
                 target.readRows(
@@ -5131,8 +5277,8 @@ namespace uf::operator_runtime
                 ) == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:5c0e9a22691b36600cf861157a8b08385e4ec546a86ad0c29849"
-                        "adc5584014ee",
+                        "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235f"
+                        "a0a077598f8016fb11c02",
                     },
                 }
             );
@@ -5150,6 +5296,98 @@ namespace uf::operator_runtime
         CHECK(replay->state == ToolCallState::Proposed);
     }
 
+    // The pair that deleted the Operation dispatch spine. Its five tables had
+    // no writer left once step minting was gone, so the migration drops them
+    // and rebuilds ledger_events without the delivery_outcome_recorded arm the
+    // dropped writers were the only producers of. Every other row survives.
+    TEST_CASE("the Operation dispatch tables are dropped under their exact pair")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        auto operationId        = std::string{};
+        {
+            auto prepared = prepareStore(temporary.path());
+            operationId   = proposedOperation(
+                                prepared,
+                                "dispatch-removal-request",
+                                prepared.project.toolName("command-1")
+            )
+                                .operationId;
+        }
+
+        auto sourceIdentity = std::string{};
+        auto auditRows      = std::vector<std::vector<std::string>>{};
+        auto eventRows      = std::vector<std::vector<std::string>>{};
+        {
+            auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationDispatchSchema(prior);
+            auditRows = prior.readRows(
+                "SELECT operation_id, client_request_id, tool_name, state "
+                "FROM operations WHERE operation_id='" + operationId + "'"
+            );
+            eventRows = prior.readRows(
+                "SELECT kind, subject_id FROM ledger_events ORDER BY sequence"
+            );
+            sourceIdentity = exactSchemaIdentity(prior);
+        }
+        REQUIRE_FALSE(auditRows.empty());
+        REQUIRE_FALSE(eventRows.empty());
+        CHECK_MESSAGE(
+            sourceIdentity
+                == "sha256:5c0e9a22691b36600cf861157a8b08385e4ec546a86ad0c29849adc5584014ee",
+            "the fixture must reproduce the exact identity this pair migrates from"
+        );
+
+        {
+            auto migrated = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(migrated.has_value(), migrated.error().message());
+        }
+        {
+            auto target = test_support::OperatorDatabaseProbe{databasePath};
+            CHECK(
+                exactSchemaIdentity(target)
+                == "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235fa0a077598f8016fb11c02"
+            );
+
+            // The five tables are gone rather than emptied.
+            CHECK(
+                target.readRows(
+                    "SELECT name FROM sqlite_schema WHERE type='table' AND "
+                    "name IN ('operation_plans', 'authority_decisions', "
+                    "'dispatches', 'operation_steps', 'approvals')"
+                )
+                    .empty()
+            );
+
+            // Everything the dropped tables did not own survives.
+            CHECK(
+                target.readRows(
+                    "SELECT operation_id, client_request_id, tool_name, state "
+                    "FROM operations WHERE operation_id='" + operationId + "'"
+                ) == auditRows
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT kind, subject_id FROM ledger_events ORDER BY sequence"
+                ) == eventRows
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT source_identity, target_identity FROM "
+                    "schema_identity_transitions WHERE source_identity='"
+                    + sourceIdentity + "'"
+                )
+                == std::vector<std::vector<std::string>>{
+                    {
+                        sourceIdentity,
+                        "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235f"
+                        "a0a077598f8016fb11c02",
+                    },
+                }
+            );
+        }
+    }
     TEST_CASE("the immediate-prior Tool runtime schema migrates identity rows exactly")
     {
         auto temporary          = TemporaryDirectory{};
@@ -5195,6 +5433,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationDispatchSchema(prior);
             identityRows = prior.readRows(
                 "SELECT call_identity, root_identity, canonical_args "
                 "FROM tool_call_positions"
@@ -5215,7 +5454,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:5c0e9a22691b36600cf861157a8b08385e4ec546a86ad0c29849adc5584014ee"
+                == "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235fa0a077598f8016fb11c02"
             );
             CHECK(
                 target.readRows(
@@ -5235,7 +5474,7 @@ namespace uf::operator_runtime
                 == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:5c0e9a22691b36600cf861157a8b08385e4ec546a86ad0c29849adc5584014ee",
+                        "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235fa0a077598f8016fb11c02",
                     },
                 }
             );
@@ -5261,6 +5500,7 @@ namespace uf::operator_runtime
         auto historicalRows = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationDispatchSchema(prior);
             restoreFormat2RegistrationIdentity(prior);
             sourceIdentity = exactSchemaIdentity(prior);
             historicalRows = prior.readRows(
@@ -5363,6 +5603,7 @@ namespace uf::operator_runtime
         auto replayBefore   = std::vector<std::vector<std::string>>{};
         {
             auto source = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationDispatchSchema(source);
             restoreFormat2RegistrationIdentity(source);
             removeReleaseUpgradeEvidenceTables(source);
             restorePriorRegistrationStateSchemaHash(source);
@@ -5438,6 +5679,7 @@ namespace uf::operator_runtime
         auto sessionRows    = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationDispatchSchema(prior);
             restoreFormat2RegistrationIdentity(prior);
             removeSessionWorldScopeColumns(prior);
             removeObservedInstanceBindingLocalRefColumn(prior);
@@ -5541,6 +5783,7 @@ namespace uf::operator_runtime
         auto bindingRows    = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationDispatchSchema(prior);
             restoreFormat2RegistrationIdentity(prior);
             removeObservedInstanceBindingLocalRefColumn(prior);
             sourceIdentity = exactSchemaIdentity(prior);
@@ -5627,6 +5870,7 @@ namespace uf::operator_runtime
         auto registrationRows = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationDispatchSchema(prior);
             restoreFormat2RegistrationIdentity(prior);
             restorePriorRegistrationStateSchemaHash(prior);
             removeSessionWorldScopeColumns(prior);
@@ -5688,6 +5932,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationDispatchSchema(prior);
             restoreFormat2RegistrationIdentity(prior);
             removeReleaseUpgradeEvidenceTables(prior);
             restorePriorSnapshotIdentityComment(prior);
@@ -5787,6 +6032,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto priorSchema = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationDispatchSchema(priorSchema);
             restoreFormat2RegistrationIdentity(priorSchema);
             priorSchema.execute("DROP TABLE availability_heads");
             priorSchema.execute("DROP TABLE session_policies");
@@ -6834,7 +7080,7 @@ namespace uf::operator_runtime
         auto const takeover = prepared.store.takeoverLease(prepared.controller, "human takeover");
         REQUIRE(takeover.has_value());
         CHECK(takeover->lease.fencingToken > prepared.lease.fencingToken);
-        CHECK(takeover->resolvedDispatches == 0U);
+
         CHECK_FALSE(prepared.store.createSnapshot(
             prepared.lease,
             prepared.project.registration,

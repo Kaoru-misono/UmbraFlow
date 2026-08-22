@@ -14,7 +14,6 @@
 #include <operator/manifest.hpp>
 #include <operator/project-generation.hpp>
 #include <operator/project-plugin.hpp>
-#include <operator/reconcile-outcome.hpp>
 #include <operator/runtime-installation.hpp>
 #include <operator/tool-invocation.hpp>
 
@@ -190,7 +189,6 @@ namespace uf::operator_runtime::test_support
         ProjectSchemaOwner            schemaOwner;
         ProjectJournalSchemaOwner     journalSchemaOwner;
         ProjectToolCatalogSchemaOwner toolCatalogSchemaOwner;
-        ProjectReconcileSchemaOwner   reconcileSchemaOwner;
 
         // The observed-instance identity authority every snapshot of this
         // project is composed under. It is built once with the fixture because
@@ -203,10 +201,10 @@ namespace uf::operator_runtime::test_support
         // because such an owner is bound to their hash.
         std::string toolCatalogBytes;
 
-        // The exact bytes the document validator last saw as a Reduce or Derive
-        // input. The synchronized log is shared with the retained validator
-        // because the property under test is that the Operator decides those
-        // bytes and no caller can.
+        // The exact bytes the document validator last saw as a reduce input.
+        // The synchronized log is shared with the retained validator because
+        // the property under test is that the Operator decides those bytes and
+        // no caller can.
         std::shared_ptr<deployment::ProjectDocumentInputLog> documentInputLog;
 
         // One of this project's catalog names, from the local half a case
@@ -462,9 +460,9 @@ namespace uf::operator_runtime::test_support
         return source;
     }
 
-    // `observationSchema` and `preconditionSchema` default to the exemplar's;
-    // a case that pins a laxer one -- e.g. a project whose tool arguments admit
-    // the observed_instance_id the submitCommand gate resolves -- states it
+    // `preconditionSchema` defaults to the exemplar's; a case that pins a
+    // laxer one -- e.g. a project whose tool arguments admit the
+    // observed_instance_id the submitCommand gate resolves -- states it
     // explicitly. Every hash and every validator must see the same bytes.
     //
     // `reducerBytes` is the caller's, because what the fold answers is what a
@@ -474,14 +472,12 @@ namespace uf::operator_runtime::test_support
     inline auto makeProject(
         std::string pluginId,
         std::string_view reducerBytes,
-        std::string_view observationSchema = k_projectObservationSchema,
         std::string_view preconditionSchema = k_toolPreconditionSchema,
         std::optional<ContentHash> environmentOverride = std::nullopt
     ) -> ProjectFixture
     {
-        auto const bundle = DeploymentBundle{pluginId};
-        auto sources               = bundle.sources();
-        sources.projectObservation = observationSchema;
+        auto const bundle   = DeploymentBundle{pluginId};
+        auto sources        = bundle.sources();
         auto const deployed = deployment::ProjectDeployment::create(sources);
         {
             auto const why = deployed.has_value()
@@ -503,9 +499,7 @@ namespace uf::operator_runtime::test_support
         }
         auto const toolCatalogHash        = hashOf(bundle.toolCatalog());
         auto const stateSchemaHash        = hashOf(k_projectStateSchema);
-        auto const observationSchemaHash  = hashOf(observationSchema);
         auto const preconditionSchemaHash = hashOf(preconditionSchema);
-        auto const reconcileSchemaHash    = hashOf(bundle.reconcileManifest());
         auto const journalSchemaHash      = hashOf(bundle.journalEventManifest());
         auto const bindings               = fixtureToolBindings(pluginId);
         auto const toolEntryPoints        = fixtureToolEntryPoints();
@@ -518,13 +512,11 @@ namespace uf::operator_runtime::test_support
             "\"observed_instance_identity_schema_hashes\":[\"{}\"],"
             "\"plugin_environment_hash\":\"{}\","
             "\"plugin_id\":\"{}\","
-            "\"project_observation_schema_hash\":\"{}\","
             "\"project_registration_format\":{},"
             "\"project_resources\":[],"
             "\"project_state_schema_hash\":\"{}\","
             "\"project_tool_bindings\":{},"
             "\"project_tool_precondition_schema_hash\":\"{}\","
-            "\"reconcile_payload_schema_manifest_hash\":\"{}\","
             "\"reducer_closure\":{},"
             "\"tool_catalog_hash\":\"{}\","
             "\"tool_closure\":{}}}",
@@ -532,12 +524,10 @@ namespace uf::operator_runtime::test_support
             hashOf(k_observedIdentitySchema).hex(),
             environmentHash->hex(),
             pluginId,
-            observationSchemaHash.hex(),
             k_projectGenerationFormat,
             stateSchemaHash.hex(),
             toolBindingsJcs(bindings),
             preconditionSchemaHash.hex(),
-            reconcileSchemaHash.hex(),
             closureJcs(reducerManifestHash, reducerEntryPoints),
             toolCatalogHash.hex(),
             closureJcs(toolManifestHash, toolEntryPoints)
@@ -556,9 +546,7 @@ namespace uf::operator_runtime::test_support
             .pluginEnvironmentHash                = *environmentHash,
             .toolCatalogHash                      = toolCatalogHash,
             .projectStateSchemaHash               = stateSchemaHash,
-            .projectObservationSchemaHash         = observationSchemaHash,
             .projectToolPreconditionSchemaHash    = preconditionSchemaHash,
-            .reconcilePayloadSchemaManifestHash   = reconcileSchemaHash,
             .journalEventSchemaManifestHash       = journalSchemaHash,
             .baselineEventType                    = "fixture.baseline",
             .projectResources                     = {},
@@ -598,9 +586,8 @@ namespace uf::operator_runtime::test_support
         auto schemaOwner = ProjectSchemaOwner::create(
             *registration,
             ProjectDocumentSchemaBytes{
-                .projectState       = k_projectStateSchema,
-                .projectObservation = observationSchema,
-                .toolPrecondition   = preconditionSchema,
+                .projectState     = k_projectStateSchema,
+                .toolPrecondition = preconditionSchema,
             },
             deployment::canonicalJsonValidator(),
             // The deployment's own document validator, with the two envelopes
@@ -610,16 +597,15 @@ namespace uf::operator_runtime::test_support
                 validate = deployed->documentValidator(),
                 documentInputLog
             ](
-                ProjectPluginFunction function,
                 ProjectDocumentDirection direction,
                 std::string_view candidateJcs
             ) -> Status
             {
                 if (direction == ProjectDocumentDirection::Input)
                 {
-                    documentInputLog->record(function, candidateJcs);
+                    documentInputLog->record(candidateJcs);
                 }
-                return validate(function, direction, candidateJcs);
+                return validate(direction, candidateJcs);
             }
         );
         REQUIRE(schemaOwner.has_value());
@@ -639,20 +625,12 @@ namespace uf::operator_runtime::test_support
         );
         REQUIRE(toolCatalogSchemaOwner.has_value());
 
-        auto reconcileSchemaOwner = ProjectReconcileSchemaOwner::create(
-            *registration,
-            bundle.reconcileManifest(),
-            deployed->reconcileDispositionReader()
-        );
-        REQUIRE(reconcileSchemaOwner.has_value());
-
         return ProjectFixture{
             .generation             = *registration,
             .registration           = *registration,
             .schemaOwner            = *schemaOwner,
             .journalSchemaOwner     = *journalSchemaOwner,
             .toolCatalogSchemaOwner = *toolCatalogSchemaOwner,
-            .reconcileSchemaOwner   = *reconcileSchemaOwner,
             .observedInstanceIdentitySchemas = observedInstanceIdentitySchemas(
                 *registration
             ),
@@ -1228,7 +1206,7 @@ identity = ["fixture.panel.anchor"]
         ProjectGenerationHandle generation;
         ProjectFixture          project;
         SessionManifest         manifest;
-        OperatorPlanAuthority   planAuthority;
+        OperatorPolicyAuthority policyAuthority;
 
         // The authenticated controller every entry point is reached through.
         // bindController is its only mint, so a case cannot assert its own
@@ -1478,20 +1456,20 @@ identity = ["fixture.panel.anchor"]
             observation.generation
         );
         REQUIRE(runtimeModel.has_value());
-        auto planAuthority = OperatorPlanAuthority::create(
+        auto policyAuthority = OperatorPolicyAuthority::create(
             project.registration,
             manifest,
             *runtimeModel,
             "operator",
             policyArtifactBytes()
         );
-        REQUIRE(planAuthority.has_value());
+        REQUIRE(policyAuthority.has_value());
         return PreparedStore{
             .store                   = std::move(store),
             .generation              = generation,
             .project                 = project,
             .manifest                = manifest,
-            .planAuthority           = *std::move(planAuthority),
+            .policyAuthority         = *std::move(policyAuthority),
             .controller              = *controller,
             .lease                   = *lease,
             .snapshot                = *std::move(snapshot),

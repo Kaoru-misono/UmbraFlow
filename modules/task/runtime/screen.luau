@@ -1,6 +1,6 @@
 --!strict
--- Ergonomic wrappers over the Framework observation and capture Tools, plus the
--- lifetime and result helpers a snapshot handle needs.
+-- Ergonomic wrappers over the Framework observation Tool, plus the lifetime and
+-- result helpers a snapshot handle needs.
 --
 -- Every call here goes through `@umbraflow/tools`, which is the SDK's one
 -- spelling of a Tool call. The private capability table this module is also
@@ -8,8 +8,8 @@
 -- the native primitive would be a second place where argument shaping, catalog
 -- checking and answer validation could drift.
 --
--- Two ergonomics here earn their place and neither is cosmetic. First, the two
--- observation Tools take exactly the empty JSON OBJECT, and a Luau `{}` decodes
+-- Two ergonomics here earn their place and neither is cosmetic. First, the
+-- observation Tool takes exactly the empty JSON OBJECT, and a Luau `{}` decodes
 -- as an empty ARRAY at the value boundary -- so every script that spelled the
 -- arguments itself would spell them wrong. `canon.emptyObject` is the one value
 -- that crosses as `{}`, and it is written here once. Second, the observation
@@ -31,7 +31,6 @@ local resultModule = require("@umbraflow/result")
 local screen = {}
 
 local k_observeTool = "framework.screen.observe"
-local k_captureTool = "framework.screen.capture"
 local k_referenceMember = "observation_reference"
 local k_targetsMember = "local_semantic_targets"
 local k_actionsMember = "authorized_ui_actions"
@@ -87,11 +86,6 @@ end
 -- performs no external-world effect, so it needs no plan authority.
 function screen.observe(): any
     return tools.call(k_observeTool, emptyObject)
-end
-
--- Capture the frame's pixels, on the same terms.
-function screen.capture(): any
-    return tools.call(k_captureTool, emptyObject)
 end
 
 -- The handle a completed observation carries, as a `@umbraflow/result`

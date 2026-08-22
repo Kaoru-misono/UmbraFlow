@@ -1212,7 +1212,7 @@ namespace uf::operator_runtime
         // "Delete-on-open has a deadline" section owns
         // the exact-pair migration policy.
         constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
-            "sha256:5c0e9a22691b36600cf861157a8b08385e4ec546a86ad0c29849adc5584014ee"
+            "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235fa0a077598f8016fb11c02"
         };
 
         // A transition row records the applied exact pair; neither the row nor
@@ -1238,9 +1238,7 @@ namespace uf::operator_runtime
             "(kind='operation_state_changed' AND detail IN ("
             "'proposed', 'awaiting_approval', 'ready', 'needs_revalidation', "
             "'running', 'reconciling', 'confirmed', 'rejected', 'ambiguous', "
-            "'invalid', 'denied', 'cancelled', 'expired', 'diverged')) OR "
-            "(kind='delivery_outcome_recorded' AND detail IN ("
-            "'not_delivered', 'delivered', 'transport_unknown')))"
+            "'invalid', 'denied', 'cancelled', 'expired', 'diverged')))"
             ") STRICT"
         };
 
@@ -1632,9 +1630,9 @@ namespace uf::operator_runtime
         // bundle also stores them. local_ref is the model target the instance
         // was observed at -- the name the proposal's local_ref carried at mint
         // -- and the migration that adds the column backfills rows minted
-        // before it with the empty sentinel, which reserveDispatch refuses, so
-        // a migrated binding can never be resolved to a target it was never
-        // observed at.
+        // before it with the empty sentinel, which a Tool-call input delivery
+        // refuses, so a migrated binding can never be resolved to a target it
+        // was never observed at.
         constexpr auto k_observedInstanceBindingsDdl = std::string_view{
             R"sql(
                     -- The bidirectional Operator-private mint binding. It is
@@ -2178,8 +2176,9 @@ namespace uf::operator_runtime
         // in place: the table is rebuilt from its exact final DDL, triggers
         // included. Bindings minted before the column existed were never
         // observed under a recorded target, so their rows are backfilled with
-        // the empty sentinel, which reserveDispatch refuses -- a migrated
-        // binding can never be resolved to a target it never claimed, the same
+        // the empty sentinel, which a Tool-call input delivery refuses -- a
+        // migrated binding can never be resolved to a target it never claimed,
+        // the same
         // fail-closed ruling the world-scope sentinel follows. Every other
         // byte of every row survives.
         [[nodiscard]]
@@ -2226,6 +2225,44 @@ namespace uf::operator_runtime
             return execute(database, "DROP TABLE prior_observed_instance_bindings");
         }
 
+        // The generation in which the Operation dispatch spine was deleted.
+        // reserveDispatch, recordDeliveryOutcome and issueApproval were the
+        // only writers of these five tables and step minting -- their only
+        // source of rows -- was already gone, so every one of them is dropped
+        // rather than carried: a table nothing can write and nothing reads is
+        // storage with nothing keeping it true.
+        //
+        // ledger_events is rebuilt because its CHECK enumerated a
+        // delivery_outcome_recorded kind that now has no producer. The rows of
+        // that kind are DELETED rather than carried, which is the one place a
+        // registered migration here discards audit: they report the outcome of
+        // a dispatch whose whole subsystem is gone, and the new CHECK cannot
+        // admit them.
+        [[nodiscard]]
+        auto dropOperationDispatchTables(sqlite3* database) -> Status
+        {
+            UF_TRY(execute(database, "PRAGMA defer_foreign_keys=ON"));
+            UF_TRY(execute(database, "DROP TABLE IF EXISTS approvals"));
+            UF_TRY(execute(database, "DROP TABLE IF EXISTS operation_steps"));
+            UF_TRY(execute(database, "DROP TABLE IF EXISTS dispatches"));
+            UF_TRY(execute(database, "DROP TABLE IF EXISTS authority_decisions"));
+            UF_TRY(execute(database, "DROP TABLE IF EXISTS operation_plans"));
+            UF_TRY(execute(
+                database,
+                "ALTER TABLE ledger_events RENAME TO prior_ledger_events"
+            ));
+            UF_TRY(execute(database, k_ledgerEventsDdl));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO ledger_events(sequence, session_epoch, "
+                "controlled_target_id, kind, subject_id, detail) "
+                "SELECT sequence, session_epoch, controlled_target_id, kind, "
+                "subject_id, detail FROM prior_ledger_events "
+                "WHERE kind<>'delivery_outcome_recorded'"
+            ));
+            return execute(database, "DROP TABLE prior_ledger_events");
+        }
+
         [[nodiscard]]
         auto migrateSessionWorldScope(
             sqlite3* database,
@@ -2237,6 +2274,7 @@ namespace uf::operator_runtime
             UF_TRY(addObservedInstanceBindingLocalRef(database));
             UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
             UF_TRY(addToolIdentityPersistence(database));
+            UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2276,6 +2314,7 @@ namespace uf::operator_runtime
             UF_TRY(addObservedInstanceBindingLocalRef(database));
             UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
             UF_TRY(addToolIdentityPersistence(database));
+            UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
 
             // No migration commits under an identity other than the exact
@@ -2299,6 +2338,7 @@ namespace uf::operator_runtime
             UF_TRY(addObservedInstanceBindingLocalRef(database));
             UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
             UF_TRY(addToolIdentityPersistence(database));
+            UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2317,6 +2357,7 @@ namespace uf::operator_runtime
             UF_TRY(addObservedInstanceBindingLocalRef(database));
             UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
             UF_TRY(addToolIdentityPersistence(database));
+            UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2334,6 +2375,7 @@ namespace uf::operator_runtime
             UF_TRY(addObservedInstanceBindingLocalRef(database));
             UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
             UF_TRY(addToolIdentityPersistence(database));
+            UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2349,6 +2391,7 @@ namespace uf::operator_runtime
             UF_TRY(addObservedInstanceBindingLocalRef(database));
             UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
             UF_TRY(addToolIdentityPersistence(database));
+            UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2363,6 +2406,7 @@ namespace uf::operator_runtime
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
             UF_TRY(addToolIdentityPersistence(database));
+            UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2376,6 +2420,7 @@ namespace uf::operator_runtime
         {
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(addToolIdentityPersistence(database));
+            UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2390,6 +2435,7 @@ namespace uf::operator_runtime
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(rebuildToolCallPositions(database, "NULL"));
             UF_TRY(addToolRuntimePersistence(database));
+            UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2428,6 +2474,7 @@ namespace uf::operator_runtime
             ));
             UF_TRY(execute(database, "DROP TABLE prior_tool_admission_attempts"));
             UF_TRY(execute(database, k_toolApprovalsDdl));
+            UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2495,6 +2542,7 @@ namespace uf::operator_runtime
             ));
             UF_TRY(execute(database, "DROP TABLE prior_tool_admission_attempts"));
             UF_TRY(execute(database, k_toolApprovalsDdl));
+            UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2509,6 +2557,7 @@ namespace uf::operator_runtime
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(addNestedToolCallSchema(database));
             UF_TRY(addToolAdmissionDelegationColumn(database));
+            UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2532,6 +2581,24 @@ namespace uf::operator_runtime
                 database,
                 "observation_reference_hash"
             ));
+            UF_TRY(dropOperationDispatchTables(database));
+            UF_TRY(recordSchemaIdentityTransition(database, migration));
+            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
+            return transaction.commit();
+        }
+
+        // The generation that deleted the Operation dispatch spine, and the one
+        // whose source identity is the schema the immediately prior generation
+        // created. It carries no step of its own beyond the drop, because
+        // nothing else about the schema moved with it.
+        [[nodiscard]]
+        auto migrateOperationDispatchRemoval(
+            sqlite3* database,
+            SchemaMigration const& migration
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2543,6 +2610,12 @@ namespace uf::operator_runtime
         // a guard nothing can reach is the mirror of a guard production does
         // not reach.
         constexpr auto k_schemaMigrations = std::array{
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:5c0e9a22691b36600cf861157a8b08385e4ec546a86ad0c29849adc5584014ee",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = migrateOperationDispatchRemoval,
+            },
             SchemaMigration{
                 .sourceIdentity =
                     "sha256:6caa3b9a5f712571a59242bb9a7c34277e6f9e7624fcf1102f74846f46f7631c",
@@ -2733,27 +2806,6 @@ namespace uf::operator_runtime
         auto requireQuiescentSessionPin(sqlite3* database) -> Status
         {
             UF_TRY_VALUE(
-                dispatchQuery,
-                prepare(
-                    database,
-                    "SELECT operation_id FROM dispatches "
-                    "WHERE delivery_outcome IS NULL "
-                    "ORDER BY operation_id, dispatch_sequence LIMIT 1"
-                )
-            );
-            if (sqlite3_step(dispatchQuery.get()) == SQLITE_ROW)
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    std::format(
-                        "Session pin refused while Operation {} has a "
-                        "dispatch in flight",
-                        columnText(dispatchQuery.get(), 0)
-                    )
-                );
-            }
-
-            UF_TRY_VALUE(
                 mutationQuery,
                 prepare(
                     database,
@@ -2761,8 +2813,6 @@ namespace uf::operator_runtime
                     "WHERE operation.mutating=1 AND operation.state IN ("
                     "'proposed', 'awaiting_approval', 'ready', "
                     "'needs_revalidation', 'running', 'reconciling', 'ambiguous') "
-                    "AND NOT EXISTS(SELECT 1 FROM dispatches dispatch "
-                    "WHERE dispatch.operation_id=operation.operation_id) "
                     "ORDER BY operation.operation_id LIMIT 1"
                 )
             );
@@ -3492,8 +3542,8 @@ namespace uf::operator_runtime
                     "Project observation proposal carries the wrong schema tag"
                 );
             }
-            // The empty name is forbidden, not merely odd: reserveDispatch
-            // resolves a step's ui_target_id to the binding's local_ref and the
+            // The empty name is forbidden, not merely odd: a Tool call
+            // resolves its observation to the binding's local_ref and the
             // deliver check compares it with the receipt's own target, while
             // the migration sentinel for pre-local_ref bindings is exactly the
             // empty name -- a binding that names nothing could be mistaken for
@@ -4176,139 +4226,6 @@ namespace uf::operator_runtime
                 // halves concatenate to the same bytes wherever it sits.
                 R"sql(
 
-                    -- operation_id is the primary key, so a plan freezes once
-                    -- and a second freeze is a constraint violation rather than
-                    -- a policy check. There is no update path and none may be
-                    -- added. required_approvals is the JCS array of approver
-                    -- capabilities the pinned PolicyArtifact ruled must sign
-                    -- this plan, and policy_hash names the artifact that ruled
-                    -- them; issueApproval reads both, so neither is a column
-                    -- nothing keeps true.
-                    CREATE TABLE IF NOT EXISTS operation_plans(
-                        operation_id TEXT PRIMARY KEY
-                            REFERENCES operations(operation_id),
-                        plan_hash TEXT NOT NULL,
-                        command_fingerprint TEXT NOT NULL,
-                        decision_basis_hash TEXT NOT NULL,
-                        effect_envelope_hash TEXT NOT NULL,
-                        project_registration_hash TEXT NOT NULL
-                            REFERENCES project_registrations(registration_hash),
-                        risk TEXT NOT NULL CHECK(risk IN (
-                            'read_only', 'low', 'medium', 'high', 'critical'
-                        )),
-                        policy_hash TEXT NOT NULL,
-                        required_approvals TEXT NOT NULL,
-                        maximum_steps INTEGER NOT NULL CHECK(maximum_steps > 0),
-                        maximum_dispatches INTEGER NOT NULL
-                            CHECK(maximum_dispatches > 0),
-                        maximum_observations INTEGER NOT NULL
-                            CHECK(maximum_observations > 0),
-                        maximum_waits INTEGER NOT NULL CHECK(maximum_waits >= 0),
-                        maximum_elapsed_ms INTEGER NOT NULL
-                            CHECK(maximum_elapsed_ms > 0),
-                        canonical_plan TEXT NOT NULL
-                    ) STRICT;
-
-                    CREATE TABLE IF NOT EXISTS authority_decisions(
-                        authority_decision_id TEXT PRIMARY KEY,
-                        operation_id TEXT NOT NULL REFERENCES operations(operation_id),
-                        dispatch_sequence INTEGER NOT NULL CHECK(dispatch_sequence > 0),
-                        session_id TEXT NOT NULL REFERENCES sessions(session_id),
-                        controller_id TEXT NOT NULL,
-                        lease_id TEXT NOT NULL,
-                        session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),
-                        fencing_token INTEGER NOT NULL CHECK(fencing_token > 0),
-                        decision_basis_hash TEXT NOT NULL,
-                        frozen_plan_hash TEXT NOT NULL,
-                        step_intent_hash TEXT NOT NULL,
-                        approval_token TEXT,
-                        UNIQUE(operation_id, dispatch_sequence)
-                    ) STRICT;
-
-                    -- The outcome vocabulary is a database fact rather than a
-                    -- C++ string comparison, because commitReconciliation's
-                    -- proof of absence is spelled delivery_outcome
-                    -- <>'not_delivered' and a fourth spelling would silently
-                    -- read as "an effect may have happened". delivery_reason is
-                    -- required for exactly the two values that are not
-                    -- delivered, which is the schema's own DeliveryOutcome rule
-                    -- and closes the gap where the Host's reason for refusing to
-                    -- act was discarded.
-                    CREATE TABLE IF NOT EXISTS dispatches(
-                        operation_id TEXT NOT NULL REFERENCES operations(operation_id),
-                        dispatch_sequence INTEGER NOT NULL CHECK(dispatch_sequence > 0),
-                        decision_basis_hash TEXT NOT NULL,
-                        frozen_plan_hash TEXT NOT NULL,
-                        authority_decision_id TEXT NOT NULL
-                            REFERENCES authority_decisions(authority_decision_id),
-                        delivery_outcome TEXT
-                            CHECK(delivery_outcome IN (
-                                'not_delivered', 'delivered', 'transport_unknown'
-                            )),
-                        delivery_reason TEXT,
-                        CHECK(
-                            (delivery_outcome IS NULL AND delivery_reason IS NULL)
-                            OR (delivery_outcome = 'delivered'
-                                AND delivery_reason IS NULL)
-                            OR (delivery_outcome IN ('not_delivered',
-                                                     'transport_unknown')
-                                AND delivery_reason IS NOT NULL)
-                        ),
-                        PRIMARY KEY(operation_id, dispatch_sequence)
-                    ) STRICT;
-
-                    -- step_index is dense and monotone because it comes from
-                    -- MAX(step_index) + 1 read inside the inserting
-                    -- transaction, so there is no gap to slip a step into.
-                    -- dispatch_sequence is NULL until reserveDispatch links the
-                    -- step to its dispatch, and "at most one UI-action step
-                    -- awaiting dispatch" is deliberately enforced only by
-                    -- mintNextStep: a partial unique index beside that check
-                    -- would keep its test green after the check was deleted.
-                    CREATE TABLE IF NOT EXISTS operation_steps(
-                        operation_id TEXT NOT NULL
-                            REFERENCES operation_plans(operation_id),
-                        step_index INTEGER NOT NULL CHECK(step_index > 0),
-                        step_kind TEXT NOT NULL
-                            CHECK(step_kind IN ('ui_action', 'wait')),
-                        step_key TEXT NOT NULL,
-                        step_intent_hash TEXT NOT NULL,
-                        canonical_step TEXT NOT NULL,
-                        dispatch_sequence INTEGER,
-                        PRIMARY KEY(operation_id, step_index),
-                        FOREIGN KEY(operation_id, dispatch_sequence)
-                            REFERENCES dispatches(operation_id, dispatch_sequence)
-                    ) STRICT;
-
-                    CREATE TABLE IF NOT EXISTS approvals(
-                        token TEXT PRIMARY KEY,
-                        operation_id TEXT NOT NULL REFERENCES operations(operation_id),
-                        session_id TEXT NOT NULL REFERENCES sessions(session_id),
-                        controller_id TEXT NOT NULL,
-                        controlled_target_id TEXT NOT NULL,
-                        lease_id TEXT NOT NULL,
-                        session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),
-                        fencing_token INTEGER NOT NULL CHECK(fencing_token > 0),
-                        command_fingerprint TEXT NOT NULL,
-                        frozen_plan_hash TEXT NOT NULL,
-                        step_intent_hash TEXT NOT NULL,
-                        decision_basis_hash TEXT NOT NULL,
-                        effect_envelope_hash TEXT NOT NULL,
-                        policy_hash TEXT NOT NULL,
-                        approver_principal TEXT NOT NULL,
-                        -- The capability the approver presented, matched
-                        -- against the plan's own required_approvals. A hash of
-                        -- an unnamed profile could not be matched against
-                        -- anything, so an approval was recorded rather than
-                        -- ruled.
-                        approver_capability TEXT NOT NULL,
-                        authority_decision_id TEXT NOT NULL,
-                        expires_at_unix_millis INTEGER NOT NULL CHECK(expires_at_unix_millis > 0),
-                        consumed INTEGER NOT NULL DEFAULT 0 CHECK(consumed IN (0, 1)),
-                        consumed_by_dispatch INTEGER,
-                        UNIQUE(authority_decision_id)
-                    ) STRICT;
-
                     -- This row IS JR:`JournalEvent`, member for member, so its
                     -- columns carry that record's member names and no storage
                     -- vocabulary of their own. opaque_project_payload holds the
@@ -4550,9 +4467,6 @@ namespace uf::operator_runtime
             UF_UNREACHABLE_MSG("Unknown DeliveryOutcome value");
         }
 
-        constexpr auto k_restartRecoveryReason = std::string_view{
-            "operator restart found this dispatch unanswered"
-        };
 
         [[nodiscard]]
         auto appendLedgerEvent(
@@ -4563,138 +4477,6 @@ namespace uf::operator_runtime
             std::string_view subjectId,
             std::optional<std::string_view> detail = std::nullopt
         ) -> Status;
-
-        // Drives every dispatch nobody has answered for to transport_unknown and
-        // its Operation to reconciling, one checked-increment CAS per row. An
-        // empty controlledTargetId means every target, which is what a restart
-        // sweeps; a takeover names the one target it seized. Never
-        // not_delivered: a dispatch the Host may already have posted is exactly
-        // what the third value exists for.
-        //
-        // It runs inside the caller's transaction rather than opening one, so a
-        // takeover's fence bump and the resolution it forces commit together or
-        // not at all.
-        [[nodiscard]]
-        auto resolveUnansweredDispatches(
-            sqlite3* database,
-            std::string_view controlledTargetId,
-            std::string_view reason
-        ) -> Result<uint64>
-        {
-            auto scan = std::string{
-                "SELECT o.operation_id, o.revision, d.dispatch_sequence, "
-                "session.session_epoch, o.controlled_target_id "
-                "FROM operations o JOIN dispatches d ON d.operation_id=o.operation_id "
-                "JOIN sessions session ON session.session_id=o.session_id "
-                "JOIN project_registrations registration ON "
-                "registration.registration_hash=session.project_registration_hash "
-                "WHERE registration.registration_format=3 "
-                "AND registration.plugin_identity_kind='module_manifest' "
-                "AND o.state='running' AND d.delivery_outcome IS NULL"
-            };
-            if (!controlledTargetId.empty())
-            {
-                scan += " AND o.controlled_target_id=?1";
-            }
-            UF_TRY_VALUE(query, prepare(database, scan));
-            if (!controlledTargetId.empty())
-            {
-                UF_TRY(bindText(database, query.get(), 1, controlledTargetId));
-            }
-
-            auto pending = std::vector<
-                std::tuple<std::string, uint64, uint64, uint64, std::string>
-            >{};
-            auto queryStep = sqlite3_step(query.get());
-            while (queryStep == SQLITE_ROW)
-            {
-                pending.emplace_back(
-                    columnText(query.get(), 0),
-                    static_cast<uint64>(sqlite3_column_int64(query.get(), 1)),
-                    static_cast<uint64>(sqlite3_column_int64(query.get(), 2)),
-                    static_cast<uint64>(sqlite3_column_int64(query.get(), 3)),
-                    columnText(query.get(), 4)
-                );
-                queryStep = sqlite3_step(query.get());
-            }
-            if (queryStep != SQLITE_DONE)
-            {
-                return databaseFailure(database, "could not scan pending dispatches");
-            }
-
-            for (
-                auto const& [
-                    operationId,
-                    revision,
-                    dispatchSequence,
-                    sessionEpoch,
-                    targetId
-                ] : pending
-            )
-            {
-                UF_TRY_VALUE(
-                    nextRevision,
-                    checkedSqlIncrement(revision, "Operation revision")
-                );
-                UF_TRY_VALUE(
-                    dispatchUpdate,
-                    prepare(
-                        database,
-                        "UPDATE dispatches SET delivery_outcome='transport_unknown', "
-                        "delivery_reason=?1 WHERE operation_id=?2 "
-                        "AND dispatch_sequence=?3 AND delivery_outcome IS NULL"
-                    )
-                );
-                UF_TRY(bindText(database, dispatchUpdate.get(), 1, reason));
-                UF_TRY(bindText(database, dispatchUpdate.get(), 2, operationId));
-                UF_TRY(bindInteger(database, dispatchUpdate.get(), 3, dispatchSequence));
-                UF_TRY(expectDone(database, dispatchUpdate.get()));
-                if (sqlite3_changes(database) != 1)
-                {
-                    return fail(
-                        AutomationErrorKind::ActionRejected,
-                        "Pending dispatch resolution lost its CAS"
-                    );
-                }
-
-                UF_TRY_VALUE(
-                    operationUpdate,
-                    prepare(
-                        database,
-                        "UPDATE operations SET state='reconciling', revision=?1 "
-                        "WHERE operation_id=?2 AND state='running' AND revision=?3"
-                    )
-                );
-                UF_TRY(bindInteger(database, operationUpdate.get(), 1, nextRevision));
-                UF_TRY(bindText(database, operationUpdate.get(), 2, operationId));
-                UF_TRY(bindInteger(database, operationUpdate.get(), 3, revision));
-                UF_TRY(expectDone(database, operationUpdate.get()));
-                if (sqlite3_changes(database) != 1)
-                {
-                    return fail(
-                        AutomationErrorKind::ActionRejected,
-                        "Pending Operation resolution lost its CAS"
-                    );
-                }
-                UF_TRY(appendLedgerEvent(
-                    database,
-                    sessionEpoch,
-                    targetId,
-                    LedgerEventKind::DeliveryOutcomeRecorded,
-                    operationId,
-                    deliveryOutcomeWireName(task::DeliveryOutcome::TransportUnknown)
-                ));
-                UF_TRY(appendLedgerEvent(
-                    database,
-                    sessionEpoch,
-                    targetId,
-                    LedgerEventKind::OperationStateChanged,
-                    operationId,
-                    operationStateWireName(OperationState::Reconciling)
-                ));
-            }
-            return static_cast<uint64>(pending.size());
-        }
 
         [[nodiscard]]
         auto sessionModeWireName(SessionMode mode) noexcept -> std::string_view
@@ -4715,8 +4497,7 @@ namespace uf::operator_runtime
             {
             case LedgerEventKind::OperationCreated: return "operation_created";
             case LedgerEventKind::OperationStateChanged: return "operation_state_changed";
-            case LedgerEventKind::DeliveryOutcomeRecorded:
-                return "delivery_outcome_recorded";
+
             case LedgerEventKind::ControlTransitioned: return "control_transitioned";
             case LedgerEventKind::ExternalInputDetected: return "external_input_detected";
             }
@@ -4730,7 +4511,6 @@ namespace uf::operator_runtime
             constexpr auto kinds = std::array{
                 LedgerEventKind::OperationCreated,
                 LedgerEventKind::OperationStateChanged,
-                LedgerEventKind::DeliveryOutcomeRecorded,
                 LedgerEventKind::ControlTransitioned,
                 LedgerEventKind::ExternalInputDetected,
             };
@@ -4751,30 +4531,6 @@ namespace uf::operator_runtime
             return *match;
         }
 
-        [[nodiscard]]
-        auto parseDeliveryOutcome(std::string_view value) -> Result<task::DeliveryOutcome>
-        {
-            constexpr auto outcomes = std::array{
-                task::DeliveryOutcome::NotDelivered,
-                task::DeliveryOutcome::Delivered,
-                task::DeliveryOutcome::TransportUnknown,
-            };
-            auto const match = std::ranges::find_if(
-                outcomes,
-                [value](task::DeliveryOutcome candidate)
-                {
-                    return deliveryOutcomeWireName(candidate) == value;
-                }
-            );
-            if (match == outcomes.end())
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    std::format("Unknown delivery outcome: {}", value)
-                );
-            }
-            return *match;
-        }
 
         [[nodiscard]]
         auto parseLedgerEventDetail(
@@ -4797,18 +4553,7 @@ namespace uf::operator_runtime
                 UF_TRY_VALUE(state, parseOperationState(columnText(row, column)));
                 return LedgerEventDetail{state};
             }
-            case LedgerEventKind::DeliveryOutcomeRecorded:
-            {
-                if (sqlite3_column_type(row, column) == SQLITE_NULL)
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "Delivery outcome event is missing its outcome"
-                    );
-                }
-                UF_TRY_VALUE(outcome, parseDeliveryOutcome(columnText(row, column)));
-                return LedgerEventDetail{outcome};
-            }
+
             case LedgerEventKind::OperationCreated:
             case LedgerEventKind::ControlTransitioned:
             case LedgerEventKind::ExternalInputDetected:
@@ -5220,40 +4965,6 @@ namespace uf::operator_runtime
             return parseSessionMode(columnText(query.get(), 0));
         }
 
-        [[nodiscard]]
-        auto reconciliationWireName(
-            ReconcileDisposition disposition
-        ) noexcept -> std::string_view
-        {
-            switch (disposition)
-            {
-            case ReconcileDisposition::Continue: return "continue";
-            case ReconcileDisposition::Confirmed: return "confirmed";
-            case ReconcileDisposition::Rejected: return "rejected";
-            case ReconcileDisposition::Ambiguous: return "ambiguous";
-            case ReconcileDisposition::Diverged: return "diverged";
-            }
-
-            UF_UNREACHABLE_MSG("Unknown ReconcileDisposition value");
-        }
-
-        [[nodiscard]]
-        auto operationStateFor(
-            ReconcileDisposition disposition
-        ) noexcept -> OperationState
-        {
-            switch (disposition)
-            {
-            case ReconcileDisposition::Continue: return OperationState::Reconciling;
-            case ReconcileDisposition::Confirmed: return OperationState::Confirmed;
-            case ReconcileDisposition::Rejected: return OperationState::Rejected;
-            case ReconcileDisposition::Ambiguous: return OperationState::Ambiguous;
-            case ReconcileDisposition::Diverged: return OperationState::Diverged;
-            }
-
-            UF_UNREACHABLE_MSG("Unknown ReconcileDisposition value");
-        }
-
         // The exact bytes the reducer is called with. JCS orders members by
         // their UTF-16 code units, which is why journal_events precedes
         // prior_project_state and, inside an event, namespaced_event_type
@@ -5641,11 +5352,11 @@ namespace uf::operator_runtime
         // already is one: the set is closed, and a chain lets a new signal be
         // added without anyone deciding what it means.
         //
-        // Eight OperationEvent values have no OperationSignal at all. Four are
-        // privileged edges an atomic ledger method owns (DispatchStarted,
-        // ApprovalObtained, HostOutcomeObserved, CorrectionCommitted plus the
-        // three reconciliation dispositions), and four are the plan lifecycle
-        // edges the deleted plan and step mints decided.
+        // Every OperationEvent that only a Host dispatch could reach has no
+        // OperationSignal at all, because no Operation can reach a dispatch:
+        // the plan and step mints and the dispatch spine are deleted, so the
+        // dispatch, approval, host-outcome, correction and reconciliation edges
+        // are unreachable from this vocabulary rather than merely unoffered.
         struct SignalRule final
         {
             OperationSignal signal;
@@ -5663,11 +5374,7 @@ namespace uf::operator_runtime
             SignalRule{OperationSignal::Denied, OperationEvent::Denied},
             SignalRule{OperationSignal::Cancelled, OperationEvent::Cancelled},
             SignalRule{OperationSignal::DeadlineExpired, OperationEvent::DeadlineExpired},
-            SignalRule{OperationSignal::NewEvidence, OperationEvent::NewEvidence},
-            SignalRule{
-                OperationSignal::PostDispatchAbort,
-                OperationEvent::PostDispatchAbort,
-            },
+
         };
 
         [[nodiscard]]
@@ -5956,7 +5663,6 @@ namespace uf::operator_runtime
                 .sessionEpoch        = sessionEpoch,
             }
         )};
-        UF_TRY(coordinator.recoverUncertainDispatches());
         UF_TRY(coordinator.recoverUncertainToolCalls());
         return coordinator;
     }
@@ -6433,21 +6139,6 @@ namespace uf::operator_runtime
         );
     }
 
-    auto OperatorCoordinator::recoverUncertainDispatches() -> Result<uint64>
-    {
-        UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
-        UF_TRY_VALUE(
-            resolved,
-            resolveUnansweredDispatches(
-                m_impl->database.get(),
-                {},
-                k_restartRecoveryReason
-            )
-        );
-        UF_TRY(transaction.commit());
-        return resolved;
-    }
-
     // Exactly one shape a restart finds mid-dispatch cannot be accounted for:
     // the MUTATING LEAF -- a call answered directly by a provider whose
     // descriptor declares it mutating. That is the one row where the world may
@@ -6545,55 +6236,6 @@ namespace uf::operator_runtime
         );
         UF_TRY(expectDone(database, supersede.get()));
         UF_TRY(transaction.commit());
-        return recovered;
-    }
-
-    auto OperatorCoordinator::recoveredUncertainDispatches()
-        -> Result<std::vector<RecoveredUncertainDispatch>>
-    {
-        UF_TRY_VALUE(
-            query,
-            prepare(
-                m_impl->database.get(),
-                "SELECT operation.operation_id, operation.revision, state.revision, "
-                "(SELECT dispatch.delivery_reason FROM dispatches dispatch "
-                "WHERE dispatch.operation_id=operation.operation_id "
-                "AND dispatch.delivery_outcome='transport_unknown' "
-                "ORDER BY dispatch.dispatch_sequence DESC LIMIT 1) "
-                "FROM operations operation "
-                "JOIN project_state state "
-                "ON state.plugin_id=operation.plugin_id "
-                "AND state.project_instance_key=operation.project_instance_key "
-                "WHERE operation.state='reconciling' AND EXISTS("
-                "SELECT 1 FROM dispatches dispatch "
-                "WHERE dispatch.operation_id=operation.operation_id "
-                "AND dispatch.delivery_outcome='transport_unknown') "
-                "ORDER BY operation.operation_id"
-            )
-        );
-        auto recovered = std::vector<RecoveredUncertainDispatch>{};
-        auto step      = sqlite3_step(query.get());
-        while (step == SQLITE_ROW)
-        {
-            recovered.emplace_back(RecoveredUncertainDispatch{
-                .operationId    = columnText(query.get(), 0),
-                .deliveryReason = columnText(query.get(), 3),
-                .expectedOperationRevision = static_cast<uint64>(
-                    sqlite3_column_int64(query.get(), 1)
-                ),
-                .expectedProjectStateRevision = static_cast<uint64>(
-                    sqlite3_column_int64(query.get(), 2)
-                ),
-            });
-            step = sqlite3_step(query.get());
-        }
-        if (step != SQLITE_DONE)
-        {
-            return databaseFailure(
-                m_impl->database.get(),
-                "could not scan restart reconciliation work"
-            );
-        }
         return recovered;
     }
 
@@ -6736,7 +6378,6 @@ namespace uf::operator_runtime
         UF_TRY_VALUE(reducedState, reducer.reduce(reducerInput));
         if (
             reducedState.projectRegistrationHash() != project.hash()
-            || reducedState.function() != ProjectPluginFunction::Reduce
             || reducedState.direction() != ProjectDocumentDirection::Output
         )
         {
@@ -7089,7 +6730,6 @@ namespace uf::operator_runtime
         UF_TRY_VALUE(refolded, reducer.reduce(envelope));
         if (
             refolded.projectRegistrationHash() != project.hash()
-            || refolded.function() != ProjectPluginFunction::Reduce
             || refolded.direction() != ProjectDocumentDirection::Output
         )
         {
@@ -7980,20 +7620,6 @@ namespace uf::operator_runtime
         UF_TRY(bindText(m_impl->database.get(), transitionWrite.get(), 7, reason));
         UF_TRY(expectDone(m_impl->database.get(), transitionWrite.get()));
 
-        // Inside the same transaction as the fence bump, so there is no instant
-        // at which the displaced controller has lost the lease and its dispatch
-        // is still unanswered. It cannot un-click what may already have landed;
-        // what it prevents is the ledger ever claiming the effect did not
-        // happen, because transport_unknown is not not_delivered.
-        UF_TRY_VALUE(
-            resolved,
-            resolveUnansweredDispatches(
-                m_impl->database.get(),
-                target,
-                "a human takeover found this dispatch unanswered"
-            )
-        );
-
         UF_TRY(appendLedgerEvent(
             m_impl->database.get(),
             sessionEpoch,
@@ -8014,7 +7640,6 @@ namespace uf::operator_runtime
                 .revision              = nextFence,
                 .capabilityProfileHash = capabilityHash,
             },
-            .resolvedDispatches = resolved,
         };
     }
 
@@ -8062,16 +7687,6 @@ namespace uf::operator_runtime
             );
         }
         auto const nextFence = lease.fencingToken + 1U;
-
-        // Release is as final as takeover for the authority the Host may still
-        // be using. Resolve first, under this transaction and while the live
-        // lease still identifies the target, so no committed state can contain
-        // neither the lease nor an answer for its dispatch.
-        UF_TRY(resolveUnansweredDispatches(
-            m_impl->database.get(),
-            lease.controlledTargetId,
-            "lease release found this dispatch unanswered"
-        ));
 
         UF_TRY_VALUE(
             highWaterUpdate,
@@ -9149,9 +8764,7 @@ namespace uf::operator_runtime
             prepare(
                 m_impl->database.get(),
                 "SELECT operation_id, command_fingerprint, tool_name, tool_version, "
-                "canonical_args, mutating, state, revision, "
-                "EXISTS(SELECT 1 FROM dispatches d WHERE "
-                "d.operation_id=operations.operation_id), session_id FROM operations "
+                "canonical_args, mutating, state, revision, session_id FROM operations "
                 "WHERE idempotency_namespace=?1 AND plugin_id=?2 "
                 "AND project_instance_key=?3 AND client_request_id=?4"
             )
@@ -9185,7 +8798,7 @@ namespace uf::operator_runtime
             // an idempotency_namespace unique to one. Without this, the hit
             // path hands another session's operation id and revision back,
             // which is all transitionOperation needs to terminate it.
-            if (columnText(existingQuery.get(), 9) != controller.sessionId())
+            if (columnText(existingQuery.get(), 8) != controller.sessionId())
             {
                 return fail(
                     AutomationErrorKind::ActionRejected,
@@ -9200,16 +8813,13 @@ namespace uf::operator_runtime
             auto const revision = static_cast<uint64>(
                 sqlite3_column_int64(existingQuery.get(), 7)
             );
-            auto const dispatched = sqlite3_column_int(existingQuery.get(), 8) != 0;
             UF_TRY(transaction.commit());
             return AcceptedCommand{
                 .operation = StoredOperation{
-                    .operationId   = std::move(operationId),
-                    .lookup        = CommandLookup::Existing,
-                    .state         = state,
-                    .revision      = revision,
-                    .planFrozen    = dispatched,
-                    .hasDispatched = dispatched,
+                    .operationId = std::move(operationId),
+                    .lookup      = CommandLookup::Existing,
+                    .state       = state,
+                    .revision    = revision,
                 },
                 .commandFingerprint = commandFingerprint,
             };
@@ -9554,12 +9164,10 @@ namespace uf::operator_runtime
         UF_TRY(transaction.commit());
         return AcceptedCommand{
             .operation = StoredOperation{
-                .operationId   = std::move(operationId),
-                .lookup        = CommandLookup::Created,
-                .state         = OperationState::Proposed,
-                .revision      = 1U,
-                .planFrozen    = false,
-                .hasDispatched = false,
+                .operationId = std::move(operationId),
+                .lookup      = CommandLookup::Created,
+                .state       = OperationState::Proposed,
+                .revision    = 1U,
             },
             .commandFingerprint = commandFingerprint,
         };
@@ -10209,9 +9817,9 @@ namespace uf::operator_runtime
         if (requiredMutability == ToolMutability::Mutating)
         {
             if (
-                mutation->planAuthority.projectRegistrationHash().hex()
+                mutation->policyAuthority.projectRegistrationHash().hex()
                     != projectRegistrationHash
-                || mutation->planAuthority.policyHash().hex() != policyHash
+                || mutation->policyAuthority.policyHash().hex() != policyHash
             )
             {
                 return fail(
@@ -10222,7 +9830,7 @@ namespace uf::operator_runtime
             UF_TRY_VALUE(
                 evaluated,
                 evaluateToolMutation(
-                    mutation->planAuthority.m_policy,
+                    mutation->policyAuthority.m_policy,
                     call.descriptor(),
                     call.toolName(),
                     effects,
@@ -11152,7 +10760,7 @@ namespace uf::operator_runtime
         ControllerBinding const& approver,
         ToolRootRequestIdentity const& root,
         ToolCallPositionIdentity const& call,
-        OperatorPlanAuthority const& planAuthority,
+        OperatorPolicyAuthority const& policyAuthority,
         std::span<ProposedEffect const> effects,
         ToolApprovalRequest const& request,
         AuthorityDecisionId const& authorityDecisionId
@@ -11274,9 +10882,9 @@ namespace uf::operator_runtime
         auto const projectRegistrationHash = columnText(sessionQuery.get(), 1);
         auto const policyHash               = columnText(sessionQuery.get(), 3);
         if (
-            planAuthority.projectRegistrationHash().hex()
+            policyAuthority.projectRegistrationHash().hex()
                     != projectRegistrationHash
-            || planAuthority.policyHash().hex() != policyHash
+            || policyAuthority.policyHash().hex() != policyHash
         )
         {
             return fail(
@@ -11321,7 +10929,7 @@ namespace uf::operator_runtime
         UF_TRY_VALUE(
             evaluated,
             evaluateToolMutation(
-                planAuthority.m_policy,
+                policyAuthority.m_policy,
                 call.descriptor(),
                 call.toolName(),
                 effects,
@@ -11905,35 +11513,23 @@ namespace uf::operator_runtime
         }
         UF_TRY(transaction.commit());
 
-        // Six of the eleven members are the Host's own checks and are filled
-        // from the live lease and the caller's generation. The five that remain
-        // belong to the Operation path, where the Host carries them back so
-        // recordDeliveryOutcome can find its dispatches row; on this path the
-        // outcome is recorded by completeToolCallDispatch against the token
-        // that crossed the boundary, so there is nothing for the Host to carry.
-        //
-        // operationId and authorityDecisionId are therefore empty, and that is
-        // load-bearing rather than filler: recordDeliveryOutcome joins on
-        // operationId, so a Tool-call delivery report presented to it matches
-        // no dispatch and is refused. frozenPlanHash carries the call identity,
-        // which is this path's frozen statement of what the delivery was
-        // authorised to do -- the coordinate, the tool, the exact arguments,
-        // the descriptor and the catalog, all inside one hash -- and
-        // dispatchSequence carries the admission attempt, which is what
-        // sequences one call's dispatches.
+        // Six of the eight members are the Host's own checks and are filled
+        // from the live lease and the caller's generation. frozenPlanHash
+        // carries the call identity, which is this path's frozen statement of
+        // what the delivery was authorised to do -- the coordinate, the tool,
+        // the exact arguments, the descriptor and the catalog, all inside one
+        // hash -- and dispatchSequence carries the admission attempt, which is
+        // what sequences one call's deliveries.
         return ToolCallDispatchReservation{
             .authority = task::DispatchAuthority{
-                .controlledTargetId  = lease.controlledTargetId,
-                .uiTarget            = uiTarget,
-                .leaseId             = lease.leaseId,
-                .operationId         = {},
-                .authorityDecisionId = {},
-                .frozenPlanHash      = call.identity(),
-                .runtimeGeneration   = runtimeGeneration,
-                .targetGeneration    = {},
-                .sessionEpoch        = lease.sessionEpoch,
-                .fencingToken        = lease.fencingToken,
-                .dispatchSequence    = attemptNumber,
+                .controlledTargetId = lease.controlledTargetId,
+                .uiTarget           = uiTarget,
+                .leaseId            = lease.leaseId,
+                .frozenPlanHash     = call.identity(),
+                .runtimeGeneration  = runtimeGeneration,
+                .sessionEpoch       = lease.sessionEpoch,
+                .fencingToken       = lease.fencingToken,
+                .dispatchSequence   = attemptNumber,
             },
         };
     }
@@ -12474,8 +12070,7 @@ namespace uf::operator_runtime
             pendingQuery,
             prepare(
                 m_impl->database.get(),
-                "SELECT operation_id, revision, state, EXISTS(SELECT 1 FROM dispatches d WHERE "
-                "d.operation_id=operations.operation_id) FROM operations "
+                "SELECT operation_id, revision, state FROM operations "
                 "WHERE controlled_target_id=?1 AND state IN "
                 "('proposed', 'awaiting_approval', 'ready') LIMIT 1"
             )
@@ -12489,8 +12084,9 @@ namespace uf::operator_runtime
                 sqlite3_column_int64(pendingQuery.get(), 1)
             );
             UF_TRY_VALUE(state, parseOperationState(columnText(pendingQuery.get(), 2)));
-            auto const dispatched = sqlite3_column_int(pendingQuery.get(), 3) != 0;
-            UF_TRY_VALUE(machine, OperationMachine::restore(state, dispatched, dispatched));
+            // An Operation can no longer reach a Host dispatch at all, so a
+            // stored one is never frozen and never dispatched.
+            UF_TRY_VALUE(machine, OperationMachine::restore(state, false, false));
             UF_TRY_VALUE(
                 nextState,
                 machine.transition(OperationEvent::DecisionInputsChanged)
@@ -12777,8 +12373,7 @@ namespace uf::operator_runtime
             query,
             prepare(
                 m_impl->database.get(),
-                "SELECT o.state, o.revision, o.mutating, EXISTS(SELECT 1 FROM dispatches d "
-                "WHERE d.operation_id=o.operation_id), o.controlled_target_id "
+                "SELECT o.state, o.revision, o.mutating, o.controlled_target_id "
                 "FROM operations o "
                 + std::string{k_liveControllerJoin}
                 + "WHERE o.operation_id=?1 AND session.active=1 "
@@ -12801,7 +12396,6 @@ namespace uf::operator_runtime
         }
         UF_TRY_VALUE(state, parseOperationState(columnText(query.get(), 0)));
         auto const mutating   = sqlite3_column_int(query.get(), 2) != 0;
-        auto const dispatched = sqlite3_column_int(query.get(), 3) != 0;
         if (event == OperationEvent::ReadCompleted && mutating)
         {
             return fail(
@@ -12809,7 +12403,7 @@ namespace uf::operator_runtime
                 "Operation event contradicts the command mutability"
             );
         }
-        UF_TRY_VALUE(machine, OperationMachine::restore(state, dispatched, dispatched));
+        UF_TRY_VALUE(machine, OperationMachine::restore(state, false, false));
         UF_TRY_VALUE(nextState, machine.transition(event));
         UF_TRY_VALUE(nextRevision, checkedSqlIncrement(revision, "Operation revision"));
 
@@ -12837,19 +12431,17 @@ namespace uf::operator_runtime
         UF_TRY(appendLedgerEvent(
             m_impl->database.get(),
             m_impl->sessionEpoch,
-            columnText(query.get(), 4),
+            columnText(query.get(), 3),
             LedgerEventKind::OperationStateChanged,
             operationId,
             operationStateWireName(nextState)
         ));
         UF_TRY(transaction.commit());
         return StoredOperation{
-            .operationId   = operationId,
-            .lookup        = CommandLookup::Existing,
-            .state         = nextState,
-            .revision      = nextRevision,
-            .planFrozen    = machine.planFrozen(),
-            .hasDispatched = machine.hasDispatched(),
+            .operationId = operationId,
+            .lookup      = CommandLookup::Existing,
+            .state       = nextState,
+            .revision    = nextRevision,
         };
     }
 
@@ -12972,767 +12564,6 @@ namespace uf::operator_runtime
             std::move(instances),
             std::string{storedJcs},
             hash,
-        };
-    }
-
-    auto OperatorCoordinator::reserveDispatch(
-        std::string const& operationId,
-        uint64 expectedRevision,
-        ControlLease const& lease,
-        GenerationId runtimeGeneration,
-        AuthorityDecisionId const& authorityDecisionId,
-        std::optional<ApprovalGrant> const& approval
-    ) -> Result<DispatchReservation>
-    {
-        UF_TRY_VALUE(currentUnixMillis, unixTimeMilliseconds());
-        UF_TRY(requireName(authorityDecisionId.value(), "authority_decision_id"));
-        UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
-        UF_TRY_VALUE(
-            query,
-            prepare(
-                m_impl->database.get(),
-                // The three hashes are read here rather than taken from the
-                // caller: an audit record a caller could name is an audit
-                // record that can be made to say anything, and an approval
-                // matched on caller-supplied hashes authorises whatever it was
-                // handed. The pending step is found rather than selected, so
-                // the dispatch names nothing at all.
-                "SELECT o.state, o.revision, "
-                "COALESCE((SELECT MAX(dispatch_sequence) FROM dispatches d WHERE "
-                "d.operation_id=o.operation_id), 0), "
-                "(SELECT delivery_outcome FROM dispatches d WHERE "
-                "d.operation_id=o.operation_id ORDER BY dispatch_sequence DESC LIMIT 1) "
-                ", o.session_id, o.controlled_target_id, o.mutating, "
-                "plan.plan_hash, plan.decision_basis_hash, plan.maximum_dispatches, "
-                "step.step_index, step.step_intent_hash, "
-                "(SELECT COUNT(*) FROM dispatches d WHERE d.operation_id=o.operation_id), "
-                // The target generation the composed world was observed at. It
-                // is read here rather than accepted, because an authority
-                // naming a generation nobody observed would carry the Host's
-                // permission to act on a world the ledger never saw.
-                "snapshot.target_generation, step.canonical_step "
-                "FROM operations o "
-                "JOIN operation_plans plan ON plan.operation_id=o.operation_id "
-                "JOIN snapshots snapshot ON snapshot.token=o.snapshot_token "
-                "JOIN operation_steps step ON step.operation_id=o.operation_id "
-                "AND step.step_kind='ui_action' AND step.dispatch_sequence IS NULL "
-                "WHERE o.operation_id=?1 "
-                "ORDER BY step.step_index LIMIT 1"
-            )
-        );
-        UF_TRY(bindText(m_impl->database.get(), query.get(), 1, operationId));
-        if (sqlite3_step(query.get()) != SQLITE_ROW)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Unknown operation_id, no frozen plan, or no UI-action step awaits dispatch"
-            );
-        }
-        auto const revision = static_cast<uint64>(sqlite3_column_int64(query.get(), 1));
-        if (revision != expectedRevision)
-        {
-            return fail(AutomationErrorKind::ActionRejected, "Operation revision is stale");
-        }
-        UF_TRY_VALUE(state, parseOperationState(columnText(query.get(), 0)));
-        if (
-            columnText(query.get(), 4) != lease.sessionId
-            || columnText(query.get(), 5) != lease.controlledTargetId
-        )
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Dispatch lease does not own the Operation target"
-            );
-        }
-        if (sqlite3_column_int(query.get(), 6) != 1)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Read-only Operations cannot enter Host dispatch"
-            );
-        }
-        UF_TRY(requireLiveLease(m_impl->database.get(), lease, "Dispatch lease is stale"));
-
-        auto const planHashHex      = columnText(query.get(), 7);
-        auto const decisionBasisHex = columnText(query.get(), 8);
-        UF_TRY_VALUE(frozenPlanHash, parseHashColumn(planHashHex));
-        UF_TRY_VALUE(decisionBasisHash, parseHashColumn(decisionBasisHex));
-        auto const maximumDispatches = static_cast<uint64>(
-            sqlite3_column_int64(query.get(), 9)
-        );
-        auto const stepIndex = static_cast<uint64>(sqlite3_column_int64(query.get(), 10));
-        auto const stepIntentHex = columnText(query.get(), 11);
-        UF_TRY_VALUE(stepIntentHash, parseHashColumn(stepIntentHex));
-        auto const dispatchCount = static_cast<uint64>(
-            sqlite3_column_int64(query.get(), 12)
-        );
-        auto const targetGeneration = TargetGeneration::fromValue(
-            static_cast<uint64>(sqlite3_column_int64(query.get(), 13))
-        );
-        // The step's canonical intent names the observed instance it acts on,
-        // and the deliver check needs the model target that instance was
-        // observed at. The binding is the ledger's own row, so the resolution
-        // cannot be handed to the authority: a step naming an instance with no
-        // persistent binding, or a binding whose local_ref is the migrated
-        // empty sentinel, is refused here rather than delivered. The id is
-        // read off the same member the step row stores, so the step the ledger
-        // recorded is exactly the step resolved here.
-        UF_TRY_VALUE(intentValue, json::parse(columnText(query.get(), 14)));
-        auto const* const p_action = intentValue.find("action");
-        UF_CHECK(p_action != nullptr);
-        auto const* const p_uiTargetId = p_action->find("ui_target_id");
-        UF_CHECK(p_uiTargetId != nullptr);
-        UF_TRY_VALUE(
-            bindingQuery,
-            prepare(
-                m_impl->database.get(),
-                "SELECT local_ref FROM observed_instance_bindings "
-                "WHERE observed_instance_id=?1"
-            )
-        );
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            bindingQuery.get(),
-            1,
-            p_uiTargetId->string()
-        ));
-        if (sqlite3_step(bindingQuery.get()) != SQLITE_ROW)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "The step names an observed instance with no persistent binding"
-            );
-        }
-        auto bindingLocalRef = columnText(bindingQuery.get(), 0);
-        if (bindingLocalRef.empty())
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "The step names a binding whose local_ref predates target resolution"
-            );
-        }
-        // Two counters because a wait step consumes a step and no dispatch.
-        if (dispatchCount >= maximumDispatches)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Workflow dispatch budget is exhausted for this frozen plan"
-            );
-        }
-
-        auto const priorSequence = static_cast<uint64>(sqlite3_column_int64(query.get(), 2));
-        auto const firstDispatch = priorSequence == 0U;
-        if (firstDispatch)
-        {
-            UF_TRY_VALUE(machine, OperationMachine::restore(state, false, false));
-            if (state == OperationState::AwaitingApproval)
-            {
-                if (!approval.has_value())
-                {
-                    return fail(
-                        AutomationErrorKind::ActionRejected,
-                        "Awaiting Operation requires a matching ApprovalToken"
-                    );
-                }
-                UF_TRY(machine.transition(OperationEvent::ApprovalObtained));
-            }
-            else if (state != OperationState::Ready || approval.has_value())
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "First dispatch authority does not match Operation approval state"
-                );
-            }
-            UF_TRY(machine.transition(OperationEvent::DispatchStarted));
-        }
-        else
-        {
-            if (state == OperationState::AwaitingApproval)
-            {
-                if (!approval.has_value())
-                {
-                    return fail(
-                        AutomationErrorKind::ActionRejected,
-                        "Awaiting workflow step requires a matching ApprovalToken"
-                    );
-                }
-                UF_TRY_VALUE(machine, OperationMachine::restore(state, true, true));
-                UF_TRY(machine.transition(OperationEvent::ApprovalObtained));
-            }
-            else if (state != OperationState::Running || approval.has_value())
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "A subsequent dispatch requires a running frozen Operation"
-                );
-            }
-            if (sqlite3_column_type(query.get(), 3) == SQLITE_NULL)
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "A new dispatch cannot overtake the prior Host outcome"
-                );
-            }
-        }
-
-        UF_TRY_VALUE(sequence, checkedSqlIncrement(priorSequence, "dispatch sequence"));
-        if (approval.has_value())
-        {
-            UF_TRY_VALUE(
-                approvalUpdate,
-                prepare(
-                    m_impl->database.get(),
-                    "UPDATE approvals SET consumed=1, consumed_by_dispatch=?1 "
-                    "WHERE token=?2 AND operation_id=?3 AND session_id=?4 "
-                    "AND controller_id=?5 AND controlled_target_id=?6 AND lease_id=?7 "
-                    "AND session_epoch=?8 AND fencing_token=?9 AND frozen_plan_hash=?10 "
-                    "AND step_intent_hash=?11 AND decision_basis_hash=?12 "
-                    "AND authority_decision_id=?13 AND expires_at_unix_millis>=?14 "
-                    "AND consumed=0"
-                )
-            );
-            UF_TRY(bindInteger(m_impl->database.get(), approvalUpdate.get(), 1, sequence));
-            UF_TRY(bindText(m_impl->database.get(), approvalUpdate.get(), 2, approval->token));
-            UF_TRY(bindText(m_impl->database.get(), approvalUpdate.get(), 3, operationId));
-            UF_TRY(bindText(m_impl->database.get(), approvalUpdate.get(), 4, lease.sessionId));
-            UF_TRY(bindText(m_impl->database.get(), approvalUpdate.get(), 5, lease.controllerId));
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                approvalUpdate.get(),
-                6,
-                lease.controlledTargetId
-            ));
-            UF_TRY(bindText(m_impl->database.get(), approvalUpdate.get(), 7, lease.leaseId));
-            UF_TRY(bindInteger(m_impl->database.get(), approvalUpdate.get(), 8, lease.sessionEpoch));
-            UF_TRY(bindInteger(m_impl->database.get(), approvalUpdate.get(), 9, lease.fencingToken));
-            UF_TRY(bindText(m_impl->database.get(), approvalUpdate.get(), 10, frozenPlanHash.hex()));
-            UF_TRY(bindText(m_impl->database.get(), approvalUpdate.get(), 11, stepIntentHash.hex()));
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                approvalUpdate.get(),
-                12,
-                decisionBasisHash.hex()
-            ));
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                approvalUpdate.get(),
-                13,
-                approval->authorityDecisionId.value()
-            ));
-            UF_TRY(bindInteger(m_impl->database.get(), approvalUpdate.get(), 14, currentUnixMillis));
-            UF_TRY(expectDone(m_impl->database.get(), approvalUpdate.get()));
-            if (sqlite3_changes(m_impl->database.get()) != 1)
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "ApprovalToken is stale, expired, mismatched, or already consumed"
-                );
-            }
-        }
-
-        UF_TRY_VALUE(
-            authorityInsert,
-            prepare(
-                m_impl->database.get(),
-                "INSERT INTO authority_decisions(authority_decision_id, operation_id, "
-                "dispatch_sequence, session_id, controller_id, lease_id, session_epoch, fencing_token, "
-                "decision_basis_hash, frozen_plan_hash, step_intent_hash, approval_token) "
-                "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
-            )
-        );
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            authorityInsert.get(),
-            1,
-            authorityDecisionId.value()
-        ));
-        UF_TRY(bindText(m_impl->database.get(), authorityInsert.get(), 2, operationId));
-        UF_TRY(bindInteger(m_impl->database.get(), authorityInsert.get(), 3, sequence));
-        UF_TRY(bindText(m_impl->database.get(), authorityInsert.get(), 4, lease.sessionId));
-        UF_TRY(bindText(m_impl->database.get(), authorityInsert.get(), 5, lease.controllerId));
-        UF_TRY(bindText(m_impl->database.get(), authorityInsert.get(), 6, lease.leaseId));
-        UF_TRY(bindInteger(m_impl->database.get(), authorityInsert.get(), 7, lease.sessionEpoch));
-        UF_TRY(bindInteger(m_impl->database.get(), authorityInsert.get(), 8, lease.fencingToken));
-        UF_TRY(bindText(m_impl->database.get(), authorityInsert.get(), 9, decisionBasisHash.hex()));
-        UF_TRY(bindText(m_impl->database.get(), authorityInsert.get(), 10, frozenPlanHash.hex()));
-        UF_TRY(bindText(m_impl->database.get(), authorityInsert.get(), 11, stepIntentHash.hex()));
-        if (approval.has_value())
-        {
-            UF_TRY(bindText(m_impl->database.get(), authorityInsert.get(), 12, approval->token));
-        }
-        else if (sqlite3_bind_null(authorityInsert.get(), 12) != SQLITE_OK)
-        {
-            return databaseFailure(m_impl->database.get(), "could not bind absent approval");
-        }
-        UF_TRY(expectDone(m_impl->database.get(), authorityInsert.get()));
-
-        UF_TRY_VALUE(
-            insert,
-            prepare(
-                m_impl->database.get(),
-                "INSERT INTO dispatches(operation_id, dispatch_sequence, decision_basis_hash, "
-                "frozen_plan_hash, authority_decision_id, delivery_outcome) "
-                "VALUES(?1, ?2, ?3, ?4, ?5, NULL)"
-            )
-        );
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 1, operationId));
-        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 2, sequence));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 3, decisionBasisHash.hex()));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 4, frozenPlanHash.hex()));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            insert.get(),
-            5,
-            authorityDecisionId.value()
-        ));
-        UF_TRY(expectDone(m_impl->database.get(), insert.get()));
-
-        // The step is linked after the dispatch row exists, so the composite
-        // foreign key holds at every point inside the transaction.
-        UF_TRY_VALUE(
-            linkStep,
-            prepare(
-                m_impl->database.get(),
-                "UPDATE operation_steps SET dispatch_sequence=?1 "
-                "WHERE operation_id=?2 AND step_index=?3 AND dispatch_sequence IS NULL"
-            )
-        );
-        UF_TRY(bindInteger(m_impl->database.get(), linkStep.get(), 1, sequence));
-        UF_TRY(bindText(m_impl->database.get(), linkStep.get(), 2, operationId));
-        UF_TRY(bindInteger(m_impl->database.get(), linkStep.get(), 3, stepIndex));
-        UF_TRY(expectDone(m_impl->database.get(), linkStep.get()));
-        if (sqlite3_changes(m_impl->database.get()) != 1)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "The pending workflow step was linked to another dispatch"
-            );
-        }
-
-        UF_TRY_VALUE(nextRevision, checkedSqlIncrement(revision, "Operation revision"));
-        UF_TRY_VALUE(
-            update,
-            prepare(
-                m_impl->database.get(),
-                "UPDATE operations SET state='running', revision=?1 "
-                "WHERE operation_id=?2 AND revision=?3"
-            )
-        );
-        UF_TRY(bindInteger(m_impl->database.get(), update.get(), 1, nextRevision));
-        UF_TRY(bindText(m_impl->database.get(), update.get(), 2, operationId));
-        UF_TRY(bindInteger(m_impl->database.get(), update.get(), 3, revision));
-        UF_TRY(expectDone(m_impl->database.get(), update.get()));
-        if (sqlite3_changes(m_impl->database.get()) != 1)
-        {
-            return fail(AutomationErrorKind::ActionRejected, "Operation revision lost its CAS");
-        }
-        if (state != OperationState::Running)
-        {
-            UF_TRY(appendLedgerEvent(
-                m_impl->database.get(),
-                lease.sessionEpoch,
-                lease.controlledTargetId,
-                LedgerEventKind::OperationStateChanged,
-                operationId,
-                operationStateWireName(OperationState::Running)
-            ));
-        }
-        UF_TRY(transaction.commit());
-        return DispatchReservation{
-            .authority = task::DispatchAuthority{
-                .controlledTargetId  = lease.controlledTargetId,
-                .uiTarget            = std::move(bindingLocalRef),
-                .leaseId             = lease.leaseId,
-                .operationId         = operationId,
-                .authorityDecisionId = authorityDecisionId.value(),
-                .frozenPlanHash      = frozenPlanHash,
-                .runtimeGeneration   = runtimeGeneration,
-                .targetGeneration    = targetGeneration,
-                .sessionEpoch        = lease.sessionEpoch,
-                .fencingToken        = lease.fencingToken,
-                .dispatchSequence    = sequence,
-            },
-            .decisionBasisHash = decisionBasisHash,
-            .stepIntentHash    = stepIntentHash,
-            .operationRevision = nextRevision,
-            .stepIndex         = stepIndex,
-        };
-    }
-
-    auto OperatorCoordinator::recordDeliveryOutcome(
-        ControlLease const& lease,
-        uint64 expectedRevision,
-        task::HostDeliveryReport const& report
-    ) -> Result<StoredOperation>
-    {
-        auto const& authority = report.authority();
-        // Checked in C++ before the statement so the refusal names its reason.
-        // The lease the caller presents must be the lease the report was
-        // authorized by; the statement below then requires that same lease to
-        // still be the live row. Two refusals, and neither implies the other.
-        if (
-            authority.controlledTargetId != lease.controlledTargetId
-            || authority.leaseId != lease.leaseId
-            || authority.sessionEpoch != lease.sessionEpoch
-            || authority.fencingToken != lease.fencingToken
-        )
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Host delivery report was not authorized by the presented lease"
-            );
-        }
-
-        auto const& operationId     = authority.operationId;
-        auto const dispatchSequence = authority.dispatchSequence;
-        UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
-        UF_TRY_VALUE(
-            query,
-            prepare(
-                m_impl->database.get(),
-                // Every identity the reservation minted is matched against the
-                // rows that minted it. A report produced before a takeover and
-                // presented after it fails here on the lease predicate and again
-                // on the outcome CAS below, and the two are independent so each
-                // is separately falsifiable.
-                "SELECT o.state, o.revision, d.delivery_outcome FROM operations o "
-                + std::string{k_liveControllerJoin}
-                + "JOIN dispatches d ON d.operation_id=o.operation_id "
-                  "JOIN authority_decisions a "
-                  "ON a.authority_decision_id=d.authority_decision_id "
-                  "JOIN snapshots snapshot ON snapshot.token=o.snapshot_token "
-                  "WHERE o.operation_id=?1 AND d.dispatch_sequence=?2 "
-                  "AND session.active=1 AND session.session_epoch=?3 "
-                  "AND o.controlled_target_id=?4 "
-                  "AND lease.lease_id=?5 AND lease.fencing_token=?6 "
-                  "AND lease.revision=?7 AND lease.session_epoch=?3 "
-                  "AND a.dispatch_sequence=?2 AND a.authority_decision_id=?8 "
-                  "AND a.lease_id=?5 AND a.fencing_token=?6 AND a.session_epoch=?3 "
-                  "AND d.frozen_plan_hash=?9 "
-                  "AND snapshot.target_generation=?10"
-            )
-        );
-        UF_TRY(bindText(m_impl->database.get(), query.get(), 1, operationId));
-        UF_TRY(bindInteger(m_impl->database.get(), query.get(), 2, dispatchSequence));
-        UF_TRY(bindInteger(m_impl->database.get(), query.get(), 3, m_impl->sessionEpoch));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            query.get(),
-            4,
-            lease.controlledTargetId
-        ));
-        UF_TRY(bindText(m_impl->database.get(), query.get(), 5, lease.leaseId));
-        UF_TRY(bindInteger(m_impl->database.get(), query.get(), 6, lease.fencingToken));
-        UF_TRY(bindInteger(m_impl->database.get(), query.get(), 7, lease.revision));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            query.get(),
-            8,
-            authority.authorityDecisionId
-        ));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            query.get(),
-            9,
-            authority.frozenPlanHash.hex()
-        ));
-        UF_TRY(bindInteger(
-            m_impl->database.get(),
-            query.get(),
-            10,
-            authority.targetGeneration.value()
-        ));
-        if (sqlite3_step(query.get()) != SQLITE_ROW)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "No live dispatch matches this Host delivery report"
-            );
-        }
-        auto const revision = static_cast<uint64>(sqlite3_column_int64(query.get(), 1));
-        if (revision != expectedRevision)
-        {
-            return fail(AutomationErrorKind::ActionRejected, "Operation revision is stale");
-        }
-        if (sqlite3_column_type(query.get(), 2) != SQLITE_NULL)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "DeliveryOutcome is immutable once recorded"
-            );
-        }
-        UF_TRY_VALUE(state, parseOperationState(columnText(query.get(), 0)));
-        UF_TRY_VALUE(machine, OperationMachine::restore(state, true, true));
-        UF_TRY_VALUE(nextState, machine.transition(OperationEvent::HostOutcomeObserved));
-
-        UF_TRY_VALUE(
-            dispatchUpdate,
-            prepare(
-                m_impl->database.get(),
-                "UPDATE dispatches SET delivery_outcome=?1, delivery_reason=?2 "
-                "WHERE operation_id=?3 AND dispatch_sequence=?4 "
-                "AND delivery_outcome IS NULL"
-            )
-        );
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            dispatchUpdate.get(),
-            1,
-            deliveryOutcomeWireName(report.outcome())
-        ));
-        // The Host's own words for why it did not act. Empty exactly when the
-        // outcome is delivered, which is the shape the table's CHECK requires.
-        if (report.reason().empty())
-        {
-            if (sqlite3_bind_null(dispatchUpdate.get(), 2) != SQLITE_OK)
-            {
-                return databaseFailure(
-                    m_impl->database.get(),
-                    "could not bind absent delivery reason"
-                );
-            }
-        }
-        else
-        {
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                dispatchUpdate.get(),
-                2,
-                report.reason()
-            ));
-        }
-        UF_TRY(bindText(m_impl->database.get(), dispatchUpdate.get(), 3, operationId));
-        UF_TRY(bindInteger(m_impl->database.get(), dispatchUpdate.get(), 4, dispatchSequence));
-        UF_TRY(expectDone(m_impl->database.get(), dispatchUpdate.get()));
-        if (sqlite3_changes(m_impl->database.get()) != 1)
-        {
-            return fail(AutomationErrorKind::ActionRejected, "DeliveryOutcome lost its CAS");
-        }
-
-        UF_TRY_VALUE(nextRevision, checkedSqlIncrement(revision, "Operation revision"));
-        UF_TRY_VALUE(
-            operationUpdate,
-            prepare(
-                m_impl->database.get(),
-                "UPDATE operations SET state=?1, revision=?2 WHERE operation_id=?3 AND revision=?4"
-            )
-        );
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            operationUpdate.get(),
-            1,
-            operationStateWireName(nextState)
-        ));
-        UF_TRY(bindInteger(m_impl->database.get(), operationUpdate.get(), 2, nextRevision));
-        UF_TRY(bindText(m_impl->database.get(), operationUpdate.get(), 3, operationId));
-        UF_TRY(bindInteger(m_impl->database.get(), operationUpdate.get(), 4, revision));
-        UF_TRY(expectDone(m_impl->database.get(), operationUpdate.get()));
-        if (sqlite3_changes(m_impl->database.get()) != 1)
-        {
-            return fail(AutomationErrorKind::ActionRejected, "Operation revision lost its CAS");
-        }
-
-        UF_TRY(appendLedgerEvent(
-            m_impl->database.get(),
-            lease.sessionEpoch,
-            lease.controlledTargetId,
-            LedgerEventKind::DeliveryOutcomeRecorded,
-            operationId,
-            deliveryOutcomeWireName(report.outcome())
-        ));
-        UF_TRY(appendLedgerEvent(
-            m_impl->database.get(),
-            lease.sessionEpoch,
-            lease.controlledTargetId,
-            LedgerEventKind::OperationStateChanged,
-            operationId,
-            operationStateWireName(nextState)
-        ));
-
-        UF_TRY(transaction.commit());
-        return StoredOperation{
-            .operationId   = operationId,
-            .lookup        = CommandLookup::Existing,
-            .state         = nextState,
-            .revision      = nextRevision,
-            .planFrozen    = true,
-            .hasDispatched = true,
-        };
-    }
-
-    auto OperatorCoordinator::issueApproval(
-        ApprovalRequest const& request,
-        AuthorityDecisionId const& authorityDecisionId
-    ) -> Result<ApprovalGrant>
-    {
-        UF_TRY(requireName(authorityDecisionId.value(), "authority_decision_id"));
-        UF_TRY(requireName(request.approverPrincipal, "approver_principal"));
-        UF_TRY(requireName(request.approverCapability, "approver_capability"));
-        UF_TRY_VALUE(currentUnixMillis, unixTimeMilliseconds());
-        if (request.expiresAtUnixMillis <= currentUnixMillis)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "Approval expiry must be in the future"
-            );
-        }
-        UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
-        UF_TRY_VALUE(
-            operationQuery,
-            prepare(
-                m_impl->database.get(),
-                // The four hashes an approval is matched on are read here, not
-                // taken from the approver: an approval issued for hashes its
-                // holder chose authorises whatever those hashes name, which is
-                // how one step's approval comes to authorise another's.
-                "SELECT o.state, o.session_id, o.controlled_target_id, "
-                "o.command_fingerprint, plan.plan_hash, "
-                "plan.decision_basis_hash, plan.effect_envelope_hash, "
-                "step.step_intent_hash, plan.policy_hash, plan.required_approvals "
-                "FROM operations o "
-                "JOIN operation_plans plan ON plan.operation_id=o.operation_id "
-                "JOIN operation_steps step ON step.operation_id=o.operation_id "
-                "AND step.step_kind='ui_action' AND step.dispatch_sequence IS NULL "
-                "WHERE o.operation_id=?1 ORDER BY step.step_index LIMIT 1"
-            )
-        );
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            operationQuery.get(),
-            1,
-            request.operationId
-        ));
-        if (sqlite3_step(operationQuery.get()) != SQLITE_ROW)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "Unknown operation_id, no frozen plan, or no UI-action step awaits dispatch"
-            );
-        }
-        UF_TRY_VALUE(state, parseOperationState(columnText(operationQuery.get(), 0)));
-        if (state != OperationState::AwaitingApproval)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Approval can only be issued for an awaiting Operation"
-            );
-        }
-        if (
-            columnText(operationQuery.get(), 1) != request.lease.sessionId
-            || columnText(operationQuery.get(), 2) != request.lease.controlledTargetId
-        )
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Approval lease does not own the Operation target"
-            );
-        }
-        auto const frozenPlanHex = columnText(operationQuery.get(), 4);
-        UF_TRY(requireLiveLease(
-            m_impl->database.get(),
-            request.lease,
-            "Approval lease is stale"
-        ));
-
-        // The plan's own ruling on who may approve it. An approver presenting
-        // any other capability is refused here: required_approvals names the
-        // approvers the policy ruled, so an approval by someone outside that
-        // set is an approval the policy never authorised.
-        UF_TRY_VALUE(
-            requiredApprovals,
-            readNameArray(columnText(operationQuery.get(), 9))
-        );
-        if (!std::ranges::contains(requiredApprovals, request.approverCapability))
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "The frozen plan's required_approvals does not name capability "
-                    + request.approverCapability
-            );
-        }
-
-        UF_TRY_VALUE(token, randomToken(m_impl->database.get()));
-        UF_TRY_VALUE(
-            insert,
-            prepare(
-                m_impl->database.get(),
-                "INSERT INTO approvals(token, operation_id, session_id, controller_id, "
-                "controlled_target_id, lease_id, session_epoch, fencing_token, "
-                "command_fingerprint, frozen_plan_hash, step_intent_hash, decision_basis_hash, "
-                "effect_envelope_hash, policy_hash, approver_principal, "
-                "approver_capability, authority_decision_id, expires_at_unix_millis) "
-                "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, "
-                "?14, ?15, ?16, ?17, ?18)"
-            )
-        );
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 1, token));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 2, request.operationId));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 3, request.lease.sessionId));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 4, request.lease.controllerId));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            insert.get(),
-            5,
-            request.lease.controlledTargetId
-        ));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 6, request.lease.leaseId));
-        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 7, request.lease.sessionEpoch));
-        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 8, request.lease.fencingToken));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            insert.get(),
-            9,
-            columnText(operationQuery.get(), 3)
-        ));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 10, frozenPlanHex));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            insert.get(),
-            11,
-            columnText(operationQuery.get(), 7)
-        ));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            insert.get(),
-            12,
-            columnText(operationQuery.get(), 5)
-        ));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            insert.get(),
-            13,
-            columnText(operationQuery.get(), 6)
-        ));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            insert.get(),
-            14,
-            columnText(operationQuery.get(), 8)
-        ));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 15, request.approverPrincipal));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            insert.get(),
-            16,
-            request.approverCapability
-        ));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            insert.get(),
-            17,
-            authorityDecisionId.value()
-        ));
-        UF_TRY(bindInteger(
-            m_impl->database.get(),
-            insert.get(),
-            18,
-            request.expiresAtUnixMillis
-        ));
-        UF_TRY(expectDone(m_impl->database.get(), insert.get()));
-        UF_TRY(transaction.commit());
-        return ApprovalGrant{
-            .token               = std::move(token),
-            .authorityDecisionId = authorityDecisionId,
         };
     }
 }

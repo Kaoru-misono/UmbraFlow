@@ -1137,7 +1137,7 @@ namespace uf::operator_runtime
         CHECK(transition.find("\"fencing_token\"") != std::string::npos);
         CHECK(authority.find("\"session_epoch\"") != std::string::npos);
         CHECK(authority.find("\"fencing_token\"") != std::string::npos);
-        CHECK(authority.find("\"authority_decision_id\"") != std::string::npos);
+        CHECK(authority.find("\"lease_id\"") != std::string::npos);
     }
 
     TEST_CASE("contract-agent-a08")

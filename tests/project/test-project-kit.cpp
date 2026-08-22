@@ -230,12 +230,9 @@ namespace uf::project
                 + std::string{authoringMember}
                 + std::string{justificationMember}
                 + R"json(      "project_state_schema": "schema/state.json",
-      "project_observation_schema": "schema/observation.json",
       "tool_precondition_schema": "schema/precondition.json",
-      "reconcile_schema": "schema/reconcile.json",
       "tool_catalog": "schema/catalog.json",
       "journal_event_schema_manifest": "schema/journal-manifest.json",
-      "reconcile_manifest": "schema/reconcile-manifest.json",
       "journal_payload_schemas": ["schema/journal-0.json"],
       "effect_payload_schemas": [],
       "observed_instance_identity_schemas": [],

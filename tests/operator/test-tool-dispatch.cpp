@@ -119,7 +119,6 @@ namespace uf::operator_runtime
             R"({"schema":"umbraflow-tool-catalog/v1","plugin":"dispatch.project"})"
         };
         constexpr auto k_stateSchemaBytes       = std::string_view{"state-schema"};
-        constexpr auto k_observationSchemaBytes = std::string_view{"observation-schema"};
         constexpr auto k_preconditionSchemaBytes = std::string_view{"precondition"};
 
         // The reducer closure: the whole of the pure program type's contract,
@@ -484,8 +483,6 @@ return {
                 {"plugin_environment_hash",
                  json::Value::ofString(claims.pluginEnvironmentHash.hex())},
                 {"plugin_id", json::Value::ofString(claims.pluginId)},
-                {"project_observation_schema_hash",
-                 json::Value::ofString(claims.projectObservationSchemaHash.hex())},
                 {"project_registration_format",
                  json::Value::ofNumber(
                      static_cast<double>(claims.projectRegistrationFormat)
@@ -497,10 +494,6 @@ return {
                 {"project_tool_precondition_schema_hash",
                  json::Value::ofString(
                      claims.projectToolPreconditionSchemaHash.hex()
-                 )},
-                {"reconcile_payload_schema_manifest_hash",
-                 json::Value::ofString(
-                     claims.reconcilePayloadSchemaManifestHash.hex()
                  )},
                 {"reducer_closure", closureValue(claims.reducerClosure)},
                 {"tool_catalog_hash",
@@ -541,11 +534,8 @@ return {
                 .pluginEnvironmentHash  = *environmentHash,
                 .toolCatalogHash        = hashOf(k_toolCatalogBytes),
                 .projectStateSchemaHash = hashOf(k_stateSchemaBytes),
-                .projectObservationSchemaHash         =
-                    hashOf(k_observationSchemaBytes),
                 .projectToolPreconditionSchemaHash    =
                     hashOf(k_preconditionSchemaBytes),
-                .reconcilePayloadSchemaManifestHash   = hashOf("reconcile"),
                 .journalEventSchemaManifestHash       = hashOf("journal"),
                 .baselineEventType                    = "dispatch.baseline",
                 .projectResources                     = {},
@@ -634,16 +624,14 @@ return {
             auto owner = ProjectSchemaOwner::create(
                 registration,
                 ProjectDocumentSchemaBytes{
-                    .projectState       = k_stateSchemaBytes,
-                    .projectObservation = k_observationSchemaBytes,
-                    .toolPrecondition   = k_preconditionSchemaBytes,
+                    .projectState     = k_stateSchemaBytes,
+                    .toolPrecondition = k_preconditionSchemaBytes,
                 },
                 deployment::canonicalJsonValidator(),
-                [](
-                    ProjectPluginFunction,
-                    ProjectDocumentDirection,
-                    std::string_view
-                ) -> Status { return ok(); }
+                [](ProjectDocumentDirection, std::string_view) -> Status
+                {
+                    return ok();
+                }
             );
             REQUIRE(owner.has_value());
             return *std::move(owner);
@@ -693,7 +681,7 @@ return {
             ControllerBinding   controller;
             ControlLease        lease;
 
-            OperatorPlanAuthority planAuthority;
+            OperatorPolicyAuthority policyAuthority;
 
             SnapshotObservationAuthority observations{};
         };
@@ -736,12 +724,12 @@ return {
         // it was parsed from, so the authority outlives the host that produced
         // it.
         [[nodiscard]]
-        auto planAuthorityFor(
+        auto policyAuthorityFor(
             OperatorCoordinator& store,
             VerifiedProjectGeneration const& registration,
             SessionManifest const& manifest,
             ContentHash const& artifactRootHash
-        ) -> OperatorPlanAuthority
+        ) -> OperatorPolicyAuthority
         {
             auto installed =
                 store.openActiveInstalledRuntimeArtifact(artifactRootHash);
@@ -754,7 +742,7 @@ return {
             auto const runtimeModel =
                 observation.host->runtimeModelBinding(observation.generation);
             REQUIRE(runtimeModel.has_value());
-            auto authority = OperatorPlanAuthority::create(
+            auto authority = OperatorPolicyAuthority::create(
                 registration,
                 manifest,
                 *runtimeModel,
@@ -899,14 +887,14 @@ return {
 
             auto session = openSession(store, registration, manifest, k_sessionId);
             auto authority =
-                planAuthorityFor(store, registration, manifest, artifactRootHash);
+                policyAuthorityFor(store, registration, manifest, artifactRootHash);
             return Incarnation{
                 .store            = std::move(store),
                 .artifactRootHash = artifactRootHash,
                 .manifest         = manifest,
                 .controller       = std::move(session.first),
                 .lease            = std::move(session.second),
-                .planAuthority    = std::move(authority),
+                .policyAuthority  = std::move(authority),
             };
         }
 
@@ -933,14 +921,14 @@ return {
             );
             auto session = openSession(store, registration, manifest, sessionId);
             auto authority =
-                planAuthorityFor(store, registration, manifest, artifactRootHash);
+                policyAuthorityFor(store, registration, manifest, artifactRootHash);
             return Incarnation{
                 .store            = std::move(store),
                 .artifactRootHash = artifactRootHash,
                 .manifest         = manifest,
                 .controller       = std::move(session.first),
                 .lease            = std::move(session.second),
-                .planAuthority    = std::move(authority),
+                .policyAuthority  = std::move(authority),
             };
         }
 
@@ -1111,7 +1099,7 @@ return {
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
             prepared.observations,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             frameworkProvider(log)
         );
         REQUIRE_MESSAGE(dispatcher.has_value(), failureText(dispatcher));
@@ -1181,7 +1169,7 @@ return {
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
             prepared.observations,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -1241,7 +1229,7 @@ return {
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
             prepared.observations,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -1307,7 +1295,7 @@ return {
             auto dispatcher = ProjectToolDispatcher::create(
                 prepared.store,
                 prepared.observations,
-                prepared.planAuthority,
+                prepared.policyAuthority,
                 frameworkProvider(log)
             );
             REQUIRE(dispatcher.has_value());
@@ -1402,7 +1390,7 @@ return {
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
             prepared.observations,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -1489,7 +1477,7 @@ return {
             auto dispatcher = ProjectToolDispatcher::create(
                 prepared.store,
                 prepared.observations,
-                prepared.planAuthority,
+                prepared.policyAuthority,
                 frameworkProvider(log)
             );
             REQUIRE(dispatcher.has_value());
@@ -1548,7 +1536,7 @@ return {
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
             prepared.observations,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -1594,7 +1582,7 @@ return {
             auto dispatcher = ProjectToolDispatcher::create(
                 prepared.store,
                 prepared.observations,
-                prepared.planAuthority,
+                prepared.policyAuthority,
                 frameworkProvider(log)
             );
             REQUIRE(dispatcher.has_value());
@@ -1651,7 +1639,7 @@ return {
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
             prepared.observations,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -1692,7 +1680,7 @@ return {
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
             prepared.observations,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -1782,7 +1770,7 @@ return {
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
             prepared.observations,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -1911,7 +1899,7 @@ return {
                     .has_value()
             );
             auto const effects = std::vector{frameworkInputEffect(k_targetId)};
-            auto const authority = prepared.planAuthority;
+            auto const authority = prepared.policyAuthority;
             auto const admitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
                     .controller = prepared.controller,
@@ -1919,8 +1907,8 @@ return {
                     .root       = root,
                     .call       = inputCall,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .planAuthority = authority,
-                        .effects       = effects,
+                        .policyAuthority = authority,
+                        .effects         = effects,
                     },
                 }
             );
@@ -1951,7 +1939,7 @@ return {
                 prepared.store.persistToolCallPosition(root, inputCall)
                     .has_value()
             );
-            auto const authority = prepared.planAuthority;
+            auto const authority = prepared.policyAuthority;
             auto const admitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
                     .controller = prepared.controller,
@@ -1959,8 +1947,8 @@ return {
                     .root       = root,
                     .call       = inputCall,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .planAuthority = authority,
-                        .effects       = std::vector{frameworkInputEffect(k_targetId)},
+                        .policyAuthority = authority,
+                        .effects         = std::vector{frameworkInputEffect(k_targetId)},
                     },
                 }
             );
@@ -1987,7 +1975,7 @@ return {
             // -- and this is the one shape for which that conversion is right.
             auto const inputCall =
                 frameworkToolCall(program, root, k_inputTool, k_inputArguments);
-            auto const authority = prepared.planAuthority;
+            auto const authority = prepared.policyAuthority;
             auto const answered = ToolRuntimeExecutor{prepared.store}.invoke(
                 ToolAdmissionRequest{
                     .controller = prepared.controller,
@@ -1995,8 +1983,8 @@ return {
                     .root       = root,
                     .call       = inputCall,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .planAuthority = authority,
-                        .effects       = std::vector{frameworkInputEffect(k_targetId)},
+                        .policyAuthority = authority,
+                        .effects         = std::vector{frameworkInputEffect(k_targetId)},
                     },
                 },
                 [](ToolCallPositionIdentity const&) -> Result<ToolCallCompletion>
@@ -2021,7 +2009,7 @@ return {
         auto const refused = ProjectToolDispatcher::create(
             prepared.store,
             prepared.observations,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             ToolProvider{}
         );
         REQUIRE_FALSE(refused.has_value());
@@ -2041,7 +2029,7 @@ return {
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
             prepared.observations,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -2079,7 +2067,7 @@ return {
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
             prepared.observations,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -2177,7 +2165,7 @@ return {
             auto dispatcher = ProjectToolDispatcher::create(
                 prepared.store,
                 prepared.observations,
-                prepared.planAuthority,
+                prepared.policyAuthority,
                 frameworkProvider(log)
             );
             REQUIRE(dispatcher.has_value());
@@ -2195,7 +2183,7 @@ return {
             REQUIRE(call.descriptor().mutability == ToolMutability::Mutating);
 
             REQUIRE(prepared.store.persistToolRootRequest(root).has_value());
-            auto const authority = prepared.planAuthority;
+            auto const authority = prepared.policyAuthority;
             auto const effects  = std::vector{projectEffect(k_targetId)};
             auto const admitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
@@ -2204,8 +2192,8 @@ return {
                     .root       = root,
                     .call       = call,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .planAuthority = authority,
-                        .effects       = effects,
+                        .policyAuthority = authority,
+                        .effects         = effects,
                     },
                 }
             );
@@ -2270,7 +2258,7 @@ return {
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
             prepared.observations,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -2320,7 +2308,7 @@ return {
             R"({"children":[]})"
         );
         REQUIRE(prepared.store.persistToolRootRequest(nextRoot).has_value());
-        auto const authority = prepared.planAuthority;
+        auto const authority = prepared.policyAuthority;
         auto const effects   = std::vector{projectEffect(k_targetId)};
         auto const readmitted = prepared.store.admitToolCall(
             ToolAdmissionRequest{
@@ -2329,8 +2317,8 @@ return {
                 .root       = nextRoot,
                 .call       = nextCall,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = authority,
-                    .effects       = effects,
+                    .policyAuthority = authority,
+                    .effects         = effects,
                 },
             }
         );
@@ -2354,7 +2342,7 @@ return {
             auto dispatcher = ProjectToolDispatcher::create(
                 prepared.store,
                 prepared.observations,
-                prepared.planAuthority,
+                prepared.policyAuthority,
                 frameworkProvider(log)
             );
             REQUIRE(dispatcher.has_value());
@@ -2369,7 +2357,7 @@ return {
                 k_children
             );
             REQUIRE(prepared.store.persistToolRootRequest(root).has_value());
-            auto const authority = prepared.planAuthority;
+            auto const authority = prepared.policyAuthority;
             auto const effects  = std::vector{projectEffect(k_targetId)};
             auto const admitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
@@ -2378,8 +2366,8 @@ return {
                     .root       = root,
                     .call       = call,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .planAuthority = authority,
-                        .effects       = effects,
+                        .policyAuthority = authority,
+                        .effects         = effects,
                     },
                 }
             );
@@ -2420,7 +2408,7 @@ return {
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
             prepared.observations,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -2468,7 +2456,7 @@ return {
         REQUIRE(
             prepared.store.persistToolCallPosition(nextRoot, nextCall).has_value()
         );
-        auto const authorityAfter = prepared.planAuthority;
+        auto const authorityAfter = prepared.policyAuthority;
         auto const readmitted = prepared.store.admitToolCall(
             ToolAdmissionRequest{
                 .controller = prepared.controller,
@@ -2476,8 +2464,8 @@ return {
                 .root       = nextRoot,
                 .call       = nextCall,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = authorityAfter,
-                    .effects       = std::vector{projectEffect(k_targetId)},
+                    .policyAuthority = authorityAfter,
+                    .effects         = std::vector{projectEffect(k_targetId)},
                 },
             }
         );
@@ -2506,14 +2494,14 @@ return {
             auto dispatcher = ProjectToolDispatcher::create(
                 prepared.store,
                 prepared.observations,
-                prepared.planAuthority,
+                prepared.policyAuthority,
                 frameworkProvider(log)
             );
             REQUIRE(dispatcher.has_value());
             auto registrar = ProjectGenerationRegistrar{};
             auto const program =
                 loadProgram(registration, registrar, log, *dispatcher);
-            auto const authority = prepared.planAuthority;
+            auto const authority = prepared.policyAuthority;
 
             auto const composed = projectRootCall(
                 program,
@@ -2533,8 +2521,8 @@ return {
                     .root       = composedRoot,
                     .call       = composed,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .planAuthority = authority,
-                        .effects       = composedEffects,
+                        .policyAuthority = authority,
+                        .effects         = composedEffects,
                     },
                 }
             );
@@ -2598,8 +2586,8 @@ return {
                     .root       = inputRoot,
                     .call       = inputCall,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .planAuthority = authority,
-                        .effects       = inputEffects,
+                        .policyAuthority = authority,
+                        .effects         = inputEffects,
                     },
                 }
             );
@@ -2620,7 +2608,7 @@ return {
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
             prepared.observations,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -2773,7 +2761,7 @@ return {
             ProjectToolDispatcher&             dispatcher;
             ProjectGenerationHandle const&    program;
             ToolStartCatalog const&            catalog;
-            OperatorPlanAuthority const&       authority;
+            OperatorPolicyAuthority const&       authority;
             ToolExecutionIdentity const&       execution;
         };
 
@@ -2867,11 +2855,11 @@ return {
                 ControllerKind::Script,
                 automation.translate(
                     ToolActorRun{
-                        .controller    = world.prepared.controller,
-                        .lease         = world.prepared.lease,
-                        .execution     = world.execution,
-                        .planAuthority = world.authority,
-                        .catalog       = world.catalog,
+                        .controller      = world.prepared.controller,
+                        .lease           = world.prepared.lease,
+                        .execution       = world.execution,
+                        .policyAuthority = world.authority,
+                        .catalog         = world.catalog,
                     },
                     world.program.bindingTable(),
                     ProjectAutomationStart{
@@ -2904,11 +2892,11 @@ return {
                 ControllerKind::Agent,
                 agent.translate(
                     ToolActorRun{
-                        .controller    = agentSession.first,
-                        .lease         = agentSession.second,
-                        .execution     = world.execution,
-                        .planAuthority = world.authority,
-                        .catalog       = world.catalog,
+                        .controller      = agentSession.first,
+                        .lease           = agentSession.second,
+                        .execution       = world.execution,
+                        .policyAuthority = world.authority,
+                        .catalog         = world.catalog,
                     },
                     AgentToolUse{
                         .requestKey = call.requestKey,
@@ -2939,11 +2927,11 @@ return {
                 ControllerKind::Human,
                 human.translate(
                     ToolActorRun{
-                        .controller    = humanSession.first,
-                        .lease         = humanSession.second,
-                        .execution     = world.execution,
-                        .planAuthority = world.authority,
-                        .catalog       = world.catalog,
+                        .controller      = humanSession.first,
+                        .lease           = humanSession.second,
+                        .execution       = world.execution,
+                        .policyAuthority = world.authority,
+                        .catalog         = world.catalog,
                     },
                     HumanToolCommand{
                         .requestKey    = call.requestKey,
@@ -3083,7 +3071,7 @@ return {
             auto dispatcher = ProjectToolDispatcher::create(
                 prepared.store,
                 prepared.observations,
-                prepared.planAuthority,
+                prepared.policyAuthority,
                 frameworkProvider(log)
             );
             REQUIRE_MESSAGE(dispatcher.has_value(), failureText(dispatcher));
@@ -3093,7 +3081,7 @@ return {
             auto const catalog =
                 ToolStartCatalog::create(toolCatalogOwner(registration));
             REQUIRE_MESSAGE(catalog.has_value(), failureText(catalog));
-            auto const authority = prepared.planAuthority;
+            auto const authority = prepared.policyAuthority;
             auto const execution = executionIdentity(program);
             auto world           = AdapterWorld{
                           .prepared     = prepared,
@@ -3125,11 +3113,11 @@ return {
             REQUIRE_MESSAGE(lease.has_value(), failureText(lease));
             auto const handler = automation.translate(
                 ToolActorRun{
-                    .controller    = prepared.controller,
-                    .lease         = *lease,
-                    .execution     = execution,
-                    .planAuthority = authority,
-                    .catalog       = *catalog,
+                    .controller      = prepared.controller,
+                    .lease           = *lease,
+                    .execution       = execution,
+                    .policyAuthority = authority,
+                    .catalog         = *catalog,
                 },
                 program.bindingTable(),
                 ProjectAutomationStart{
@@ -3175,11 +3163,11 @@ return {
             // either be unable to name a Framework Tool at all or unable to
             // name every Project Tool compared above.
             auto const probeRun = ToolActorRun{
-                .controller    = prepared.controller,
-                .lease         = *lease,
-                .execution     = execution,
-                .planAuthority = authority,
-                .catalog       = *catalog,
+                .controller      = prepared.controller,
+                .lease           = *lease,
+                .execution       = execution,
+                .policyAuthority = authority,
+                .catalog         = *catalog,
             };
             auto probe           = AgentToolAdapter{};
             auto const frameworkStart = probe.translate(
@@ -3340,7 +3328,7 @@ return {
             auto dispatcher = ProjectToolDispatcher::create(
                 prepared.store,
                 prepared.observations,
-                prepared.planAuthority,
+                prepared.policyAuthority,
                 frameworkProvider(log)
             );
             REQUIRE_MESSAGE(dispatcher.has_value(), failureText(dispatcher));
@@ -3350,7 +3338,7 @@ return {
             auto const catalog =
                 ToolStartCatalog::create(toolCatalogOwner(registration));
             REQUIRE_MESSAGE(catalog.has_value(), failureText(catalog));
-            auto const authority = prepared.planAuthority;
+            auto const authority = prepared.policyAuthority;
             auto const execution = executionIdentity(program);
             auto world           = AdapterWorld{
                           .prepared     = prepared,
@@ -3390,12 +3378,12 @@ return {
             auto const& mutation = *start.request.mutation;
             CHECK(mutation.approvals.empty());
             CHECK(
-                mutation.planAuthority.projectRegistrationHash()
-                == expected.planAuthority.projectRegistrationHash()
+                mutation.policyAuthority.projectRegistrationHash()
+                == expected.policyAuthority.projectRegistrationHash()
             );
             CHECK(
-                mutation.planAuthority.policyHash()
-                == expected.planAuthority.policyHash()
+                mutation.policyAuthority.policyHash()
+                == expected.policyAuthority.policyHash()
             );
             REQUIRE(mutation.effects.size() == 1U);
             REQUIRE(expected.effects.size() == 1U);

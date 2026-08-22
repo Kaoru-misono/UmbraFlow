@@ -81,7 +81,7 @@ namespace uf::operator_runtime
         ControllerBinding const&       controller;
         ControlLease const&            lease;
         ToolExecutionIdentity const&   execution;
-        OperatorPlanAuthority const&   planAuthority;
+        OperatorPolicyAuthority const&   policyAuthority;
         ValidatedToolInvocation const& invocation;
 
         // The caller-supplied pre-admission material of the root request: the

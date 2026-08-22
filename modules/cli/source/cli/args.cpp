@@ -1,5 +1,6 @@
 #include "args.hpp"
 
+#include <core/error/contracts.hpp>
 #include <core/numeric/checked-cast.hpp>
 #include <core/safety/checked-access.hpp>
 #include <core/types/integer.hpp>
@@ -15,10 +16,12 @@
 #include <format>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <variant>
 
 namespace uf::cli
 {
@@ -197,6 +200,188 @@ namespace uf::cli
             );
             if (found == k_observeFlags.end()) return std::nullopt;
             return found->flag;
+        }
+
+        enum class InvokeActor : uint8
+        {
+            Agent,
+            Human,
+            Project,
+        };
+
+        enum class InvokeFlag : uint8
+        {
+            Project,
+            WindowHandle,
+            Runtime,
+            OcrModels,
+            Actor,
+            RequestKey,
+            Capability,
+            Tool,
+            Entry,
+            Objective,
+            Arguments,
+            ObjectiveFile,
+            ArgumentsFile,
+            AgentProfile,
+            Budget,
+            RecognitionTimeout,
+            Trace,
+        };
+
+        struct InvokeFlagSpec final
+        {
+            std::string_view name{};
+            InvokeFlag       flag{InvokeFlag::Project};
+        };
+
+        // Every spelling this verb answers to, and the only place each is
+        // written. The refusals below name flags out of this table rather than
+        // out of literals, so a renamed flag cannot be refused under its old
+        // name.
+        constexpr auto k_invokeFlags = std::array{
+            InvokeFlagSpec{"--project", InvokeFlag::Project},
+            InvokeFlagSpec{"--hwnd", InvokeFlag::WindowHandle},
+            InvokeFlagSpec{"--runtime", InvokeFlag::Runtime},
+            InvokeFlagSpec{"--ocr-models", InvokeFlag::OcrModels},
+            InvokeFlagSpec{"--actor", InvokeFlag::Actor},
+            InvokeFlagSpec{"--request-key", InvokeFlag::RequestKey},
+            InvokeFlagSpec{"--capability", InvokeFlag::Capability},
+            InvokeFlagSpec{"--tool", InvokeFlag::Tool},
+            InvokeFlagSpec{"--entry", InvokeFlag::Entry},
+            InvokeFlagSpec{"--objective", InvokeFlag::Objective},
+            InvokeFlagSpec{"--arguments", InvokeFlag::Arguments},
+            InvokeFlagSpec{"--objective-file", InvokeFlag::ObjectiveFile},
+            InvokeFlagSpec{"--arguments-file", InvokeFlag::ArgumentsFile},
+            InvokeFlagSpec{"--agent-profile", InvokeFlag::AgentProfile},
+            InvokeFlagSpec{"--budget", InvokeFlag::Budget},
+            InvokeFlagSpec{
+                "--recognition-timeout",
+                InvokeFlag::RecognitionTimeout,
+            },
+            InvokeFlagSpec{"--trace", InvokeFlag::Trace},
+        };
+
+        [[nodiscard]]
+        auto findInvokeFlag(std::string_view name) noexcept -> std::optional<InvokeFlag>
+        {
+            auto const found = std::ranges::find(
+                k_invokeFlags,
+                name,
+                &InvokeFlagSpec::name
+            );
+            if (found == k_invokeFlags.end()) return std::nullopt;
+            return found->flag;
+        }
+
+        [[nodiscard]]
+        auto invokeFlagName(InvokeFlag flag) -> std::string_view
+        {
+            auto const found = std::ranges::find(
+                k_invokeFlags,
+                flag,
+                &InvokeFlagSpec::flag
+            );
+            if (found != k_invokeFlags.end())
+            {
+                return found->name;
+            }
+            UF_UNREACHABLE_MSG("run flag with no command-line spelling");
+        }
+
+        // Exactly the material each actor presents, and the whole of what
+        // separates the three on a command line.
+        //
+        // The three transports carry three members each. The agent's fourth is
+        // not the transport's: an online Agent is the one principal whose
+        // stopping condition the Operator holds, so its session is pinned to a
+        // budget document and the ledger refuses to pin one without it. It is
+        // listed here because the two rules below are exactly the two this
+        // material needs -- present for the actor that owns it, refused by
+        // name for the two that do not.
+        //
+        // One table rather than two lists, because the refusal that names a
+        // flag the stated actor does not carry and the requirement that every
+        // flag it does carry is present are two readings of one statement.
+        constexpr auto k_agentMaterial = std::array{
+            InvokeFlag::Tool,
+            InvokeFlag::ObjectiveFile,
+            InvokeFlag::ArgumentsFile,
+            InvokeFlag::AgentProfile,
+        };
+        constexpr auto k_humanMaterial = std::array{
+            InvokeFlag::Tool,
+            InvokeFlag::Objective,
+            InvokeFlag::Arguments,
+        };
+        constexpr auto k_projectMaterial = std::array{
+            InvokeFlag::Entry,
+            InvokeFlag::ObjectiveFile,
+            InvokeFlag::ArgumentsFile,
+        };
+
+        struct InvokeActorSpec final
+        {
+            std::string_view name{};
+            InvokeActor      actor{InvokeActor::Agent};
+
+            // A view over one of the three tables above, each of which has
+            // static storage duration, so the span outlives every reader.
+            std::span<InvokeFlag const> material{};
+        };
+
+        constexpr auto k_invokeActors = std::array{
+            InvokeActorSpec{"agent", InvokeActor::Agent, k_agentMaterial},
+            InvokeActorSpec{"human", InvokeActor::Human, k_humanMaterial},
+            InvokeActorSpec{"project", InvokeActor::Project, k_projectMaterial},
+        };
+
+        // Whether one material flag was stated, paired with the flag itself so
+        // the two loops below read the same six answers.
+        struct InvokeMaterialState final
+        {
+            InvokeFlag flag{InvokeFlag::Tool};
+            bool       stated{};
+        };
+
+        // The actors whose transport carries `flag`, as their --actor words.
+        // Membership rather than ownership: a person and a model both name a
+        // Tool, and a model and a Project both deliver documents, so what a
+        // refusal can state is which transports carry the material and not
+        // which one owns it.
+        [[nodiscard]]
+        auto actorsCarrying(InvokeFlag flag) -> std::string
+        {
+            auto carriers = std::string{};
+            for (auto const& spec : k_invokeActors)
+            {
+                if (!std::ranges::contains(spec.material, flag)) continue;
+                if (!carriers.empty())
+                {
+                    carriers += " and ";
+                }
+                carriers += spec.name;
+            }
+            return carriers;
+        }
+
+        [[nodiscard]]
+        auto actorOf(AgentToolRequest const&) noexcept -> InvokeActor
+        {
+            return InvokeActor::Agent;
+        }
+
+        [[nodiscard]]
+        auto actorOf(HumanToolRequest const&) noexcept -> InvokeActor
+        {
+            return InvokeActor::Human;
+        }
+
+        [[nodiscard]]
+        auto actorOf(ProjectAutomationRequest const&) noexcept -> InvokeActor
+        {
+            return InvokeActor::Project;
         }
 
         enum class OcrFlag : uint8
@@ -881,6 +1066,272 @@ namespace uf::cli
         };
     }
 
+    auto parseInvokeArguments(std::span<std::string const> raw) -> Result<InvokeArgs>
+    {
+        auto project      = std::optional<std::filesystem::path>{};
+        auto windowHandle = std::optional<intptr>{};
+        auto runtime      = std::optional<std::filesystem::path>{};
+        auto ocrModels    = std::optional<std::filesystem::path>{};
+
+        auto actorWord  = std::optional<std::string_view>{};
+        auto requestKey = std::optional<std::string>{};
+
+        auto toolName      = std::optional<std::string>{};
+        auto entryToolName = std::optional<std::string>{};
+        auto objectiveText = std::optional<std::string>{};
+        auto argumentsText = std::optional<std::string>{};
+        auto objectiveFile = std::optional<std::filesystem::path>{};
+        auto argumentsFile = std::optional<std::filesystem::path>{};
+        auto agentProfile  = std::optional<std::filesystem::path>{};
+
+        auto capabilities = std::vector<std::string>{};
+
+        auto budget             = k_defaultPixelComparisonBudget;
+        auto recognitionTimeout = k_defaultRecognitionTimeout;
+        auto trace              = std::filesystem::path{k_defaultInvokeTracePath};
+
+        auto index = std::size_t{0};
+        while (index < raw.size())
+        {
+            auto const& name = raw[index];
+            auto const flag  = findInvokeFlag(name);
+            if (!flag)
+            {
+                return invalid(std::format("unknown argument \"{}\"", name));
+            }
+            if (index + 1U >= raw.size())
+            {
+                return invalid(std::format("missing value for {}", name));
+            }
+            auto const& value = raw[index + 1U];
+
+            switch (*flag)
+            {
+            case InvokeFlag::Project:
+                project = std::filesystem::path{value};
+                break;
+            case InvokeFlag::WindowHandle:
+            {
+                UF_TRY_VALUE(parsed, parseWindowHandle(value, name));
+                windowHandle = parsed;
+                break;
+            }
+            case InvokeFlag::Runtime:
+                runtime = std::filesystem::path{value};
+                break;
+            case InvokeFlag::OcrModels:
+                ocrModels = std::filesystem::path{value};
+                break;
+            case InvokeFlag::Actor:
+                actorWord = std::string_view{value};
+                break;
+            case InvokeFlag::RequestKey:
+                requestKey = value;
+                break;
+            case InvokeFlag::Capability:
+                capabilities.emplace_back(value);
+                break;
+            case InvokeFlag::Tool:
+                toolName = value;
+                break;
+            case InvokeFlag::Entry:
+                entryToolName = value;
+                break;
+            case InvokeFlag::Objective:
+                objectiveText = value;
+                break;
+            case InvokeFlag::Arguments:
+                argumentsText = value;
+                break;
+            case InvokeFlag::ObjectiveFile:
+                objectiveFile = std::filesystem::path{value};
+                break;
+            case InvokeFlag::ArgumentsFile:
+                argumentsFile = std::filesystem::path{value};
+                break;
+            case InvokeFlag::AgentProfile:
+                agentProfile = std::filesystem::path{value};
+                break;
+            case InvokeFlag::Budget:
+            {
+                UF_TRY_VALUE(parsed, parseUnsigned(value, name));
+                budget = parsed;
+                break;
+            }
+            case InvokeFlag::RecognitionTimeout:
+            {
+                UF_TRY_VALUE(count, parseUnsigned(value, name));
+                UF_TRY_VALUE(
+                    parsed,
+                    parseDurationCount<std::chrono::milliseconds>(count, name)
+                );
+                recognitionTimeout = parsed;
+                break;
+            }
+            case InvokeFlag::Trace:
+                trace = std::filesystem::path{value};
+                break;
+            }
+            index += 2U;
+        }
+
+        UF_TRY_VALUE(requiredProject, requirePath(std::move(project), "--project"));
+        UF_TRY_VALUE(requiredRuntime, requirePath(std::move(runtime), "--runtime"));
+        UF_TRY_VALUE(
+            requiredModels,
+            requirePath(std::move(ocrModels), "--ocr-models")
+        );
+        if (!windowHandle)
+        {
+            return invalid("missing required argument --hwnd");
+        }
+        if (!requestKey || requestKey->empty())
+        {
+            return invalid("missing required argument --request-key");
+        }
+
+        // Required with no default and nothing inferred. Which transport a
+        // call arrives at is what the Operator admits it as, so a front end
+        // that read an absent actor as any of the three would be choosing the
+        // principal on the caller's behalf.
+        if (!actorWord)
+        {
+            return invalid(
+                "missing required argument --actor; state agent, human or "
+                "project"
+            );
+        }
+        auto const namedActor = std::ranges::find(
+            k_invokeActors,
+            *actorWord,
+            &InvokeActorSpec::name
+        );
+        if (namedActor == k_invokeActors.end())
+        {
+            return invalid(
+                std::format(
+                    "--actor expects agent, human or project, got \"{}\"",
+                    *actorWord
+                )
+            );
+        }
+
+        auto const stated = std::array{
+            InvokeMaterialState{InvokeFlag::Tool, toolName.has_value()},
+            InvokeMaterialState{InvokeFlag::Entry, entryToolName.has_value()},
+            InvokeMaterialState{InvokeFlag::Objective, objectiveText.has_value()},
+            InvokeMaterialState{InvokeFlag::Arguments, argumentsText.has_value()},
+            InvokeMaterialState{InvokeFlag::ObjectiveFile, objectiveFile.has_value()},
+            InvokeMaterialState{InvokeFlag::ArgumentsFile, argumentsFile.has_value()},
+            InvokeMaterialState{InvokeFlag::AgentProfile, agentProfile.has_value()},
+        };
+
+        // Material the named actor's transport does not carry is refused by
+        // name rather than ignored. One job, one vehicle
+        // (docs/decisions/2026-08-22-one-job-one-vehicle.md): a caller that
+        // typed a person's objective under --actor agent is presenting at the
+        // wrong transport, and a verb that dropped the flag would start a call
+        // the caller did not describe.
+        for (auto const& material : stated)
+        {
+            if (!material.stated) continue;
+
+            auto const carried = std::ranges::contains(
+                namedActor->material,
+                material.flag
+            );
+            if (carried) continue;
+
+            return invalid(
+                std::format(
+                    "{} is not material the {} actor's transport carries; it "
+                    "belongs to {}",
+                    invokeFlagName(material.flag),
+                    namedActor->name,
+                    actorsCarrying(material.flag)
+                )
+            );
+        }
+
+        for (auto const& required : namedActor->material)
+        {
+            auto const present = std::ranges::find(
+                stated,
+                required,
+                &InvokeMaterialState::flag
+            );
+            if (present != stated.end() && present->stated) continue;
+            return invalid(
+                std::format(
+                    "missing required argument {} for --actor {}",
+                    invokeFlagName(required),
+                    namedActor->name
+                )
+            );
+        }
+
+        auto request = ActorToolRequest{};
+        switch (namedActor->actor)
+        {
+        case InvokeActor::Agent:
+            request = AgentToolRequest{
+                .toolName             = *std::move(toolName),
+                .objectiveDocument    = *std::move(objectiveFile),
+                .argumentsDocument    = *std::move(argumentsFile),
+                .agentProfileDocument = *std::move(agentProfile),
+            };
+            break;
+        case InvokeActor::Human:
+            request = HumanToolRequest{
+                .toolName      = *std::move(toolName),
+                .objectiveText = *std::move(objectiveText),
+                .argumentsText = *std::move(argumentsText),
+            };
+            break;
+        case InvokeActor::Project:
+            request = ProjectAutomationRequest{
+                .entryToolName     = *std::move(entryToolName),
+                .objectiveDocument = *std::move(objectiveFile),
+                .argumentsDocument = *std::move(argumentsFile),
+            };
+            break;
+        }
+
+        return InvokeArgs{
+            .project            = std::move(requiredProject),
+            .windowHandle       = *windowHandle,
+            .runtime            = std::move(requiredRuntime),
+            .ocrModels          = std::move(requiredModels),
+            .requestKey         = *std::move(requestKey),
+            .request            = std::move(request),
+            .capabilities       = std::move(capabilities),
+            .budget             = budget,
+            .recognitionTimeout = recognitionTimeout,
+            .trace              = std::move(trace),
+        };
+    }
+
+    auto actorName(ActorToolRequest const& request) -> std::string_view
+    {
+        auto const actor = std::visit(
+            [](auto const& material) noexcept
+            {
+                return actorOf(material);
+            },
+            request
+        );
+        auto const found = std::ranges::find(
+            k_invokeActors,
+            actor,
+            &InvokeActorSpec::actor
+        );
+        if (found != k_invokeActors.end())
+        {
+            return found->name;
+        }
+        UF_UNREACHABLE_MSG("actor transport with no --actor word");
+    }
+
     auto parseOcrArguments(std::span<std::string const> raw) -> Result<OcrArgs>
     {
         auto image     = std::optional<std::filesystem::path>{};
@@ -1083,6 +1534,105 @@ namespace uf::cli
             "umbra-flow-observe-trace.jsonl\n";
     }
 
+    auto invokeUsageText() noexcept -> std::string_view
+    {
+        return
+            "Usage:\n"
+            "  umbra-flow invoke --project DIR --hwnd 0xHANDLE --runtime DIR\n"
+            "                    --ocr-models DIR --request-key KEY\n"
+            "                    --actor agent|human|project ACTOR-MATERIAL\n"
+            "                    [options]\n"
+            "\n"
+            "Starts ONE Tool call at the top of a run and prints the durable\n"
+            "replay the Tool Runtime recorded for it. It loads the project at\n"
+            "--project, opens the RuntimeArtifact that project names from the\n"
+            "Operator production root at --runtime, activates it, binds the\n"
+            "window --hwnd names, and presents the call at the transport\n"
+            "--actor names.\n"
+            "\n"
+            "--actor names the PRINCIPAL, not merely the door. It pins the\n"
+            "session's controller kind -- agent is an Agent, human is a Human,\n"
+            "project is a Script -- and every power the call then has is\n"
+            "granted or refused by the ledger against that kind: an agent\n"
+            "reaches only the semantic Tool surface and must pin a budget, and\n"
+            "only a human may approve a mutating Tool or report external\n"
+            "input. It is required and has no default, because an inferred\n"
+            "actor would be this front end choosing the principal on the\n"
+            "caller's behalf.\n"
+            "\n"
+            "Each actor carries its own material and nothing else. A model's\n"
+            "and a Project's transports deliver a parsed document, so their\n"
+            "objective and arguments are FILES this verb reads and parses. A\n"
+            "person's transport delivers text, so a human's are typed here and\n"
+            "the human adapter re-renders them -- which is what makes a typed\n"
+            "document mean what its author meant rather than what its bytes\n"
+            "happened to be. Naming another actor's material is refused by\n"
+            "name.\n"
+            "\n"
+            "Unlike `observe` this holds a control lease and may run a\n"
+            "mutating Tool. It releases the lease before it returns, whether\n"
+            "the call concluded or failed.\n"
+            "\n"
+            "Required:\n"
+            "  --project DIR                Project directory holding\n"
+            "                               umbraflow-project.json\n"
+            "  --hwnd 0xHANDLE              Target handle from `umbra-flow targets`\n"
+            "  --runtime DIR                Operator production root holding the\n"
+            "                               installed RuntimeArtifact\n"
+            "  --ocr-models DIR             Directory holding\n"
+            "                               ppocr-v6-small-rec and\n"
+            "                               ppocr-v6-small-det\n"
+            "  --request-key KEY            What the durable root request is\n"
+            "                               idempotent on; the same key resolves\n"
+            "                               to the same call rather than opening\n"
+            "                               a second one\n"
+            "  --actor ACTOR                agent, human or project\n"
+            "\n"
+            "Required for --actor agent:\n"
+            "  --tool NAME                  Tool the model named\n"
+            "  --objective-file FILE        JSON document the transport carried\n"
+            "                               as the objective\n"
+            "  --arguments-file FILE        JSON document of the tool-use\n"
+            "                               block's arguments\n"
+            "  --agent-profile FILE         The AgentBudget document this\n"
+            "                               session is pinned to. Only an agent\n"
+            "                               states one: the Operator holds the\n"
+            "                               stopping condition of the one\n"
+            "                               principal whose intent it cannot\n"
+            "                               verify in advance, and refuses to\n"
+            "                               pin an agent session without a\n"
+            "                               budget. Its bytes are hashed into\n"
+            "                               the SessionManifest, so a wider\n"
+            "                               ceiling changes every decision this\n"
+            "                               session goes on to record\n"
+            "\n"
+            "Required for --actor human:\n"
+            "  --tool NAME                  Tool the person named\n"
+            "  --objective TEXT             JSON the person typed as the\n"
+            "                               objective\n"
+            "  --arguments TEXT             JSON the person typed as the\n"
+            "                               arguments\n"
+            "\n"
+            "Required for --actor project:\n"
+            "  --entry NAME                 Entry this Project's own\n"
+            "                               registration bound; an entry it did\n"
+            "                               not bind is another party's Tool\n"
+            "  --objective-file FILE        JSON document carried as the\n"
+            "                               objective\n"
+            "  --arguments-file FILE        JSON document carried as the\n"
+            "                               arguments\n"
+            "\n"
+            "Options:\n"
+            "  --capability NAME            Capability the session pins;\n"
+            "                               repeatable. A Tool requiring one\n"
+            "                               this session does not hold is\n"
+            "                               refused at admission\n"
+            "  --budget N                   Pixel comparison ceiling per search\n"
+            "  --recognition-timeout MS     Per-recognition deadline; default: 2000\n"
+            "  --trace PATH                 Trace JSONL path; default: "
+            "umbra-flow-invoke-trace.jsonl\n";
+    }
+
     auto reclaimUsageText() noexcept -> std::string_view
     {
         return
@@ -1224,6 +1774,8 @@ namespace uf::cli
         text += openUsageText();
         text += '\n';
         text += reclaimUsageText();
+        text += '\n';
+        text += invokeUsageText();
         text += '\n';
         text += approveUsageText();
         text += '\n';

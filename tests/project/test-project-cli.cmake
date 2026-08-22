@@ -103,12 +103,9 @@ file(WRITE "${SOURCE_DIRECTORY}/umbraflow-project.json" [=[{
       },
       "plugin_authoring": "generated",
       "project_state_schema": "schema/state.json",
-      "project_observation_schema": "schema/observation.json",
       "tool_precondition_schema": "schema/precondition.json",
-      "reconcile_schema": "schema/reconcile.json",
       "tool_catalog": "generated/tool-catalogs/chaos.project/tool-catalog-v1.json",
       "journal_event_schema_manifest": "schema/journal-manifest.json",
-      "reconcile_manifest": "schema/reconcile-manifest.json",
       "journal_payload_schemas": ["schema/journal-0.json"],
       "effect_payload_schemas": [],
       "observed_instance_identity_schemas": [],
@@ -172,9 +169,6 @@ file(WRITE "${DECLARED_CATALOG}" [=[{
 file(WRITE "${SOURCE_DIRECTORY}/schema/state.json" [=[{
   "type": "object"
 }]=])
-file(WRITE "${SOURCE_DIRECTORY}/schema/observation.json" [=[{
-  "type": "object"
-}]=])
 file(WRITE "${SOURCE_DIRECTORY}/schema/precondition.json" [=[{
   "$defs": {
     "observed_instance_id": {"type": "string"},
@@ -182,14 +176,8 @@ file(WRITE "${SOURCE_DIRECTORY}/schema/precondition.json" [=[{
   },
   "type": "object"
 }]=])
-file(WRITE "${SOURCE_DIRECTORY}/schema/reconcile.json" [=[{
-  "type": "object"
-}]=])
 file(WRITE "${SOURCE_DIRECTORY}/schema/journal-manifest.json" [=[{
   "schema": "umbraflow-journal-event-schema-manifest/v1"
-}]=])
-file(WRITE "${SOURCE_DIRECTORY}/schema/reconcile-manifest.json" [=[{
-  "schema": "umbraflow-reconcile-manifest/v1"
 }]=])
 file(WRITE "${SOURCE_DIRECTORY}/schema/journal-0.json" [=[{
   "type": "object"
@@ -626,7 +614,7 @@ file(WRITE "${SOURCE_DIRECTORY}/schema/state.json" [=[{
 # H2. A declared schema whose bytes differ from what the build recorded is
 # refused by name. The declared read opens the files in the declaration's
 # order, so the fixture must be whole before the altered one can be reached.
-file(APPEND "${SOURCE_DIRECTORY}/schema/observation.json" "\n")
+file(APPEND "${SOURCE_DIRECTORY}/schema/journal-0.json" "\n")
 run_project(ALTERED_SCHEMA_RESULT ALTERED_SCHEMA_DIAGNOSTIC check
     --source "${SOURCE_DIRECTORY}"
     --build "${BUILD_DIRECTORY}"
@@ -637,11 +625,11 @@ if(ALTERED_SCHEMA_RESULT EQUAL 0)
     )
 endif()
 require_contains("the altered-schema refusal"
-    "${ALTERED_SCHEMA_DIAGNOSTIC}" "schema/observation.json")
+    "${ALTERED_SCHEMA_DIAGNOSTIC}" "schema/journal-0.json")
 
 # H3. The positive control: with the altered file restored, check accepts
 # the tree the build recorded.
-file(WRITE "${SOURCE_DIRECTORY}/schema/observation.json" [=[{
+file(WRITE "${SOURCE_DIRECTORY}/schema/journal-0.json" [=[{
   "type": "object"
 }]=])
 run_project(RESTORED_SCHEMAS_RESULT RESTORED_SCHEMAS_DIAGNOSTIC check
@@ -758,12 +746,9 @@ file(WRITE "${CUT_SOURCE}/umbraflow-project.json" "{
       \"plugin_authoring\": \"hand-written\",
       \"plugin_justification\": \"A fixture plugin that answers from constants: umbraflow-declarative-workflow-tool/v1 has no member that decides what a Reduce returns.\",
       \"project_state_schema\": \"schema/state.json\",
-      \"project_observation_schema\": \"schema/observation.json\",
       \"tool_precondition_schema\": \"schema/precondition.json\",
-      \"reconcile_schema\": \"schema/reconcile.json\",
       \"tool_catalog\": \"schema/catalog.json\",
       \"journal_event_schema_manifest\": \"schema/journal-manifest.json\",
-      \"reconcile_manifest\": \"schema/reconcile-manifest.json\",
       \"journal_payload_schemas\": [\"schema/journal-0.json\"],
       \"effect_payload_schemas\": [],
       \"observed_instance_identity_schemas\": [],
@@ -817,9 +802,6 @@ file(WRITE "${CUT_SOURCE}/schema/catalog.json" [=[{
 file(WRITE "${CUT_SOURCE}/schema/state.json" [=[{
   "type": "object"
 }]=])
-file(WRITE "${CUT_SOURCE}/schema/observation.json" [=[{
-  "type": "object"
-}]=])
 file(WRITE "${CUT_SOURCE}/schema/precondition.json" [=[{
   "$defs": {
     "observed_instance_id": {"type": "string"},
@@ -827,14 +809,8 @@ file(WRITE "${CUT_SOURCE}/schema/precondition.json" [=[{
   },
   "type": "object"
 }]=])
-file(WRITE "${CUT_SOURCE}/schema/reconcile.json" [=[{
-  "type": "object"
-}]=])
 file(WRITE "${CUT_SOURCE}/schema/journal-manifest.json" [=[{
   "schema": "umbraflow-journal-event-schema-manifest/v1"
-}]=])
-file(WRITE "${CUT_SOURCE}/schema/reconcile-manifest.json" [=[{
-  "schema": "umbraflow-reconcile-manifest/v1"
 }]=])
 file(WRITE "${CUT_SOURCE}/schema/journal-0.json" [=[{
   "type": "object"

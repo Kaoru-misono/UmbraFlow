@@ -832,15 +832,9 @@ identity = ["screen.anchor"]
 
         // The reservation comes back untouched, which is what lets the ledger
         // recognise its own row instead of taking the Host's word for it.
-        CHECK(delivered->authority().operationId == authority.operationId);
         CHECK(delivered->authority().dispatchSequence == authority.dispatchSequence);
-        CHECK(
-            delivered->authority().authorityDecisionId
-            == authority.authorityDecisionId
-        );
         CHECK(delivered->authority().leaseId == authority.leaseId);
         CHECK(delivered->authority().frozenPlanHash == authority.frozenPlanHash);
-        CHECK(delivered->authority().targetGeneration == authority.targetGeneration);
 
         // A second presentation is an ERROR rather than a report: nothing was
         // consumed, so there is no fact for the ledger to record.

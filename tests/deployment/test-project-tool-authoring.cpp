@@ -312,22 +312,13 @@ return {
                 auto const bundle = umbraflow::DeploymentBundle{k_pluginId};
                 write(m_root / "schema/state.json", umbraflow::k_projectStateSchema);
                 write(
-                    m_root / "schema/observation.json",
-                    umbraflow::k_projectObservationSchema
-                );
-                write(
                     m_root / "schema/precondition.json",
                     umbraflow::k_toolPreconditionSchema
                 );
-                write(m_root / "schema/reconcile.json", umbraflow::k_reconcileSchema);
                 write(m_root / "schema/catalog.json", toolCatalog);
                 write(
                     m_root / "schema/journal-manifest.json",
                     bundle.journalEventManifest()
-                );
-                write(
-                    m_root / "schema/reconcile-manifest.json",
-                    bundle.reconcileManifest()
                 );
                 for (auto index = std::size_t{0};
                      index < umbraflow::k_journalPayloadSchemas.size();
@@ -401,17 +392,11 @@ return {
                     R"json(Tool Runtime, which umbraflow-declarative-workflow-)json"
                     R"json(tool/v1 has no member for at all.",)json";
                 document += R"json("project_state_schema":"schema/state.json",)json";
-                document += R"json("project_observation_schema":)json"
-                    R"json("schema/observation.json",)json";
                 document += R"json("tool_precondition_schema":)json"
                     R"json("schema/precondition.json",)json";
-                document +=
-                    R"json("reconcile_schema":"schema/reconcile.json",)json";
                 document += R"json("tool_catalog":"schema/catalog.json",)json";
                 document += R"json("journal_event_schema_manifest":)json"
                     R"json("schema/journal-manifest.json",)json";
-                document += R"json("reconcile_manifest":)json"
-                    R"json("schema/reconcile-manifest.json",)json";
                 document += R"json("journal_payload_schemas":[)json";
                 for (auto index = std::size_t{0};
                      index < umbraflow::k_journalPayloadSchemas.size();

@@ -102,8 +102,6 @@ namespace uf::operator_runtime
                 {"plugin_environment_hash",
                  json::Value::ofString(claims.pluginEnvironmentHash.hex())},
                 {"plugin_id", json::Value::ofString(claims.pluginId)},
-                {"project_observation_schema_hash",
-                 json::Value::ofString(claims.projectObservationSchemaHash.hex())},
                 {"project_registration_format",
                  json::Value::ofNumber(
                      static_cast<double>(claims.projectRegistrationFormat)
@@ -115,10 +113,6 @@ namespace uf::operator_runtime
                 {"project_tool_precondition_schema_hash",
                  json::Value::ofString(
                      claims.projectToolPreconditionSchemaHash.hex()
-                 )},
-                {"reconcile_payload_schema_manifest_hash",
-                 json::Value::ofString(
-                     claims.reconcilePayloadSchemaManifestHash.hex()
                  )},
                 {"reducer_closure", closureValue(claims.reducerClosure)},
                 {"tool_catalog_hash",
@@ -170,16 +164,14 @@ namespace uf::operator_runtime
                     .moduleManifestHash  = hashOf("tool-modules"),
                     .exportedEntryPoints = std::move(entries),
                 },
-                .pluginEnvironmentHash              = hashOf("environment"),
-                .toolCatalogHash                    = hashOf(catalogBytes),
-                .projectStateSchemaHash             = hashOf("state"),
-                .projectObservationSchemaHash       = hashOf("observation"),
-                .projectToolPreconditionSchemaHash  = hashOf("precondition"),
-                .reconcilePayloadSchemaManifestHash = hashOf("reconcile"),
-                .journalEventSchemaManifestHash     = hashOf("journal"),
-                .baselineEventType                  = "chaos.baseline",
-                .projectResources                   = {},
-                .projectToolBindings                = std::move(bindings),
+                .pluginEnvironmentHash             = hashOf("environment"),
+                .toolCatalogHash                   = hashOf(catalogBytes),
+                .projectStateSchemaHash            = hashOf("state"),
+                .projectToolPreconditionSchemaHash = hashOf("precondition"),
+                .journalEventSchemaManifestHash    = hashOf("journal"),
+                .baselineEventType                 = "chaos.baseline",
+                .projectResources                  = {},
+                .projectToolBindings               = std::move(bindings),
             };
             auto const exactJcs = generationJcs(claims);
             auto registration   = ProjectGeneration::verifyExact(
@@ -408,15 +400,13 @@ namespace uf::operator_runtime
                 .moduleManifestHash  = hashOf("tool-modules"),
                 .exportedEntryPoints = {"dismiss", "sweep"},
             },
-            .pluginEnvironmentHash              = hashOf("environment"),
-            .toolCatalogHash                    = hashOf(k_toolCatalogBytes),
-            .projectStateSchemaHash             = hashOf("state"),
-            .projectObservationSchemaHash       = hashOf("observation"),
-            .projectToolPreconditionSchemaHash  = hashOf("precondition"),
-            .reconcilePayloadSchemaManifestHash = hashOf("reconcile"),
-            .journalEventSchemaManifestHash     = hashOf("journal"),
-            .baselineEventType                  = "chaos.baseline",
-            .projectResources                   = {},
+            .pluginEnvironmentHash             = hashOf("environment"),
+            .toolCatalogHash                   = hashOf(k_toolCatalogBytes),
+            .projectStateSchemaHash            = hashOf("state"),
+            .projectToolPreconditionSchemaHash = hashOf("precondition"),
+            .journalEventSchemaManifestHash    = hashOf("journal"),
+            .baselineEventType                 = "chaos.baseline",
+            .projectResources                  = {},
             .projectToolBindings                = {
                 ProjectToolBinding{
                     .toolName   = std::string{k_secondTool},
@@ -461,15 +451,13 @@ namespace uf::operator_runtime
                 .moduleManifestHash  = hashOf("tool-modules"),
                 .exportedEntryPoints = {"dismiss"},
             },
-            .pluginEnvironmentHash              = hashOf("environment"),
-            .toolCatalogHash                    = hashOf(k_toolCatalogBytes),
-            .projectStateSchemaHash             = hashOf("state"),
-            .projectObservationSchemaHash       = hashOf("observation"),
-            .projectToolPreconditionSchemaHash  = hashOf("precondition"),
-            .reconcilePayloadSchemaManifestHash = hashOf("reconcile"),
-            .journalEventSchemaManifestHash     = hashOf("journal"),
-            .baselineEventType                  = "chaos.baseline",
-            .projectResources                   = {},
+            .pluginEnvironmentHash             = hashOf("environment"),
+            .toolCatalogHash                   = hashOf(k_toolCatalogBytes),
+            .projectStateSchemaHash            = hashOf("state"),
+            .projectToolPreconditionSchemaHash = hashOf("precondition"),
+            .journalEventSchemaManifestHash    = hashOf("journal"),
+            .baselineEventType                 = "chaos.baseline",
+            .projectResources                  = {},
             .projectToolBindings                = {
                 ProjectToolBinding{
                     .toolName   = "dismiss",

@@ -24,14 +24,14 @@
 namespace uf::operator_runtime
 {
     class OperatorCoordinator;
-    class OperatorPlanAuthority;
+    class OperatorPolicyAuthority;
 
     // The canonical, order-independent form of one proposed effect set. It is
     // a value rather than an authority: callers may propose effects, while
     // descriptor bounds and the Operator-owned PolicyArtifact still decide
     // whether those effects may be admitted. Keeping this derivation shared
-    // prevents Tool admission and EffectivePlan minting from assigning two
-    // hashes to the same set.
+    // prevents two seams that derive one from assigning two hashes to the
+    // same set.
     //
     // No in-class initializer for the hash: ContentHash has no default state.
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
@@ -52,14 +52,18 @@ namespace uf::operator_runtime
     // only through create(), which proves every one of those pins before an
     // authority exists at all, and OperatorCoordinator is its only friend, so
     // no path reaches the verified PolicyArtifact except through the ledger.
-    class OperatorPlanAuthority final
+    //
+    // It is named for the policy and not for a plan: what it holds is the
+    // registration hash and a VerifiedPolicyArtifact, and the frozen plan it
+    // once answered for no longer exists.
+    class OperatorPolicyAuthority final
     {
         friend class OperatorCoordinator;
 
         ContentHash            m_projectRegistrationHash;
         VerifiedPolicyArtifact m_policy;
 
-        OperatorPlanAuthority(
+        OperatorPolicyAuthority(
             ContentHash projectRegistrationHash,
             VerifiedPolicyArtifact policy
         );
@@ -87,7 +91,7 @@ namespace uf::operator_runtime
             task::RuntimeModelBinding const& runtimeModel,
             std::string_view exactOperatorProtocolSchemaBytes,
             std::string_view exactPolicyArtifactBytes
-        ) -> Result<OperatorPlanAuthority>;
+        ) -> Result<OperatorPolicyAuthority>;
 
         [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;
 

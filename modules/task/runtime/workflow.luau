@@ -19,12 +19,8 @@
 --    identity and the Tool's own result -- and deliberately NOT the arguments
 --    the call was made with -- so re-issuing a recorded call is not expressible
 --    from anything this module hands a script.
---  * Exactly one function accepts an answer AND issues a Tool call:
---    `reconcile`. The Tool it issues is the literal
---    `framework.workflow.reconcile` compiled into this module, it is read-only,
---    and its whole job is to REPLACE the uncertain classification with a
---    proven one. It refuses any answer that is not `possible`, so it can
---    neither retry a settled call nor be aimed at a different Tool.
+--  * No function here accepts an answer AND issues a Tool call at all, so
+--    there is no shape a script could aim at the answered call's own Tool.
 --  * `recover` dispatches on the classification and has NO default arm. A
 --    script that did not write a `possible` arm gets a refusal naming the
 --    classification it failed to handle, rather than falling through into
@@ -41,7 +37,6 @@ local workflow = {}
 
 local k_waitTool = "framework.workflow.wait"
 local k_statusTool = "framework.workflow.status"
-local k_reconcileTool = "framework.workflow.reconcile"
 
 local k_durationMember = "duration_ms"
 local k_maximumDurationMember = "maximum_duration_ms"
@@ -156,20 +151,6 @@ end
 function workflow.refused(answer: any): boolean
     local state = tools.state(answer)
     return state == "rejected" or state == "terminal_failure"
-end
-
--- Replace one uncertain classification with a proven one. This is the only
--- function in the module that takes an answer and issues a Tool call, and the
--- Tool it issues is fixed: it cannot be aimed at the call's own Tool, so it
--- cannot be a retry.
-function workflow.reconcile(answer: any): any
-    local state = tools.state(answer)
-    if state ~= "possible" then
-        reject("reconcile applies only to a possible outcome, not " .. state)
-    end
-    return tools.call(k_reconcileTool, {
-        call_identity = tools.call_identity(answer),
-    })
 end
 
 -- Compose a child flow: call a Tool whose own handler may issue Tool calls, so

@@ -67,13 +67,7 @@ namespace uf::task
             R"(,"name":"framework.audit.record","tool_version":"1"})"
             R"(,{"argument_contract":{"maximum_duration_ms":5000})"
             R"(,"child_effects":{"maximum_child_calls":0})"
-            R"(,"name":"framework.screen.capture","tool_version":"1"})"
-            R"(,{"argument_contract":{"maximum_duration_ms":5000})"
-            R"(,"child_effects":{"maximum_child_calls":0})"
             R"(,"name":"framework.screen.observe","tool_version":"1"})"
-            R"(,{"argument_contract":{"maximum_duration_ms":5000})"
-            R"(,"child_effects":{"maximum_child_calls":0})"
-            R"(,"name":"framework.workflow.reconcile","tool_version":"1"})"
             R"(,{"argument_contract":{"maximum_duration_ms":5000})"
             R"(,"child_effects":{"maximum_child_calls":0})"
             R"(,"name":"framework.workflow.status","tool_version":"1"})"
@@ -207,13 +201,13 @@ namespace uf::task
                 else if (toolName == "project.flow.run")
                 {
                     state = "possible";
-                }
-                else if (toolName == "framework.workflow.reconcile")
-                {
                     members.emplace_back(
                         "evidence",
                         json::Value::ofObject({
-                            {"resolved", json::Value::ofString("proven_absent")},
+                            {"reason",
+                             json::Value::ofString(
+                                 "operator_restart_after_dispatch_started"
+                             )},
                         })
                     );
                 }
@@ -500,7 +494,6 @@ return {
         local recorded = audit.record({ note = "kept" })
 
         local uncertain = workflow.child_flow("project.flow.run", canon.emptyObject)
-        local reconciled = workflow.reconcile(uncertain)
 
         local noArm = pcall(function()
             return workflow.recover(uncertain, {
@@ -515,7 +508,6 @@ return {
         local leafFlow = pcall(function()
             return workflow.child_flow("framework.workflow.status", canon.emptyObject)
         end)
-        local settledReconcile = pcall(function() return workflow.reconcile(waited) end)
 
         return {
             actions = actions,
@@ -523,7 +515,7 @@ return {
             catalog_hash = tools.catalog_hash,
             delivered = workflow.delivered(waited),
             empty_record = emptyRecord,
-            evidence = outcome.unwrap_or(tools.evidence(reconciled), "none"),
+            evidence = outcome.unwrap_or(tools.evidence(uncertain), "none"),
             frame = reference.frame_identity_hash,
             knows = tools.knows("framework.screen.observe")
                 and not tools.knows("nowhere.at.all"),
@@ -533,13 +525,11 @@ return {
             no_result = outcome.unwrap_or(tools.result(recorded), "absent"),
             over_long_wait = overLongWait,
             possible = tools.state(uncertain),
-            reconciled = tools.state(reconciled),
             recovered = workflow.recover(uncertain, {
                 possible = function(answer) return tools.call_identity(answer) end,
             }),
             reused = reused,
             settled = workflow.settled(uncertain),
-            settled_reconcile = settledReconcile,
             states = tools.states,
             stopped = workflow.stopped(waited),
             targets = targets,
@@ -563,18 +553,17 @@ return {
         REQUIRE(answer.has_value());
         auto const bytes = json::canonicalBytes(*answer);
 
-        // Exactly five Tool calls reached the seam, numbered from 1 in the
+        // Exactly four Tool calls reached the seam, numbered from 1 in the
         // order the script issued them, every one of them anchored on the
         // coordinate of the root-positioned call this run implements rather
         // than on an absence. Everything the facades refused was refused
         // BEFORE a call was spent on it.
-        REQUIRE(log->size() == 5U);
+        REQUIRE(log->size() == 4U);
         constexpr auto issued = std::array{
             std::string_view{"framework.screen.observe"},
             std::string_view{"framework.workflow.wait"},
             std::string_view{"framework.audit.record"},
             std::string_view{"project.flow.run"},
-            std::string_view{"framework.workflow.reconcile"},
         };
         for (auto index = std::size_t{}; index < issued.size(); ++index)
         {
@@ -590,10 +579,6 @@ return {
         CHECK((*log)[1].arguments == R"({"duration_ms":250})");
         CHECK((*log)[2].arguments == R"({"record":{"note":"kept"}})");
         CHECK((*log)[3].arguments == "{}");
-        CHECK(
-            (*log)[4].arguments
-            == R"({"call_identity":")" + digestOf("project.flow.run#4") + R"("})"
-        );
 
         // A possible outcome surfaces as itself, is not settled, and reaches a
         // handler only through an arm the script wrote for it by name.
@@ -606,12 +591,13 @@ return {
             != std::string::npos
         );
 
-        // Reconciliation replaces the uncertain classification, and refuses a
-        // settled one.
-        CHECK(bytes.find(R"("reconciled":"confirmed")") != std::string::npos);
-        CHECK(bytes.find(R"("settled_reconcile":false)") != std::string::npos);
+        // What the Operator recorded beside an uncertain classification reaches
+        // the script as data, without a second Tool call being spent on it.
         CHECK(
-            bytes.find(R"("evidence":{"resolved":"proven_absent"})")
+            bytes.find(
+                R"("evidence":{"reason":)"
+                R"("operator_restart_after_dispatch_started"})"
+            )
             != std::string::npos
         );
 
@@ -626,8 +612,8 @@ return {
         CHECK(bytes.find(R"("unknown_tool":false)") != std::string::npos);
         CHECK(
             bytes.find(
-                R"("names":["framework.audit.record","framework.screen.capture",)"
-                R"("framework.screen.observe","framework.workflow.reconcile",)"
+                R"("names":["framework.audit.record",)"
+                R"("framework.screen.observe",)"
                 R"("framework.workflow.status","framework.workflow.wait",)"
                 R"("project.flow.run"])"
             )

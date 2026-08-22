@@ -3,6 +3,7 @@
 #include <deployment/project-deployment.hpp>
 #include <deployment/project-directory.hpp>
 
+#include <operator/agent-profile.hpp>
 #include <operator/effective-plan.hpp>
 #include <operator/manifest.hpp>
 #include <operator/policy.hpp>
@@ -26,11 +27,13 @@
 
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
+#include <core/numeric/checked-cast.hpp>
 #include <core/safety/annotations.hpp>
 
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 
+#include <json/schema.hpp>
 #include <json/value.hpp>
 
 #include <algorithm>
@@ -53,6 +56,18 @@ namespace uf::service
             "schema/umbraflow-operator-v1.schema.json"
         };
         constexpr auto k_noAgentProfile = std::string_view{"null"};
+
+        // What an AgentProfile refusal names as the bytes' origin. They arrive
+        // on the start request rather than as a file this module opens --
+        // whoever read them owns the path and names it in its own refusal --
+        // and the one refusal verifyExact spells an origin into is the hash
+        // mismatch, which cannot fire from here because the manifest it is
+        // compared against was derived from these exact bytes. What can fire
+        // from here is the profile's own schema and its non-zero-ceiling rule,
+        // and neither names an origin.
+        constexpr auto k_agentProfileOrigin = std::string_view{
+            "the AgentProfile bytes this session was started with"
+        };
 
         // The controller identity an upgrade authenticates as, and the target
         // every upgrade session binds. The target id is stable across upgrades
@@ -184,6 +199,105 @@ namespace uf::service
                 );
             }
             return *document;
+        }
+
+        // One ceiling out of an AgentBudget document the definition below has
+        // already accepted. Present and integral are settled by then, which is
+        // why neither is re-tested here: the definition requires all five
+        // members and types every one as an integer, so a branch for an absent
+        // one would be a branch nothing could reach. What the definition does
+        // NOT settle is the top -- it bounds only the minimum -- and a
+        // canonical JSON number is a double, so a ceiling past what a uint64
+        // holds is the one thing left to refuse.
+        [[nodiscard]]
+        auto budgetCeiling(
+            json::Value const& budget,
+            std::string_view member
+        ) -> Result<uint64>
+        {
+            auto const* const p_stated = budget.find(member);
+            UF_CHECK(p_stated != nullptr);
+
+            auto const ceiling = checkedIntegralCast<uint64>(p_stated->number());
+            if (!ceiling)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "AgentProfile states a {} past what this Operator "
+                        "counts in",
+                        member
+                    )
+                );
+            }
+            return *ceiling;
+        }
+
+        // The production reader of the AgentProfile bytes a SessionManifest
+        // attests to. It is the callback AgentProfile::verifyExact names as a
+        // trusted deployment one, and it reaches no plugin code and no business
+        // VM: it compiles the published Operator protocol schema this module
+        // already hashes into every SessionManifest and judges the bytes by
+        // that document's own OP:`AgentBudget` definition.
+        //
+        // The definition is the whole reason a caller cannot widen its own
+        // ceiling quietly. additionalProperties is closed and every ceiling is
+        // required, so the five numbers this returns are exactly the five the
+        // attested bytes state -- and changing one changes agent_profile_hash,
+        // which changes session_manifest_hash, which changes every
+        // decision_basis_hash the session goes on to compose.
+        //
+        // The returned callable owns its compiled schema, and the bytes that
+        // schema was compiled from name the generated catalog's
+        // process-lifetime static storage, so it borrows nothing from this
+        // scope.
+        [[nodiscard]]
+        auto agentProfileValidator(
+            framework_schema::FrameworkSchemaDocument const& operatorSchema
+        ) -> Result<operator_runtime::AgentProfileValidator>
+        {
+            UF_TRY_VALUE(
+                schema,
+                json::Schema::compile(json::Schema::Document{
+                    .label      = operatorSchema.relativePath,
+                    .exactBytes = operatorSchema.exactBytes,
+                })
+            );
+            return [schema](
+                       std::string_view exactProfileJcs
+                   ) -> Result<operator_runtime::AgentBudget>
+            {
+                UF_TRY_VALUE(document, json::parse(exactProfileJcs));
+                UF_TRY(schema.validateDefinition("AgentBudget", document));
+
+                UF_TRY_VALUE(
+                    toolCalls,
+                    budgetCeiling(document, "maximum_tool_calls")
+                );
+                UF_TRY_VALUE(
+                    mutations,
+                    budgetCeiling(document, "maximum_mutations")
+                );
+                UF_TRY_VALUE(
+                    observations,
+                    budgetCeiling(document, "maximum_observations")
+                );
+                UF_TRY_VALUE(
+                    elapsed,
+                    budgetCeiling(document, "maximum_elapsed_ms")
+                );
+                UF_TRY_VALUE(
+                    riskUnits,
+                    budgetCeiling(document, "maximum_risk_units")
+                );
+                return operator_runtime::AgentBudget{
+                    .maximumToolCalls     = toolCalls,
+                    .maximumMutations     = mutations,
+                    .maximumObservations  = observations,
+                    .maximumElapsedMillis = elapsed,
+                    .maximumRiskUnits     = riskUnits,
+                };
+            };
         }
 
         // The Tool Runtime seam a release upgrade compiles its generation
@@ -335,8 +449,8 @@ namespace uf::service
         // gave Impl a std::map, whose move this standard library does not
         // declare noexcept, which was the sole reason two types here could
         // throw while being constructed.
-        operator_runtime::OperatorTaskHost      operatorHost;
-        operator_runtime::OperatorPlanAuthority planAuthority;
+        operator_runtime::OperatorTaskHost        operatorHost;
+        operator_runtime::OperatorPolicyAuthority policyAuthority;
         static_assert(
             std::is_nothrow_move_constructible_v<
                 operator_runtime::ControlLease
@@ -380,8 +494,6 @@ namespace uf::service
         std::string               sessionId;
         ContentHash               sessionManifestHash;
 
-        std::vector<operator_runtime::RecoveredUncertainDispatch> recoveries;
-
         // Operator admission of this run's starts at the top of a run: the one
         // producer that mints a root request identity from the authenticated
         // binding, assigns a root-positioned call's ordinal, and derives what a
@@ -401,26 +513,24 @@ namespace uf::service
             deployment::LoadedProject ownedLoaded,
             std::size_t ownedDeploymentIndex,
             operator_runtime::OperatorTaskHost ownedOperatorHost,
-            operator_runtime::OperatorPlanAuthority ownedPlanAuthority,
+            operator_runtime::OperatorPolicyAuthority ownedPlanAuthority,
             GenerationId ownedGeneration,
             LifecycleAccess ownedAccess,
             task::RuntimeModelBinding ownedRuntimeModel,
             uint64 ownedInstalledGeneration,
             std::string ownedSessionId,
-            ContentHash ownedSessionManifestHash,
-            std::vector<operator_runtime::RecoveredUncertainDispatch> ownedRecoveries
+            ContentHash ownedSessionManifestHash
         )
             : loaded{std::move(ownedLoaded)}
             , deploymentIndex{ownedDeploymentIndex}
             , operatorHost{std::move(ownedOperatorHost)}
-            , planAuthority{std::move(ownedPlanAuthority)}
+            , policyAuthority{std::move(ownedPlanAuthority)}
             , generation{ownedGeneration}
             , access{ownedAccess}
             , runtimeModel{std::move(ownedRuntimeModel)}
             , installedGeneration{ownedInstalledGeneration}
             , sessionId{std::move(ownedSessionId)}
             , sessionManifestHash{ownedSessionManifestHash}
-            , recoveries{std::move(ownedRecoveries)}
         {
         }
 
@@ -607,14 +717,6 @@ namespace uf::service
 
     ProductLifecycle::~ProductLifecycle() = default;
 
-    auto lifecycleAccessAfterRestart(
-        std::span<operator_runtime::RecoveredUncertainDispatch const> recoveries
-    ) noexcept -> LifecycleAccess
-    {
-        return recoveries.empty()
-            ? LifecycleAccess::Writable
-            : LifecycleAccess::ReadOnly;
-    }
 
     auto ProductLifecycle::start(ProductStart const& start)
         -> Result<ProductLifecycle>
@@ -649,8 +751,9 @@ namespace uf::service
             coordinator,
             operator_runtime::OperatorCoordinator::open(start.runtimeDirectory)
         );
-        UF_TRY_VALUE(recoveries, coordinator.recoveredUncertainDispatches());
-        auto const access = lifecycleAccessAfterRestart(recoveries);
+        // A started lifecycle holds the lease it acquires below, so it starts
+        // writable and becomes read-only only when it gives that lease up.
+        auto const access = LifecycleAccess::Writable;
 
         UF_TRY_VALUE(
             installed,
@@ -676,7 +779,20 @@ namespace uf::service
             operator_runtime::denyAllPolicyArtifact(operatorSchemaHash)
         );
         UF_TRY_VALUE(policyHash, hashOf(policyBytes));
-        UF_TRY_VALUE(noAgentProfileHash, hashOf(k_noAgentProfile));
+
+        // The manifest attests to whatever profile bytes this start carries,
+        // and to the absent-profile document when it carries none. The hash is
+        // derived from the bytes rather than stated beside them, which is what
+        // makes a widened ceiling change the session identity every later
+        // decision is composed against.
+        UF_TRY_VALUE(
+            agentProfileHash,
+            hashOf(
+                start.agentProfileJcs.has_value()
+                    ? std::string_view{*start.agentProfileJcs}
+                    : k_noAgentProfile
+            )
+        );
 
         auto const project = operator_runtime::ProjectIdentity{selected.generation};
         UF_TRY_VALUE(
@@ -687,13 +803,35 @@ namespace uf::service
                     .operatorProtocolSchemaHash   = operatorSchemaHash,
                     .projectRegistrationHash      = project.hash(),
                     .policyArtifactHash           = policyHash,
-                    .agentProfileHash             = noAgentProfileHash,
+                    .agentProfileHash             = agentProfileHash,
                 }
             )
         );
+
+        // Verified against the manifest that just attested to it, before the
+        // pin that needs it. Whether one is required at all is the ledger's
+        // question and not this module's: pinSession refuses a profile whose
+        // presence disagrees with the controller kind, so an agent that
+        // carried no bytes and a human that carried some are both refused
+        // there rather than reasoned about here.
+        auto agentProfile = std::optional<operator_runtime::AgentProfile>{};
+        if (start.agentProfileJcs.has_value())
+        {
+            UF_TRY_VALUE(validate, agentProfileValidator(operatorSchema));
+            UF_TRY_VALUE(
+                verified,
+                operator_runtime::AgentProfile::verifyExact(
+                    sessionManifest,
+                    std::filesystem::path{k_agentProfileOrigin},
+                    *start.agentProfileJcs,
+                    validate
+                )
+            );
+            agentProfile.emplace(std::move(verified));
+        }
         UF_TRY_VALUE(
-            planAuthority,
-            operator_runtime::OperatorPlanAuthority::create(
+            policyAuthority,
+            operator_runtime::OperatorPolicyAuthority::create(
                 project,
                 sessionManifest,
                 binding,
@@ -718,14 +856,13 @@ namespace uf::service
             std::move(loaded),
             deploymentIndex,
             std::move(operatorHost),
-            std::move(planAuthority),
+            std::move(policyAuthority),
             generation,
             access,
             binding,
             installedGeneration,
             std::move(sessionId),
-            sessionManifest.hash(),
-            std::move(recoveries)
+            sessionManifest.hash()
         );
         auto& deployed = implementation->deployment();
 
@@ -739,7 +876,7 @@ namespace uf::service
             operator_runtime::ProjectToolDispatcher::create(
                 implementation->operatorHost.coordinator(),
                 implementation->observations,
-                implementation->planAuthority,
+                implementation->policyAuthority,
                 [p_implementation](
                     operator_runtime::ToolCallPositionIdentity const& call
                 ) -> Result<operator_runtime::ToolCallCompletion>
@@ -805,11 +942,11 @@ namespace uf::service
                 .mode = access == LifecycleAccess::Writable
                     ? operator_runtime::SessionMode::Write
                     : operator_runtime::SessionMode::Read,
-                .kind       = operator_runtime::ControllerKind::Human,
+                .kind       = start.kind,
                 .worldScope = start.worldScope,
             },
             sessionManifest,
-            std::nullopt
+            agentProfile
         ));
         UF_TRY_VALUE(controller, store.bindController(implementation->sessionId));
         implementation->boundController.emplace(std::move(controller));
@@ -840,11 +977,6 @@ namespace uf::service
         };
     }
 
-    auto ProductLifecycle::recoveries() const
-        -> std::vector<operator_runtime::RecoveredUncertainDispatch>
-    {
-        return m_impl->recoveries;
-    }
 
     auto ProductLifecycle::observe(task::TaskContext& context)
         -> Result<ProductObservation>
@@ -964,8 +1096,6 @@ namespace uf::service
              json::Value::ofString(controller().controlledTargetId())},
             {"installed_generation", counterMember(installedGeneration)},
             {"session_id", json::Value::ofString(sessionId)},
-            {"unreconciled_dispatches",
-             counterMember(static_cast<uint64>(recoveries.size()))},
         }));
     }
 
@@ -1159,9 +1289,14 @@ namespace uf::service
                 )
             );
         }
-        return fail(
-            AutomationErrorKind::InternalInvariant,
-            "Framework Tool Catalog admitted a Tool with no provider"
+        // Impossible flow rather than a refusal. Every name that reaches here
+        // was admitted, and admission validates a `framework.` name against
+        // FrameworkToolCatalogOwner -- which declares exactly the names above --
+        // while every Project name is refused registration unless it is bound to
+        // an exported entry, so runAdmitted routes it to the dispatcher instead.
+        // A recoverable failure here would be a check no test could make fail.
+        UF_UNREACHABLE_MSG(
+            "Framework Tool Catalog declared a Tool with no provider"
         );
     }
 
@@ -1237,7 +1372,8 @@ namespace uf::service
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "recovery is unfinished, so this lifecycle is read-only"
+                "this lifecycle has given up its control lease, so it is "
+                "read-only"
             );
         }
 
@@ -1251,7 +1387,7 @@ namespace uf::service
             .controller      = m_impl->controller(),
             .lease           = m_impl->controlLease(),
             .execution       = request.executionIdentity,
-            .planAuthority   = m_impl->planAuthority,
+            .policyAuthority   = m_impl->policyAuthority,
             .invocation      = invocation,
             .requestKey      = std::move(request.requestKey),
             .requestPreimage = std::move(rootPreimage),
@@ -1287,7 +1423,7 @@ namespace uf::service
                   .controller    = m_impl->controller(),
                   .lease         = m_impl->controlLease(),
                   .execution     = execution,
-                  .planAuthority = m_impl->planAuthority,
+                  .policyAuthority = m_impl->policyAuthority,
                   .catalog       = m_impl->catalog(),
         };
         UF_TRY_VALUE(admission, m_impl->agentAdapter.translate(run, use));
@@ -1304,7 +1440,7 @@ namespace uf::service
                   .controller    = m_impl->controller(),
                   .lease         = m_impl->controlLease(),
                   .execution     = execution,
-                  .planAuthority = m_impl->planAuthority,
+                  .policyAuthority = m_impl->policyAuthority,
                   .catalog       = m_impl->catalog(),
         };
         UF_TRY_VALUE(admission, m_impl->humanAdapter.translate(run, command));
@@ -1321,7 +1457,7 @@ namespace uf::service
                   .controller    = m_impl->controller(),
                   .lease         = m_impl->controlLease(),
                   .execution     = execution,
-                  .planAuthority = m_impl->planAuthority,
+                  .policyAuthority = m_impl->policyAuthority,
                   .catalog       = m_impl->catalog(),
         };
         UF_TRY_VALUE(
@@ -1484,8 +1620,16 @@ namespace uf::service
             .controlledTargetId        = std::string{k_upgradeTargetId},
             .projectInstanceKey        = projectInstanceKey,
             .mode                      = operator_runtime::SessionMode::Read,
-            .kind                      = operator_runtime::ControllerKind::Human,
-            .worldScope                = worldScope,
+            // A person at a terminal, and stated rather than derived from
+            // anything a caller passed. `umbra-flow upgrade` is somebody
+            // deciding that this release goes into this production root; there
+            // is no actor flag on that verb and no principal behind it but the
+            // operator running it. The kind is load-bearing even here, because
+            // it is what makes the session that records the release one no
+            // Agent budget is required for and one that may stand behind an
+            // approval.
+            .kind       = operator_runtime::ControllerKind::Human,
+            .worldScope = worldScope,
         };
         if (active)
         {

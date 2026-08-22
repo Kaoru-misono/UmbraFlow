@@ -318,31 +318,10 @@ namespace uf::project
                 },
                 {"plugin_id", json::Value::ofString(spec.pluginId)},
                 {
-                    "project_observation_schema",
-                    json::Value::ofString(
-                        "schemas/" + spec.pluginId
-                        + "/project-observation-v1.schema.json"
-                    ),
-                },
-                {
                     "project_state_schema",
                     json::Value::ofString(
                         "schemas/" + spec.pluginId
                         + "/project-state-v1.schema.json"
-                    ),
-                },
-                {
-                    "reconcile_manifest",
-                    json::Value::ofString(
-                        "schemas/" + spec.pluginId
-                        + "/reconcile-manifest-v1.json"
-                    ),
-                },
-                {
-                    "reconcile_schema",
-                    json::Value::ofString(
-                        "schemas/" + spec.pluginId
-                        + "/reconcile-v1.schema.json"
                     ),
                 },
                 {
@@ -3200,9 +3179,6 @@ namespace uf::project
         auto const projectStateSchema = objectSchema(
             "https://umbraflow.dev/schema/project/state"
         );
-        auto const projectObservationSchema = objectSchema(
-            "https://umbraflow.dev/schema/project/observation"
-        );
         auto const preconditionSchema = jsonDocument(json::Value::ofObject({
             {
                 "$defs",
@@ -3238,77 +3214,6 @@ namespace uf::project
         auto const journalPayloadSchema = objectSchema(
             "https://umbraflow.dev/schema/project/scaffold/journal-payload"
         );
-        auto const reconcileSchema = jsonDocument(json::Value::ofObject({
-            {
-                "$defs",
-                json::Value::ofObject({
-                    {
-                        "request",
-                        json::Value::ofObject({
-                            {"type", json::Value::ofString("object")},
-                        }),
-                    },
-                    {
-                        "verdict",
-                        json::Value::ofObject({
-                            {
-                                "additionalProperties",
-                                json::Value::ofBoolean(false),
-                            },
-                            {
-                                "properties",
-                                json::Value::ofObject({
-                                    {
-                                        "disposition",
-                                        json::Value::ofObject({
-                                            {
-                                                "enum",
-                                                json::Value::ofArray({
-                                                    json::Value::ofString(
-                                                        "Continue"
-                                                    ),
-                                                    json::Value::ofString(
-                                                        "Confirmed"
-                                                    ),
-                                                    json::Value::ofString(
-                                                        "Rejected"
-                                                    ),
-                                                    json::Value::ofString(
-                                                        "Ambiguous"
-                                                    ),
-                                                    json::Value::ofString(
-                                                        "Diverged"
-                                                    ),
-                                                }),
-                                            },
-                                        }),
-                                    },
-                                }),
-                            },
-                            {
-                                "required",
-                                json::Value::ofArray({
-                                    json::Value::ofString("disposition"),
-                                }),
-                            },
-                            {"type", json::Value::ofString("object")},
-                        }),
-                    },
-                }),
-            },
-            {
-                "$id",
-                json::Value::ofString(
-                    "https://umbraflow.dev/schema/project/reconcile"
-                ),
-            },
-            {
-                "$schema",
-                json::Value::ofString(
-                    "https://json-schema.org/draft/2020-12/schema"
-                ),
-            },
-        }));
         UF_TRY_VALUE(
             preconditionHash,
             sha256(std::as_bytes(std::span{preconditionSchema}))
@@ -3317,11 +3222,6 @@ namespace uf::project
             journalPayloadHash,
             sha256(std::as_bytes(std::span{journalPayloadSchema}))
         );
-        UF_TRY_VALUE(
-            reconcileHash,
-            sha256(std::as_bytes(std::span{reconcileSchema}))
-        );
-
         auto const projectDocument = scaffoldProjectDocument(spec);
         auto const projectBytes    = jsonDocument(projectDocument);
         UF_TRY(validatedProjectDocument(projectBytes));
@@ -3348,18 +3248,6 @@ namespace uf::project
                     "schemas"
                 } / spec.pluginId / "project-state-v1.schema.json",
                 .bytes = projectStateSchema,
-            },
-            {
-                .relativePath = std::filesystem::path{
-                    "schemas"
-                } / spec.pluginId / "project-observation-v1.schema.json",
-                .bytes = projectObservationSchema,
-            },
-            {
-                .relativePath = std::filesystem::path{
-                    "schemas"
-                } / spec.pluginId / "reconcile-v1.schema.json",
-                .bytes = reconcileSchema,
             },
             {
                 .relativePath = std::filesystem::path{
@@ -3395,76 +3283,6 @@ namespace uf::project
                         json::Value::ofString(
                             "umbraflow-journal-event-schema-manifest/v1"
                         ),
-                    },
-                })),
-            },
-            {
-                .relativePath = std::filesystem::path{
-                    "schemas"
-                } / spec.pluginId / "reconcile-manifest-v1.json",
-                .bytes = jsonDocument(json::Value::ofObject({
-                    {
-                        "dispositions",
-                        json::Value::ofArray({
-                            json::Value::ofObject({
-                                {
-                                    "disposition",
-                                    json::Value::ofString("continue"),
-                                },
-                                {"value", json::Value::ofString("Continue")},
-                            }),
-                            json::Value::ofObject({
-                                {
-                                    "disposition",
-                                    json::Value::ofString("confirmed"),
-                                },
-                                {"value", json::Value::ofString("Confirmed")},
-                            }),
-                            json::Value::ofObject({
-                                {
-                                    "disposition",
-                                    json::Value::ofString("rejected"),
-                                },
-                                {"value", json::Value::ofString("Rejected")},
-                            }),
-                            json::Value::ofObject({
-                                {
-                                    "disposition",
-                                    json::Value::ofString("ambiguous"),
-                                },
-                                {"value", json::Value::ofString("Ambiguous")},
-                            }),
-                            json::Value::ofObject({
-                                {
-                                    "disposition",
-                                    json::Value::ofString("diverged"),
-                                },
-                                {"value", json::Value::ofString("Diverged")},
-                            }),
-                        }),
-                    },
-                    {"plugin_id", json::Value::ofString(spec.pluginId)},
-                    {
-                        "reconcile_schema_sha256",
-                        json::Value::ofString(reconcileHash.hex()),
-                    },
-                    {
-                        "request_definition",
-                        json::Value::ofString("request"),
-                    },
-                    {
-                        "schema",
-                        json::Value::ofString(
-                            "umbraflow-reconcile-manifest/v1"
-                        ),
-                    },
-                    {
-                        "verdict_definition",
-                        json::Value::ofString("verdict"),
-                    },
-                    {
-                        "verdict_member",
-                        json::Value::ofString("disposition"),
                     },
                 })),
             },

@@ -27,7 +27,7 @@ namespace uf::operator_runtime
 
     auto proposedToolMutation(
         ValidatedToolInvocation const& invocation,
-        OperatorPlanAuthority const& planAuthority,
+        OperatorPolicyAuthority const& policyAuthority,
         std::string_view controlledTargetId
     ) -> std::optional<ToolAdmissionRequest::Mutation>
     {
@@ -50,9 +50,9 @@ namespace uf::operator_runtime
             });
         }
         return ToolAdmissionRequest::Mutation{
-            .planAuthority = planAuthority,
-            .effects       = std::move(effects),
-            .approvals     = {},
+            .policyAuthority = policyAuthority,
+            .effects         = std::move(effects),
+            .approvals       = {},
         };
     }
 }

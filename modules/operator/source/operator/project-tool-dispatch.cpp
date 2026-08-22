@@ -94,7 +94,7 @@ namespace uf::operator_runtime
         // providers' own, so what it recognises is exactly what they minted.
         SnapshotObservationAuthority& m_observations;
 
-        OperatorPlanAuthority     m_planAuthority;
+        OperatorPolicyAuthority   m_policyAuthority;
         ToolProvider              m_frameworkTools;
         FrameworkToolCatalogOwner m_frameworkCatalog;
 
@@ -104,13 +104,13 @@ namespace uf::operator_runtime
         State(
             OperatorCoordinator& coordinator,
             SnapshotObservationAuthority& observations,
-            OperatorPlanAuthority planAuthority,
+            OperatorPolicyAuthority policyAuthority,
             ToolProvider frameworkTools,
             FrameworkToolCatalogOwner frameworkCatalog
         )
             : m_coordinator{coordinator}
             , m_observations{observations}
-            , m_planAuthority{std::move(planAuthority)}
+            , m_policyAuthority{std::move(policyAuthority)}
             , m_frameworkTools{std::move(frameworkTools)}
             , m_frameworkCatalog{std::move(frameworkCatalog)}
         {
@@ -245,7 +245,7 @@ namespace uf::operator_runtime
                 .call       = child,
                 .mutation   = proposedToolMutation(
                     invocation,
-                    m_planAuthority,
+                    m_policyAuthority,
                     run.controller.controlledTargetId()
                 ),
                 .delegation = std::move(grant),
@@ -346,7 +346,7 @@ namespace uf::operator_runtime
     auto ProjectToolDispatcher::create(
         OperatorCoordinator& coordinator,
         SnapshotObservationAuthority& observations,
-        OperatorPlanAuthority planAuthority,
+        OperatorPolicyAuthority policyAuthority,
         ToolProvider frameworkTools
     ) -> Result<ProjectToolDispatcher>
     {
@@ -361,7 +361,7 @@ namespace uf::operator_runtime
         return ProjectToolDispatcher{std::make_shared<State>(
             coordinator,
             observations,
-            std::move(planAuthority),
+            std::move(policyAuthority),
             std::move(frameworkTools),
             std::move(frameworkCatalog)
         )};

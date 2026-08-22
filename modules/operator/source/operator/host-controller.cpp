@@ -130,50 +130,6 @@ namespace uf::operator_runtime
         return takeover;
     }
 
-    auto OperatorTaskHost::dispatch(
-        std::string const& operationId,
-        uint64 expectedRevision,
-        ControlLease const& lease,
-        GenerationId runtimeGeneration,
-        AuthorityDecisionId const& authorityDecisionId,
-        std::optional<ApprovalGrant> const& approval,
-        task::TaskContext& context
-    ) -> Result<DispatchResult>
-    {
-        UF_TRY(requireControlledTarget(lease.controlledTargetId));
-        auto lock = std::scoped_lock{m_impl->targetSerialization};
-        UF_TRY_VALUE(
-            reservation,
-            m_impl->coordinator.reserveDispatch(
-                operationId,
-                expectedRevision,
-                lease,
-                runtimeGeneration,
-                authorityDecisionId,
-                approval
-            )
-        );
-        UF_TRY_VALUE(
-            delivery,
-            m_impl->host.deliver(
-                reservation.authority,
-                context
-            )
-        );
-        UF_TRY_VALUE(
-            operation,
-            m_impl->coordinator.recordDeliveryOutcome(
-                lease,
-                reservation.operationRevision,
-                delivery
-            )
-        );
-        return DispatchResult{
-            .reservation = std::move(reservation),
-            .delivery    = std::move(delivery),
-            .operation   = std::move(operation),
-        };
-    }
 
     auto OperatorTaskHost::deliverToolCallInput(
         ToolCallPositionIdentity const& call,

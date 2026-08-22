@@ -7,16 +7,16 @@
 #include <core/error/result.hpp>
 
 #include <memory>
-#include <optional>
 #include <string>
 
 namespace uf::operator_runtime
 {
     // The production join between the Operator ledger and Host delivery for
     // one controlled target. Lease acquire/release/takeover and a complete
-    // dispatch share m_targetSerialization inside the implementation, so a
-    // displaced fence cannot enter reserveDispatch after takeover returns or
-    // move between a successful reservation and TaskHost::deliver.
+    // Tool-call input delivery share m_targetSerialization inside the
+    // implementation, so a displaced fence cannot enter a reservation after
+    // takeover returns or move between a successful reservation and
+    // TaskHost::deliver.
     class OperatorTaskHost final
     {
         struct Impl;
@@ -29,13 +29,6 @@ namespace uf::operator_runtime
             -> Status;
 
     public:
-        struct DispatchResult final
-        {
-            DispatchReservation      reservation;
-            task::HostDeliveryReport delivery;
-            StoredOperation          operation;
-        };
-
         // What one Tool-call-native input asks the Host to deliver: the model
         // target the call's own resolved observation named, and the UI action
         // it asks for on that target.
@@ -88,21 +81,10 @@ namespace uf::operator_runtime
             std::string const& reason
         ) -> Result<ControlTakeover>;
 
-        [[nodiscard]]
-        auto dispatch(
-            std::string const& operationId,
-            uint64 expectedRevision,
-            ControlLease const& lease,
-            GenerationId runtimeGeneration,
-            AuthorityDecisionId const& authorityDecisionId,
-            std::optional<ApprovalGrant> const& approval,
-            task::TaskContext& context
-        ) -> Result<DispatchResult>;
-
-        // The Tool Runtime's counterpart of dispatch above, and it shares
-        // m_targetSerialization with lease acquire, release and takeover for
-        // the same reason: a fence displaced between the reservation and the
-        // Host call would let a Host act under authority the ledger has already
+        // The one mint of Host delivery authority. It shares
+        // m_targetSerialization with lease acquire, release and takeover,
+        // because a fence displaced between the reservation and the Host call
+        // would let a Host act under authority the ledger has already
         // superseded.
         //
         // It returns the report alone. There is no ledger write to pair with

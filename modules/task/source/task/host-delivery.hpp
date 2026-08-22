@@ -49,34 +49,30 @@ namespace uf::task
     // fence, so the displaced one keeps both. What forbids it is TaskHost::
     // deliver being private, not the shape of this type. A production delivery
     // path must therefore mint every authority from
-    // OperatorCoordinator::reserveDispatch, which refuses a lease a takeover
-    // has superseded, and accept none from a caller.
+    // OperatorCoordinator::reserveToolCallDispatch, which refuses a lease a
+    // takeover has superseded, and accept none from a caller.
     //
-    // The two generations are deliberately separate quantities under separate
-    // names. runtimeGeneration is the Host's own GenerationId, so the Host can
-    // and does compare it; targetGeneration is the domain TargetGeneration the
-    // ledger records, which the Host cannot see and therefore only carries.
+    // frozenPlanHash carries the durable call identity the delivery was
+    // authorised under, and dispatchSequence the admission attempt that
+    // sequences one call's deliveries. Neither is the Host's to read: it
+    // carries both back so the ledger can recognise its own reservation.
     //
-    // uiTarget is the model target the reserved step's observed instance was
-    // observed at -- the binding's local_ref, resolved out of the step's
-    // ui_target_id by reserveDispatch. The receipt a Host mints names the
-    // target its own runtime resolved, so the ledger resolving one instance
-    // while the Host delivers to another is a disagreement TaskHost::deliver
-    // can and does refuse before it consumes anything.
+    // uiTarget is the model target the call's own resolved observation named.
+    // The receipt a Host mints names the target its own runtime resolved, so
+    // the ledger resolving one instance while the Host delivers to another is a
+    // disagreement TaskHost::deliver can and does refuse before it consumes
+    // anything.
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
     struct DispatchAuthority final
     {
-        std::string      controlledTargetId{};
-        std::string      uiTarget{};
-        std::string      leaseId{};
-        std::string      operationId{};
-        std::string      authorityDecisionId{};
-        ContentHash      frozenPlanHash;
-        GenerationId     runtimeGeneration;
-        TargetGeneration targetGeneration{};
-        uint64           sessionEpoch{};
-        uint64           fencingToken{};
-        uint64           dispatchSequence{};
+        std::string  controlledTargetId{};
+        std::string  uiTarget{};
+        std::string  leaseId{};
+        ContentHash  frozenPlanHash;
+        GenerationId runtimeGeneration;
+        uint64       sessionEpoch{};
+        uint64       fencingToken{};
+        uint64       dispatchSequence{};
     };
 
     enum class DeliveryOutcome : uint8

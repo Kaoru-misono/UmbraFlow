@@ -613,7 +613,7 @@ target_compile_definitions(test-deployment PRIVATE
 # put the slowest of them at 22 seconds.
 uf_shard_doctest_gates(
     TARGET test-deployment
-    TOTAL_CASES 51
+    TOTAL_CASES 49
     SHARDS 4
 )
 
@@ -737,7 +737,7 @@ if(TARGET ${PROJECT_NAME}_operator)
     # beside it.
     uf_shard_doctest_gates(
         TARGET test-operator
-        TOTAL_CASES 170
+        TOTAL_CASES 171
         SHARDS 6
     )
 

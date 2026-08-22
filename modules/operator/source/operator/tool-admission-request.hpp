@@ -66,13 +66,13 @@ namespace uf::operator_runtime
         // admission refuses an authority whose registration or policy hash
         // differs from the live session's.
         //
-        // No in-class initializer for the authority: OperatorPlanAuthority has
+        // No in-class initializer for the authority: OperatorPolicyAuthority has
         // no default state, and a mutation with no authority to judge it is not
         // a value this type should be able to hold.
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
         struct Mutation final
         {
-            OperatorPlanAuthority planAuthority;
+            OperatorPolicyAuthority policyAuthority;
 
             std::vector<ProposedEffect>    effects{};
             std::vector<ToolApprovalGrant> approvals{};
@@ -135,7 +135,7 @@ namespace uf::operator_runtime
     [[nodiscard]]
     auto proposedToolMutation(
         ValidatedToolInvocation const& invocation,
-        OperatorPlanAuthority const& planAuthority,
+        OperatorPolicyAuthority const& policyAuthority,
         std::string_view controlledTargetId
     ) -> std::optional<ToolAdmissionRequest::Mutation>;
 }

@@ -31,11 +31,12 @@ namespace uf::operator_runtime
     // a behaviour from it, so the integer is an identity assertion inside the
     // reader and never a dispatch key. Code that inspected a document to pick
     // a reader would be the selector this constant exists to avoid.
-    inline constexpr auto k_projectGenerationFormat = uint64{5U};
+    inline constexpr auto k_projectGenerationFormat = uint64{6U};
 
     // The one entry point the pure program type keeps under the two-closure
-    // contract. `derive`, `plan`, `next_step` and `reconcile` are the
-    // five-function contract's, and no closure of a generation exports them.
+    // contract. It is also the only one: `derive`, `plan`, `next_step` and
+    // `reconcile` died with the five-function contract, and no closure of a
+    // generation exports them.
     inline constexpr auto k_reducerEntryPoint = std::string_view{"reduce"};
 
     // The namespace the Framework owns. Every Framework Tool is named inside
@@ -140,9 +141,9 @@ namespace uf::operator_runtime
     // a branch of their own.
     //
     // It is deliberately not every claim a registration carries. The resource
-    // closure, the environment digest and the journal and reconcile manifests
-    // stay with the verified documents, because the seams that read them are
-    // the loaders, which hold the document itself.
+    // closure, the environment digest and the journal manifest stay with the
+    // verified documents, because the seams that read them are the loaders,
+    // which hold the document itself.
     class ProjectIdentity final
     {
         ContentHash                     m_projectRegistrationHash;
@@ -151,9 +152,7 @@ namespace uf::operator_runtime
         ContentHash                     m_moduleIdentityHash;
         ContentHash                     m_toolCatalogHash;
         ContentHash                     m_projectStateSchemaHash;
-        ContentHash                     m_projectObservationSchemaHash;
         ContentHash                     m_projectToolPreconditionSchemaHash;
-        ContentHash                     m_reconcilePayloadSchemaManifestHash;
         ContentHash                     m_journalEventSchemaManifestHash;
         std::string                     m_baselineEventType;
         std::vector<ContentHash>        m_observedInstanceIdentitySchemaHashes;
@@ -185,9 +184,7 @@ namespace uf::operator_runtime
 
         [[nodiscard]] auto toolCatalogHash() const -> ContentHash;
         [[nodiscard]] auto projectStateSchemaHash() const -> ContentHash;
-        [[nodiscard]] auto projectObservationSchemaHash() const -> ContentHash;
         [[nodiscard]] auto projectToolPreconditionSchemaHash() const -> ContentHash;
-        [[nodiscard]] auto reconcilePayloadSchemaManifestHash() const -> ContentHash;
         [[nodiscard]] auto journalEventSchemaManifestHash() const -> ContentHash;
         [[nodiscard]] auto baselineEventType() const -> std::string;
 
@@ -246,9 +243,7 @@ namespace uf::operator_runtime
         ContentHash pluginEnvironmentHash;
         ContentHash toolCatalogHash;
         ContentHash projectStateSchemaHash;
-        ContentHash projectObservationSchemaHash;
         ContentHash projectToolPreconditionSchemaHash;
-        ContentHash reconcilePayloadSchemaManifestHash;
         ContentHash journalEventSchemaManifestHash;
 
         std::string                  baselineEventType{};
@@ -371,7 +366,7 @@ namespace uf::operator_runtime
         [[nodiscard]] auto runtimeModelArtifactRootHash() const -> ContentHash;
 
         // The operator protocol schema this session is pinned to. It is
-        // exposed because OperatorPlanAuthority must satisfy it with exact
+        // exposed because OperatorPolicyAuthority must satisfy it with exact
         // bytes: an authority that merely named a hash would be a convention.
         [[nodiscard]] auto operatorProtocolSchemaHash() const -> ContentHash;
 

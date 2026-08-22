@@ -9,7 +9,6 @@
 #include "project-generation.hpp"
 #include "project-observation.hpp"
 #include "project-plugin.hpp"
-#include "reconcile-outcome.hpp"
 #include "tool-invocation.hpp"
 #include "tool-runtime.hpp"
 
@@ -140,19 +139,14 @@ namespace uf::operator_runtime
     {
         OperationCreated,
         OperationStateChanged,
-        DeliveryOutcomeRecorded,
         ControlTransitioned,
         ExternalInputDetected,
     };
 
-    // Only the two event kinds that report a changed value carry one. The
+    // Only the one event kind that reports a changed value carries one. The
     // other kinds are complete in their kind and subject identity, so giving
     // them a nullable string would admit combinations the stream never writes.
-    using LedgerEventDetail = std::variant<
-        std::monostate,
-        OperationState,
-        task::DeliveryOutcome
-    >;
+    using LedgerEventDetail = std::variant<std::monostate, OperationState>;
 
     // How far a reader has got through that sequence: the sequence number of
     // the last event it has consumed, and 0 before the first one.
@@ -284,14 +278,15 @@ namespace uf::operator_runtime
         Existing,
     };
 
+    // No plan-frozen or dispatched flag: an Operation can no longer reach a
+    // Host dispatch at all, so both were constants and a stored constant is a
+    // fact with nothing keeping it true.
     struct StoredOperation final
     {
         std::string    operationId{};
         CommandLookup  lookup{CommandLookup::Created};
         OperationState state{OperationState::Proposed};
         uint64         revision{};
-        bool           planFrozen{};
-        bool           hasDispatched{};
     };
 
     // What one accepted submission settled. The fingerprint is
@@ -332,35 +327,11 @@ namespace uf::operator_runtime
         ToolIdentityLookup lookup{ToolIdentityLookup::Created};
     };
 
-    // What the dispatch was authorised against. The three hashes were caller
-    // parameters until W2 and are now results: the Operation has at most one
-    // pending UI-action step, so a dispatch names nothing and either finds that
-    // step or fails.
-    //
-    // frozenPlanHash and dispatchSequence are deliberately not repeated beside
-    // authority: they live there and are read from there, because the value the
-    // Host is handed and the value the ledger later matches its own rows
-    // against must be one value and not two that agree today.
-    //
-    // No in-class initializer for the hashes: ContentHash has no default state.
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
-    struct DispatchReservation final
-    {
-        task::DispatchAuthority authority;
-        ContentHash             decisionBasisHash;
-        ContentHash             stepIntentHash;
-        uint64                  operationRevision{};
-        uint64                  stepIndex{};
-    };
-
     // What one Tool-call-native input delivery was authorized against.
     //
-    // It carries the authority and nothing else, and that is the whole
-    // difference from DispatchReservation. On the Operation path the Host
-    // carries the reservation's Operation members back so recordDeliveryOutcome
-    // can find its own dispatches row; on this path the ledger already holds
-    // the durable dispatching row the caller's ToolCallPositionIdentity names,
-    // so there is nothing for the Host to carry back and no second revision to
+    // It carries the authority and nothing else. The ledger already holds the
+    // durable dispatching row the caller's ToolCallPositionIdentity names, so
+    // there is nothing for the Host to carry back and no second revision to
     // compare. The outcome is recorded by completeToolCallDispatch against the
     // dispatch token the executor holds, which is the token that crossed the
     // boundary in the first place.
@@ -400,19 +371,12 @@ namespace uf::operator_runtime
         Denied,
         Cancelled,
         DeadlineExpired,
-        NewEvidence,
-        PostDispatchAbort,
     };
 
-    // What one human takeover did: the lease the new controller now holds, and
-    // the dispatches this takeover found unanswered and resolved to
-    // transport_unknown. The count is returned rather than logged because
-    // "nothing was in flight" and "one effect may already have landed" are
-    // different situations for the caller.
+    // What one human takeover did: the lease the new controller now holds.
     struct ControlTakeover final
     {
         ControlLease lease;
-        uint64       resolvedDispatches{};
     };
 
     // The fence a Host must adopt to act under this lease. Derived, never
@@ -422,18 +386,12 @@ namespace uf::operator_runtime
     auto controlFence(ControlLease const& lease) -> task::ControlFence;
 
     // The identity of one authority decision. It is a strong type and not a
-    // std::string because it travels beside operationId through reserveDispatch
-    // and issueApproval: two interchangeable strings in an authorization path
-    // swap silently at a call site, and neither the compiler nor a test that
-    // asserts on the result can tell afterwards.
+    // std::string because it travels beside other opaque identifiers through an
+    // authorization path: two interchangeable strings there swap silently at a
+    // call site, and neither the compiler nor a test that asserts on the result
+    // can tell afterwards.
     struct AuthorityDecisionIdTag;
     using AuthorityDecisionId = StrongValue<AuthorityDecisionIdTag, std::string>;
-
-    struct ApprovalGrant final
-    {
-        std::string         token{};
-        AuthorityDecisionId authorityDecisionId;
-    };
 
     struct ToolApprovalGrant final
     {
@@ -445,26 +403,6 @@ namespace uf::operator_runtime
     {
         std::string approverCapability{};
         uint64      expiresAtUnixMillis{};
-    };
-
-    // What a human approver states, and nothing else. The plan hash, the step
-    // intent, the decision basis and the effect envelope are read from
-    // operation_plans and the pending operation_steps row, because an approver
-    // who could name them could issue an approval for a plan nobody froze.
-    //
-    // The policy hash is read from operation_plans for the same reason, now
-    // that a PolicyArtifact is evaluated rather than named: an approver who
-    // could state which policy ruled the plan could state one that did not.
-    //
-    // approverCapability is what the approver presents, and issueApproval
-    // refuses one the plan's required_approvals does not name.
-    struct ApprovalRequest final
-    {
-        std::string  operationId{};
-        ControlLease lease;
-        std::string  approverPrincipal{};
-        std::string  approverCapability{};
-        uint64       expiresAtUnixMillis{};
     };
 
     // What an external input requires of the automation that was mid-flight
@@ -485,9 +423,8 @@ namespace uf::operator_runtime
     // command through this door.
     //
     // reason is free text and lands in a column nothing resolves a tool from;
-    // a caller who writes a tool name into it produces a row the Operator will
-    // never dispatch, because dispatch reads operations and operation_steps and
-    // this row is in neither.
+    // a caller who writes a tool name into it produces a row nothing executes,
+    // because no seam reads a tool out of a finding.
     struct ExternalInputReport final
     {
         ExternalInputAction requiredAction{ExternalInputAction::FreezeAndReobserve};
@@ -1020,7 +957,7 @@ namespace uf::operator_runtime
             ControllerBinding const& approver,
             ToolRootRequestIdentity const& root,
             ToolCallPositionIdentity const& call,
-            OperatorPlanAuthority const& planAuthority,
+            OperatorPolicyAuthority const& policyAuthority,
             std::span<ProposedEffect const> effects,
             ToolApprovalRequest const& request,
             AuthorityDecisionId const& authorityDecisionId
@@ -1071,8 +1008,8 @@ namespace uf::operator_runtime
             ToolCallPositionIdentity const& call
         ) -> Result<ToolCallDispatch>;
 
-        // The Tool Runtime's counterpart of reserveDispatch: the one mint of
-        // Host delivery authority over a Tool call that is already dispatching.
+        // The one mint of Host delivery authority, over a Tool call that is
+        // already dispatching.
         //
         // It names the call rather than carrying the ToolCallDispatch token,
         // and the reason is that the token proves less here than the row does.
@@ -1090,8 +1027,12 @@ namespace uf::operator_runtime
         // names another target, so naming the wrong one can only make the Host
         // refuse.
         //
-        // runtimeGeneration is the caller's for the reason reserveDispatch
-        // states.
+        // runtimeGeneration is the one member the ledger cannot know. A Host
+        // generation is a per-process counter the Host itself mints, and
+        // sessions.installed_generation is a different quantity, so echoing
+        // that column here would make one name mean two things. It is safe as
+        // the caller's for the reason the whole authority is plain data: naming
+        // the wrong generation can only make the Host refuse.
         [[nodiscard]]
         auto reserveToolCallDispatch(
             ToolCallPositionIdentity const& call,
@@ -1182,45 +1123,5 @@ namespace uf::operator_runtime
             uint64 expectedRevision,
             OperationSignal signal
         ) -> Result<StoredOperation>;
-
-        // The single mint of dispatch authority: the returned
-        // task::DispatchAuthority is the only one a Host will act on, because
-        // every field of it is matched against these rows again when the report
-        // comes back.
-        //
-        // runtimeGeneration is the one member the ledger cannot know. A Host
-        // generation is a per-process counter the Host itself mints, and
-        // sessions.installed_generation is a different quantity -- the CAS
-        // generation of the installed artifact -- so echoing that column here
-        // would make one name mean two things. It is therefore the caller's,
-        // and it is safe as the caller's for the reason the whole authority is
-        // plain data: naming the wrong generation can only make the Host refuse.
-        [[nodiscard]]
-        auto reserveDispatch(
-            std::string const& operationId,
-            uint64 expectedRevision,
-            ControlLease const& lease,
-            GenerationId runtimeGeneration,
-            AuthorityDecisionId const& authorityDecisionId,
-            std::optional<ApprovalGrant> const& approval
-        ) -> Result<DispatchReservation>;
-
-        // The Operation and the dispatch are read out of the report, because
-        // the only dispatch this call may answer for is the one the Host was
-        // authorized to perform, and a HostDeliveryReport is constructible only
-        // by TaskHost. expectedRevision stays a parameter: it is the caller's
-        // own read of the ledger, not the Host's.
-        [[nodiscard]]
-        auto recordDeliveryOutcome(
-            ControlLease const& lease,
-            uint64 expectedRevision,
-            task::HostDeliveryReport const& report
-        ) -> Result<StoredOperation>;
-
-        [[nodiscard]]
-        auto issueApproval(
-            ApprovalRequest const& request,
-            AuthorityDecisionId const& authorityDecisionId
-        ) -> Result<ApprovalGrant>;
     };
 }

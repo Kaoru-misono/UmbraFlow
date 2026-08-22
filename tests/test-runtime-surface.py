@@ -111,8 +111,37 @@ RETIRED_COMMANDS = frozenset({"check", "replay", "run"})
 # restores the predecessor at a new monotonic generation, and the whole
 # sequence is refused while any other session owns the root. approve records
 # an evidence-backed capability expansion and writes nothing else.
+# invoke is the case every entry above defines itself against: it names a real
+# target, binds a session and may post real input, because it is the
+# production entry point for a Tool run -- the acting half of the invariant
+# open's entry calls "a binary whose whole invariant is acting on a real
+# window". Until 2026-08-23 that half had no shipped caller at all: explore
+# acts only in the authoring environment without an Operator, observe may not
+# act by composition, and ProductLifecycle's three actor transports had no
+# caller anywhere in the repository. What invoke adds is a transport, never an
+# authority: --actor names the principal, start pins that kind, and every
+# power the principal has is granted or refused by the ledger it is pinned
+# into. An agent must present an AgentProfile verified against the
+# SessionManifest and cannot bind a read-mode session; an agent reaches only
+# the semantic Tool surface. A mutating descriptor is admitted only with a
+# concrete effect envelope and a mutation proposal, and where policy demands
+# approval, only with an unexpired Human approval bound to the same target. A
+# run beside another owner is refused by claimExclusiveOwnership on reclaim's
+# terms, and a mutating call after the lifecycle gives up its lease is refused
+# outright. None of that is reasoned about here: the CLI performs the
+# translation its actor transport owes and nothing else.
 ALLOWED_COMMANDS = frozenset(
-    {"approve", "explore", "observe", "ocr", "open", "reclaim", "targets", "upgrade"}
+    {
+        "approve",
+        "explore",
+        "invoke",
+        "observe",
+        "ocr",
+        "open",
+        "reclaim",
+        "targets",
+        "upgrade",
+    }
 )
 # Names that must not be bound in a project script's global table.
 #

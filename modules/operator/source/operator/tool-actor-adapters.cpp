@@ -57,7 +57,7 @@ namespace uf::operator_runtime
                 .controller      = run.controller,
                 .lease           = run.lease,
                 .execution       = run.execution,
-                .planAuthority   = run.planAuthority,
+                .policyAuthority = run.policyAuthority,
                 .invocation      = invocation,
                 .requestKey      = std::move(requestKey),
                 .requestPreimage = std::move(objective),

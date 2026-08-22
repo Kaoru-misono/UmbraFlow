@@ -237,7 +237,6 @@ namespace uf::operator_runtime
         UF_TRY_VALUE(
             validatedInput,
             m_state->schemaOwner.validate(
-                ProjectPluginFunction::Reduce,
                 ProjectDocumentDirection::Input,
                 input
             )
@@ -251,10 +250,7 @@ namespace uf::operator_runtime
             canonicalFold,
             m_state->schemaOwner.canonicalizeValue(std::move(folded))
         );
-        return m_state->schemaOwner.validateOutput(
-            ProjectPluginFunction::Reduce,
-            std::move(canonicalFold)
-        );
+        return m_state->schemaOwner.validateOutput(std::move(canonicalFold));
     }
 
     auto ProjectGenerationHandle::invokeBoundTool(

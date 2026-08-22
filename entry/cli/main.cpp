@@ -4,6 +4,7 @@
 #include <cli/args.hpp>
 #include <cli/cli-result.hpp>
 #include <cli/explore.hpp>
+#include <cli/invoke.hpp>
 #include <cli/observe.hpp>
 #include <cli/ocr.hpp>
 #include <cli/open-project.hpp>
@@ -163,6 +164,31 @@ namespace uf::cli
         }
 
         [[nodiscard]]
+        auto dispatchInvoke(std::span<std::string const> raw) -> ExitCode
+        {
+            auto const args = parseInvokeArguments(raw);
+            if (!args)
+            {
+                std::cerr << formatError(args.error()) << '\n';
+                std::cerr << invokeUsageText();
+                return exitCodeForError(args.error(), false);
+            }
+
+            auto const report = invokeToolProduct(*args);
+            if (!report)
+            {
+                std::cerr << formatError(report.error()) << '\n';
+                return exitCodeForError(report.error(), false);
+            }
+
+            // The report and nothing else on stdout, as dispatchOcr documents.
+            // Every diagnostic this verb produces went to stderr above, so a
+            // caller may pipe this stream straight into a reader.
+            std::cout << formatToolInvoke(*report);
+            return ExitCode::Success;
+        }
+
+        [[nodiscard]]
         auto dispatchTargets(std::span<std::string const> raw) -> ExitCode
         {
             if (!raw.empty())
@@ -241,6 +267,7 @@ namespace uf::cli
         constexpr auto k_commands = std::array{
             Command{"approve", &dispatchApprove},
             Command{"explore", &dispatchExplore},
+            Command{"invoke", &dispatchInvoke},
             Command{"observe", &dispatchObserve},
             Command{"ocr", &dispatchOcr},
             Command{"open", &dispatchOpen},

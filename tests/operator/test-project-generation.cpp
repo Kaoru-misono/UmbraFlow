@@ -319,16 +319,8 @@ return {
                 hashMember(document, "project_state_schema_hash")
             );
             UF_TRY_VALUE(
-                observationSchemaHash,
-                hashMember(document, "project_observation_schema_hash")
-            );
-            UF_TRY_VALUE(
                 preconditionSchemaHash,
                 hashMember(document, "project_tool_precondition_schema_hash")
-            );
-            UF_TRY_VALUE(
-                reconcileSchemaHash,
-                hashMember(document, "reconcile_payload_schema_manifest_hash")
             );
             UF_TRY_VALUE(
                 journalSchemaHash,
@@ -355,13 +347,11 @@ return {
                 .reducerClosure = std::move(reducerClosure),
                 .toolClosure    = std::move(toolClosure),
 
-                .pluginEnvironmentHash              = environmentHash,
-                .toolCatalogHash                    = toolCatalogHash,
-                .projectStateSchemaHash             = stateSchemaHash,
-                .projectObservationSchemaHash       = observationSchemaHash,
-                .projectToolPreconditionSchemaHash  = preconditionSchemaHash,
-                .reconcilePayloadSchemaManifestHash = reconcileSchemaHash,
-                .journalEventSchemaManifestHash     = journalSchemaHash,
+                .pluginEnvironmentHash             = environmentHash,
+                .toolCatalogHash                   = toolCatalogHash,
+                .projectStateSchemaHash            = stateSchemaHash,
+                .projectToolPreconditionSchemaHash = preconditionSchemaHash,
+                .journalEventSchemaManifestHash    = journalSchemaHash,
 
                 .baselineEventType = std::string{
                     memberOf(document, "baseline_event_type").string()
@@ -472,8 +462,6 @@ return {
                 {"plugin_environment_hash",
                  json::Value::ofString(runningEnvironmentHash().hex())},
                 {"plugin_id", json::Value::ofString(std::string{k_pluginId})},
-                {"project_observation_schema_hash",
-                 json::Value::ofString(hashOf("observation").hex())},
                 {"project_registration_format",
                  json::Value::ofNumber(
                      static_cast<double>(k_projectGenerationFormat)
@@ -484,8 +472,6 @@ return {
                 {"project_tool_bindings", json::Value::ofArray(std::move(rows))},
                 {"project_tool_precondition_schema_hash",
                  json::Value::ofString(hashOf("precondition").hex())},
-                {"reconcile_payload_schema_manifest_hash",
-                 json::Value::ofString(hashOf("reconcile").hex())},
                 {"reducer_closure",
                  closureValue(reducerSource, declaredReducerEntries)},
                 {"tool_catalog_hash",
@@ -686,9 +672,8 @@ return {
             auto owner = ProjectSchemaOwner::create(
                 generation,
                 ProjectDocumentSchemaBytes{
-                    .projectState       = "state",
-                    .projectObservation = "observation",
-                    .toolPrecondition   = "precondition",
+                    .projectState     = "state",
+                    .toolPrecondition = "precondition",
                 },
                 [](std::string_view exactJcs) -> Result<json::Value>
                 {
@@ -699,7 +684,6 @@ return {
                     outputRefusal = std::string{refuseOutput},
                     inputRefusal  = std::string{refuseInput}
                 ](
-                    ProjectPluginFunction,
                     ProjectDocumentDirection direction,
                     std::string_view
                 ) -> Status
@@ -846,7 +830,6 @@ return {
             REQUIRE(folded.has_value());
             CHECK(folded->bytes() == R"({"folded":"admitted"})");
             CHECK(folded->projectRegistrationHash() == generation.hash());
-            CHECK(folded->function() == ProjectPluginFunction::Reduce);
             CHECK(folded->direction() == ProjectDocumentDirection::Output);
 
             // The scoped half runs the entries the binding table named, out of
@@ -1217,13 +1200,11 @@ return {
                             .exportedEntryPoints = {},
                         },
 
-                        .pluginEnvironmentHash              = hashOf("environment"),
-                        .toolCatalogHash                    = hashOf("catalog"),
-                        .projectStateSchemaHash             = hashOf("state"),
-                        .projectObservationSchemaHash       = hashOf("observation"),
-                        .projectToolPreconditionSchemaHash  = hashOf("precondition"),
-                        .reconcilePayloadSchemaManifestHash = hashOf("reconcile"),
-                        .journalEventSchemaManifestHash     = hashOf("journal"),
+                        .pluginEnvironmentHash             = hashOf("environment"),
+                        .toolCatalogHash                   = hashOf("catalog"),
+                        .projectStateSchemaHash            = hashOf("state"),
+                        .projectToolPreconditionSchemaHash = hashOf("precondition"),
+                        .journalEventSchemaManifestHash    = hashOf("journal"),
 
                         .baselineEventType                    = "chaos.baseline",
                         .projectResources                     = {},
@@ -1234,7 +1215,7 @@ return {
             );
             REQUIRE_FALSE(refused.has_value());
             CHECK(refused.error().message().contains(
-                "the registration states 4 and this framework reads 5"
+                "the registration states 4 and this framework reads 6"
             ));
         }
 

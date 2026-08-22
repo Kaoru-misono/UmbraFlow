@@ -121,7 +121,6 @@ namespace uf::operator_runtime
             R"({"schema":"umbraflow-tool-catalog/v1","plugin":"e2.automation"})"
         };
         constexpr auto k_stateSchemaBytes        = std::string_view{"e2-state"};
-        constexpr auto k_observationSchemaBytes  = std::string_view{"e2-observation"};
         constexpr auto k_preconditionSchemaBytes = std::string_view{"e2-precondition"};
 
         // The automation script.
@@ -503,8 +502,6 @@ return {
                 {"plugin_environment_hash",
                  json::Value::ofString(claims.pluginEnvironmentHash.hex())},
                 {"plugin_id", json::Value::ofString(claims.pluginId)},
-                {"project_observation_schema_hash",
-                 json::Value::ofString(claims.projectObservationSchemaHash.hex())},
                 {"project_registration_format",
                  json::Value::ofNumber(
                      static_cast<double>(claims.projectRegistrationFormat)
@@ -516,10 +513,6 @@ return {
                 {"project_tool_precondition_schema_hash",
                  json::Value::ofString(
                      claims.projectToolPreconditionSchemaHash.hex()
-                 )},
-                {"reconcile_payload_schema_manifest_hash",
-                 json::Value::ofString(
-                     claims.reconcilePayloadSchemaManifestHash.hex()
                  )},
                 {"reducer_closure", closureValue(claims.reducerClosure)},
                 {"tool_catalog_hash",
@@ -553,13 +546,11 @@ return {
                     .moduleManifestHash  = manifestHashOf(toolModules()),
                     .exportedEntryPoints = exportedToolEntries(),
                 },
-                .pluginEnvironmentHash        = *environmentHash,
-                .toolCatalogHash              = hashOf(k_toolCatalogBytes),
-                .projectStateSchemaHash       = hashOf(k_stateSchemaBytes),
-                .projectObservationSchemaHash = hashOf(k_observationSchemaBytes),
+                .pluginEnvironmentHash  = *environmentHash,
+                .toolCatalogHash        = hashOf(k_toolCatalogBytes),
+                .projectStateSchemaHash = hashOf(k_stateSchemaBytes),
                 .projectToolPreconditionSchemaHash =
                     hashOf(k_preconditionSchemaBytes),
-                .reconcilePayloadSchemaManifestHash   = hashOf("e2-reconcile"),
                 .journalEventSchemaManifestHash       = hashOf("e2-journal"),
                 .baselineEventType                    = "e2.baseline",
                 .projectResources                     = {},
@@ -774,16 +765,14 @@ return {
             auto owner = ProjectSchemaOwner::create(
                 registration,
                 ProjectDocumentSchemaBytes{
-                    .projectState       = k_stateSchemaBytes,
-                    .projectObservation = k_observationSchemaBytes,
-                    .toolPrecondition   = k_preconditionSchemaBytes,
+                    .projectState     = k_stateSchemaBytes,
+                    .toolPrecondition = k_preconditionSchemaBytes,
                 },
                 deployment::canonicalJsonValidator(),
-                [](
-                    ProjectPluginFunction,
-                    ProjectDocumentDirection,
-                    std::string_view
-                ) -> Status { return ok(); }
+                [](ProjectDocumentDirection, std::string_view) -> Status
+                {
+                    return ok();
+                }
             );
             REQUIRE(owner.has_value());
             return *std::move(owner);
@@ -821,12 +810,12 @@ return {
         }
 
         [[nodiscard]]
-        auto planAuthorityFor(
+        auto policyAuthorityFor(
             OperatorCoordinator& store,
             VerifiedProjectGeneration const& registration,
             SessionManifest const& manifest,
             ContentHash const& artifactRootHash
-        ) -> OperatorPlanAuthority
+        ) -> OperatorPolicyAuthority
         {
             auto installed =
                 store.openActiveInstalledRuntimeArtifact(artifactRootHash);
@@ -839,7 +828,7 @@ return {
             auto const runtimeModel =
                 observation.host->runtimeModelBinding(observation.generation);
             REQUIRE(runtimeModel.has_value());
-            auto authority = OperatorPlanAuthority::create(
+            auto authority = OperatorPolicyAuthority::create(
                 registration,
                 manifest,
                 *runtimeModel,
@@ -863,7 +852,7 @@ return {
             SessionManifest       manifest;
             ControllerBinding     controller;
             ControlLease          lease;
-            OperatorPlanAuthority planAuthority;
+            OperatorPolicyAuthority policyAuthority;
         };
 
         [[nodiscard]]
@@ -956,7 +945,7 @@ return {
             auto lease = store.acquireLease(*controller);
             REQUIRE_MESSAGE(lease.has_value(), failureText(lease));
             auto authority =
-                planAuthorityFor(store, registration, manifest, artifactRootHash);
+                policyAuthorityFor(store, registration, manifest, artifactRootHash);
 
             return Incarnation{
                 .store            = std::move(store),
@@ -964,7 +953,7 @@ return {
                 .manifest         = manifest,
                 .controller       = *std::move(controller),
                 .lease            = *std::move(lease),
-                .planAuthority    = std::move(authority),
+                .policyAuthority  = std::move(authority),
             };
         }
 
@@ -1038,7 +1027,7 @@ return {
             auto dispatcher = ProjectToolDispatcher::create(
                 prepared.store,
                 world->observations,
-                prepared.planAuthority,
+                prepared.policyAuthority,
                 frameworkProvider(world)
             );
             REQUIRE_MESSAGE(dispatcher.has_value(), failureText(dispatcher));
@@ -1049,11 +1038,11 @@ return {
             REQUIRE_MESSAGE(catalog.has_value(), failureText(catalog));
             auto const execution = executionIdentity(program);
             auto const run       = ToolActorRun{
-                      .controller    = prepared.controller,
-                      .lease         = prepared.lease,
-                      .execution     = execution,
-                      .planAuthority = prepared.planAuthority,
-                      .catalog       = *catalog,
+                      .controller      = prepared.controller,
+                      .lease           = prepared.lease,
+                      .execution       = execution,
+                      .policyAuthority = prepared.policyAuthority,
+                      .catalog         = *catalog,
             };
 
             // The actor's start. A Project starting one of its own bound

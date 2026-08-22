@@ -515,49 +515,7 @@
         "workflow_limits": { "$ref": "#/$defs/WorkflowLimits" }
       }
     },
-    "EffectivePlan": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "tool_name",
-        "tool_version",
-        "canonical_args",
-        "command_fingerprint",
-        "project_registration_hash",
-        "decision_basis_hash",
-        "effective_effects",
-        "risk",
-        "allowed_ui_actions",
-        "workflow_limits",
-        "required_approvals",
-        "plan_hash"
-      ],
-      "properties": {
-        "tool_name": { "$ref": "#/$defs/NamespacedIdentifier" },
-        "tool_version": { "$ref": "#/$defs/Identifier" },
-        "canonical_args": { "$ref": "#/$defs/CanonicalJsonValue" },
-        "command_fingerprint": { "$ref": "#/$defs/Hash" },
-        "project_registration_hash": { "$ref": "#/$defs/Hash" },
-        "decision_basis_hash": { "$ref": "#/$defs/Hash" },
-        "effective_effects": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/EffectEnvelope" }
-        },
-        "risk": { "$ref": "#/$defs/Risk" },
-        "allowed_ui_actions": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/NamespacedIdentifier" },
-          "uniqueItems": true
-        },
-        "workflow_limits": { "$ref": "#/$defs/WorkflowLimits" },
-        "required_approvals": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/Identifier" },
-          "uniqueItems": true
-        },
-        "plan_hash": { "$ref": "#/$defs/Hash" }
-      }
-    },
+
     "TimeoutPolicy": {
       "type": "object",
       "additionalProperties": false,
@@ -697,11 +655,10 @@
     "PlanVersion": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["version", "decision_basis_hash", "effective_plan", "status"],
+      "required": ["version", "decision_basis_hash", "status"],
       "properties": {
         "version": { "type": "integer", "minimum": 1 },
         "decision_basis_hash": { "$ref": "#/$defs/Hash" },
-        "effective_plan": { "$ref": "#/$defs/EffectivePlan" },
         "status": { "enum": ["provisional", "frozen", "superseded"] }
       }
     },
@@ -710,26 +667,20 @@
       "additionalProperties": false,
       "required": [
         "controlled_target_id",
-        "target_generation",
         "session_epoch",
         "lease_id",
         "fencing_token",
-        "operation_id",
         "dispatch_seq",
         "frozen_plan_hash",
-        "authority_decision_id",
         "receipt_ref"
       ],
       "properties": {
         "controlled_target_id": { "$ref": "#/$defs/Identifier" },
-        "target_generation": { "type": "integer", "minimum": 1 },
         "session_epoch": { "$ref": "#/$defs/SessionEpoch" },
         "lease_id": { "$ref": "#/$defs/Identifier" },
         "fencing_token": { "$ref": "#/$defs/FencingToken" },
-        "operation_id": { "$ref": "#/$defs/Identifier" },
         "dispatch_seq": { "type": "integer", "minimum": 1 },
         "frozen_plan_hash": { "$ref": "#/$defs/Hash" },
-        "authority_decision_id": { "$ref": "#/$defs/Identifier" },
         "receipt_ref": { "$ref": "#/$defs/ReceiptRef" }
       }
     },

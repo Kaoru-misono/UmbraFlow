@@ -52,91 +52,6 @@ namespace uf::operator_runtime::test_support
     }
 })json"};
 
-    // This project's derive answers the observation proposal envelope for every
-    // world, so the honest schema for its observation is that envelope's shape:
-    // the proposal boundary's members and nothing else. The shape mirrors
-    // schema/umbraflow-project-observation-proposal-v1.schema.json -- the same
-    // required members, the same wire words -- so a document this schema stamps
-    // is one proposalFromDerived can read. The basis stays unconstrained here
-    // exactly as the proposal contract leaves it: the identity schema's
-    // validator is the one authority that reads a basis (see
-    // k_observedIdentitySchema below), and this schema stating the same
-    // constraint again would be a second spelling of one rule.
-    inline constexpr auto k_projectObservationSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/project/observation",
-    "title": "umbraflow fixture ProjectObservation",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-        "schema",
-        "canonical_opaque_payload",
-        "project_tool_preconditions",
-        "observed_instance_proposals"
-    ],
-    "properties": {
-        "schema": {"const": "umbraflow-project-observation-proposal/v1"},
-        "canonical_opaque_payload": true,
-        "project_tool_preconditions": {
-            "type": "array",
-            "items": {"$ref": "#/$defs/FixtureToolPrecondition"}
-        },
-        "observed_instance_proposals": {
-            "type": "array",
-            "items": {"$ref": "#/$defs/FixtureObservedInstanceProposal"}
-        }
-    },
-    "$defs": {
-        "FixtureToolPrecondition": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["name", "status"],
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "pattern": "^[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$"
-                },
-                "status": {"enum": ["Known", "Unknown", "Stale", "Conflict"]}
-            }
-        },
-        "FixtureObservedInstanceProposal": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-                "local_ref",
-                "kind",
-                "identity_schema_id",
-                "semantic_identity_basis",
-                "opaque_project_payload"
-            ],
-            "properties": {
-                "local_ref": {
-                    "type": "string",
-                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
-                },
-                "parent_local_ref": {
-                    "type": "string",
-                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
-                },
-                "kind": {
-                    "type": "string",
-                    "pattern": "^[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$"
-                },
-                "identity_schema_id": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 512
-                },
-                "semantic_identity_basis": {"type": "object"},
-                "opaque_project_payload": true
-            }
-        }
-    }
-})json"};
-
-    // Every tool in this fixture's catalog takes the same one argument, so the
-    // catalog names one definition for all of them. A real catalog names one per
-    // tool; this one has nothing to tell them apart by.
     inline constexpr auto k_toolPreconditionSchema = std::string_view{R"json({
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://umbraflow.dev/schema/project/tool-precondition",
@@ -190,52 +105,6 @@ namespace uf::operator_runtime::test_support
             "required": ["outcome"],
             "properties": {
                 "outcome": {"type": "string"}
-            }
-        }
-    }
-})json"};
-
-    // This fixture's reconcile is the identity, so its request and its verdict
-    // are one shape and the disposition is spelled in the request. Nothing in
-    // the suite may rely on that; the arcana exemplar maps the two apart.
-    //
-    // The root asserts nothing: both definitions are reached by name, and a
-    // root oneOf over two identical branches would match neither.
-    inline constexpr auto k_reconcileSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/project/reconcile",
-    "title": "umbraflow fixture reconcile documents",
-    "$defs": {
-        "ReconcileRequest": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["disposition"],
-            "properties": {
-                "disposition": {
-                    "enum": [
-                        "continue",
-                        "confirmed",
-                        "rejected",
-                        "ambiguous",
-                        "diverged"
-                    ]
-                }
-            }
-        },
-        "ReconcileVerdict": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["disposition"],
-            "properties": {
-                "disposition": {
-                    "enum": [
-                        "continue",
-                        "confirmed",
-                        "rejected",
-                        "ambiguous",
-                        "diverged"
-                    ]
-                }
             }
         }
     }
@@ -707,7 +576,7 @@ namespace uf::operator_runtime::test_support
         return declaration;
     }
 
-    // The three documents a deployment writes rather than authors: each carries
+    // The two documents a deployment writes rather than authors: each carries
     // the sha256 of schema bytes, so each is assembled here from the bytes
     // above rather than transcribed.
     class DeploymentBundle final
@@ -715,7 +584,6 @@ namespace uf::operator_runtime::test_support
         std::string m_pluginId{};
         std::string m_toolCatalog{};
         std::string m_journalEventManifest{};
-        std::string m_reconcileManifest{};
 
     public:
         explicit DeploymentBundle(std::string_view pluginId)
@@ -749,25 +617,6 @@ namespace uf::operator_runtime::test_support
             m_journalEventManifest += R"json(],"plugin_id":")json"
                 + m_pluginId
                 + R"json(","schema":"umbraflow-journal-event-schema-manifest/v1"})json";
-
-            m_reconcileManifest = R"json({"$comment":)json"
-                R"json("The disposition is read out of the verdict's own member )json"
-                R"json(through this mapping. This project's reconcile is the identity, )json"
-                R"json(so its verdict words are the framework's; the arcana exemplar's )json"
-                R"json(are not.","dispositions":[)json"
-                R"json({"disposition":"ambiguous","value":"ambiguous"},)json"
-                R"json({"disposition":"confirmed","value":"confirmed"},)json"
-                R"json({"disposition":"continue","value":"continue"},)json"
-                R"json({"disposition":"diverged","value":"diverged"},)json"
-                R"json({"disposition":"rejected","value":"rejected"}],)json"
-                R"json("plugin_id":")json"
-                + m_pluginId
-                + R"json(","reconcile_schema_sha256":")json"
-                + schemaHashHex(k_reconcileSchema)
-                + R"json(","request_definition":"ReconcileRequest",)json"
-                  R"json("schema":"umbraflow-reconcile-manifest/v1",)json"
-                  R"json("verdict_definition":"ReconcileVerdict",)json"
-                  R"json("verdict_member":"disposition"})json";
         }
 
         [[nodiscard]]
@@ -782,12 +631,6 @@ namespace uf::operator_runtime::test_support
             return m_journalEventManifest;
         }
 
-        [[nodiscard]]
-        auto reconcileManifest() const UF_LIFETIME_BOUND -> std::string const&
-        {
-            return m_reconcileManifest;
-        }
-
         // Views into this bundle and into the static schema storage above, so
         // the result must not outlive the bundle it came from.
         [[nodiscard]]
@@ -797,12 +640,9 @@ namespace uf::operator_runtime::test_support
             return deployment::ProjectDeploymentSources{
                 .pluginId                        = m_pluginId,
                 .projectState                    = k_projectStateSchema,
-                .projectObservation              = k_projectObservationSchema,
                 .toolPrecondition                = k_toolPreconditionSchema,
-                .reconcile                       = k_reconcileSchema,
                 .toolCatalog                     = m_toolCatalog,
                 .journalEventManifest            = m_journalEventManifest,
-                .reconcileManifest               = m_reconcileManifest,
                 .journalPayloadSchemas           = k_journalPayloadSchemas,
                 .effectPayloadSchemas            = k_effectPayloadSchemas,
                 .observedInstanceIdentitySchemas = k_observedIdentitySchemas,

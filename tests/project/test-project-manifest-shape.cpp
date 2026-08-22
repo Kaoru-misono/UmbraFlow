@@ -178,12 +178,9 @@ namespace uf::project
             block += R"json(",)json";
             block += justification;
             block += R"json("project_state_schema":"schema/state.json",)json";
-            block += R"json("project_observation_schema":"schema/observation.json",)json";
             block += R"json("tool_precondition_schema":"schema/precondition.json",)json";
-            block += R"json("reconcile_schema":"schema/reconcile.json",)json";
             block += R"json("tool_catalog":"schema/catalog.json",)json";
             block += R"json("journal_event_schema_manifest":"schema/journal.json",)json";
-            block += R"json("reconcile_manifest":"schema/reconcile-manifest.json",)json";
             block += R"json("journal_payload_schemas":["schema/journal-0.json"],)json";
             block += R"json("effect_payload_schemas":[],)json";
             block += R"json("observed_instance_identity_schemas":[],)json";

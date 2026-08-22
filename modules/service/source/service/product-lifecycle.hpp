@@ -1,5 +1,6 @@
 #pragma once
 
+#include <operator/controller.hpp>
 #include <operator/host-controller.hpp>
 #include <operator/ledger.hpp>
 #include <operator/tool-actor-adapters.hpp>
@@ -15,24 +16,22 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace uf::service
 {
+    // Whether this lifecycle may still ask for a mutating Tool. It starts
+    // writable, because start() acquires the control lease before it returns,
+    // and becomes read-only exactly when that lease is given up.
     enum class LifecycleAccess : uint8
     {
         ReadOnly,
         Writable,
     };
 
-    [[nodiscard]]
-    auto lifecycleAccessAfterRestart(
-        std::span<operator_runtime::RecoveredUncertainDispatch const> recoveries
-    ) noexcept -> LifecycleAccess;
-
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
     struct ProductStart final
     {
         std::filesystem::path    projectDirectory{};
@@ -40,6 +39,26 @@ namespace uf::service
         std::string              authenticatedControllerId{};
         std::vector<std::string> controllerCapabilities{};
         std::string              controlledTargetId{};
+
+        // Which principal this session is pinned as, and deliberately without
+        // a default: the kind is not a label on the controller id beside it,
+        // it is the ceiling the whole Operator reads. An Agent reaches only
+        // the semantic Tool surface, must pin an AgentProfile budget, and
+        // cannot bind a read-mode session; only a Human may approve a mutating
+        // Tool or report external input about a third party. A default here
+        // would be this module choosing a principal for a caller that did not
+        // state one, which is exactly how one actor comes to hold another's
+        // powers.
+        operator_runtime::ControllerKind kind;
+
+        // The exact AgentProfile bytes this session is pinned to, present for
+        // the kinds whose budgets the Operator holds and absent for the kinds
+        // that stop on their own. They are bytes rather than a budget value
+        // because their hash IS the manifest's agent_profile_hash: a caller
+        // that stated ceilings instead would be naming a budget no manifest
+        // has to agree with. pinSession refuses a presence that disagrees with
+        // the kind, so this pair is judged by the ledger and never here.
+        std::optional<std::string> agentProfileJcs{};
 
         // The observed-instance world this session observes in. It is
         // transferred into the session pin unchanged, so the observations this
@@ -108,9 +127,9 @@ namespace uf::service
     };
 
     // The production session over an Operator root. The exact published
-    // Operator protocol schema has a production reader here: its catalog bytes
-    // are pinned into SessionManifest and passed to OperatorPlanAuthority with
-    // deployment's production PlanProposal and StepIntent readers.
+    // Operator protocol schema has a production reader here: its bytes are
+    // hashed into SessionManifest and satisfied again, byte for byte, by the
+    // session's policy authority.
     //
     // This module holds the only production calls that open an
     // OperatorCoordinator -- start below, and reclaimRuntimeArtifacts,
@@ -146,9 +165,6 @@ namespace uf::service
 
         [[nodiscard]] auto identity() const -> ProductIdentity;
 
-        [[nodiscard]]
-        auto recoveries() const
-            -> std::vector<operator_runtime::RecoveredUncertainDispatch>;
 
         [[nodiscard]]
         auto observe(task::TaskContext& context)
@@ -160,7 +176,7 @@ namespace uf::service
         //
         // A mutating descriptor carries a mutation proposal built from the
         // descriptor's own effect bounds and this run's plan authority, and is
-        // refused outright while recovery leaves the lifecycle read-only. A
+        // refused outright once the lifecycle has given up its lease. A
         // call whose canonical arguments carry an `observation_reference` is
         // issued against the reference this run minted for those exact bytes,
         // so a call consuming an observation this run never produced is refused

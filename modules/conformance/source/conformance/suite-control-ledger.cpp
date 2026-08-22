@@ -29,10 +29,6 @@ namespace uf::operator_runtime::conformance
         REQUIRE(takeover.has_value());
         CHECK(takeover->lease.fencingToken > prepared.lease.fencingToken);
 
-        // Nothing was in flight, so the takeover resolved nothing. The count is
-        // reported rather than logged because "nothing was in flight" and "one
-        // effect may already have landed" are different situations.
-        CHECK(takeover->resolvedDispatches == 0U);
 
         // The displaced lease keeps its value and loses its authority, which is
         // the only difference that matters after a takeover.

@@ -13,11 +13,13 @@
 
 #include <cli/args.hpp>
 #include <cli/cli-result.hpp>
+#include <cli/invoke.hpp>
 #include <cli/observe.hpp>
 
 #include <conformance/observation-fixture.hpp>
 #include <conformance/operator-protocol.hpp>
 
+#include <operator/controller.hpp>
 #include <operator/ledger.hpp>
 #include <operator/project-observation.hpp>
 
@@ -75,11 +77,15 @@ namespace uf::cli
         constexpr auto k_recordedHeight = uint32{1};
         constexpr auto k_recordedDpi    = uint32{96};
 
+        // Templated because two verbs are composed in this file and each
+        // answers with its own report; the caller only ever reads this when
+        // the call failed.
+        template <typename Value>
         [[nodiscard]]
-        auto why(Result<ObservedState> const& outcome) -> std::string
+        auto why(Result<Value> const& outcome) -> std::string
         {
             return outcome.has_value()
-                ? std::string{"<the observation succeeded>"}
+                ? std::string{"<the call succeeded>"}
                 : formatError(outcome.error());
         }
 
@@ -276,6 +282,15 @@ namespace uf::cli
         {
             std::string transition{};
             std::string sessionId{};
+        };
+
+        // One row of the Operator's sessions table, reduced to the pair this
+        // file asks about: who authenticated, and which principal the ledger
+        // pinned them as.
+        struct PinnedController final
+        {
+            std::string controllerId{};
+            std::string kind{};
         };
 
         // The stream identity every trace line carries. TraceRecorder writes no
@@ -491,6 +506,48 @@ namespace uf::cli
                 return std::nullopt;
             }
 
+            // The principal every pinned session was recorded as, read out of
+            // the Operator's own sessions table rather than out of anything
+            // the verb returned. A run's controller kind reaches no report and
+            // no trace, so this row is the only place a caller can see which
+            // principal the ledger actually holds the run to.
+            [[nodiscard]]
+            auto pinnedControllers() const -> std::vector<PinnedController>
+            {
+                auto const rows = ledgerRows(
+                    m_runtime / "operator-runtime.sqlite",
+                    "SELECT authenticated_controller_id, controller_kind "
+                    "FROM sessions ORDER BY authenticated_controller_id"
+                );
+                auto pinned = std::vector<PinnedController>{};
+                for (auto const& row : rows)
+                {
+                    REQUIRE(row.size() == 2U);
+                    pinned.emplace_back(
+                        PinnedController{
+                            .controllerId = row[0],
+                            .kind         = row[1],
+                        }
+                    );
+                }
+                return pinned;
+            }
+
+            // Puts one document beside the project and answers with its path.
+            [[nodiscard]]
+            auto document(
+                std::string_view name,
+                std::string_view bytes
+            ) const -> std::filesystem::path
+            {
+                auto const path = m_root / std::filesystem::path{name};
+                auto stream = std::ofstream{path, std::ios::binary};
+                REQUIRE(stream.good());
+                stream << bytes;
+                REQUIRE(stream.good());
+                return path;
+            }
+
             [[nodiscard]] auto tracePath(std::string_view trace) const
                 -> std::filesystem::path
             {
@@ -651,7 +708,15 @@ namespace uf::cli
                     .authenticatedControllerId = std::string{controllerId},
                     .controllerCapabilities    = std::move(capabilities),
                     .controlledTargetId        = "recorded-tool-target",
-                    .worldScope                = scope,
+                    // The kind every case here means. These cases drive the
+                    // adapters and the lease, not the per-kind ceilings, and
+                    // Human is the one kind that needs no AgentProfile and
+                    // reaches the whole Tool surface -- so a case about
+                    // something else is never silently also a case about a
+                    // budget.
+                    .kind            = operator_runtime::ControllerKind::Human,
+                    .agentProfileJcs = std::nullopt,
+                    .worldScope      = scope,
                 }
             );
             auto const lifecycleWhy = lifecycle.has_value()
@@ -921,16 +986,12 @@ namespace uf::cli
         CHECK(p_recordHash->string() == recordHash->hex());
 
         // Status reports the run rather than the screen: it observes nothing,
-        // and a clean start has nothing left uncertain to report.
+        // and a lifecycle that still holds its lease reports itself writable.
         auto const reportedStatus = json::parse(executed.status);
         REQUIRE(reportedStatus.has_value());
         auto const* const p_access = reportedStatus->find("access");
         REQUIRE(p_access != nullptr);
         CHECK(p_access->string() == "writable");
-        auto const* const p_unreconciled =
-            reportedStatus->find("unreconciled_dispatches");
-        REQUIRE(p_unreconciled != nullptr);
-        CHECK(p_unreconciled->string() == "0");
 
         // The two observes are byte-identical requests, and they still differ:
         // the second one got its own ordinal, executed on its own and minted
@@ -1306,6 +1367,79 @@ namespace uf::cli
         CHECK(transitions[1].transition == "release");
     }
 
+    // What --actor actually buys, asserted where it lands rather than where it
+    // was typed. A run's controller kind reaches no report, no trace and no
+    // return value: it is written into the Operator's sessions row and read
+    // back out of it by every later refusal. So the only way to say "invoke
+    // pins the principal the caller named" is to run the verb and read that
+    // row.
+    //
+    // The case is worth its seconds because three separate claims land on it
+    // at once, and each has its own mutation:
+    //
+    //  - The kind reaches the ledger. Make principalOf(AgentToolRequest) answer
+    //    Human and the recorded kind stops being "agent" -- which is what makes
+    //    an agent escaping every Agent gate a red run rather than prose.
+    //  - The controller id is composed from that kind. Compose it from anything
+    //    else and the id stops being the wire name's, so two actors sharing one
+    //    id -- and therefore one durable root identity for one --request-key --
+    //    cannot come back unnoticed.
+    //  - The AgentProfile verified. An Agent session the ledger will pin at all
+    //    is one that presented a budget which hashed to the manifest it was
+    //    attested against and satisfied the published AgentBudget definition;
+    //    break the profile document or drop it and start fails before any row
+    //    exists.
+    TEST_CASE("invoke pins the principal --actor names")
+    {
+        auto const world     = RecordedWorld{};
+        auto const delivered = std::make_shared<uint32>();
+
+        // A real AgentBudget document, in the member order RFC 8785 puts them
+        // in. Its bytes are what agent_profile_hash attests to, so the numbers
+        // below are the session's actual ceilings and not a fixture's decoration.
+        auto const profile = world.document(
+            "budget.json",
+            "{\"maximum_elapsed_ms\":3600000,\"maximum_mutations\":0,"
+            "\"maximum_observations\":8,\"maximum_risk_units\":0,"
+            "\"maximum_tool_calls\":4}"
+        );
+        auto const objective = world.document(
+            "objective.json",
+            "{\"goal\":\"see\"}"
+        );
+        auto const arguments = world.document("arguments.json", "{}");
+
+        auto const observeArgs = world.args("invoke-agent.jsonl");
+        auto const args        = InvokeArgs{
+            .project      = observeArgs.project,
+            .windowHandle = observeArgs.windowHandle,
+            .runtime      = observeArgs.runtime,
+            .ocrModels    = observeArgs.ocrModels,
+            .requestKey   = "root-agent-1",
+            .request      = AgentToolRequest{
+                .toolName             = "framework.screen.observe",
+                .objectiveDocument    = objective,
+                .argumentsDocument    = arguments,
+                .agentProfileDocument = profile,
+            },
+            .trace = observeArgs.trace,
+        };
+
+        auto const report = invokeTool(
+            args,
+            world.sources(delivered, std::make_unique<PresentReader>())
+        );
+        REQUIRE_MESSAGE(report.has_value(), why(report));
+        CHECK(report->actor == "agent");
+
+        // One session, pinned as the principal the actor named, under an id
+        // that spells that same kind.
+        auto const pinned = world.pinnedControllers();
+        REQUIRE(pinned.size() == 1U);
+        CHECK(pinned[0].kind == "agent");
+        CHECK(pinned[0].controllerId == "umbra-flow-invoke-agent");
+    }
+
     TEST_CASE("destroying an unclosed lifecycle drops the lease it took")
     {
         auto const world = RecordedWorld{};
@@ -1324,6 +1458,8 @@ namespace uf::cli
                     .authenticatedControllerId = "destructor-fallback",
                     .controllerCapabilities    = {},
                     .controlledTargetId        = "recorded-target",
+                    .kind                      = operator_runtime::ControllerKind::Human,
+                    .agentProfileJcs           = std::nullopt,
                     .worldScope                = *scope,
                 }
             );
@@ -1360,6 +1496,8 @@ namespace uf::cli
                     .authenticatedControllerId = "explicit-shutdown",
                     .controllerCapabilities    = {},
                     .controlledTargetId        = "recorded-target",
+                    .kind                      = operator_runtime::ControllerKind::Human,
+                    .agentProfileJcs           = std::nullopt,
                     .worldScope                = *scope,
                 }
             );

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://umbraflow.local/schema/project-registration-v3",
   "title": "Umbraflow ProjectRegistrationManifest v3",
-  "$comment": "The two-closure registration. A generation carries a reducer closure compiled on the pure program type and a tool closure compiled on the scoped program type, each with its own module manifest hash and its own stated export surface. It has no production producer: modules/deployment writes the one-closure v2 document, and this generation's production debut is the terminal commit that also retires that one. The two documents are never read by one reader -- the v2 reader accepts project_registration_format 4 and refuses everything else, this one accepts 5 and refuses everything else -- so the format integer is an identity assertion inside a reader and never a key anything dispatches on.",
+  "$comment": "The two-closure registration. A generation carries a reducer closure compiled on the pure program type and a tool closure compiled on the scoped program type, each with its own module manifest hash and its own stated export surface. There is ONE reader and it accepts project_registration_format 6 and refuses everything else, so the format integer is an identity assertion inside a reader and never a key anything dispatches on. Format 6 is format 5 without project_observation_schema_hash and reconcile_payload_schema_manifest_hash: derive and reconcile were the only judges of the documents those two pinned, and a pinned document nothing judges is the defect.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -13,9 +13,7 @@
     "plugin_environment_hash",
     "tool_catalog_hash",
     "project_state_schema_hash",
-    "project_observation_schema_hash",
     "project_tool_precondition_schema_hash",
-    "reconcile_payload_schema_manifest_hash",
     "journal_event_schema_manifest_hash",
     "observed_instance_identity_schema_hashes",
     "baseline_event_type",
@@ -29,7 +27,7 @@
     },
     "plugin_id": { "$ref": "#/$defs/namespaced_name" },
     "reducer_closure": {
-      "$comment": "The closure compiled on the pure program type. Its exported_entry_points is exactly [\"reduce\"]: the pure type keeps one entry, and derive, plan, next_step and reconcile die with the five-function contract the Tool Runtime replaces. The slot is required, and there is deliberately no reading in which an absent reducer closure means a project that does not fold.",
+      "$comment": "The closure compiled on the pure program type. Its exported_entry_points is exactly [\"reduce\"]: the pure type keeps one entry, and derive, plan, next_step and reconcile died with the five-function contract the Tool Runtime replaces. The slot is required, and there is deliberately no reading in which an absent reducer closure means a project that does not fold.",
       "$ref": "#/$defs/closure"
     },
     "tool_closure": {
@@ -39,9 +37,7 @@
     "plugin_environment_hash": { "$ref": "#/$defs/hash" },
     "tool_catalog_hash": { "$ref": "#/$defs/hash" },
     "project_state_schema_hash": { "$ref": "#/$defs/hash" },
-    "project_observation_schema_hash": { "$ref": "#/$defs/hash" },
     "project_tool_precondition_schema_hash": { "$ref": "#/$defs/hash" },
-    "reconcile_payload_schema_manifest_hash": { "$ref": "#/$defs/hash" },
     "journal_event_schema_manifest_hash": { "$ref": "#/$defs/hash" },
     "observed_instance_identity_schema_hashes": {
       "$comment": "The closed set of observed-instance identity schema documents this registration owns, as the sha256 of each exact document. The deployment names the documents and the loader derives every digest from the bytes it read, sorted and unique by that derivation -- JSON Schema cannot state sortedness, so the framework's own reading of the derived document refuses any other order.",
@@ -65,7 +61,7 @@
   },
   "$defs": {
     "format": {
-      "const": 5
+      "const": 6
     },
     "hash": {
       "type": "string",

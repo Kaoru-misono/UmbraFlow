@@ -31,7 +31,7 @@ Parity for one of these is byte identity: read the file, do not copy it.
 | `https://umbraflow.dev/schema/project-attestation/v2` | v2 | -- | `schema/umbraflow-project-attestation-v2.schema.json` | `set_version`, `predecessor_set_id`, `bundle_root_hash`, `plugin_id`, `attestations` |
 | `https://umbraflow.dev/schema/project-observation-proposal/v1` | v1 | `umbraflow-project-observation-proposal/v1` | `schema/umbraflow-project-observation-proposal-v1.schema.json` | `schema`, `canonical_opaque_payload`, `project_tool_preconditions`, `observed_instance_proposals` |
 | `https://umbraflow.dev/schema/project-observation/v1` | v1 | `umbraflow-project-observation/v1` | `schema/umbraflow-project-observation-v1.schema.json` | `schema`, `canonical_opaque_payload`, `project_tool_preconditions`, `observed_instances` |
-| `https://umbraflow.local/schema/project-registration-v3` | v3 | -- | `schema/umbraflow-project-registration-v3.schema.json` | `project_registration_format`, `plugin_id`, `reducer_closure`, `tool_closure`, `plugin_environment_hash`, `tool_catalog_hash`, `project_state_schema_hash`, `project_observation_schema_hash`, `project_tool_precondition_schema_hash`, `reconcile_payload_schema_manifest_hash`, `journal_event_schema_manifest_hash`, `observed_instance_identity_schema_hashes`, `baseline_event_type`, `project_resources`, `project_tool_bindings` |
+| `https://umbraflow.local/schema/project-registration-v3` | v3 | -- | `schema/umbraflow-project-registration-v3.schema.json` | `project_registration_format`, `plugin_id`, `reducer_closure`, `tool_closure`, `plugin_environment_hash`, `tool_catalog_hash`, `project_state_schema_hash`, `project_tool_precondition_schema_hash`, `journal_event_schema_manifest_hash`, `observed_instance_identity_schema_hashes`, `baseline_event_type`, `project_resources`, `project_tool_bindings` |
 | `https://umbraflow.dev/schema/project-tool-precondition/v1` | v1 | -- | `schema/umbraflow-project-tool-precondition-v1.schema.json` | `name`, `status` |
 | `https://umbraflow.dev/schema/project/directory` | v2 | `umbraflow-project/v2` | `schema/umbraflow-project-v2.schema.json` | `deployments`, `primary_deployment`, `runtime_artifact`, `schema`, `template_cuts` |
 | `https://umbraflow.dev/schema/umbraflow-runtime-artifact-v1.schema.json` | v1 | -- | `schema/umbraflow-runtime-artifact-v1.schema.json` | `runtime_artifact_format`, `runtime_model_format`, `page_model`, `assets` |
@@ -47,9 +47,7 @@ compare against. Read from `modules/deployment/source/deployment/project-deploym
 
 | Role | `$id` the project's document must declare |
 | --- | --- |
-| `projectObservation` | `https://umbraflow.dev/schema/project/observation` |
 | `projectState` | `https://umbraflow.dev/schema/project/state` |
-| `reconcile` | `https://umbraflow.dev/schema/project/reconcile` |
 | `toolPrecondition` | `https://umbraflow.dev/schema/project/tool-precondition` |
 
 ### 1.3 Identities compiled from module bytes
@@ -69,16 +67,10 @@ call boundary. `unclassified` means none is true of it in these bytes.
 | `$id` | Ownership | Wire tag | Source | Required members |
 | --- | --- | --- | --- | --- |
 | `https://umbraflow.dev/schema/operator/common` | embedded_fragment | -- | `modules/deployment/source/deployment/project-deployment.cpp` | no top-level requirement |
-| `https://umbraflow.dev/schema/operator/derive-input` | operator_protocol | -- | `modules/deployment/source/deployment/project-deployment.cpp` | `pending_operation_transition`, `pinned_project_artifact_identities`, `prior_project_observation`, `project_state`, `ui_snapshot` |
 | `https://umbraflow.dev/schema/operator/journal-event-schema-manifest` | wire_tag_owned | `umbraflow-journal-event-schema-manifest/v1` | `modules/deployment/source/deployment/project-deployment.cpp` | `payload_schemas`, `plugin_id`, `schema` |
-| `https://umbraflow.dev/schema/operator/plan-input` | operator_protocol | -- | `modules/deployment/source/deployment/project-deployment.cpp` | `canonical_args`, `project_observation`, `project_state`, `tool_name`, `tool_version` |
-| `https://umbraflow.dev/schema/operator/plan-proposal` | operator_protocol | -- | `modules/deployment/source/deployment/project-deployment.cpp` | `allowed_ui_actions`, `canonical_args`, `effects`, `tool_name`, `tool_version`, `workflow_limits` |
-| `https://umbraflow.dev/schema/operator/reconcile-manifest` | wire_tag_owned | `umbraflow-reconcile-manifest/v1` | `modules/deployment/source/deployment/project-deployment.cpp` | `dispositions`, `plugin_id`, `reconcile_schema_sha256`, `request_definition`, `schema`, `verdict_definition`, `verdict_member` |
 | `https://umbraflow.dev/schema/operator/reduce-input` | operator_protocol | -- | `modules/deployment/source/deployment/project-deployment.cpp` | `journal_events`, `prior_project_state` |
-| `https://umbraflow.dev/schema/operator/step-input` | operator_protocol | -- | `modules/deployment/source/deployment/project-deployment.cpp` | `frozen_plan_hash`, `project_observation`, `project_state`, `step_index` |
-| `https://umbraflow.dev/schema/operator/step-intent` | operator_protocol | -- | `modules/deployment/source/deployment/project-deployment.cpp` | one of `UiActionIntent`, `WaitIntent` |
 | `https://umbraflow.dev/schema/operator/tool-catalog` | wire_tag_owned | `umbraflow-tool-catalog/v1` | `modules/deployment/source/deployment/project-deployment.cpp` | `effect_payload_sha256s`, `plugin_id`, `schema`, `tool_precondition_sha256`, `tools` |
-| `https://umbraflow.dev/schema/project/conformance` | wire_tag_owned | `umbraflow-conformance/v1` | `modules/deployment/source/deployment/project-directory.cpp` | `foreign`, `probe_frame`, `schema`, `under_test` |
+| `https://umbraflow.dev/schema/project/conformance` | wire_tag_owned | `umbraflow-conformance/v2` | `modules/deployment/source/deployment/project-directory.cpp` | `foreign`, `probe_frame`, `schema`, `under_test` |
 
 ### 1.4 Wire tags no published schema pins
 
@@ -88,7 +80,7 @@ statement.
 
 | Wire tag |
 | --- |
-| `umbraflow-conformance/v1` |
+| `umbraflow-conformance/v2` |
 | `umbraflow-framework-schema-catalog/v1` |
 | `umbraflow-journal-event-schema-manifest/v1` |
 | `umbraflow-observed-instance-authority-input/v1` |
@@ -96,7 +88,6 @@ statement.
 | `umbraflow-project-kit-artifact-manifest/v1` |
 | `umbraflow-project-kit-execution-closure/v1` |
 | `umbraflow-project-kit-execution-closure/v2` |
-| `umbraflow-reconcile-manifest/v1` |
 | `umbraflow-release/v1` |
 | `umbraflow-tool-catalog/v1` |
 
@@ -161,10 +152,7 @@ member below is a hash.
 | `observed_instance_identity_schemas` |
 | `plugin_authoring` |
 | `plugin_id` |
-| `project_observation_schema` |
 | `project_state_schema` |
-| `reconcile_manifest` |
-| `reconcile_schema` |
 | `reducer_closure` |
 | `resources` |
 | `tool_bindings` |
@@ -206,7 +194,6 @@ only when every one of them compiles. Read from
 | `ProjectSchemaOwner` | `schemaOwner` |
 | `ProjectJournalSchemaOwner` | `journalSchemaOwner` |
 | `ProjectToolCatalogSchemaOwner` | `toolCatalogSchemaOwner` |
-| `ProjectReconcileSchemaOwner` | `reconcileSchemaOwner` |
 | `ObservedInstanceIdentitySchemas` | `observedInstanceIdentitySchemas` |
 
 ### 2.5 The Tool Catalog floor
@@ -445,15 +432,12 @@ under_test and foreign are both played by {}; authority is per registration, so 
 
 ```text
 {} is not a schema this deployment can apply: {}
-{} is not what this ValidatedDocument was stamped as
 document is not JSON: {}
 {} must declare "$id": "{}"
 {} must declare its own absolute "$id"
 {} belongs to plugin {}, not to {}
-a PlanProposal's {} is outside the range that workflow bound holds
 this project's Tool Catalog declares no tool named {}
 this project's journal event schema manifest names no payload schema for {}
-an EffectEnvelope names payload schema {}, which this deployment does not carry
 a framework-format document names its own format in a schema member, and this one carries no such member
 no framework document format is named {}
 the Tool Catalog names tool precondition schema {}, and the schema this deployment carries hashes to {}
@@ -464,10 +448,6 @@ the Tool Catalog names result schema {}, which the tool precondition schema does
 the Tool Catalog bounds an effect to payload schema {}, which this deployment does not carry: its effect_payload_schemas hash to {}
 the journal event schema manifest names payload schema {} for {}, which this deployment does not carry: its journal_payload_schemas hash to {}
 this deployment supplies a journal payload schema hashing to {}, which the journal event schema manifest names under no event type
-the reconcile manifest names reconcile schema {}, and the schema this deployment carries hashes to {}
-the reconcile manifest names definition {}, which the reconcile schema does not declare
-the reconcile output carries no {} member to read a disposition from
-the reconcile manifest maps no disposition to {}
 ```
 
 #### project kit
@@ -626,9 +606,9 @@ classification inside the value it answers with.
 | Reserved scoped module | Exports | Source SHA-256 |
 | --- | --- | --- |
 | `@umbraflow/audit` | `record`, `recorded` | `59ca9c95641c7582282ea718017f2893f60e0573f9375705048b817eeb497425` |
-| `@umbraflow/screen` | `actions`, `capture`, `observation`, `observe`, `targets`, `use`, `used` | `32c35f0363f2bf68c30800ec8aa5d1bb0f94547639b2ecc1fba88e8ccdeeeeda` |
+| `@umbraflow/screen` | `actions`, `observation`, `observe`, `targets`, `use`, `used` | `d867a61d61d48af242585d4b9e9b5eec24498450997c5870e7ead63a97474de3` |
 | `@umbraflow/tools` | `call`, `call_identity`, `catalog_hash`, `describe`, `evidence`, `knows`, `names`, `result`, `state`, `states`, `tool_name` | `bcf5b96295b298da14fd658a42494fe3a377da8d8562cd268dbb80952c83b93b` |
-| `@umbraflow/workflow` | `absent`, `child_flow`, `delivered`, `pending`, `reconcile`, `recover`, `refused`, `settled`, `status`, `stopped`, `uncertain`, `wait` | `a3af209b8c3ba732e5f9b90c9bc0ac5676412a4060e6e97dbef4f84226b92250` |
+| `@umbraflow/workflow` | `absent`, `child_flow`, `delivered`, `pending`, `recover`, `refused`, `settled`, `status`, `stopped`, `uncertain`, `wait` | `9ba69c1e5e1073985ea13c4438d62922a2676e663d591867e7b5241cf99bc0b5` |
 
 ### 4.2 Identity preimage
 

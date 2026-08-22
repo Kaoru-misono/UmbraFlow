@@ -1,5 +1,6 @@
 #include <cli/args.hpp>
 #include <cli/cli-result.hpp>
+#include <cli/invoke.hpp>
 
 #include <core/types/integer.hpp>
 
@@ -15,10 +16,13 @@
 #include <array>
 #include <chrono>
 #include <filesystem>
+#include <optional>
 #include <source_location>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace uf::cli
@@ -47,6 +51,33 @@ namespace uf::cli
                 "--results",
                 "results.jsonl",
             };
+        }
+
+        // What every Tool run needs whichever actor starts it. The material the
+        // named actor carries is appended per case, so a case states only the
+        // thing it is about.
+        [[nodiscard]]
+        auto invokeArgsWith(
+            std::vector<std::string> const& material
+        ) -> std::vector<std::string>
+        {
+            auto raw = std::vector<std::string>{
+                "--project",
+                "proj",
+                "--hwnd",
+                "0x20",
+                "--runtime",
+                "runtime-root",
+                "--ocr-models",
+                "models",
+                "--request-key",
+                "root-1",
+            };
+            for (auto const& value : material)
+            {
+                raw.emplace_back(value);
+            }
+            return raw;
         }
 
         [[nodiscard]]
@@ -511,6 +542,266 @@ namespace uf::cli
         CHECK(foreign.error().message().contains("--project"));
     }
 
+    // The three transports deliver different material, and the parser's job is
+    // to keep that difference rather than flatten it: a model's and a Project's
+    // objective and arguments are documents their runtime already holds, and a
+    // person's are the text they typed.
+    TEST_CASE("parseInvokeArguments carries each transport's own material")
+    {
+        auto const agent = parseInvokeArguments(
+            invokeArgsWith({
+                "--actor", "agent",
+                "--tool", "framework.observe",
+                "--objective-file", "objective.json",
+                "--arguments-file", "arguments.json",
+                "--agent-profile", "budget.json",
+            })
+        );
+        REQUIRE(agent.has_value());
+        CHECK(agent->project == std::filesystem::path{"proj"});
+        CHECK(agent->runtime == std::filesystem::path{"runtime-root"});
+        CHECK(agent->requestKey == "root-1");
+        CHECK(agent->trace == std::filesystem::path{k_defaultInvokeTracePath});
+        CHECK(actorName(agent->request) == "agent");
+
+        auto const* const use = std::get_if<AgentToolRequest>(&agent->request);
+        REQUIRE(use != nullptr);
+        CHECK(use->toolName == "framework.observe");
+        CHECK(use->objectiveDocument == std::filesystem::path{"objective.json"});
+        CHECK(use->argumentsDocument == std::filesystem::path{"arguments.json"});
+        // The budget is the agent's own material and nobody else's: the
+        // Operator holds the stopping condition of the one principal whose
+        // intent it cannot verify in advance.
+        CHECK(
+            use->agentProfileDocument == std::filesystem::path{"budget.json"}
+        );
+
+        auto const human = parseInvokeArguments(
+            invokeArgsWith({
+                "--actor", "human",
+                "--tool", "framework.observe",
+                "--objective", "{ \"goal\": \"look\" }",
+                "--arguments", "{}",
+                "--capability", "operate",
+            })
+        );
+        REQUIRE(human.has_value());
+        CHECK(actorName(human->request) == "human");
+        REQUIRE(human->capabilities.size() == 1U);
+        CHECK(human->capabilities[0] == "operate");
+
+        auto const* const command = std::get_if<HumanToolRequest>(
+            &human->request
+        );
+        REQUIRE(command != nullptr);
+        // Spacing and all, untouched. The human adapter parses and re-renders;
+        // a front end that canonicalised here would answer for the person.
+        CHECK(command->objectiveText == "{ \"goal\": \"look\" }");
+        CHECK(command->argumentsText == "{}");
+
+        auto const project = parseInvokeArguments(
+            invokeArgsWith({
+                "--actor", "project",
+                "--entry", "restock",
+                "--objective-file", "objective.json",
+                "--arguments-file", "arguments.json",
+            })
+        );
+        REQUIRE(project.has_value());
+        CHECK(actorName(project->request) == "project");
+
+        auto const* const start = std::get_if<ProjectAutomationRequest>(
+            &project->request
+        );
+        REQUIRE(start != nullptr);
+        CHECK(start->entryToolName == "restock");
+    }
+
+    // One job, one vehicle. Material belonging to another transport is refused
+    // by name rather than dropped, because a verb that ignored the flag would
+    // start a call the caller did not describe. Replacing the membership guard
+    // in parseInvokeArguments with an unconditional `continue;` reds every case.
+    TEST_CASE("parseInvokeArguments refuses material the named actor cannot carry")
+    {
+        struct MisdirectedMaterial final
+        {
+            std::string_view         actor{};
+            std::vector<std::string> material{};
+            std::string_view         refused{};
+        };
+
+        auto const cases = std::vector<MisdirectedMaterial>{
+            {
+                "agent",
+                {"--tool", "t", "--objective", "{}", "--arguments-file", "a.json"},
+                "--objective",
+            },
+            {
+                "agent",
+                {"--entry", "e", "--objective-file", "o.json", "--arguments-file", "a.json"},
+                "--entry",
+            },
+            {
+                "human",
+                {"--tool", "t", "--objective-file", "o.json", "--arguments", "{}"},
+                "--objective-file",
+            },
+            {
+                "project",
+                {"--tool", "t", "--objective-file", "o.json", "--arguments-file", "a.json"},
+                "--tool",
+            },
+            // A budget presented by a principal that stops on its own. The
+            // ledger refuses an AgentProfile from a Human or a Script pin, so
+            // a front end that carried one this far would be assembling a
+            // session the Operator cannot admit.
+            {
+                "human",
+                {
+                    "--tool", "t", "--objective", "{}", "--arguments", "{}",
+                    "--agent-profile", "budget.json",
+                },
+                "--agent-profile",
+            },
+            {
+                "project",
+                {
+                    "--entry", "e", "--objective-file", "o.json",
+                    "--arguments-file", "a.json",
+                    "--agent-profile", "budget.json",
+                },
+                "--agent-profile",
+            },
+        };
+
+        for (auto const& misdirected : cases)
+        {
+            auto material = std::vector<std::string>{
+                "--actor",
+                std::string{misdirected.actor},
+            };
+            for (auto const& value : misdirected.material)
+            {
+                material.emplace_back(value);
+            }
+
+            INFO("actor ", misdirected.actor, " given ", misdirected.refused);
+            auto const refused = parseInvokeArguments(invokeArgsWith(material));
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(refused.error().message().contains(misdirected.refused));
+            CHECK(refused.error().message().contains(misdirected.actor));
+        }
+    }
+
+    TEST_CASE("parseInvokeArguments requires an actor and the material it carries")
+    {
+        // No default and nothing inferred: which transport a call arrives at is
+        // what the Operator admits it as.
+        auto const noActor = parseInvokeArguments(
+            invokeArgsWith({
+                "--tool", "framework.observe",
+                "--objective-file", "o.json",
+                "--arguments-file", "a.json",
+            })
+        );
+        REQUIRE_FALSE(noActor.has_value());
+        CHECK(noActor.error().message().contains("--actor"));
+
+        auto const unknownActor = parseInvokeArguments(
+            invokeArgsWith({"--actor", "operator"})
+        );
+        REQUIRE_FALSE(unknownActor.has_value());
+        CHECK(unknownActor.error().message().contains("--actor"));
+
+        auto const noArguments = parseInvokeArguments(
+            invokeArgsWith({
+                "--actor", "agent",
+                "--tool", "framework.observe",
+                "--objective-file", "o.json",
+                "--agent-profile", "budget.json",
+            })
+        );
+        REQUIRE_FALSE(noArguments.has_value());
+        CHECK(noArguments.error().message().contains("--arguments-file"));
+        CHECK(noArguments.error().message().contains("agent"));
+
+        // An agent with no budget document. pinSession refuses an Agent
+        // session that pins no AgentProfile, so the whole material is present
+        // here and the call is still one the Operator would not admit; it is
+        // refused by name at the flag rather than deep inside a lifecycle
+        // start.
+        auto const noProfile = parseInvokeArguments(
+            invokeArgsWith({
+                "--actor", "agent",
+                "--tool", "framework.observe",
+                "--objective-file", "o.json",
+                "--arguments-file", "a.json",
+            })
+        );
+        REQUIRE_FALSE(noProfile.has_value());
+        CHECK(noProfile.error().message().contains("--agent-profile"));
+        CHECK(noProfile.error().message().contains("agent"));
+
+        // The key the durable root request is idempotent on. A front end that
+        // minted one would put a second durable root beside the first on every
+        // rerun of the same command.
+        auto const noKey = parseInvokeArguments(
+            std::vector<std::string>{
+                "--project", "proj", "--hwnd", "0x20",
+                "--runtime", "runtime-root", "--ocr-models", "models",
+                "--actor", "human", "--tool", "t",
+                "--objective", "{}", "--arguments", "{}",
+            }
+        );
+        REQUIRE_FALSE(noKey.has_value());
+        CHECK(noKey.error().message().contains("--request-key"));
+
+        // A flag `explore` takes, refused rather than accepted and ignored:
+        // this verb tails no queue, so a caller that named one is running the
+        // wrong command.
+        auto const foreign = parseInvokeArguments(
+            invokeArgsWith({
+                "--actor", "human", "--tool", "t",
+                "--objective", "{}", "--arguments", "{}",
+                "--queue", "queue.jsonl",
+            })
+        );
+        REQUIRE_FALSE(foreign.has_value());
+        CHECK(foreign.error().message().contains("--queue"));
+    }
+
+    // The report a script parses. Both documents are named even when the row
+    // carried neither, because "the provider recorded nothing" and "this report
+    // dropped it" are what a reader is trying to tell apart.
+    TEST_CASE("formatToolInvoke names the coordinate a reader joins the row by")
+    {
+        auto const report = ToolInvokeReport{
+            .project                = "proj",
+            .runtimeArtifactRoot    = "runtime-root/artifact",
+            .deployment             = "primary",
+            .pluginId               = "example.fixture",
+            .actor                  = "agent",
+            .toolName               = "framework.observe",
+            .requestKey             = "root-1",
+            .state                  = "confirmed",
+            .revision               = uint64{7},
+            .activeAdmissionAttempt = uint64{2},
+            .payload                = std::string{"{\"ok\":true}"},
+            .evidence               = std::nullopt,
+            .trace                  = "run-trace.jsonl",
+        };
+
+        auto const text = formatToolInvoke(report);
+        CHECK(text.find("agent") != std::string::npos);
+        CHECK(text.find("framework.observe") != std::string::npos);
+        CHECK(text.find("root-1") != std::string::npos);
+        CHECK(text.find("confirmed") != std::string::npos);
+        CHECK(text.find("example.fixture") != std::string::npos);
+        CHECK(text.find("{\"ok\":true}") != std::string::npos);
+        CHECK(text.find("(none)") != std::string::npos);
+        CHECK(text.find("run-trace.jsonl") != std::string::npos);
+    }
+
     // The name is the assertion: every command main.cpp dispatches must appear.
     // It listed four of six until 2026-08-17 -- `observe` had been missing since
     // it was added, and `reclaim` arrived the same day -- so a command could ship
@@ -525,11 +816,15 @@ namespace uf::cli
         CHECK(usage.find("  umbra-flow ocr ") != std::string::npos);
         CHECK(usage.find("  umbra-flow open ") != std::string::npos);
         CHECK(usage.find("  umbra-flow reclaim ") != std::string::npos);
+        CHECK(usage.find("  umbra-flow invoke ") != std::string::npos);
         CHECK(usage.find("  umbra-flow targets\n") != std::string::npos);
         CHECK(usage.find("  umbra-flow upgrade ") != std::string::npos);
-        CHECK(usage.find("  umbra-flow run ") == std::string::npos);
         CHECK(usage.find("  umbra-flow check ") == std::string::npos);
         CHECK(usage.find("  umbra-flow replay ") == std::string::npos);
+        // `run` is retired beside those two and stays retired: the verb that
+        // starts a Tool call is `invoke`, and the old spelling is the name the
+        // v1 annotator surface went out under.
+        CHECK(usage.find("  umbra-flow run ") == std::string::npos);
     }
 
     TEST_CASE("ExitCode uses the compact current command contract")

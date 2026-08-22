@@ -3,13 +3,11 @@
 // Everything a second game's deployment holds for one ProjectRegistration.
 //
 // Nothing here is shared with this repository's own exemplar: a different state
-// shape, a non-empty observation, a bounded numeric tool argument, four journal
-// payloads of three different shapes, and a reconcile vocabulary in which the
-// request and the verdict say different things -- so the disposition the
-// authority reads is nowhere in the document that produced it.
+// shape, a bounded numeric tool argument, and four journal payloads of three
+// different shapes.
 //
 // It is written the way a consumer writes one: the schemas are files a project
-// authors, and the three manifests are what a deployment assembles from them,
+// authors, and the manifests are what a deployment assembles from them,
 // because each carries the sha256 of bytes only the deployment can hash.
 
 #include <deployment/project-deployment.hpp>
@@ -45,19 +43,6 @@ namespace uf::operator_runtime::conformance::expedition
     }
 })json"};
 
-    // What derive reads off one observation: whether the camp is on screen.
-    inline constexpr auto k_projectObservationSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/project/observation",
-    "title": "arcana expedition ProjectObservation",
-    "type": "object",
-    "additionalProperties": false,
-    "required": ["visible"],
-    "properties": {
-        "visible": {"type": "boolean"}
-    }
-})json"};
-
     // Every expedition tool is stated in the expedition's own vocabulary -- a
     // number of leagues to march, and nothing that describes the screen. Eight
     // is the longest march a single command may order.
@@ -80,39 +65,6 @@ namespace uf::operator_runtime::conformance::expedition
             "required": ["leagues"],
             "properties": {
                 "leagues": {"type": "integer", "minimum": 0, "maximum": 8}
-            }
-        }
-    }
-})json"};
-
-    // The request carries what was observed; the verdict carries what the
-    // expedition concluded. They are deliberately different vocabularies, and
-    // neither word is one of the framework's five dispositions: the mapping
-    // lives in the reconcile manifest, so only this project decides which
-    // observation becomes which conclusion.
-    inline constexpr auto k_reconcileSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/project/reconcile",
-    "title": "arcana expedition reconcile documents",
-    "$defs": {
-        "ReconcileRequest": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["observed"],
-            "properties": {
-                "observed": {
-                    "enum": ["advanced", "arrived", "blocked", "nothing"]
-                }
-            }
-        },
-        "ReconcileVerdict": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["verdict"],
-            "properties": {
-                "verdict": {
-                    "enum": ["underway", "settled", "refused", "unclear"]
-                }
             }
         }
     }
@@ -327,7 +279,7 @@ namespace uf::operator_runtime::conformance::expedition
         return declaration;
     }
 
-    // The three documents this deployment assembles rather than authors. Each
+    // The two documents this deployment assembles rather than authors. Each
     // names the schema bytes it governs by sha256 and the registration it
     // belongs to by plugin id, so neither link is a convention.
     class DeploymentBundle final
@@ -335,7 +287,6 @@ namespace uf::operator_runtime::conformance::expedition
         std::string m_pluginId{};
         std::string m_toolCatalog{};
         std::string m_journalEventManifest{};
-        std::string m_reconcileManifest{};
 
     public:
         explicit DeploymentBundle(std::string_view pluginId)
@@ -368,24 +319,6 @@ namespace uf::operator_runtime::conformance::expedition
             m_journalEventManifest += R"json(],"plugin_id":")json"
                 + m_pluginId
                 + R"json(","schema":"umbraflow-journal-event-schema-manifest/v1"})json";
-
-            m_reconcileManifest = R"json({"$comment":)json"
-                R"json("The expedition's four verdict words and the framework )json"
-                R"json(disposition each one means. No word here appears in a )json"
-                R"json(ReconcileRequest, so the disposition cannot be read off the )json"
-                R"json(document that produced the verdict.","dispositions":[)json"
-                R"json({"disposition":"continue","value":"underway"},)json"
-                R"json({"disposition":"confirmed","value":"settled"},)json"
-                R"json({"disposition":"rejected","value":"refused"},)json"
-                R"json({"disposition":"ambiguous","value":"unclear"}],)json"
-                R"json("plugin_id":")json"
-                + m_pluginId
-                + R"json(","reconcile_schema_sha256":")json"
-                + schemaHashHex(k_reconcileSchema)
-                + R"json(","request_definition":"ReconcileRequest",)json"
-                  R"json("schema":"umbraflow-reconcile-manifest/v1",)json"
-                  R"json("verdict_definition":"ReconcileVerdict",)json"
-                  R"json("verdict_member":"verdict"})json";
         }
 
         [[nodiscard]]
@@ -400,12 +333,6 @@ namespace uf::operator_runtime::conformance::expedition
             return m_journalEventManifest;
         }
 
-        [[nodiscard]]
-        auto reconcileManifest() const UF_LIFETIME_BOUND -> std::string const&
-        {
-            return m_reconcileManifest;
-        }
-
         // Views into this bundle and into the static schema storage above, so
         // the result must not outlive the bundle it came from.
         [[nodiscard]]
@@ -415,12 +342,9 @@ namespace uf::operator_runtime::conformance::expedition
             return deployment::ProjectDeploymentSources{
                 .pluginId                        = m_pluginId,
                 .projectState                    = k_projectStateSchema,
-                .projectObservation              = k_projectObservationSchema,
                 .toolPrecondition                = k_toolPreconditionSchema,
-                .reconcile                       = k_reconcileSchema,
                 .toolCatalog                     = m_toolCatalog,
                 .journalEventManifest            = m_journalEventManifest,
-                .reconcileManifest               = m_reconcileManifest,
                 .journalPayloadSchemas           = k_journalPayloadSchemas,
                 .effectPayloadSchemas            = k_effectPayloadSchemas,
                 .observedInstanceIdentitySchemas = {},

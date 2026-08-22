@@ -163,7 +163,7 @@ namespace uf::operator_runtime::conformance
         // is part of the prepared state because a deployment builds one from
         // the exact operator protocol bytes its session manifest pins, and the
         // suite must be unable to reach a PolicyArtifact any other way.
-        OperatorPlanAuthority planAuthority;
+        OperatorPolicyAuthority policyAuthority;
 
         // The authenticated controller every entry point below is reached
         // through. It is part of the prepared state because there is no other
@@ -192,15 +192,6 @@ namespace uf::operator_runtime::conformance
     auto deliveringHost(PreparedStore& prepared)
         -> std::unique_ptr<DeliveringHost>;
 
-    // One reserved dispatch carried through a real Host and recorded. The report
-    // cannot be fabricated -- HostDeliveryReport's only friend is TaskHost --
-    // so this is the only way a case reaches a recorded delivery outcome.
-    [[nodiscard]]
-    auto deliverAndRecord(
-        PreparedStore& prepared,
-        DeliveringHost& host,
-        DispatchReservation const& reservation
-    ) -> Result<StoredOperation>;
 
     // One further observation cycle on the prepared Host: a new capture, a new
     // observation id, and -- over an unchanged world -- the same resolution.

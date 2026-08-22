@@ -624,17 +624,14 @@ identity = ["panel.anchor"]
     ) -> DispatchAuthority
     {
         return DispatchAuthority{
-            .controlledTargetId  = fence.controlledTargetId,
-            .uiTarget            = std::string{uiTarget},
-            .leaseId             = "lease-1",
-            .operationId         = "operation-1",
-            .authorityDecisionId = "authority-decision-1",
-            .frozenPlanHash      = hash("frozen-plan"),
-            .runtimeGeneration   = generation,
-            .targetGeneration    = TargetGeneration::fromValue(3),
-            .sessionEpoch        = fence.sessionEpoch,
-            .fencingToken        = fence.fencingToken,
-            .dispatchSequence    = 1,
+            .controlledTargetId = fence.controlledTargetId,
+            .uiTarget           = std::string{uiTarget},
+            .leaseId            = "lease-1",
+            .frozenPlanHash     = hash("frozen-plan"),
+            .runtimeGeneration  = generation,
+            .sessionEpoch       = fence.sessionEpoch,
+            .fencingToken       = fence.fencingToken,
+            .dispatchSequence   = 1,
         };
     }
 

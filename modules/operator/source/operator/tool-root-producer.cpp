@@ -74,7 +74,7 @@ namespace uf::operator_runtime
             .call       = std::move(call),
             .mutation   = proposedToolMutation(
                 start.invocation,
-                start.planAuthority,
+                start.policyAuthority,
                 start.controller.controlledTargetId()
             ),
         };

@@ -43,14 +43,12 @@ namespace uf::operator_runtime
                     .moduleManifestHash  = hashOf("tool-manifest"),
                     .exportedEntryPoints = {},
                 },
-                .pluginEnvironmentHash              = hashOf("environment"),
-                .toolCatalogHash                    = hashOf("catalogue"),
-                .projectStateSchemaHash             = hashOf("state"),
-                .projectObservationSchemaHash       = hashOf("observation"),
-                .projectToolPreconditionSchemaHash  = hashOf("precondition"),
-                .reconcilePayloadSchemaManifestHash = hashOf("reconcile"),
-                .journalEventSchemaManifestHash     = hashOf("journal"),
-                .baselineEventType                  = "fixture.baseline",
+                .pluginEnvironmentHash             = hashOf("environment"),
+                .toolCatalogHash                   = hashOf("catalogue"),
+                .projectStateSchemaHash            = hashOf("state"),
+                .projectToolPreconditionSchemaHash = hashOf("precondition"),
+                .journalEventSchemaManifestHash    = hashOf("journal"),
+                .baselineEventType                 = "fixture.baseline",
             };
         }
 
@@ -95,8 +93,6 @@ namespace uf::operator_runtime
             result += "],\"plugin_environment_hash\":\""
                 + claims.pluginEnvironmentHash.hex()
                 + "\",\"plugin_id\":\"" + claims.pluginId
-                + "\",\"project_observation_schema_hash\":\""
-                + claims.projectObservationSchemaHash.hex()
                 + "\",\"project_registration_format\":"
                 + std::to_string(claims.projectRegistrationFormat)
                 + ",\"project_resources\":[";
@@ -127,8 +123,6 @@ namespace uf::operator_runtime
             }
             result += "],\"project_tool_precondition_schema_hash\":\""
                 + claims.projectToolPreconditionSchemaHash.hex()
-                + "\",\"reconcile_payload_schema_manifest_hash\":\""
-                + claims.reconcilePayloadSchemaManifestHash.hex()
                 + "\",\"reducer_closure\":" + closureJcs(claims.reducerClosure)
                 + ",\"tool_catalog_hash\":\""
                 + claims.toolCatalogHash.hex()
@@ -236,14 +230,15 @@ namespace uf::operator_runtime
     }
 
     // The forward case above proves nothing about the migration itself: a
-    // consumer that accepted any format <= 5 would keep it green. This case
-    // names the generation this framework just stopped reading -- the
-    // one-closure document, format 4 -- so the 4 -> 5 break is red before any
-    // future format-6 document is.
+    // consumer that accepted any format <= 6 would keep it green. This case
+    // names the generation this framework just stopped reading -- format 5,
+    // the document that still pinned an observation schema and a reconcile
+    // payload schema manifest -- so the 5 -> 6 break is red before any future
+    // format-7 document is.
     TEST_CASE("VerifiedProjectGeneration refuses the previous generation's format")
     {
         auto claims                      = claimsFor(hashOf("plugin"));
-        claims.projectRegistrationFormat = 4U;
+        claims.projectRegistrationFormat = 5U;
         auto const exactJcs = generationJcs(claims);
         auto const reader   = exactReader(exactJcs, claims);
         auto const refused =
@@ -251,7 +246,7 @@ namespace uf::operator_runtime
         REQUIRE_FALSE(refused.has_value());
         // The message names the stated format and the format this framework
         // reads, so a refusal of the wrong generation cannot be green.
-        CHECK(refused.error().message().contains("4"));
+        CHECK(refused.error().message().contains("5"));
         CHECK(refused.error().message().contains(
             std::to_string(k_projectGenerationFormat)
         ));

@@ -12,13 +12,13 @@ unity_build = false
 # deployment code. `deployment` is the framework's own word for it.
 #
 # json, because every validator here is json::requireExactCanonical or a
-# json::Schema and nothing else decides. operator, because the four callables
-# this module hands out are operator's own signatures -- CanonicalJsonValidator,
-# ProjectDocumentValidator, JournalPayloadSchemaValidator, ToolCatalogValidator
-# and ReconcileDispositionReader -- and their result types (ToolDescriptor,
-# ReconcileDisposition) are operator's. domain, because a payload schema
-# identity is a ContentHash and a refusal is an AutomationErrorKind, both of
-# which this module names directly. core, for Result and the integer aliases.
+# json::Schema and nothing else decides. operator, because the callables this
+# module hands out are operator's own signatures -- CanonicalJsonValidator,
+# ProjectDocumentValidator, JournalPayloadSchemaValidator and
+# ToolCatalogValidator -- and their result type (ToolDescriptor) is operator's.
+# domain, because a payload schema identity is a ContentHash and a refusal is an
+# AutomationErrorKind, both of which this module names directly. core, for
+# Result and the integer aliases.
 #
 # task, because a project directory is opened through
 # task_platform::ConfinedRoot -- the type that exists so a path inspected and

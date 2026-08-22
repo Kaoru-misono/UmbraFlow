@@ -22,15 +22,6 @@
 
 namespace uf::operator_runtime
 {
-    enum class ProjectPluginFunction : uint8
-    {
-        Derive,
-        Plan,
-        NextStep,
-        Reconcile,
-        Reduce,
-    };
-
     enum class ProjectDocumentDirection : uint8
     {
         Input,
@@ -40,8 +31,8 @@ namespace uf::operator_runtime
     class ProjectSchemaOwner;
 
     // Immutable exact JCS with no schema authority. It proves canonical bytes
-    // and their content hash only; it does not claim that any field is valid for
-    // a ProjectPlugin function.
+    // and their content hash only; it does not claim that any field is valid
+    // against the reduce contract.
     //
     // It carries the value those bytes denote beside them. That cached value is
     // useful only to the owner that minted it: a different ProjectSchemaOwner
@@ -76,8 +67,8 @@ namespace uf::operator_runtime
         auto operator==(CanonicalJson const&) const -> bool = default;
     };
 
-    // A document accepted by the schema owner for one exact registration,
-    // function, and direction. No schema hash label is exposed or accepted.
+    // A document accepted by the schema owner for one exact registration and
+    // direction. No schema hash label is exposed or accepted.
     //
     // The value the accepted bytes denote is exposed beside them: the owner
     // already parsed once to validate, and the Operator consumes the proposal
@@ -87,20 +78,17 @@ namespace uf::operator_runtime
         friend class ProjectSchemaOwner;
 
         ContentHash              m_projectRegistrationHash;
-        ProjectPluginFunction    m_function;
         ProjectDocumentDirection m_direction;
         CanonicalJson            m_canonicalJson;
 
         ValidatedDocument(
             ContentHash projectRegistrationHash,
-            ProjectPluginFunction function,
             ProjectDocumentDirection direction,
             CanonicalJson canonicalJson
         );
 
     public:
         [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;
-        [[nodiscard]] auto function() const noexcept -> ProjectPluginFunction;
 
         [[nodiscard]]
         auto direction() const noexcept -> ProjectDocumentDirection;
@@ -121,27 +109,22 @@ namespace uf::operator_runtime
     // those exact bytes denote -- it had to build one to answer, and returning
     // it is what keeps the ProjectPlugin boundary from parsing the same
     // document again. The document validator must validate the complete
-    // function-specific JSON Schema, including every project-owned nested
+    // direction-specific JSON Schema, including every project-owned nested
     // payload. Neither callable is passed to plugin code or published in a
     // business VM.
     using CanonicalJsonValidator = std::function<Result<json::Value>(std::string_view exactJcs)>;
     using ProjectDocumentValidator = std::function<
-        Status(
-            ProjectPluginFunction function,
-            ProjectDocumentDirection direction,
-            std::string_view exactJcs
-        )
+        Status(ProjectDocumentDirection direction, std::string_view exactJcs)
     >;
 
-    // The exact bytes of the three schemas this owner answers for. They are
-    // required for the same reason the Journal, Tool Catalog and reconcile
-    // owners require theirs: an owner that merely names a hash is a
-    // convention, and every ValidatedDocument it stamps is downstream proof
-    // that the pinned schema was applied.
+    // The exact bytes of the two schemas this owner answers for. They are
+    // required for the same reason the Journal and Tool Catalog owners require
+    // theirs: an owner that merely names a hash is a convention, and every
+    // ValidatedDocument it stamps is downstream proof that the pinned schema
+    // was applied.
     struct ProjectDocumentSchemaBytes final
     {
         std::string_view projectState{};
-        std::string_view projectObservation{};
         std::string_view toolPrecondition{};
     };
 
@@ -157,7 +140,6 @@ namespace uf::operator_runtime
 
         [[nodiscard]]
         auto validate(
-            ProjectPluginFunction function,
             ProjectDocumentDirection direction,
             CanonicalJson const& document
         ) const -> Result<json::Value>;
@@ -171,10 +153,7 @@ namespace uf::operator_runtime
         auto canonicalizeValue(json::Value value) const -> Result<CanonicalJson>;
 
         [[nodiscard]]
-        auto validateOutput(
-            ProjectPluginFunction function,
-            CanonicalJson document
-        ) const
+        auto validateOutput(CanonicalJson document) const
             -> Result<ValidatedDocument>;
 
     public:
@@ -185,9 +164,8 @@ namespace uf::operator_runtime
         ~ProjectSchemaOwner() = default;
 
         // `project` is the registration identity: the root this owner stamps
-        // its documents with, and the three schema digests the exact bytes
-        // must satisfy. Both generations of the registration document state
-        // all four, so one owner judges the documents of either.
+        // its documents with, and the two schema digests the exact bytes must
+        // satisfy.
         [[nodiscard]]
         static auto create(
             ProjectIdentity const& project,

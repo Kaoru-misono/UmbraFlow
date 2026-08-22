@@ -418,7 +418,7 @@ namespace uf::operator_runtime
         CHECK(*crossed == ObservationRefusal::Unminted);
     }
 
-    TEST_CASE("The Framework Tool Catalog declares eight built-in Tools")
+    TEST_CASE("The Framework Tool Catalog declares six built-in Tools")
     {
         auto catalog = FrameworkToolCatalogOwner::create();
         REQUIRE(catalog.has_value());
@@ -450,21 +450,9 @@ namespace uf::operator_runtime
                 ToolIdempotency::NonIdempotent,
             },
             CatalogExpectation{
-                "framework.screen.capture",
-                ToolMutability::ReadOnly,
-                ToolSurface::Privileged,
-                ToolIdempotency::ReadSafe,
-            },
-            CatalogExpectation{
                 "framework.screen.observe",
                 ToolMutability::ReadOnly,
                 ToolSurface::Semantic,
-                ToolIdempotency::ReadSafe,
-            },
-            CatalogExpectation{
-                "framework.workflow.reconcile",
-                ToolMutability::ReadOnly,
-                ToolSurface::Privileged,
                 ToolIdempotency::ReadSafe,
             },
             CatalogExpectation{
@@ -495,7 +483,7 @@ namespace uf::operator_runtime
             );
         }
 
-        // A controller that is not restricted to semantic tools sees all eight,
+        // A controller that is not restricted to semantic tools sees all six,
         // in the byte order the catalog declares them.
         auto noCapabilities = std::array<std::string, 0U>{};
         auto const offered  = catalog->offeredTools(
@@ -510,7 +498,7 @@ namespace uf::operator_runtime
         }
 
         // Per R5 audit is a read-only Tool that proposes no effect, so it needs
-        // no OperatorPlanAuthority material at all.
+        // no OperatorPolicyAuthority material at all.
         auto const audit = catalog->describe("framework.audit.record");
         REQUIRE(audit.has_value());
         CHECK(audit->effectBounds.empty());
@@ -540,14 +528,12 @@ namespace uf::operator_runtime
         );
         CHECK(semantic->timeout.onTimeout == TimeoutAction::Reconcile);
 
-        // Reconciliation may consume fresh Host evidence, so it is the only
-        // Privileged Tool that spends an observation.
-        auto const reconcile = catalog->describe(
-            "framework.workflow.reconcile"
-        );
-        REQUIRE(reconcile.has_value());
-        CHECK(reconcile->limits.maximumObservations == 1U);
-        CHECK(reconcile->limits.maximumDispatches == 0U);
+        // Observation is the one Tool that spends an observation, and it spends
+        // exactly one without dispatching anything.
+        auto const observe = catalog->describe("framework.screen.observe");
+        REQUIRE(observe.has_value());
+        CHECK(observe->limits.maximumObservations == 1U);
+        CHECK(observe->limits.maximumDispatches == 0U);
     }
 
     TEST_CASE("The Framework Tool Catalog identity is pinned to its material")
@@ -560,7 +546,7 @@ namespace uf::operator_runtime
         // hash compared against itself pins nothing.
         CHECK(
             catalog->toolCatalogHash().hex()
-            == "c8fd5413fe4410402d094a959f31ac8c78dc754214810f116ca699a119c2a75d"
+            == "a32904ff445c0297b788c34d5ffec0aca8dd89f0314404f14ee7da689c42d354"
         );
 
         auto material = CanonicalJson::parseExact(catalog->canonicalJcs());
@@ -580,8 +566,8 @@ namespace uf::operator_runtime
             bool             admitted{};
         };
         constexpr auto k_cases = std::array{
-            ArgumentCase{"framework.screen.capture", "{}", true},
-            ArgumentCase{"framework.screen.capture", R"({"scale":1})", false},
+            ArgumentCase{"framework.screen.observe", "{}", true},
+            ArgumentCase{"framework.screen.observe", R"({"scale":1})", false},
             ArgumentCase{"framework.workflow.status", "{}", true},
             ArgumentCase{"framework.workflow.status", R"({"verbose":true})", false},
             ArgumentCase{
@@ -594,21 +580,6 @@ namespace uf::operator_runtime
             ArgumentCase{
                 "framework.audit.record",
                 R"({"position":1,"record":{}})",
-                false,
-            },
-            ArgumentCase{
-                "framework.workflow.reconcile",
-                R"({"call_identity":"sha256:1111111111111111111111111111111111111111111111111111111111111111"})",
-                true,
-            },
-            ArgumentCase{
-                "framework.workflow.reconcile",
-                R"({"call_identity":"1111111111111111111111111111111111111111111111111111111111111111"})",
-                false,
-            },
-            ArgumentCase{
-                "framework.workflow.reconcile",
-                R"({"call_identity":"not-a-hash"})",
                 false,
             },
             ArgumentCase{

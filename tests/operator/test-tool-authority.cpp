@@ -130,7 +130,7 @@ namespace uf::operator_runtime
 
         SUBCASE("the exact schema bytes must hash to what the manifest pinned")
         {
-            auto const refused = OperatorPlanAuthority::create(
+            auto const refused = OperatorPolicyAuthority::create(
                 prepared.project.registration,
                 prepared.manifest,
                 *runtimeModel,
@@ -158,7 +158,7 @@ namespace uf::operator_runtime
             });
             REQUIRE(manifest.has_value());
 
-            auto const refused = OperatorPlanAuthority::create(
+            auto const refused = OperatorPolicyAuthority::create(
                 prepared.project.registration,
                 *manifest,
                 *runtimeModel,
@@ -206,8 +206,8 @@ namespace uf::operator_runtime
         CHECK(wait->descriptor().timeout.maximumElapsedMillis == 60'000U);
 
         // An Agent is offered the Semantic Framework Tools and none of the
-        // Privileged ones: raw capture, bare-coordinate input, and the
-        // reconciliation transition are absent rather than present and refused.
+        // Privileged ones: bare-coordinate input is absent rather than present
+        // and refused.
         auto noCapabilities = std::array<std::string, 0U>{};
         auto const offered = frameworkCatalog->offeredTools(
             controllerProfile(ControllerKind::Agent),
@@ -934,7 +934,6 @@ namespace uf::operator_runtime
         auto const project = test_support::makeProject(
             "fixture.control",
             source,
-            test_support::k_projectObservationSchema,
             test_support::k_toolPreconditionSchema,
             test_support::hashOf("forged-plugin-environment")
         );

@@ -206,106 +206,6 @@ namespace uf::deployment
     }
 })json"};
 
-        // The exact bytes ProjectPlugin.derive is called with. The Operator
-        // assembles this envelope from what the world currently holds, so its
-        // shape is the Operator's; the two members that are the project's are
-        // referenced rather than described.
-        constexpr auto k_deriveInputSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/operator/derive-input",
-    "title": "ProjectPlugin.derive input",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-        "pending_operation_transition",
-        "pinned_project_artifact_identities",
-        "prior_project_observation",
-        "project_state",
-        "ui_snapshot"
-    ],
-    "properties": {
-        "pending_operation_transition": {
-            "oneOf": [
-                {"type": "null"},
-                {"$ref": "https://umbraflow.dev/schema/operator/common#/$defs/PendingOperationTransition"}
-            ]
-        },
-        "pinned_project_artifact_identities": {
-            "type": "array",
-            "items": {"$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Hash"}
-        },
-        "prior_project_observation": {
-            "$comment": "null before this instance has ever been derived. The stored observation is the Operator's minted final envelope, so its shape is the framework's, not the project's.",
-            "oneOf": [
-                {"type": "null"},
-                {"$ref": "https://umbraflow.dev/schema/project-observation/v1"}
-            ]
-        },
-        "project_state": {"$ref": "https://umbraflow.dev/schema/project/state"},
-        "ui_snapshot": {
-            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/StateResolution"
-        }
-    }
-})json"};
-
-        constexpr auto k_planInputSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/operator/plan-input",
-    "title": "ProjectPlugin.plan input",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-        "canonical_args",
-        "project_observation",
-        "project_state",
-        "tool_name",
-        "tool_version"
-    ],
-    "properties": {
-        "canonical_args": {
-            "$comment": "Judged against the argument definition this project's Tool Catalog names for tool_name, which no single subschema can select."
-        },
-        "project_observation": {
-            "$ref": "https://umbraflow.dev/schema/project-observation/v1"
-        },
-        "project_state": {"$ref": "https://umbraflow.dev/schema/project/state"},
-        "tool_name": {
-            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/ToolName"
-        },
-        "tool_version": {
-            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
-        }
-    }
-})json"};
-
-        constexpr auto k_stepInputSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/operator/step-input",
-    "title": "ProjectPlugin.next_step input",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-        "frozen_plan_hash",
-        "project_observation",
-        "project_state",
-        "step_index"
-    ],
-    "properties": {
-        "frozen_plan_hash": {
-            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Hash"
-        },
-        "project_observation": {
-            "$ref": "https://umbraflow.dev/schema/project-observation/v1"
-        },
-        "project_state": {"$ref": "https://umbraflow.dev/schema/project/state"},
-        "step_index": {
-            "$comment": "Dense and monotone from one: the Operator mints at MAX(step_index) + 1.",
-            "type": "integer",
-            "minimum": 1
-        }
-    }
-})json"};
-
         constexpr auto k_reduceInputSchema = std::string_view{R"json({
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://umbraflow.dev/schema/operator/reduce-input",
@@ -345,189 +245,6 @@ namespace uf::deployment
                 "provenance": {
                     "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/JournalProvenance"
                 }
-            }
-        }
-    }
-})json"};
-
-        // OP:`PlanProposal`, from schema/umbraflow-operator-v1.schema.json with
-        // one deliberate difference: tool_name is the ToolName above rather
-        // than that document's NamespacedIdentifier, and is required in
-        // addition to name a tool this project's own Tool Catalog declares --
-        // which is the stronger of the two statements. See the note in
-        // ProjectDeployment::create.
-        constexpr auto k_planProposalSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/operator/plan-proposal",
-    "title": "OP:PlanProposal",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-        "allowed_ui_actions",
-        "canonical_args",
-        "effects",
-        "tool_name",
-        "tool_version",
-        "workflow_limits"
-    ],
-    "properties": {
-        "allowed_ui_actions": {
-            "type": "array",
-            "items": {
-                "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/NamespacedIdentifier"
-            },
-            "uniqueItems": true
-        },
-        "canonical_args": {
-            "$comment": "Judged against the argument definition this project's Tool Catalog names for tool_name."
-        },
-        "effects": {"type": "array", "items": {"$ref": "#/$defs/EffectEnvelope"}},
-        "tool_name": {
-            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/ToolName"
-        },
-        "tool_version": {
-            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
-        },
-        "workflow_limits": {"$ref": "#/$defs/WorkflowLimits"}
-    },
-    "$defs": {
-        "EffectEnvelope": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-                "namespaced_type",
-                "opaque_project_payload",
-                "payload_schema_hash",
-                "risk",
-                "scope_key",
-                "scope_kind"
-            ],
-            "properties": {
-                "namespaced_type": {
-                    "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/NamespacedIdentifier"
-                },
-                "opaque_project_payload": {
-                    "$comment": "Judged against the effect payload schema whose sha256 is payload_schema_hash."
-                },
-                "payload_schema_hash": {
-                    "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Hash"
-                },
-                "risk": {
-                    "enum": ["read_only", "low", "medium", "high", "critical"]
-                },
-                "scope_key": {
-                    "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
-                },
-                "scope_kind": {
-                    "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
-                }
-            }
-        },
-        "WorkflowLimits": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-                "maximum_dispatches",
-                "maximum_elapsed_ms",
-                "maximum_observations",
-                "maximum_steps",
-                "maximum_waits"
-            ],
-            "properties": {
-                "maximum_dispatches": {"type": "integer", "minimum": 0},
-                "maximum_elapsed_ms": {"type": "integer", "minimum": 1},
-                "maximum_observations": {"type": "integer", "minimum": 1},
-                "maximum_steps": {"type": "integer", "minimum": 0},
-                "maximum_waits": {"type": "integer", "minimum": 0}
-            }
-        }
-    }
-})json"};
-
-        // OP:`UIActionIntent` and OP:`WaitIntent`, told apart by their complete
-        // member sets because the schema gives them no discriminator. oneOf
-        // rather than anyOf for that reason: a document satisfying both would
-        // be a step of two kinds.
-        constexpr auto k_stepIntentSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/operator/step-intent",
-    "title": "OP:UIActionIntent or OP:WaitIntent",
-    "oneOf": [{"$ref": "#/$defs/UiActionIntent"}, {"$ref": "#/$defs/WaitIntent"}],
-    "$defs": {
-        "UiActionIntent": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-                "action",
-                "binding_variant_constraints",
-                "delivery_class",
-                "expected_ui_postconditions",
-                "required_ui_preconditions",
-                "step_key",
-                "timeout_policy"
-            ],
-            "properties": {
-                "action": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": [
-                        "action_id",
-                        "canonical_parameters",
-                        "surface_id",
-                        "ui_target_id"
-                    ],
-                    "properties": {
-                        "action_id": {
-                            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
-                        },
-                        "canonical_parameters": {
-                            "$comment": "Project-owned and judged by nothing here: no member of ProjectGenerationClaims pins a schema for a UI action's parameters, so this module has no authority to invent one."
-                        },
-                        "surface_id": {
-                            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
-                        },
-                        "ui_target_id": {
-                            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
-                        }
-                    }
-                },
-                "binding_variant_constraints": {"type": "array"},
-                "delivery_class": {
-                    "enum": ["delivery_safe", "keyed_external", "non_idempotent"]
-                },
-                "expected_ui_postconditions": {"type": "array"},
-                "required_ui_preconditions": {"type": "array"},
-                "step_key": {
-                    "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
-                },
-                "timeout_policy": {"$ref": "#/$defs/TimeoutPolicy"}
-            }
-        },
-        "WaitIntent": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-                "condition",
-                "observation_budget",
-                "step_key",
-                "timeout_policy"
-            ],
-            "properties": {
-                "condition": {"$comment": "Project-owned, as canonical_parameters is."},
-                "observation_budget": {"type": "integer", "minimum": 1},
-                "step_key": {
-                    "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
-                },
-                "timeout_policy": {"$ref": "#/$defs/TimeoutPolicy"}
-            }
-        },
-        "TimeoutPolicy": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["maximum_elapsed_ms", "on_timeout"],
-            "properties": {
-                "maximum_elapsed_ms": {"type": "integer", "minimum": 1},
-                "on_timeout": {"enum": ["reobserve", "reconcile", "stop"]}
             }
         }
     }
@@ -791,68 +508,10 @@ namespace uf::deployment
     }
 })json"};
 
-        constexpr auto k_reconcileManifestSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/operator/reconcile-manifest",
-    "title": "Reconcile payload schema manifest",
-    "$comment": "The disposition is read out of one named member of a verdict this project's own schema accepted, through the mapping declared here. It is never read out of the request that produced the verdict.",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-        "dispositions",
-        "plugin_id",
-        "reconcile_schema_sha256",
-        "request_definition",
-        "schema",
-        "verdict_definition",
-        "verdict_member"
-    ],
-    "properties": {
-        "$comment": {"type": "string"},
-        "plugin_id": {
-            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
-        },
-        "schema": {"const": "umbraflow-reconcile-manifest/v1"},
-        "reconcile_schema_sha256": {
-            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Hash"
-        },
-        "request_definition": {
-            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
-        },
-        "verdict_definition": {
-            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
-        },
-        "verdict_member": {
-            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
-        },
-        "dispositions": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["disposition", "value"],
-                "properties": {
-                    "disposition": {
-                        "enum": [
-                            "continue",
-                            "confirmed",
-                            "rejected",
-                            "ambiguous",
-                            "diverged"
-                        ]
-                    },
-                    "value": {"type": "string", "minLength": 1}
-                }
-            }
-        }
-    }
-})json"};
-
         // One document a deployment authors whose format is the framework's:
         // the value its `schema` member must carry, the label its refusals are
-        // named by, and the exact bytes that judge it. The three are spelled
-        // once here because two readers need them -- create() below, and
+        // named by, and the exact bytes that judge it. They are spelled once
+        // here because two readers need them -- create() below, and
         // validateFrameworkFormat, which is what holds the specification's
         // worked examples to these bytes.
         struct FrameworkDocument final
@@ -872,15 +531,8 @@ namespace uf::deployment
             .label      = "operator/journal-event-schema-manifest",
             .exactBytes = k_journalManifestSchema,
         };
-        constexpr auto k_reconcileManifestDocument = FrameworkDocument{
-            .schemaName = "umbraflow-reconcile-manifest/v1",
-            .label      = "operator/reconcile-manifest",
-            .exactBytes = k_reconcileManifestSchema,
-        };
-
         constexpr auto k_frameworkDocuments = std::array{
             k_journalManifestDocument,
-            k_reconcileManifestDocument,
             k_toolCatalogDocument,
         };
 
@@ -941,83 +593,6 @@ namespace uf::deployment
                 });
             }
             return documents;
-        }
-
-        // The two operator protocol schemas that reference no project document.
-        // Every other schema this module compiles is a project's or names one,
-        // so it belongs to a deployment; these two are the Operator's own and
-        // one compilation answers for every deployment.
-        struct EnvelopeSchemas final
-        {
-            json::Schema planProposal;
-            json::Schema stepIntent;
-        };
-
-        [[nodiscard]]
-        auto envelopeSchemas() -> Result<EnvelopeSchemas>
-        {
-            static auto const s_compiled = []() -> Result<EnvelopeSchemas>
-            {
-                auto const commonOnly = std::array{json::Schema::Document{
-                    .label      = "operator/common",
-                    .exactBytes = k_commonSchema,
-                }};
-                UF_TRY_VALUE(
-                    planProposal,
-                    compile(
-                        "operator/plan-proposal",
-                        k_planProposalSchema,
-                        commonOnly
-                    )
-                );
-                UF_TRY_VALUE(
-                    stepIntent,
-                    compile("operator/step-intent", k_stepIntentSchema, commonOnly)
-                );
-                return EnvelopeSchemas{
-                    .planProposal = std::move(planProposal),
-                    .stepIntent   = std::move(stepIntent),
-                };
-            }();
-            if (!s_compiled.has_value())
-            {
-                return std::unexpected{s_compiled.error().clone()};
-            }
-            return *s_compiled;
-        }
-
-        // The one thing a ValidatedDocument does not state about itself. Only a
-        // ProjectSchemaOwner can mint one, so holding it proves the bytes are
-        // exact RFC 8785 that owner's schema accepted -- but a Reduce output is
-        // the same type, and reading one as a PlanProposal would reach a member
-        // the operator protocol never put in it, where `member` below aborts on
-        // a contract rather than refusing.
-        //
-        // The direction half cannot be turned red today: ProjectSchemaOwner's
-        // validateOutput is the sole mint and stamps Output every time, so no
-        // ValidatedDocument carries Input. It is named here rather than
-        // dropped, so that a green mutation campaign is not read as coverage of
-        // it, and because it is what would notice a second mint.
-        [[nodiscard]]
-        auto requireOutputOf(
-            operator_runtime::ValidatedDocument const& document,
-            operator_runtime::ProjectPluginFunction function,
-            std::string_view what
-        ) -> Status
-        {
-            using operator_runtime::ProjectDocumentDirection;
-
-            if (
-                document.function() != function
-                || document.direction() != ProjectDocumentDirection::Output
-            )
-            {
-                return refuse(std::format(
-                    "{} is not what this ValidatedDocument was stamped as",
-                    what
-                ));
-            }
-            return ok();
         }
 
         [[nodiscard]]
@@ -1127,35 +702,6 @@ namespace uf::deployment
             operator_runtime::ToolSurface::Privileged,
         };
 
-        struct DispositionName final
-        {
-            std::string_view                       wire{};
-            operator_runtime::ReconcileDisposition disposition{};
-        };
-
-        constexpr auto k_dispositions = std::array{
-            DispositionName{
-                "ambiguous",
-                operator_runtime::ReconcileDisposition::Ambiguous,
-            },
-            DispositionName{
-                "confirmed",
-                operator_runtime::ReconcileDisposition::Confirmed,
-            },
-            DispositionName{
-                "continue",
-                operator_runtime::ReconcileDisposition::Continue,
-            },
-            DispositionName{
-                "diverged",
-                operator_runtime::ReconcileDisposition::Diverged,
-            },
-            DispositionName{
-                "rejected",
-                operator_runtime::ReconcileDisposition::Rejected,
-            },
-        };
-
         // OP:`Risk`, spelled once. The wire names are riskWireName's and are
         // not restated here: the enumerators are the domain and the projection
         // is the mapping, so a name that drifted would drift in one place.
@@ -1166,37 +712,6 @@ namespace uf::deployment
             operator_runtime::Risk::High,
             operator_runtime::Risk::Critical,
         };
-
-        // The largest value each OP:`WorkflowLimits` member holds. 2^53 for the
-        // millisecond bound rather than uint64's maximum: past it a double no
-        // longer represents consecutive integers, so a larger ceiling would
-        // admit a value the document did not spell.
-        constexpr auto k_workflowCountBound  = uint64{0xFFFF'FFFF};
-        constexpr auto k_workflowMillisBound = uint64{1} << 53U;
-
-        // One OP:`WorkflowLimits` member, narrowed. The schema bounds each of
-        // the five from below and none of them from above, and converting a
-        // double outside the destination's range is undefined rather than
-        // merely large -- so the upper bound is stated where the narrowing
-        // happens and nowhere else.
-        [[nodiscard]]
-        auto workflowBound(
-            json::Value const& limits,
-            std::string_view name,
-            uint64 ceiling
-        ) -> Result<uint64>
-        {
-            auto const declared = member(limits, name).number();
-            if (declared < 0.0 || declared > static_cast<double>(ceiling))
-            {
-                return refuse(std::format(
-                    "a PlanProposal's {} is outside the range that workflow "
-                    "bound holds",
-                    name
-                ));
-            }
-            return static_cast<uint64>(declared);
-        }
 
         // Both definition names, because a call has two documents to judge and
         // one entry declares both. Keeping only the argument one and looking
@@ -1356,36 +871,23 @@ namespace uf::deployment
             std::size_t schemaIndex{};
         };
 
-        struct DispositionEntry final
-        {
-            std::string                            value{};
-            operator_runtime::ReconcileDisposition disposition{};
-        };
     }
 
     // Everything create() compiled and read, and the whole of what judging a
     // document consults. It carries the operations rather than leaving them as
-    // free functions, because six of them would otherwise take it as a first
+    // free functions, because each of them would otherwise take it as a first
     // parameter.
     class ProjectDeployment::State final
     {
     public:
-        json::Schema deriveInput;
-        json::Schema planInput;
-        json::Schema stepInput;
         json::Schema reduceInput;
-        json::Schema planProposal;
-        json::Schema stepIntent;
         json::Schema projectState;
-        json::Schema projectObservation;
         json::Schema toolPrecondition;
-        json::Schema reconcile;
 
-        std::vector<ToolEntry>        tools{};
-        std::vector<PayloadSchema>    journalPayloadSchemas{};
-        std::vector<JournalPayload>   journalPayloads{};
-        std::vector<PayloadSchema>    effectPayloadSchemas{};
-        std::vector<DispositionEntry> dispositions{};
+        std::vector<ToolEntry>      tools{};
+        std::vector<PayloadSchema>  journalPayloadSchemas{};
+        std::vector<JournalPayload> journalPayloads{};
+        std::vector<PayloadSchema>  effectPayloadSchemas{};
 
         // One observed identity schema this deployment compiled, in the order
         // the deployment block named the documents. The registration pins the
@@ -1398,10 +900,6 @@ namespace uf::deployment
             json::Schema schema;
         };
         std::vector<IdentitySchema> identitySchemas{};
-
-        std::string requestDefinition{};
-        std::string verdictDefinition{};
-        std::string verdictMember{};
 
         [[nodiscard]] auto findTool(std::string_view name) const -> ToolEntry const*;
 
@@ -1430,19 +928,10 @@ namespace uf::deployment
         ) const -> Status;
 
         [[nodiscard]]
-        auto validateEffectPayloads(json::Value const& proposal) const -> Status;
+        auto validateInput(json::Value const& document) const -> Status;
 
         [[nodiscard]]
-        auto validateInput(
-            operator_runtime::ProjectPluginFunction function,
-            json::Value const& document
-        ) const -> Status;
-
-        [[nodiscard]]
-        auto validateOutput(
-            operator_runtime::ProjectPluginFunction function,
-            json::Value const& document
-        ) const -> Status;
+        auto validateOutput(json::Value const& document) const -> Status;
     };
 
     auto ProjectDeployment::State::findTool(std::string_view name) const
@@ -1538,129 +1027,26 @@ namespace uf::deployment
         );
     }
 
-    auto ProjectDeployment::State::validateEffectPayloads(
-        json::Value const& proposal
+    auto ProjectDeployment::State::validateInput(
+        json::Value const& document
     ) const -> Status
     {
-        for (auto const& effect : member(proposal, "effects").items())
+        UF_TRY(adopt(reduceInput.validate(document), "reduce input"));
+        for (auto const& event : member(document, "journal_events").items())
         {
-            auto const declared = member(effect, "payload_schema_hash").string();
-            UF_TRY_VALUE(
-                hash,
-                ContentHash::parse("sha256:" + std::string{declared})
-            );
-            auto const found = std::ranges::find(
-                effectPayloadSchemas,
-                hash,
-                &PayloadSchema::hash
-            );
-            if (found == effectPayloadSchemas.end())
-            {
-                return refuse(std::format(
-                    "an EffectEnvelope names payload schema {}, which this "
-                    "deployment does not carry",
-                    declared
-                ));
-            }
-            UF_TRY(adopt(
-                found->schema.validate(member(effect, "opaque_project_payload")),
-                std::format(
-                    "payload of effect {}",
-                    member(effect, "namespaced_type").string()
-                )
+            UF_TRY(validateJournalPayload(
+                member(event, "namespaced_event_type").string(),
+                member(event, "opaque_project_payload")
             ));
         }
         return ok();
     }
 
-    auto ProjectDeployment::State::validateInput(
-        operator_runtime::ProjectPluginFunction function,
-        json::Value const& document
-    ) const -> Status
-    {
-        switch (function)
-        {
-        case operator_runtime::ProjectPluginFunction::Derive:
-        {
-            return adopt(deriveInput.validate(document), "derive input");
-        }
-        case operator_runtime::ProjectPluginFunction::Plan:
-        {
-            UF_TRY(adopt(planInput.validate(document), "plan input"));
-            return validateToolArguments(
-                member(document, "tool_name").string(),
-                member(document, "canonical_args")
-            );
-        }
-        case operator_runtime::ProjectPluginFunction::NextStep:
-        {
-            return adopt(stepInput.validate(document), "next_step input");
-        }
-        case operator_runtime::ProjectPluginFunction::Reconcile:
-        {
-            return adopt(
-                reconcile.validateDefinition(requestDefinition, document),
-                "reconcile input"
-            );
-        }
-        case operator_runtime::ProjectPluginFunction::Reduce:
-        {
-            UF_TRY(adopt(reduceInput.validate(document), "reduce input"));
-            for (auto const& event : member(document, "journal_events").items())
-            {
-                UF_TRY(validateJournalPayload(
-                    member(event, "namespaced_event_type").string(),
-                    member(event, "opaque_project_payload")
-                ));
-            }
-            return ok();
-        }
-        }
-
-        UF_UNREACHABLE_MSG("unknown ProjectPluginFunction");
-    }
-
     auto ProjectDeployment::State::validateOutput(
-        operator_runtime::ProjectPluginFunction function,
         json::Value const& document
     ) const -> Status
     {
-        switch (function)
-        {
-        case operator_runtime::ProjectPluginFunction::Derive:
-        {
-            return adopt(
-                projectObservation.validate(document),
-                "derived ProjectObservation"
-            );
-        }
-        case operator_runtime::ProjectPluginFunction::Plan:
-        {
-            UF_TRY(adopt(planProposal.validate(document), "PlanProposal"));
-            UF_TRY(validateToolArguments(
-                member(document, "tool_name").string(),
-                member(document, "canonical_args")
-            ));
-            return validateEffectPayloads(document);
-        }
-        case operator_runtime::ProjectPluginFunction::NextStep:
-        {
-            return adopt(stepIntent.validate(document), "step intent");
-        }
-        case operator_runtime::ProjectPluginFunction::Reconcile:
-        {
-            return adopt(
-                reconcile.validateDefinition(verdictDefinition, document),
-                "reconcile output"
-            );
-        }
-        case operator_runtime::ProjectPluginFunction::Reduce:
-        {
-            return adopt(projectState.validate(document), "reduced ProjectState");
-        }
-        }
-
-        UF_UNREACHABLE_MSG("unknown ProjectPluginFunction");
+        return adopt(projectState.validate(document), "reduced ProjectState");
     }
 
     auto validateFrameworkFormat(std::string_view exactBytes) -> Status
@@ -1728,19 +1114,9 @@ namespace uf::deployment
             k_projectStateSchemaId
         ));
         UF_TRY(requireIdentity(
-            "the project observation schema",
-            sources.projectObservation,
-            k_projectObservationSchemaId
-        ));
-        UF_TRY(requireIdentity(
             "the tool precondition schema",
             sources.toolPrecondition,
             k_toolPreconditionSchemaId
-        ));
-        UF_TRY(requireIdentity(
-            "the reconcile schema",
-            sources.reconcile,
-            k_reconcileSchemaId
         ));
 
         auto const common = json::Schema::Document{
@@ -1751,11 +1127,6 @@ namespace uf::deployment
             .label      = "project/state",
             .exactBytes = sources.projectState,
         };
-        auto const projectObservationDocument = json::Schema::Document{
-            .label      = "project/observation",
-            .exactBytes = sources.projectObservation,
-        };
-
         auto const commonOnly      = std::array{common};
         auto const sharedDocuments = sharedSchemaDocuments();
 
@@ -1773,40 +1144,14 @@ namespace uf::deployment
             return local;
         };
         auto const withState = withShared({common, projectStateDocument});
-        auto const withWorld = withShared({
-            common,
-            projectStateDocument,
-            projectObservationDocument,
-        });
 
-        UF_TRY_VALUE(
-            deriveInput,
-            compile("operator/derive-input", k_deriveInputSchema, withWorld)
-        );
-        UF_TRY_VALUE(
-            planInput,
-            compile("operator/plan-input", k_planInputSchema, withWorld)
-        );
-        UF_TRY_VALUE(
-            stepInput,
-            compile("operator/step-input", k_stepInputSchema, withWorld)
-        );
         UF_TRY_VALUE(
             reduceInput,
             compile("operator/reduce-input", k_reduceInputSchema, withState)
         );
-        UF_TRY_VALUE(envelopes, envelopeSchemas());
         UF_TRY_VALUE(
             projectState,
             compile("project/state", sources.projectState, sharedDocuments)
-        );
-        UF_TRY_VALUE(
-            projectObservation,
-            compile(
-                "project/observation",
-                sources.projectObservation,
-                sharedDocuments
-            )
         );
         UF_TRY_VALUE(
             toolPrecondition,
@@ -1816,31 +1161,16 @@ namespace uf::deployment
                 sharedDocuments
             )
         );
-        UF_TRY_VALUE(
-            reconcile,
-            compile("project/reconcile", sources.reconcile, sharedDocuments)
-        );
 
         auto state = std::make_shared<State>(State{
-            .deriveInput           = std::move(deriveInput),
-            .planInput             = std::move(planInput),
-            .stepInput             = std::move(stepInput),
             .reduceInput           = std::move(reduceInput),
-            .planProposal          = std::move(envelopes.planProposal),
-            .stepIntent            = std::move(envelopes.stepIntent),
             .projectState          = std::move(projectState),
-            .projectObservation    = std::move(projectObservation),
             .toolPrecondition      = std::move(toolPrecondition),
-            .reconcile             = std::move(reconcile),
             .tools                 = {},
             .journalPayloadSchemas = {},
             .journalPayloads       = {},
             .effectPayloadSchemas  = {},
-            .dispositions          = {},
             .identitySchemas       = {},
-            .requestDefinition     = {},
-            .verdictDefinition     = {},
-            .verdictMember         = {},
         });
 
         // The payload schema sets first, because every manifest below names one
@@ -2219,72 +1549,6 @@ namespace uf::deployment
             }
         }
 
-        UF_TRY_VALUE(
-            reconcileManifestSchema,
-            compile(
-                k_reconcileManifestDocument.label,
-                k_reconcileManifestDocument.exactBytes,
-                commonOnly
-            )
-        );
-        UF_TRY_VALUE(reconcileManifest, parseDocument(sources.reconcileManifest));
-        UF_TRY(adopt(
-            reconcileManifestSchema.validate(reconcileManifest),
-            "the reconcile payload schema manifest"
-        ));
-        UF_TRY(requirePluginId(
-            reconcileManifest,
-            sources.pluginId,
-            "the reconcile payload schema manifest"
-        ));
-        UF_TRY_VALUE(reconcileHash, hashOf(sources.reconcile));
-        if (member(reconcileManifest, "reconcile_schema_sha256").string()
-            != reconcileHash.hex())
-        {
-            return refuse(std::format(
-                "the reconcile manifest names reconcile schema {}, and the "
-                "schema this deployment carries hashes to {}",
-                member(reconcileManifest, "reconcile_schema_sha256").string(),
-                reconcileHash.hex()
-            ));
-        }
-        state->requestDefinition = std::string{
-            member(reconcileManifest, "request_definition").string(),
-        };
-        state->verdictDefinition = std::string{
-            member(reconcileManifest, "verdict_definition").string(),
-        };
-        state->verdictMember = std::string{
-            member(reconcileManifest, "verdict_member").string(),
-        };
-        for (auto const& name : std::array{
-                 state->requestDefinition,
-                 state->verdictDefinition,
-             })
-        {
-            if (!state->reconcile.hasDefinition(name))
-            {
-                return refuse(std::format(
-                    "the reconcile manifest names definition {}, which the "
-                    "reconcile schema does not declare",
-                    name
-                ));
-            }
-        }
-        for (auto const& entry : member(reconcileManifest, "dispositions").items())
-        {
-            auto const named = std::ranges::find(
-                k_dispositions,
-                member(entry, "disposition").string(),
-                &DispositionName::wire
-            );
-            UF_CHECK(named != k_dispositions.end());
-            state->dispositions.emplace_back(DispositionEntry{
-                .value       = std::string{member(entry, "value").string()},
-                .disposition = named->disposition,
-            });
-        }
-
         return ProjectDeployment{std::shared_ptr<State const>{std::move(state)}};
     }
 
@@ -2303,7 +1567,6 @@ namespace uf::deployment
         -> operator_runtime::ProjectDocumentValidator
     {
         return [p_state = m_state](
-                   operator_runtime::ProjectPluginFunction function,
                    operator_runtime::ProjectDocumentDirection direction,
                    std::string_view exactJcs
                ) -> Status
@@ -2312,9 +1575,9 @@ namespace uf::deployment
             switch (direction)
             {
             case operator_runtime::ProjectDocumentDirection::Input:
-                return p_state->validateInput(function, document);
+                return p_state->validateInput(document);
             case operator_runtime::ProjectDocumentDirection::Output:
-                return p_state->validateOutput(function, document);
+                return p_state->validateOutput(document);
             }
 
             UF_UNREACHABLE_MSG("unknown ProjectDocumentDirection");
@@ -2394,45 +1657,6 @@ namespace uf::deployment
         {
             UF_TRY_VALUE(result, parseDocument(exactResultJcs));
             return p_state->validateToolResult(toolName, result);
-        };
-    }
-
-    auto ProjectDeployment::reconcileDispositionReader() const
-        -> operator_runtime::ReconcileDispositionReader
-    {
-        return [p_state = m_state](std::string_view exactJcs)
-                   -> Result<operator_runtime::ReconcileDisposition>
-        {
-            UF_TRY_VALUE(verdict, parseDocument(exactJcs));
-            UF_TRY(adopt(
-                p_state->reconcile.validateDefinition(
-                    p_state->verdictDefinition,
-                    verdict
-                ),
-                "reconcile output"
-            ));
-            auto const* const p_member = verdict.find(p_state->verdictMember);
-            if (p_member == nullptr || p_member->kind() != json::ValueKind::String)
-            {
-                return refuse(std::format(
-                    "the reconcile output carries no {} member to read a "
-                    "disposition from",
-                    p_state->verdictMember
-                ));
-            }
-            auto const found = std::ranges::find(
-                p_state->dispositions,
-                p_member->string(),
-                &DispositionEntry::value
-            );
-            if (found == p_state->dispositions.end())
-            {
-                return refuse(std::format(
-                    "the reconcile manifest maps no disposition to {}",
-                    p_member->string()
-                ));
-            }
-            return found->disposition;
         };
     }
 

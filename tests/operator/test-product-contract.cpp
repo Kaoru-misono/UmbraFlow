@@ -247,7 +247,6 @@ return {
             REQUIRE(folded.has_value());
             CHECK(folded->bytes() == expected);
             CHECK(folded->projectRegistrationHash() == project.registration.hash());
-            CHECK(folded->function() == ProjectPluginFunction::Reduce);
             CHECK(folded->direction() == ProjectDocumentDirection::Output);
         }
     }

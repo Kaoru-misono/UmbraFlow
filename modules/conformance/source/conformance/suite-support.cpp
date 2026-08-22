@@ -401,7 +401,7 @@ namespace uf::operator_runtime::conformance
             observation.generation
         );
         REQUIRE(runtimeModel.has_value());
-        auto authority = OperatorPlanAuthority::create(
+        auto authority = OperatorPolicyAuthority::create(
             ProjectIdentity{underTest.generation},
             manifest,
             *runtimeModel,
@@ -414,7 +414,7 @@ namespace uf::operator_runtime::conformance
             .generation              = generation,
             .project                 = std::move(project),
             .manifest                = manifest,
-            .planAuthority           = *std::move(authority),
+            .policyAuthority         = *std::move(authority),
             .controller              = *controller,
             .lease                   = *lease,
             .snapshot                = *std::move(snapshot),
@@ -437,18 +437,6 @@ namespace uf::operator_runtime::conformance
         );
     }
 
-    auto deliverAndRecord(
-        PreparedStore& prepared,
-        DeliveringHost& host,
-        DispatchReservation const& reservation
-    ) -> Result<StoredOperation>
-    {
-        return prepared.store.recordDeliveryOutcome(
-            prepared.lease,
-            reservation.operationRevision,
-            host.deliverReport(reservation.authority)
-        );
-    }
 
     auto observeAgain(PreparedStore& prepared) -> task::UiObservationSnapshot
     {

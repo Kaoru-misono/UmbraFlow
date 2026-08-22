@@ -82,7 +82,7 @@ namespace uf::operator_runtime
         // mutating input consumes; a second authority beside the providers'
         // would recognise nothing they minted.
         //
-        // `planAuthority` is the verified authority of the session this
+        // `policyAuthority` is the verified authority of the session this
         // dispatcher serves, taken by value because it is one. A dispatcher
         // cannot widen anything by holding one: admission refuses an authority
         // whose registration or policy hash differs from the live session's,
@@ -97,7 +97,7 @@ namespace uf::operator_runtime
         static auto create(
             OperatorCoordinator& coordinator,
             SnapshotObservationAuthority& observations,
-            OperatorPlanAuthority planAuthority,
+            OperatorPolicyAuthority policyAuthority,
             ToolProvider frameworkTools
         ) -> Result<ProjectToolDispatcher>;
 

@@ -363,17 +363,6 @@ namespace uf::operator_runtime
         // HOST_VALIDATION_TEST(DeliveryAuthority.frozen_plan_hash)
         CHECK(reserved->authority.frozenPlanHash == call->identity());
 
-        // The three Operation-shaped fields, asserted EMPTY rather than
-        // skipped. recordDeliveryOutcome joins a report to a dispatch on
-        // operation_id, so a Tool-call report presented to it matches no row
-        // and is refused; filling any of these would make this door mint an
-        // authority an Operation could be answered with.
-        // HOST_VALIDATION_TEST(DeliveryAuthority.operation_id)
-        CHECK(reserved->authority.operationId.empty());
-        // HOST_VALIDATION_TEST(DeliveryAuthority.authority_decision_id)
-        CHECK(reserved->authority.authorityDecisionId.empty());
-        // HOST_VALIDATION_TEST(DeliveryAuthority.target_generation)
-        CHECK(reserved->authority.targetGeneration == TargetGeneration{});
 
         auto const delivered = owner->deliverToolCallInput(
             *call,

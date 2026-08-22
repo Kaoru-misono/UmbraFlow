@@ -1,4 +1,4 @@
-// What a ProjectRegistration's five authorities decide, and what no caller can
+// What a ProjectRegistration's authorities decide, and what no caller can
 // decide for them. Every case here runs against whatever project directory the
 // run was pointed at.
 //
@@ -13,7 +13,6 @@
 #include <operator/journal-entry.hpp>
 #include <operator/ledger.hpp>
 #include <operator/project-plugin.hpp>
-#include <operator/reconcile-outcome.hpp>
 #include <operator/tool-invocation.hpp>
 
 #include <core/error/result.hpp>
@@ -53,7 +52,6 @@ namespace uf::operator_runtime::conformance
 
         static_assert(!std::is_aggregate_v<ValidatedJournalEntryData>);
         static_assert(!std::is_aggregate_v<ValidatedToolInvocation>);
-        static_assert(!std::is_aggregate_v<ValidatedReconcileOutcome>);
         static_assert(!std::is_aggregate_v<ValidatedDocument>);
         static_assert(!std::is_aggregate_v<CanonicalJson>);
     }
@@ -106,9 +104,9 @@ namespace uf::operator_runtime::conformance
         auto const& underTest = deploymentFor(project, ProjectRole::UnderTest);
 
         // Every authority takes the exact bytes it answers for, and the hash in
-        // the registration is what decides. A validator for some other catalog,
-        // journal or reconcile schema therefore has nowhere to attach, however
-        // permissive it is.
+        // the registration is what decides. A validator for some other catalog
+        // or journal schema therefore has nowhere to attach, however permissive
+        // it is.
         CHECK_FALSE(
             ProjectToolCatalogSchemaOwner::create(
                 ProjectIdentity{underTest.generation},
@@ -126,16 +124,6 @@ namespace uf::operator_runtime::conformance
                     };
                 },
                 [](std::string_view, std::string_view) -> Status { return ok(); }
-            ).has_value()
-        );
-        CHECK_FALSE(
-            ProjectReconcileSchemaOwner::create(
-                ProjectIdentity{underTest.generation},
-                "not-the-reconcile-manifest",
-                [](std::string_view) -> Result<ReconcileDisposition>
-                {
-                    return ReconcileDisposition::Confirmed;
-                }
             ).has_value()
         );
         CHECK_FALSE(

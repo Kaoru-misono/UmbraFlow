@@ -270,17 +270,11 @@ namespace uf::deployment
                         + "\"";
                 };
                 block += R"json("project_state_schema":)json" + document("state.json");
-                block += R"json(,"project_observation_schema":)json"
-                    + document("observation.json");
                 block += R"json(,"tool_precondition_schema":)json"
                     + document("precondition.json");
-                block +=
-                    R"json(,"reconcile_schema":)json" + document("reconcile.json");
                 block += R"json(,"tool_catalog":)json" + document("catalog.json");
                 block += R"json(,"journal_event_schema_manifest":)json"
                     + document("journal-manifest.json");
-                block += R"json(,"reconcile_manifest":)json"
-                    + document("reconcile-manifest.json");
                 block += R"json(,"journal_payload_schemas":[)json";
                 for (auto index = std::size_t{0};
                      index < umbraflow::k_journalPayloadSchemas.size();
@@ -305,7 +299,7 @@ namespace uf::deployment
 
             [[nodiscard]] static auto conformanceManifest() -> std::string
             {
-                return R"json({"schema":"umbraflow-conformance/v1",)json"
+                return R"json({"schema":"umbraflow-conformance/v2",)json"
                     R"json("probe_frame":"runtime/probe-frame.png",)json"
                     R"json("under_test":{"deployment":"alpha","vocabulary":)json"
                     + vocabulary("fixture.alpha")
@@ -344,10 +338,6 @@ namespace uf::deployment
                        R"json("superseded_entry":{"event_type":"fixture.duplicate",)json"
                        R"json("payload":"{\"marker\":\"duplicate\"}"},)json"
                        R"json("provenance":"{\"kind\":\"observation\"}",)json"
-                       R"json("continue_input":"{\"disposition\":\"continue\"}",)json"
-                       R"json("confirmed_input":"{\"disposition\":\"confirmed\"}",)json"
-                       R"json("rejected_input":"{\"disposition\":\"rejected\"}",)json"
-                       R"json("ambiguous_input":"{\"disposition\":\"ambiguous\"}",)json"
                        + R"json("approval_required_plan_tool":")json"
                        + tool("approval-plan")
                        + R"json(",)json"
@@ -366,12 +356,9 @@ namespace uf::deployment
                     return m_root / "schema" / std::string{name} / std::string{leaf};
                 };
                 write(at("state.json"), umbraflow::k_projectStateSchema);
-                write(at("observation.json"), umbraflow::k_projectObservationSchema);
                 write(at("precondition.json"), umbraflow::k_toolPreconditionSchema);
-                write(at("reconcile.json"), umbraflow::k_reconcileSchema);
                 write(at("catalog.json"), bundle.toolCatalog());
                 write(at("journal-manifest.json"), bundle.journalEventManifest());
-                write(at("reconcile-manifest.json"), bundle.reconcileManifest());
                 for (auto index = std::size_t{0};
                      index < umbraflow::k_journalPayloadSchemas.size();
                      ++index)
@@ -429,8 +416,8 @@ namespace uf::deployment
         }
     }
 
-    // The design document states three documents by worked example, and this is
-    // what keeps an example a document the framework accepts. Without it the
+    // The design document states these documents by worked example, and this
+    // is what keeps an example a document the framework accepts. Without it the
     // examples are prose beside a C++ string constant, which is the arrangement
     // that had one consumer writing CamelCase for `mutating` and `semantic`.
     //
@@ -455,25 +442,71 @@ namespace uf::deployment
         };
         REQUIRE_FALSE(text.empty());
 
-        for (auto const format : std::array{
-                 std::string_view{"umbraflow-tool-catalog/v1"},
-                 std::string_view{"umbraflow-journal-event-schema-manifest/v1"},
-                 std::string_view{"umbraflow-reconcile-manifest/v1"},
-             })
+        // The examples are discovered from the document's own anchors rather
+        // than looked up one format at a time. A membership kept by hand
+        // drifts: the reconcile payload schema manifest kept its worked
+        // example after the format itself was deleted, and a loop that only
+        // looked up the two surviving formats stayed green beside a block
+        // validateFrameworkFormat now refuses.
+        struct WorkedExample final
         {
-            INFO(format);
-            auto const anchored = text.find(
-                std::string{"<!-- example: "} + std::string{format} + " -->"
-            );
-            REQUIRE(anchored != std::string::npos);
-            auto const opened = text.find("```json\n", anchored);
+            std::string format{};
+            std::string document{};
+        };
+
+        // The formats this module owns, and so the complete set of worked
+        // examples the document may carry.
+        constexpr auto k_owned = std::array{
+            std::string_view{"umbraflow-tool-catalog/v1"},
+            std::string_view{"umbraflow-journal-event-schema-manifest/v1"},
+        };
+
+        // An anchor is a line of its own. The paragraph above the examples
+        // names the `<!-- example: ... -->` spelling in prose, and admitting a
+        // mid-line match would take `...` for a format and hand it whichever
+        // block came next -- a third entry that passes by validating a document
+        // another entry already owns.
+        constexpr auto k_anchor = std::string_view{"\n<!-- example: "};
+        constexpr auto k_fence  = std::string_view{"```json\n"};
+        auto discovered         = std::vector<WorkedExample>{};
+        for (auto at = text.find(k_anchor);
+             at != std::string::npos;
+             at = text.find(k_anchor, at + k_anchor.size()))
+        {
+            auto const named = at + k_anchor.size();
+            auto const ended = text.find(" -->", named);
+            REQUIRE(ended != std::string::npos);
+            auto const opened = text.find(k_fence, ended);
             REQUIRE(opened != std::string::npos);
-            auto const begin  = opened + std::string_view{"```json\n"}.size();
+            auto const begin  = opened + k_fence.size();
             auto const closed = text.find("\n```", begin);
             REQUIRE(closed != std::string::npos);
 
-            auto const example = text.substr(begin, closed - begin);
-            auto const judged  = validateFrameworkFormat(example);
+            discovered.emplace_back(WorkedExample{
+                .format   = text.substr(named, ended - named),
+                .document = text.substr(begin, closed - begin),
+            });
+        }
+
+        // Declared against discovered, both ways. The loop below judges every
+        // example the document carries, so one naming a format this module
+        // dropped is refused there; it says nothing about a format that lost
+        // its example, or about a second block minted under a name an earlier
+        // entry already carries, and neither of those leaves anything red.
+        CHECK(discovered.size() == k_owned.size());
+        for (auto const format : k_owned)
+        {
+            INFO(format);
+            CHECK(
+                std::ranges::find(discovered, format, &WorkedExample::format)
+                != discovered.end()
+            );
+        }
+
+        for (auto const& example : discovered)
+        {
+            INFO(example.format);
+            auto const judged = validateFrameworkFormat(example.document);
             // Both arms are std::string: message() answers with a view into the
             // Error, and a conditional mixing it with a std::string temporary
             // takes the view as its type and outlives what backs it.
@@ -572,23 +605,14 @@ namespace uf::deployment
         auto const projectState = readText(
             schemaRoot / "project-state-v1.schema.json"
         );
-        auto const projectObservation = readText(
-            schemaRoot / "project-observation-v1.schema.json"
-        );
         auto const toolPrecondition = readText(
             schemaRoot / "precondition-v1.schema.json"
-        );
-        auto const reconcile = readText(
-            schemaRoot / "reconcile-v1.schema.json"
         );
         auto const toolCatalog = readText(
             schemaRoot / "tool-catalog-v1.json"
         );
         auto const journalManifest = readText(
             schemaRoot / "journal-manifest-v1.json"
-        );
-        auto const reconcileManifest = readText(
-            schemaRoot / "reconcile-manifest-v1.json"
         );
         auto const journalPayload = readText(
             schemaRoot / "journal-0-v1.schema.json"
@@ -600,12 +624,9 @@ namespace uf::deployment
             ProjectDeploymentSources{
                 .pluginId                        = "scaffold.project",
                 .projectState                    = projectState,
-                .projectObservation              = projectObservation,
                 .toolPrecondition                = toolPrecondition,
-                .reconcile                       = reconcile,
                 .toolCatalog                     = toolCatalog,
                 .journalEventManifest            = journalManifest,
-                .reconcileManifest               = reconcileManifest,
                 .journalPayloadSchemas           = journalPayloads,
                 .effectPayloadSchemas            = {},
                 .observedInstanceIdentitySchemas = {},
@@ -621,7 +642,7 @@ namespace uf::deployment
     // Everything below breaks one thing in this directory, so this case is what
     // says the directory is otherwise whole. It also states what a load
     // produces, because no other case reads the result.
-    TEST_CASE("a project directory becomes six authorities per deployment")
+    TEST_CASE("a project directory becomes four authorities per deployment")
     {
         auto const  fixture = Fixture{};
         auto const  loaded  = fixture.load();
@@ -663,8 +684,8 @@ namespace uf::deployment
         REQUIRE(p_beta != nullptr);
         CHECK(p_alpha->generation.hash() != p_beta->generation.hash());
 
-        // The five authorities are bound to that registration and can be asked
-        // to judge, which is the whole of what constructing them was for.
+        // The authorities are bound to that registration and can be asked to
+        // judge, which is the whole of what constructing them was for.
         CHECK(p_alpha->schemaOwner.projectRegistrationHash()
               == p_alpha->generation.hash());
         CHECK(p_alpha->schemaOwner.canonicalize("{\"revision\":0}").has_value());
@@ -682,7 +703,7 @@ namespace uf::deployment
                         )
                         .has_value());
 
-        // The sixth authority: the loader derived the identity hashes from the
+        // The last authority: the loader derived the identity hashes from the
         // file it read, pinned them in the registration, and built the
         // authority from the very bindings the deployment compiled -- so the
         // authority answers for exactly the registration it was bound to.
@@ -931,7 +952,6 @@ namespace uf::deployment
         CHECK(loaded->loaded.findDeployment("alpha") != nullptr);
         REQUIRE(loaded->documentInputLog != nullptr);
         CHECK(loaded->documentInputLog->lastReduceInput().empty());
-        CHECK(loaded->documentInputLog->lastDeriveInput().empty());
 
         CHECK(loaded->underTest.deployment == "alpha");
         CHECK(loaded->foreign.deployment == "beta");
@@ -1304,21 +1324,6 @@ namespace uf::deployment
             bundle.journalEventManifest()
         );
         REQUIRE(fixture.load().has_value());
-
-        fixture.rewrite(
-            "schema/alpha/reconcile-manifest.json",
-            substituted(
-                bundle.reconcileManifest(),
-                umbraflow::schemaHashHex(umbraflow::k_reconcileSchema),
-                std::string(64U, 'b')
-            )
-        );
-        auto const reconcile = fixture.load();
-        REQUIRE_FALSE(reconcile.has_value());
-        CHECK(why(reconcile).contains(std::string(64U, 'b')));
-        CHECK(why(reconcile).contains(
-            umbraflow::schemaHashHex(umbraflow::k_reconcileSchema)
-        ));
     }
 
     // R5, third site. The Tool Catalog's tool_precondition_sha256 is the only

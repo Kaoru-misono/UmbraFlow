@@ -2,6 +2,8 @@
 
 #include <service/product-lifecycle.hpp>
 
+#include <operator/controller.hpp>
+
 #include <task/task-context.hpp>
 #include <task/ui-observation.hpp>
 
@@ -17,6 +19,7 @@
 #include <filesystem>
 #include <format>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -148,7 +151,17 @@ namespace uf::cli
                     .authenticatedControllerId = std::string{k_observeControllerId},
                     .controllerCapabilities    = {},
                     .controlledTargetId        = controlledTargetId,
-                    .worldScope                = worldScope,
+                    // A person at a terminal, on `upgrade`'s terms. This verb
+                    // takes no --actor: there is no principal behind it but
+                    // whoever ran it, and it exists so that somebody can see
+                    // what this project's model resolves on a live window.
+                    // Script would be the other honest reading and is refused
+                    // for one reason -- a Script may not report external input
+                    // about a third party, and a person reading a screen is
+                    // exactly the party that may.
+                    .kind            = operator_runtime::ControllerKind::Human,
+                    .agentProfileJcs = std::nullopt,
+                    .worldScope      = worldScope,
                 }
             )
         );

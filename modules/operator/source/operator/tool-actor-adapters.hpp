@@ -58,7 +58,7 @@ namespace uf::operator_runtime
         ControllerBinding const&     controller;
         ControlLease const&          lease;
         ToolExecutionIdentity const& execution;
-        OperatorPlanAuthority const& planAuthority;
+        OperatorPolicyAuthority const& policyAuthority;
         ToolStartCatalog const&      catalog;
     };
 

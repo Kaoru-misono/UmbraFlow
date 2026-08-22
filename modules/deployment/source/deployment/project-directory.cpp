@@ -64,13 +64,13 @@ namespace uf::deployment
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://umbraflow.dev/schema/project/conformance",
     "title": "umbraflow-conformance.json",
-    "$comment": "There is no fingerprint member. The extent a probe frame is checked against is the one RuntimeModelBinding publishes out of the model, never a number this document restates.",
+    "$comment": "There is no fingerprint member. The extent a probe frame is checked against is the one RuntimeModelBinding publishes out of the model, never a number this document restates. Tag v2 is v1 without a vocabulary's continue_input, confirmed_input, rejected_input and ambiguous_input: those were the four reconcile inputs, and reconcile died with the five-function ProjectPlugin contract, so the loader parsed four strings no reader ever asked for. The tag moved with them because a required member set that lost members is a different shape, and one tag naming two shapes leaves whoever meets an old copy unable to say which of them it is.",
     "type": "object",
     "additionalProperties": false,
     "required": ["foreign", "probe_frame", "schema", "under_test"],
     "properties": {
         "$comment": {"type": "string"},
-        "schema": {"const": "umbraflow-conformance/v1"},
+        "schema": {"const": "umbraflow-conformance/v2"},
         "probe_frame": {"type": "string", "minLength": 1},
         "under_test": {"$ref": "#/$defs/Role"},
         "foreign": {"$ref": "#/$defs/Role"}
@@ -123,19 +123,15 @@ namespace uf::deployment
             "additionalProperties": false,
             "required": [
                 "absent_tool",
-                "ambiguous_input",
                 "approval_required_plan_tool",
                 "baseline_entry",
                 "confirmed_entry",
-                "confirmed_input",
-                "continue_input",
                 "mutating_tool",
                 "other_mutating_tool",
                 "progress_entry",
                 "provenance",
                 "read_only_tool",
                 "refused_tool_arguments",
-                "rejected_input",
                 "superseded_entry",
                 "tool_arguments",
                 "ui_action"
@@ -153,10 +149,6 @@ namespace uf::deployment
                 "confirmed_entry": {"$ref": "#/$defs/JournalDocument"},
                 "superseded_entry": {"$ref": "#/$defs/JournalDocument"},
                 "provenance": {"$ref": "#/$defs/Document"},
-                "continue_input": {"$ref": "#/$defs/Document"},
-                "confirmed_input": {"$ref": "#/$defs/Document"},
-                "rejected_input": {"$ref": "#/$defs/Document"},
-                "ambiguous_input": {"$ref": "#/$defs/Document"},
                 "approval_required_plan_tool": {"$ref": "#/$defs/ToolName"},
                 "ui_action": {
                     "type": "object",
@@ -431,9 +423,7 @@ namespace uf::deployment
             ContentHash                            pluginEnvironmentHash;
             ContentHash                            toolCatalogHash;
             ContentHash                            projectStateSchemaHash;
-            ContentHash                            projectObservationSchemaHash;
             ContentHash                            projectToolPreconditionSchemaHash;
-            ContentHash                            reconcilePayloadSchemaManifestHash;
             ContentHash                            journalEventSchemaManifestHash;
             std::vector<ContentHash>               observedInstanceIdentitySchemaHashes{};
         };
@@ -526,8 +516,6 @@ namespace uf::deployment
                  json::Value::ofArray(std::move(identityHashes))},
                 {"plugin_environment_hash", hash(derived.pluginEnvironmentHash)},
                 {"plugin_id", json::Value::ofString(derived.pluginId)},
-                {"project_observation_schema_hash",
-                 hash(derived.projectObservationSchemaHash)},
                 {"project_registration_format",
                  json::Value::ofNumber(
                      static_cast<double>(
@@ -539,8 +527,6 @@ namespace uf::deployment
                 {"project_tool_precondition_schema_hash",
                  hash(derived.projectToolPreconditionSchemaHash)},
                 {"project_resources", json::Value::ofArray(std::move(resources))},
-                {"reconcile_payload_schema_manifest_hash",
-                 hash(derived.reconcilePayloadSchemaManifestHash)},
                 {"reducer_closure", closureValue(derived.reducerClosure)},
                 {"tool_catalog_hash", hash(derived.toolCatalogHash)},
                 {"tool_closure", closureValue(derived.toolClosure)},
@@ -652,16 +638,8 @@ namespace uf::deployment
                     parseHash(document, "project_state_schema_hash")
                 );
                 UF_TRY_VALUE(
-                    observationHash,
-                    parseHash(document, "project_observation_schema_hash")
-                );
-                UF_TRY_VALUE(
                     preconditionHash,
                     parseHash(document, "project_tool_precondition_schema_hash")
-                );
-                UF_TRY_VALUE(
-                    reconcileHash,
-                    parseHash(document, "reconcile_payload_schema_manifest_hash")
                 );
                 UF_TRY_VALUE(
                     journalHash,
@@ -717,9 +695,7 @@ namespace uf::deployment
                     .pluginEnvironmentHash                = environmentHash,
                     .toolCatalogHash                      = catalogHash,
                     .projectStateSchemaHash               = stateHash,
-                    .projectObservationSchemaHash         = observationHash,
                     .projectToolPreconditionSchemaHash    = preconditionHash,
-                    .reconcilePayloadSchemaManifestHash   = reconcileHash,
                     .journalEventSchemaManifestHash       = journalHash,
                     .baselineEventType                    = text(document, "baseline_event_type"),
                     .projectResources                     = std::move(resources),
@@ -729,11 +705,11 @@ namespace uf::deployment
             };
         }
 
-        // The document validator the five authorities are built on, wrapped so
-        // that the exact bytes a Reduce or Derive input arrived as are kept.
-        // The wrapper is the loader's because the thing that observes them is
-        // the host's validator: a directory of data has nowhere to put a value
-        // that exists only while a suite runs.
+        // The document validator the authorities are built on, wrapped so that
+        // the exact bytes a reduce input arrived as are kept. The wrapper is
+        // the loader's because the thing that observes them is the host's
+        // validator: a directory of data has nowhere to put a value that
+        // exists only while a suite runs.
         [[nodiscard]]
         auto recordingValidator(
             operator_runtime::ProjectDocumentValidator judge,
@@ -744,7 +720,6 @@ namespace uf::deployment
                 judge    = std::move(judge),
                 inputLog = std::move(p_inputLog)
             ](
-                operator_runtime::ProjectPluginFunction function,
                 operator_runtime::ProjectDocumentDirection direction,
                 std::string_view exactJcs
             ) -> Status
@@ -753,9 +728,9 @@ namespace uf::deployment
 
                 if (direction == ProjectDocumentDirection::Input)
                 {
-                    inputLog->record(function, exactJcs);
+                    inputLog->record(exactJcs);
                 }
-                return judge(function, direction, exactJcs);
+                return judge(direction, exactJcs);
             };
         }
 
@@ -767,12 +742,9 @@ namespace uf::deployment
             DeploymentClosure reducerClosure{};
             DeploymentClosure toolClosure{};
             std::string       projectState{};
-            std::string       projectObservation{};
             std::string       toolPrecondition{};
-            std::string       reconcile{};
             std::string       toolCatalog{};
             std::string       journalEventManifest{};
-            std::string       reconcileManifest{};
 
             std::vector<std::string> journalPayloadSchemas{};
             std::vector<std::string> effectPayloadSchemas{};
@@ -900,22 +872,13 @@ namespace uf::deployment
             );
             UF_TRY_VALUE(state, read("project_state_schema", k_maximumDocumentBytes));
             UF_TRY_VALUE(
-                observation,
-                read("project_observation_schema", k_maximumDocumentBytes)
-            );
-            UF_TRY_VALUE(
                 precondition,
                 read("tool_precondition_schema", k_maximumDocumentBytes)
             );
-            UF_TRY_VALUE(reconcile, read("reconcile_schema", k_maximumDocumentBytes));
             UF_TRY_VALUE(catalog, read("tool_catalog", k_maximumDocumentBytes));
             UF_TRY_VALUE(
                 journal,
                 read("journal_event_schema_manifest", k_maximumDocumentBytes)
-            );
-            UF_TRY_VALUE(
-                reconcileManifest,
-                read("reconcile_manifest", k_maximumDocumentBytes)
             );
             UF_TRY_VALUE(
                 journalPayloads,
@@ -949,12 +912,9 @@ namespace uf::deployment
                 .reducerClosure                  = std::move(reducerClosure),
                 .toolClosure                     = std::move(toolClosure),
                 .projectState                    = std::move(state),
-                .projectObservation              = std::move(observation),
                 .toolPrecondition                = std::move(precondition),
-                .reconcile                       = std::move(reconcile),
                 .toolCatalog                     = std::move(catalog),
                 .journalEventManifest            = std::move(journal),
-                .reconcileManifest               = std::move(reconcileManifest),
                 .journalPayloadSchemas           = std::move(journalPayloads),
                 .effectPayloadSchemas            = std::move(effectPayloads),
                 .observedInstanceIdentitySchemas = std::move(identitySchemas),
@@ -1131,10 +1091,6 @@ namespace uf::deployment
                 .confirmedEntry       = entry(member(declared, "confirmed_entry")),
                 .supersededEntry      = entry(member(declared, "superseded_entry")),
                 .provenance           = text(declared, "provenance"),
-                .continueInput        = text(declared, "continue_input"),
-                .confirmedInput       = text(declared, "confirmed_input"),
-                .rejectedInput        = text(declared, "rejected_input"),
-                .ambiguousInput       = text(declared, "ambiguous_input"),
                 .approvalRequiredPlanTool =
                     text(declared, "approval_required_plan_tool"),
                 .uiAction = ProjectUiAction{
@@ -1363,52 +1319,16 @@ namespace uf::deployment
         };
     }
 
-    auto ProjectDocumentInputLog::record(
-        operator_runtime::ProjectPluginFunction function,
-        std::string_view exactJcs
-    ) -> void
+    auto ProjectDocumentInputLog::record(std::string_view exactJcs) -> void
     {
-        using operator_runtime::ProjectPluginFunction;
-
-        // Only the state-reducing and observation-deriving inputs are contract
-        // evidence. The table makes that subset explicit without a conditional
-        // chain over the closed ProjectPluginFunction vocabulary.
-        constexpr auto targets = std::array{
-            std::pair{
-                ProjectPluginFunction::Derive,
-                &ProjectDocumentInputLog::m_lastDeriveInput
-            },
-            std::pair{
-                ProjectPluginFunction::Reduce,
-                &ProjectDocumentInputLog::m_lastReduceInput
-            },
-        };
-        auto const target = std::ranges::find_if(
-            targets,
-            [function](auto const& candidate)
-            {
-                return candidate.first == function;
-            }
-        );
-        if (target == targets.end())
-        {
-            return;
-        }
-
-        auto lock = std::lock_guard{m_mutex};
-        (this->*target->second) = std::string{exactJcs};
+        auto lock         = std::lock_guard{m_mutex};
+        m_lastReduceInput = std::string{exactJcs};
     }
 
     auto ProjectDocumentInputLog::lastReduceInput() const -> std::string
     {
         auto lock = std::lock_guard{m_mutex};
         return m_lastReduceInput;
-    }
-
-    auto ProjectDocumentInputLog::lastDeriveInput() const -> std::string
-    {
-        auto lock = std::lock_guard{m_mutex};
-        return m_lastDeriveInput;
     }
 
     auto LoadedProject::findDeployment(std::string_view name) const
@@ -1538,21 +1458,17 @@ namespace uf::deployment
             auto const sources         = ProjectDeploymentSources{
                      .pluginId                        = pluginId,
                      .projectState                    = files.projectState,
-                     .projectObservation              = files.projectObservation,
                      .toolPrecondition                = files.toolPrecondition,
-                     .reconcile                       = files.reconcile,
                      .toolCatalog                     = files.toolCatalog,
                      .journalEventManifest            = files.journalEventManifest,
-                     .reconcileManifest               = files.reconcileManifest,
                      .journalPayloadSchemas           = journalViews,
                      .effectPayloadSchemas            = effectViews,
                      .observedInstanceIdentitySchemas = identityViews,
             };
             // R5, R6 and R7 are all inside this call. It compiles every schema
             // under the evaluator's closed keyword set, holds the journal
-            // manifest's per-schema sha256 and the reconcile manifest's schema
-            // digest to the bytes they name, and refuses a catalog row that
-            // omits mutability or surface.
+            // manifest's per-schema sha256 to the bytes it names, and refuses a
+            // catalog row that omits mutability or surface.
             auto deployed = ProjectDeployment::create(sources);
             if (!deployed.has_value())
             {
@@ -1583,9 +1499,7 @@ namespace uf::deployment
             );
             UF_TRY_VALUE(catalogHash, hashOf(files.toolCatalog));
             UF_TRY_VALUE(stateHash, hashOf(files.projectState));
-            UF_TRY_VALUE(observationHash, hashOf(files.projectObservation));
             UF_TRY_VALUE(preconditionHash, hashOf(files.toolPrecondition));
-            UF_TRY_VALUE(reconcileHash, hashOf(files.reconcileManifest));
             UF_TRY_VALUE(journalHash, hashOf(files.journalEventManifest));
 
             // The identity schema hashes, derived from the bytes this loader
@@ -1620,9 +1534,7 @@ namespace uf::deployment
                 .pluginEnvironmentHash                = pluginEnvironmentHash,
                 .toolCatalogHash                      = catalogHash,
                 .projectStateSchemaHash               = stateHash,
-                .projectObservationSchemaHash         = observationHash,
                 .projectToolPreconditionSchemaHash    = preconditionHash,
-                .reconcilePayloadSchemaManifestHash   = reconcileHash,
                 .journalEventSchemaManifestHash       = journalHash,
                 .observedInstanceIdentitySchemaHashes = std::move(identityHashes),
             };
@@ -1673,9 +1585,8 @@ namespace uf::deployment
 
             auto const documentSchemas =
                 operator_runtime::ProjectDocumentSchemaBytes{
-                    .projectState       = files.projectState,
-                    .projectObservation = files.projectObservation,
-                    .toolPrecondition   = files.toolPrecondition,
+                    .projectState     = files.projectState,
+                    .toolPrecondition = files.toolPrecondition,
                 };
             auto documentValidator = deployed->documentValidator();
             if (p_inputLog != nullptr)
@@ -1715,16 +1626,6 @@ namespace uf::deployment
             {
                 return std::unexpected{catalogOwner.error().clone()};
             }
-            auto reconcileOwner =
-                operator_runtime::ProjectReconcileSchemaOwner::create(
-                    *registration,
-                    files.reconcileManifest,
-                    deployed->reconcileDispositionReader()
-                );
-            if (!reconcileOwner.has_value())
-            {
-                return std::unexpected{reconcileOwner.error().clone()};
-            }
             // The authority obeys the registration's own rule and refuses a
             // supplied set that is not the canonical sorted order, so the
             // bindings are sorted here, the same derivation that wrote the
@@ -1752,7 +1653,6 @@ namespace uf::deployment
                 .schemaOwner                     = *std::move(projectSchemaOwner),
                 .journalSchemaOwner              = *std::move(journalOwner),
                 .toolCatalogSchemaOwner          = *std::move(catalogOwner),
-                .reconcileSchemaOwner            = *std::move(reconcileOwner),
                 .observedInstanceIdentitySchemas = *std::move(identitySet),
                 .catalog                         = *std::move(deployed),
                 .reducerClosure                  = std::move(files.reducerClosure),
@@ -1822,7 +1722,7 @@ namespace uf::deployment
         );
         UF_TRY_VALUE(
             conformanceSchema,
-            compile("umbraflow-conformance/v1", k_conformanceSchema)
+            compile("umbraflow-conformance/v2", k_conformanceSchema)
         );
         UF_TRY_VALUE(
             conformance,
@@ -1955,12 +1855,9 @@ namespace uf::deployment
         {
             for (auto const& name : std::array{
                      "project_state_schema",
-                     "project_observation_schema",
                      "tool_precondition_schema",
-                     "reconcile_schema",
                      "tool_catalog",
                      "journal_event_schema_manifest",
-                     "reconcile_manifest",
                  })
             {
                 auto const declaredPath = std::string{

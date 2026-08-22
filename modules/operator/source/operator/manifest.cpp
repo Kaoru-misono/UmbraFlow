@@ -516,14 +516,8 @@ namespace uf::operator_runtime
           }
         , m_toolCatalogHash{generation.m_claims.toolCatalogHash}
         , m_projectStateSchemaHash{generation.m_claims.projectStateSchemaHash}
-        , m_projectObservationSchemaHash{
-              generation.m_claims.projectObservationSchemaHash
-          }
         , m_projectToolPreconditionSchemaHash{
               generation.m_claims.projectToolPreconditionSchemaHash
-          }
-        , m_reconcilePayloadSchemaManifestHash{
-              generation.m_claims.reconcilePayloadSchemaManifestHash
           }
         , m_journalEventSchemaManifestHash{
               generation.m_claims.journalEventSchemaManifestHash
@@ -566,19 +560,9 @@ namespace uf::operator_runtime
         return m_projectStateSchemaHash;
     }
 
-    auto ProjectIdentity::projectObservationSchemaHash() const -> ContentHash
-    {
-        return m_projectObservationSchemaHash;
-    }
-
     auto ProjectIdentity::projectToolPreconditionSchemaHash() const -> ContentHash
     {
         return m_projectToolPreconditionSchemaHash;
-    }
-
-    auto ProjectIdentity::reconcilePayloadSchemaManifestHash() const -> ContentHash
-    {
-        return m_reconcilePayloadSchemaManifestHash;
     }
 
     auto ProjectIdentity::journalEventSchemaManifestHash() const -> ContentHash

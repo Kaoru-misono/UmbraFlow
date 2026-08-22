@@ -281,7 +281,7 @@ namespace uf::operator_runtime
         auto const receipt   = definition(schema, "ReceiptRef");
         checkStrictObject(authority);
         checkStrictObject(receipt);
-        CHECK(authority.find("\"target_generation\"") != std::string::npos);
+        CHECK(authority.find("\"controlled_target_id\"") != std::string::npos);
         CHECK(authority.find("\"session_epoch\"") != std::string::npos);
         CHECK(authority.find("\"fencing_token\"") != std::string::npos);
         CHECK(authority.find("\"receipt_ref\"") != std::string::npos);
@@ -351,17 +351,13 @@ namespace uf::operator_runtime
 
     TEST_CASE("schema-control-c05")
     {
-        auto const schema    = readSchema("umbraflow-operator-v1.schema.json");
-        auto const proposal  = definition(schema, "PlanProposal");
-        auto const effective = definition(schema, "EffectivePlan");
+        auto const schema   = readSchema("umbraflow-operator-v1.schema.json");
+        auto const proposal = definition(schema, "PlanProposal");
         checkStrictObject(proposal);
-        checkStrictObject(effective);
         CHECK(proposal.find("\"effects\"") != std::string::npos);
         CHECK(proposal.find("\"allowed_ui_actions\"") != std::string::npos);
-        CHECK(effective.find("\"command_fingerprint\"") != std::string::npos);
-        CHECK(effective.find("\"project_registration_hash\"") != std::string::npos);
-        CHECK(effective.find("\"decision_basis_hash\"") != std::string::npos);
-        CHECK(effective.find("\"required_approvals\"") != std::string::npos);
+        CHECK(proposal.find("\"workflow_limits\"") != std::string::npos);
+        CHECK(proposal.find("\"canonical_args\"") != std::string::npos);
     }
 
     TEST_CASE("contract-control-c07")
@@ -391,7 +387,7 @@ namespace uf::operator_runtime
     TEST_CASE("schema-control-c08")
     {
         auto const schema = readSchema("umbraflow-operator-v1.schema.json");
-        auto const plan   = definition(schema, "EffectivePlan");
+        auto const plan   = definition(schema, "PlanProposal");
         auto const intent = definition(schema, "UIActionIntent");
         auto const limits = definition(schema, "WorkflowLimits");
         checkStrictObject(plan);

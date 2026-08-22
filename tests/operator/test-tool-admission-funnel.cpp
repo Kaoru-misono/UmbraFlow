@@ -144,7 +144,7 @@ namespace uf::operator_runtime
                 ToolRootRequestIdentity,
                 ToolCallPositionIdentity,
                 ToolMutability,
-                OperatorPlanAuthority,
+                OperatorPolicyAuthority,
                 std::vector<ProposedEffect>,
                 std::vector<ToolApprovalGrant>,
                 ToolDelegationGrant

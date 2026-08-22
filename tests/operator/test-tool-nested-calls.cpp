@@ -63,9 +63,6 @@ namespace uf::operator_runtime
         constexpr auto k_observeTool = std::string_view{
             "framework.screen.observe"
         };
-        constexpr auto k_captureTool = std::string_view{
-            "framework.screen.capture"
-        };
         constexpr auto k_semanticInputTool = std::string_view{
             "framework.input.semantic_target"
         };
@@ -218,7 +215,6 @@ namespace uf::operator_runtime
                 // another registration's catalog owner is refused for being
                 // another registration's.
                 .childToolNames = {
-                    std::string{k_captureTool},
                     std::string{k_coordinateInputTool},
                     std::string{k_observeTool},
                     std::string{k_readOnlyChildTool},
@@ -329,20 +325,20 @@ namespace uf::operator_runtime
                 observation.generation
             );
             REQUIRE(runtimeModel.has_value());
-            auto planAuthority = OperatorPlanAuthority::create(
+            auto policyAuthority = OperatorPolicyAuthority::create(
                 project.registration,
                 manifest,
                 *runtimeModel,
                 "operator",
                 policy
             );
-            REQUIRE(planAuthority.has_value());
+            REQUIRE(policyAuthority.has_value());
             return test_support::PreparedStore{
                 .store                   = std::move(store),
                 .generation              = projectGeneration,
                 .project                 = project,
                 .manifest                = manifest,
-                .planAuthority           = *std::move(planAuthority),
+                .policyAuthority         = *std::move(policyAuthority),
                 .controller              = *controller,
                 .lease                   = *lease,
                 .snapshot                = *std::move(snapshot),
@@ -535,8 +531,8 @@ namespace uf::operator_runtime
                         .root       = root,
                         .call       = call,
                         .mutation   = ToolAdmissionRequest::Mutation{
-                            .planAuthority = prepared.planAuthority,
-                            .effects       = effects,
+                            .policyAuthority = prepared.policyAuthority,
+                            .effects         = effects,
                         },
                     }
                 )
@@ -655,6 +651,45 @@ namespace uf::operator_runtime
             auto const rootEffects = std::vector{
                 inputEffect(agent.controlledTargetId(), Risk::Medium),
             };
+
+            // Direct visibility and delegated authority are distinct: this
+            // actor presenting the privileged input Tool as a root call of its
+            // own is refused, while the parent's declaration reaches it below.
+            // The direct attempt runs before the parent starts, because a
+            // target already carrying a dispatching mutation refuses a second
+            // one for that barrier rather than for the surface.
+            auto inputInvocation = frameworkInvocation(
+                framework,
+                k_coordinateInputTool,
+                R"({"action":"click","x":4,"y":9})"
+            );
+            auto const childEffects = std::vector{
+                inputEffect(agent.controlledTargetId(), Risk::Medium),
+            };
+            auto const directRoot = rootFor("nested-direct-privileged");
+            auto directContext = ToolCallIssuingContext::forRoot(
+                directRoot,
+                executionIdentity()
+            );
+            auto directCall = directContext.issue(inputInvocation);
+            REQUIRE(directCall.has_value());
+            auto direct = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = agent,
+                    .lease      = *lease,
+                    .root       = directRoot,
+                    .call       = *directCall,
+                    .mutation   = ToolAdmissionRequest::Mutation{
+                        .policyAuthority = prepared.policyAuthority,
+                        .effects         = childEffects,
+                    },
+                }
+            );
+            REQUIRE_FALSE(direct.has_value());
+            CHECK(direct.error().message().contains(
+                "does not admit this Tool surface"
+            ));
+
             auto handler = startHandler(
                 prepared,
                 agent,
@@ -700,61 +735,10 @@ namespace uf::operator_runtime
             REQUIRE_MESSAGE(observeAdmission.has_value(), failureText(observeAdmission));
             completeReadOnlyChild(prepared, *observeAdmission);
 
-            // A privileged Framework capture child. Direct visibility and
-            // delegated authority are distinct: the same actor presenting the same
-            // privileged Tool as a root call of its own is refused, while the
-            // parent's declaration reaches it.
-            auto captureInvocation = frameworkInvocation(
-                framework,
-                k_captureTool,
-                "{}"
-            );
-            auto captureChild = handler->context.issue(captureInvocation);
-            REQUIRE(captureChild.has_value());
-            auto captureAdmission = prepared.store.admitToolCall(
-                ToolAdmissionRequest{
-                    .controller = agent,
-                    .lease      = *lease,
-                    .root       = root,
-                    .call       = *captureChild,
-                    .delegation = handler->grant,
-                }
-            );
-            REQUIRE_MESSAGE(captureAdmission.has_value(), failureText(captureAdmission));
-            completeReadOnlyChild(prepared, *captureAdmission);
-
-            auto const directRoot = rootFor("nested-direct-privileged");
-            auto directContext = ToolCallIssuingContext::forRoot(
-                directRoot,
-                executionIdentity()
-            );
-            auto directCall = directContext.issue(captureInvocation);
-            REQUIRE(directCall.has_value());
-            auto direct = prepared.store.admitToolCall(
-                ToolAdmissionRequest{
-                    .controller = agent,
-                    .lease      = *lease,
-                    .root       = directRoot,
-                    .call       = *directCall,
-                }
-            );
-            REQUIRE_FALSE(direct.has_value());
-            CHECK(direct.error().message().contains(
-                "does not admit this Tool surface"
-            ));
-
-            // An admitted Framework input child, which the same actor could not
-            // present directly either.
-            auto inputInvocation = frameworkInvocation(
-                framework,
-                k_coordinateInputTool,
-                R"({"action":"click","x":4,"y":9})"
-            );
+            // The privileged Framework input child the parent's declaration
+            // reaches, which the direct attempt above could not.
             auto inputChild = handler->context.issue(inputInvocation);
             REQUIRE(inputChild.has_value());
-            auto const childEffects = std::vector{
-                inputEffect(agent.controlledTargetId(), Risk::Medium),
-            };
             auto inputAdmission = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
                     .controller = agent,
@@ -762,8 +746,8 @@ namespace uf::operator_runtime
                     .root       = root,
                     .call       = *inputChild,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .planAuthority = prepared.planAuthority,
-                        .effects       = childEffects,
+                        .policyAuthority = prepared.policyAuthority,
+                        .effects         = childEffects,
                     },
                     .delegation = handler->grant,
                 }
@@ -842,8 +826,8 @@ namespace uf::operator_runtime
                     .root       = root,
                     .call       = *child,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .planAuthority = prepared.planAuthority,
-                        .effects       = widened,
+                        .policyAuthority = prepared.policyAuthority,
+                        .effects         = widened,
                     },
                     .delegation = handler->grant,
                 }
@@ -868,8 +852,8 @@ namespace uf::operator_runtime
                     .root       = root,
                     .call       = *child,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .planAuthority = prepared.planAuthority,
-                        .effects       = moved,
+                        .policyAuthority = prepared.policyAuthority,
+                        .effects         = moved,
                     },
                     .delegation = handler->grant,
                 }
@@ -961,8 +945,8 @@ namespace uf::operator_runtime
                     .root       = root,
                     .call       = *child,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .planAuthority = prepared.planAuthority,
-                        .effects       = rootEffects,
+                        .policyAuthority = prepared.policyAuthority,
+                        .effects         = rootEffects,
                     },
                     .delegation = handler->grant,
                 }
@@ -1133,8 +1117,8 @@ namespace uf::operator_runtime
                 .root       = root,
                 .call       = *call,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = rootEffects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = rootEffects,
                 },
             }
         );
@@ -1199,8 +1183,8 @@ namespace uf::operator_runtime
                 .root       = root,
                 .call       = *child,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
                 .delegation = *grant,
             }
@@ -1658,7 +1642,7 @@ namespace uf::operator_runtime
             approver,
             root,
             *parent,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             rootEffects,
             ToolApprovalRequest{
                 .approverCapability  = std::string{
@@ -1677,9 +1661,9 @@ namespace uf::operator_runtime
                 .root       = root,
                 .call       = *parent,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = rootEffects,
-                    .approvals     = approvals,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = rootEffects,
+                    .approvals       = approvals,
                 },
             }
         );
@@ -1701,8 +1685,8 @@ namespace uf::operator_runtime
                 .root       = root,
                 .call       = *child,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = rootEffects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = rootEffects,
                 },
                 .delegation = *grant,
             }
@@ -1832,7 +1816,7 @@ namespace uf::operator_runtime
 
         auto narrow = ChildEffectDeclaration{
             .childToolNames = {
-                std::string{k_captureTool},
+                std::string{k_coordinateInputTool},
                 std::string{k_semanticInputTool},
             },
             .maximumChildSurface    = ToolSurface::Semantic,
@@ -1868,21 +1852,33 @@ namespace uf::operator_runtime
         REQUIRE_MESSAGE(handler.has_value(), failureText(handler));
 
         auto privilegedChild = handler->context.issue(
-            frameworkInvocation(framework, k_captureTool, "{}")
+            frameworkInvocation(
+                framework,
+                k_coordinateInputTool,
+                R"({"action":"click","x":4,"y":9})"
+            )
         );
         REQUIRE(privilegedChild.has_value());
+        auto const privilegedEffects = std::vector{
+            inputEffect(target, Risk::Medium),
+        };
         auto refusedSurface = prepared.store.admitToolCall(
             ToolAdmissionRequest{
                 .controller = controller,
                 .lease      = lease,
                 .root       = root,
                 .call       = *privilegedChild,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = privilegedEffects,
+                },
                 .delegation = handler->grant,
             }
         );
         REQUIRE_FALSE(refusedSurface.has_value());
         CHECK(refusedSurface.error().message().contains(
-            "may not delegate the privileged surface of framework.screen.capture"
+            "may not delegate the privileged surface of "
+            "framework.input.coordinate"
         ));
 
         auto mutatingChild = handler->context.issue(frameworkInvocation(
@@ -1900,8 +1896,8 @@ namespace uf::operator_runtime
                 .root       = root,
                 .call       = *mutatingChild,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
                 .delegation = handler->grant,
             }
@@ -1958,8 +1954,8 @@ namespace uf::operator_runtime
                 .root       = root,
                 .call       = *child,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = raised,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = raised,
                 },
                 .delegation = handler->grant,
             }
@@ -1977,9 +1973,7 @@ namespace uf::operator_runtime
             std::string_view{"framework.audit.record"},
             std::string_view{"framework.input.coordinate"},
             std::string_view{"framework.input.semantic_target"},
-            std::string_view{"framework.screen.capture"},
             std::string_view{"framework.screen.observe"},
-            std::string_view{"framework.workflow.reconcile"},
             std::string_view{"framework.workflow.status"},
             std::string_view{"framework.workflow.wait"},
         };

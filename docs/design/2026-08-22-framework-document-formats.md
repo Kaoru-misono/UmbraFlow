@@ -1,9 +1,9 @@
 # Framework document formats
 
-Three of the documents a deployment ships are the **framework's** formats rather
-than the project's: the Tool Catalog, the journal event schema manifest, and the
-reconcile payload schema manifest. A project authors the bytes, but the shape,
-the vocabulary and the refusals are this repository's.
+Two of the documents a deployment ships are the **framework's** formats rather
+than the project's: the Tool Catalog and the journal event schema manifest. A
+project authors the bytes, but the shape, the vocabulary and the refusals are
+this repository's.
 
 The normative authority is the schema bytes embedded in
 [`modules/deployment/source/deployment/project-deployment.cpp`](../../modules/deployment/source/deployment/project-deployment.cpp),
@@ -14,7 +14,7 @@ schema came first. No prose here restates a field those bytes own.
 
 ## Why the worked examples live here
 
-`tests/deployment/test-project-directory.cpp` reads the three blocks below by
+`tests/deployment/test-project-directory.cpp` reads the two blocks below by
 their `<!-- example: ... -->` anchors and requires `validateFrameworkFormat` to
 accept each one. That test is what keeps a worked example a document the
 framework accepts instead of prose beside a C++ string constant — the
@@ -185,39 +185,6 @@ directory outside every digest in the design.
       "namespaced_event_type": "battle.completed",
       "sha256": "3d6714b1b5dff0f9a1443ef49f22d8773512e7ba327ba1b5f1e4eecbae997d8b"
     }
-  ]
-}
-```
-
-## Reconcile payload schema manifest
-
-`"schema": "umbraflow-reconcile-manifest/v1"`. `verdict_member` is a **named**
-member rather than a positional read, deliberately: a positional read means a
-later schema edit that adds a member silently changes which value is read.
-
-`dispositions` is a list of `{disposition, value}` rather than a map, so that the
-framework's five words are the closed vocabulary on one side and the project's
-words are free text on the other. It need not be exhaustive over the five — a
-project may never produce `diverged` — and a verdict whose value is in no entry
-is refused. A project whose words happen to be the framework's still writes them
-out, because "absent means identity" is a default.
-
-<!-- example: umbraflow-reconcile-manifest/v1 -->
-```json
-{
-  "$comment": "chaos.dream answers with `reconciliation` and chaos.archive with `settlement`: two deployments that agreed on the spelling could not prove that a document minted under one is refused by the other.",
-  "schema": "umbraflow-reconcile-manifest/v1",
-  "plugin_id": "chaos.dream",
-  "reconcile_schema_sha256": "178029a53a3acc8a56a12b01e50821283c1c02bcf3bb8c2e85759a11c5b6008d",
-  "request_definition": "ReconcileRequest",
-  "verdict_definition": "ReconcileVerdict",
-  "verdict_member": "reconciliation",
-  "dispositions": [
-    {"disposition": "continue", "value": "Continue"},
-    {"disposition": "confirmed", "value": "Confirmed"},
-    {"disposition": "rejected", "value": "Rejected"},
-    {"disposition": "ambiguous", "value": "Ambiguous"},
-    {"disposition": "diverged", "value": "Diverged"}
   ]
 }
 ```

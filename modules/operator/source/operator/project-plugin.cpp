@@ -28,43 +28,10 @@ namespace uf::operator_runtime
     {
         constexpr auto k_maximumCanonicalBytes = std::size_t{1024U} * 1024U;
 
-        constexpr auto k_functions = std::array{
-            std::pair{ProjectPluginFunction::Derive, std::string_view{"derive"}},
-            std::pair{ProjectPluginFunction::Plan, std::string_view{"plan"}},
-            std::pair{ProjectPluginFunction::NextStep, std::string_view{"next_step"}},
-            std::pair{ProjectPluginFunction::Reconcile, std::string_view{"reconcile"}},
-            std::pair{ProjectPluginFunction::Reduce, std::string_view{"reduce"}},
-        };
-
-        constexpr auto k_entryPoints = std::array{
-            std::string_view{"derive"},
-            std::string_view{"plan"},
-            std::string_view{"next_step"},
-            std::string_view{"reconcile"},
-            std::string_view{"reduce"},
-        };
-
         [[nodiscard]]
         auto refuse(std::string message) -> std::unexpected<Error>
         {
             return fail(AutomationErrorKind::InvalidResource, std::move(message));
-        }
-
-        [[nodiscard]]
-        auto functionName(ProjectPluginFunction function) -> std::string_view
-        {
-            auto const found = std::ranges::find_if(
-                k_functions,
-                [function](auto const& entry)
-                {
-                    return entry.first == function;
-                }
-            );
-            if (found != k_functions.end())
-            {
-                return found->second;
-            }
-            UF_UNREACHABLE_MSG("unknown ProjectPluginFunction");
         }
 
         [[nodiscard]]
@@ -241,12 +208,10 @@ namespace uf::operator_runtime
 
     ValidatedDocument::ValidatedDocument(
         ContentHash projectRegistrationHash,
-        ProjectPluginFunction function,
         ProjectDocumentDirection direction,
         CanonicalJson canonicalJson
     )
         : m_projectRegistrationHash{projectRegistrationHash}
-        , m_function{function}
         , m_direction{direction}
         , m_canonicalJson{std::move(canonicalJson)}
     {
@@ -255,11 +220,6 @@ namespace uf::operator_runtime
     auto ValidatedDocument::projectRegistrationHash() const -> ContentHash
     {
         return m_projectRegistrationHash;
-    }
-
-    auto ValidatedDocument::function() const noexcept -> ProjectPluginFunction
-    {
-        return m_function;
     }
 
     auto ValidatedDocument::direction() const noexcept -> ProjectDocumentDirection
@@ -301,10 +261,6 @@ namespace uf::operator_runtime
         }
         auto const pinned = std::array{
             std::pair{exactSchemas.projectState, project.projectStateSchemaHash()},
-            std::pair{
-                exactSchemas.projectObservation,
-                project.projectObservationSchemaHash(),
-            },
             std::pair{
                 exactSchemas.toolPrecondition,
                 project.projectToolPreconditionSchemaHash(),
@@ -356,7 +312,6 @@ namespace uf::operator_runtime
     }
 
     auto ProjectSchemaOwner::validate(
-        ProjectPluginFunction function,
         ProjectDocumentDirection direction,
         CanonicalJson const& document
     ) const -> Result<json::Value>
@@ -371,26 +326,22 @@ namespace uf::operator_runtime
             "revalidating exact JCS at the ProjectPlugin call boundary"
         );
         UF_TRY_CONTEXT(
-            m_state->validateDocument(function, direction, document.bytes()),
+            m_state->validateDocument(direction, document.bytes()),
             "validating complete ProjectPlugin document schema"
         );
         return validatedValue;
     }
 
-    auto ProjectSchemaOwner::validateOutput(
-        ProjectPluginFunction function,
-        CanonicalJson document
-    ) const
+    auto ProjectSchemaOwner::validateOutput(CanonicalJson document) const
         -> Result<ValidatedDocument>
     {
         UF_TRY_VALUE(
             validatedValue,
-            validate(function, ProjectDocumentDirection::Output, document)
+            validate(ProjectDocumentDirection::Output, document)
         );
         document.m_value = std::move(validatedValue);
         return ValidatedDocument{
             m_state->projectRegistrationHash,
-            function,
             ProjectDocumentDirection::Output,
             std::move(document),
         };

@@ -1,6 +1,6 @@
 {
   "$comment": "The expedition drives the run and the rival mints the documents it must refuse. Every reconcile input here is stated in the request's vocabulary, which shares no word with the verdict the disposition is read out of.",
-  "schema": "umbraflow-conformance/v1",
+  "schema": "umbraflow-conformance/v2",
   "probe_frame": "runtime/probe-frame.png",
   "under_test": {
     "deployment": "expedition",
@@ -28,10 +28,6 @@
         "payload": "{\"leagues\":9}"
       },
       "provenance": "{\"kind\":\"human_correction\",\"observation_ids\":[],\"principal_id\":\"expedition.witness\",\"source_hashes\":[\"7d4f3b2a19c8e6d5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1\"]}",
-      "continue_input": "{\"observed\":\"advanced\"}",
-      "confirmed_input": "{\"observed\":\"arrived\"}",
-      "rejected_input": "{\"observed\":\"blocked\"}",
-      "ambiguous_input": "{\"observed\":\"nothing\"}",
       "approval_required_plan_tool": "arcana.expedition.approval",
       "ui_action": {
         "surface": "expedition.surface",
@@ -66,10 +62,6 @@
         "payload": "{\"leagues\":9}"
       },
       "provenance": "{\"kind\":\"human_correction\",\"observation_ids\":[],\"principal_id\":\"expedition.witness\",\"source_hashes\":[\"7d4f3b2a19c8e6d5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1\"]}",
-      "continue_input": "{\"observed\":\"advanced\"}",
-      "confirmed_input": "{\"observed\":\"arrived\"}",
-      "rejected_input": "{\"observed\":\"blocked\"}",
-      "ambiguous_input": "{\"observed\":\"nothing\"}",
       "approval_required_plan_tool": "arcana.rival.approval",
       "ui_action": {
         "surface": "expedition.surface",

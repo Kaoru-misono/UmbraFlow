@@ -52,7 +52,6 @@ namespace uf::deployment
         namespace arcana    = operator_runtime::conformance::expedition;
 
         using operator_runtime::ProjectDocumentDirection;
-        using operator_runtime::ProjectPluginFunction;
 
         [[nodiscard]]
         auto repositoryRoot() -> std::filesystem::path
@@ -145,21 +144,6 @@ namespace uf::deployment
             return oldOrderedMemberRecognizer(exactJcs, members);
         }
 
-        // The umbraflow exemplar's reconcile branch, and the arcana exemplar's.
-        [[nodiscard]]
-        auto oldDispositionRecognizer(std::string_view exactJcs) -> bool
-        {
-            return exactJcs.starts_with("{\"disposition\":\"")
-                && exactJcs.ends_with("\"}");
-        }
-
-        [[nodiscard]]
-        auto oldVerdictRecognizer(std::string_view exactJcs) -> bool
-        {
-            return exactJcs.starts_with("{\"verdict\":\"")
-                && exactJcs.ends_with("\"}");
-        }
-
         // Every member name is present and in the order the recognizer walks,
         // and "a" sorts before all of them -- so this is a plan envelope to the
         // old validator and is not its own RFC 8785 form.
@@ -248,27 +232,6 @@ namespace uf::deployment
             return envelope;
         }
 
-        // One derive envelope whose ui_snapshot reports a single undecided
-        // reading. Only the reason varies, so nothing but the reason vocabulary
-        // can separate two of these.
-        [[nodiscard]]
-        auto deriveEnvelopeReading(std::string_view reason) -> std::string
-        {
-            auto envelope = std::string{
-                "{\"pending_operation_transition\":null,"
-                "\"pinned_project_artifact_identities\":[],"
-                "\"prior_project_observation\":null,"
-                "\"project_state\":{\"revision\":0},"
-                "\"ui_snapshot\":{\"kind\":\"resolved_state\","
-                "\"ordered_surface_stack\":[\"fixture.surface\"],"
-                "\"readings\":[{\"kind\":\"unknown\",\"reader\":\"fixture.reader\","
-                "\"reason\":\""
-            };
-            envelope += reason;
-            envelope += "\",\"ui_target\":\"fixture.target\"}]}}";
-            return envelope;
-        }
-
         [[nodiscard]]
         auto planEnvelope(std::string_view canonicalArgs) -> std::string
         {
@@ -286,50 +249,6 @@ namespace uf::deployment
                         "\"tool_version\":\"1\"}";
             return envelope;
         }
-
-        [[nodiscard]]
-        auto planProposal(std::string_view payload, std::string_view schemaHex)
-            -> std::string
-        {
-            auto proposal = std::string{
-                "{\"allowed_ui_actions\":[\"fixture.step\"],"
-                "\"canonical_args\":{\"value\":1},"
-                "\"effects\":[{\"namespaced_type\":\"fixture.write\","
-                "\"opaque_project_payload\":"
-            };
-            proposal += payload;
-            proposal += ",\"payload_schema_hash\":\"";
-            proposal += schemaHex;
-            proposal += "\",\"risk\":\"low\",\"scope_key\":\"alpha\","
-                        "\"scope_kind\":\"instance\"}],"
-                        "\"tool_name\":\"fixture.alpha.command-1\",\"tool_version\":\"1\","
-                        "\"workflow_limits\":{\"maximum_dispatches\":8,"
-                        "\"maximum_elapsed_ms\":60000,\"maximum_observations\":16,"
-                        "\"maximum_steps\":8,\"maximum_waits\":4}}";
-            return proposal;
-        }
-
-        // OP:`UIActionIntent` in the shape the umbraflow exemplar's plugin
-        // answers next_step with, and OP:`WaitIntent` beside it.
-        constexpr auto k_uiActionIntent = std::string_view{
-            "{\"action\":{\"action_id\":\"fixture.press\","
-            "\"canonical_parameters\":{\"value\":1},"
-            "\"surface_id\":\"fixture.surface\","
-            "\"ui_target_id\":\"fixture.target\"},"
-            "\"binding_variant_constraints\":[],"
-            "\"delivery_class\":\"delivery_safe\","
-            "\"expected_ui_postconditions\":[],"
-            "\"required_ui_preconditions\":[],\"step_key\":\"fixture.step\","
-            "\"timeout_policy\":{\"maximum_elapsed_ms\":5000,"
-            "\"on_timeout\":\"reobserve\"}}"
-        };
-
-        constexpr auto k_waitIntent = std::string_view{
-            "{\"condition\":{\"settled\":true},\"observation_budget\":4,"
-            "\"step_key\":\"fixture.wait\","
-            "\"timeout_policy\":{\"maximum_elapsed_ms\":5000,"
-            "\"on_timeout\":\"reobserve\"}}"
-        };
 
         // One substring of an otherwise accepted document, restated. Each
         // refusal below is about the single substitution it makes, so the
@@ -519,85 +438,34 @@ namespace uf::deployment
         CHECK(validate("{\"turn\":0}").has_value());
     }
 
-    TEST_CASE("the document validator refuses documents the exemplars' switches accepted")
+    // The reduced ProjectState is judged by the schema the registration
+    // pinned, so a state one exemplar accepts is a state the other refuses.
+    TEST_CASE("the document validator answers for one project's ProjectState")
     {
         auto const umbraflowBundle = umbraflow::DeploymentBundle{"fixture.alpha"};
         auto const validate =
             umbraflowDeployment(umbraflowBundle).documentValidator();
 
-        // The umbraflow exemplar read a reconcile document as any object whose
-        // bytes opened with the member name and closed with a quoted string.
-        constexpr auto forgedDisposition =
-            std::string_view{"{\"disposition\":\"forged\"}"};
-        REQUIRE(oldDispositionRecognizer(forgedDisposition));
-        CHECK_FALSE(validate(
-            ProjectPluginFunction::Reconcile,
-            ProjectDocumentDirection::Output,
-            forgedDisposition
-        ).has_value());
-        CHECK(validate(
-            ProjectPluginFunction::Reconcile,
-            ProjectDocumentDirection::Output,
-            "{\"disposition\":\"confirmed\"}"
-        ).has_value());
-
-        // The plan envelope, likewise: the recognizer never asked what any
-        // member's value was.
-        REQUIRE(oldPlanEnvelopeRecognizer(k_unsortedPlanEnvelope));
-        CHECK_FALSE(validate(
-            ProjectPluginFunction::Plan,
-            ProjectDocumentDirection::Input,
-            k_unsortedPlanEnvelope
-        ).has_value());
-        CHECK(validate(
-            ProjectPluginFunction::Plan,
-            ProjectDocumentDirection::Input,
-            planEnvelope("{\"value\":1}")
-        ).has_value());
-
-        // The envelope's own shape, isolated from everything nested in it: a
-        // member the Operator never puts in a plan input, with a tool name and
-        // arguments this project's catalog does accept. Only the envelope
-        // schema can refuse this one -- so the observation it carries is the
-        // same valid envelope planEnvelope embeds, and "extra" is the one
-        // clause that can refuse.
-        CHECK_FALSE(validate(
-            ProjectPluginFunction::Plan,
-            ProjectDocumentDirection::Input,
-            "{\"canonical_args\":{\"value\":1},\"extra\":1,"
-            "\"project_observation\":{\"canonical_opaque_payload\":{},"
-            "\"observed_instances\":[],\"project_tool_preconditions\":[],"
-            "\"schema\":\"umbraflow-project-observation/v1\"},"
-            "\"project_state\":{\"revision\":0},\"tool_name\":\"fixture.alpha.command-1\","
-            "\"tool_version\":\"1\"}"
-        ).has_value());
-
         auto const arcanaBundle = arcana::DeploymentBundle{"arcana.expedition"};
         auto const judgeExpedition =
             arcanaDeployment(arcanaBundle).documentValidator();
 
-        constexpr auto forgedVerdict = std::string_view{"{\"verdict\":\"forged\"}"};
-        REQUIRE(oldVerdictRecognizer(forgedVerdict));
-        CHECK_FALSE(judgeExpedition(
-            ProjectPluginFunction::Reconcile,
+        CHECK(validate(
             ProjectDocumentDirection::Output,
-            forgedVerdict
+            "{\"revision\":0}"
         ).has_value());
         CHECK(judgeExpedition(
-            ProjectPluginFunction::Reconcile,
             ProjectDocumentDirection::Output,
-            "{\"verdict\":\"settled\"}"
+            "{\"turn\":0}"
         ).has_value());
 
         // The two projects do not accept each other's documents, which is what
         // makes the schema the project's rather than the framework's.
         CHECK_FALSE(judgeExpedition(
-            ProjectPluginFunction::Reduce,
             ProjectDocumentDirection::Output,
             "{\"revision\":0}"
         ).has_value());
         CHECK_FALSE(validate(
-            ProjectPluginFunction::Reduce,
             ProjectDocumentDirection::Output,
             "{\"turn\":0}"
         ).has_value());
@@ -992,7 +860,6 @@ namespace uf::deployment
             CAPTURE(entry.clause);
             CAPTURE(entry.knowledge);
             auto const outcome = validate(
-                ProjectPluginFunction::Reduce,
                 ProjectDocumentDirection::Output,
                 knowledgeState(entry.knowledge)
             );
@@ -1136,7 +1003,6 @@ namespace uf::deployment
             CAPTURE(entry.clause);
             CAPTURE(entry.knowledge);
             auto const outcome = validate(
-                ProjectPluginFunction::Reduce,
                 ProjectDocumentDirection::Output,
                 knowledgeState(entry.knowledge)
             );
@@ -1190,20 +1056,19 @@ namespace uf::deployment
         }
     }
 
-    // The four schema families a registration owns that no other document
+    // The three schema families a registration owns that no other document
     // embeds, probed with a pointer that misses inside the published Fact
     // document. The refusal naming the pointer rather than the document is what
     // says the document was in that compiler's closed set: the case above shows
     // that a document the set does not carry is refused with the other message
     // instead.
     //
-    // The project state and observation documents cannot be probed this way and
-    // are not probed here. Both are embedded in the operator envelope schemas,
-    // which compile first, so a bad reference in either is always reported by
-    // the envelope's compilation and the probe would pass whatever the
-    // project's own compilation received. They are proved instead by the two
-    // fragment cases above and the observation case below, each of which
-    // applies the schema that compilation produced.
+    // The project state document cannot be probed this way and is not probed
+    // here: it is embedded in the reduce-input schema, which compiles first, so
+    // a bad reference in it is always reported by that compilation and the
+    // probe would pass whatever the project's own compilation received. It is
+    // proved instead by the two fragment cases above, each of which applies the
+    // schema that compilation produced.
     TEST_CASE("every registration-owned schema compiler receives the Fact closure")
     {
         constexpr auto k_missingTarget = std::string_view{
@@ -1236,13 +1101,6 @@ namespace uf::deployment
         REQUIRE_FALSE(precondition.has_value());
         CHECK(why(precondition).contains(k_inClosure));
 
-        auto reconcileSources      = bundle.sources();
-        auto const reconcileSchema = referencing(k_reconcileSchemaId);
-        reconcileSources.reconcile = reconcileSchema;
-        auto const reconcile       = ProjectDeployment::create(reconcileSources);
-        REQUIRE_FALSE(reconcile.has_value());
-        CHECK(why(reconcile).contains(k_inClosure));
-
         auto journalSources      = bundle.sources();
         auto const journalSchema = referencing(
             "https://umbraflow.dev/schema/project/journal/missing-target"
@@ -1262,49 +1120,6 @@ namespace uf::deployment
         auto const effect = ProjectDeployment::create(effectSources);
         REQUIRE_FALSE(effect.has_value());
         CHECK(why(effect).contains(k_inClosure));
-    }
-
-    // The observation compiler's own closure, proved by the schema it produced
-    // rather than by a refusal message an earlier compilation could have
-    // written. A derived observation is judged by projectObservation.validate,
-    // so a Fact clause firing here fired inside that compilation's document set.
-    TEST_CASE("the project observation compiler receives the Fact closure")
-    {
-        constexpr auto k_factObservationSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/project/observation",
-    "title": "a project observation holding one Fact",
-    "type": "object",
-    "additionalProperties": false,
-    "required": ["reading"],
-    "properties": {
-        "reading": {"$ref": "https://umbraflow.dev/schema/fact/v1"}
-    }
-})json"};
-
-        auto const bundle          = umbraflow::DeploymentBundle{"fixture.alpha"};
-        auto sources               = bundle.sources();
-        sources.projectObservation = k_factObservationSchema;
-        auto const deployed        = ProjectDeployment::create(sources);
-        INFO(why(deployed));
-        REQUIRE(deployed.has_value());
-
-        auto const validate = deployed->documentValidator();
-        auto const observed = [&validate](std::string_view fact)
-        {
-            auto document = std::string{"{\"reading\":"};
-            document += fact;
-            document += "}";
-            return validate(
-                ProjectPluginFunction::Derive,
-                ProjectDocumentDirection::Output,
-                document
-            ).has_value();
-        };
-
-        CHECK(observed(k_knownFact));
-        CHECK_FALSE(observed(substituted(k_knownFact, ",\"value\":\"chaos\"", "")));
-        CHECK_FALSE(observed(substituted(k_knownFact, "\"Known\"", "\"Guessed\"")));
     }
 
     TEST_CASE("the framework schema catalog publishes every runtime schema source")
@@ -1440,7 +1255,6 @@ namespace uf::deployment
             "fixture.unnamed"
         );
         auto const refusedEvent = validate(
-            ProjectPluginFunction::Reduce,
             ProjectDocumentDirection::Input,
             unnamed
         );
@@ -1451,13 +1265,12 @@ namespace uf::deployment
     }
 
     // The ruling on which schema keywords this evaluator can never reach. A
-    // tool precondition document and a reconcile document are judged only
-    // through the definition their manifest names -- validateDefinition, never
-    // validate -- so nothing at either root is ever evaluated. Both roots below
-    // carry an assertion that would refuse every instance, and both documents
-    // are still accepted, which is what licenses deleting a root keyword from
-    // one of those two families and nothing else.
-    TEST_CASE("the tool precondition and reconcile roots are never evaluated")
+    // tool precondition document is judged only through the definition its
+    // catalog row names -- validateDefinition, never validate -- so nothing at
+    // its root is ever evaluated. The root below carries an assertion that
+    // would refuse every instance, and the document is still accepted, which is
+    // what licenses deleting a root keyword from that family and nothing else.
+    TEST_CASE("the tool precondition root is never evaluated")
     {
         auto const bundle = umbraflow::DeploymentBundle{"fixture.alpha"};
 
@@ -1466,59 +1279,33 @@ namespace uf::deployment
             "    \"$defs\": {",
             "    \"type\": \"null\",\n    \"$defs\": {"
         );
-        auto const reconcile = substituted(
-            umbraflow::k_reconcileSchema,
-            "    \"$defs\": {",
-            "    \"type\": \"null\",\n    \"$defs\": {"
-        );
 
-        // Everything else repaired: both digests are named by a manifest, so a
+        // Everything else repaired: the digest is named by the catalog, so a
         // refusal here would be about the digest rather than about the root.
         auto const catalog = substituted(
             bundle.toolCatalog(),
             umbraflow::schemaHashHex(umbraflow::k_toolPreconditionSchema),
             umbraflow::schemaHashHex(precondition)
         );
-        auto const manifest = substituted(
-            bundle.reconcileManifest(),
-            umbraflow::schemaHashHex(umbraflow::k_reconcileSchema),
-            umbraflow::schemaHashHex(reconcile)
-        );
 
-        auto sources              = bundle.sources();
-        sources.toolPrecondition  = precondition;
-        sources.reconcile         = reconcile;
-        sources.toolCatalog       = catalog;
-        sources.reconcileManifest = manifest;
+        auto sources             = bundle.sources();
+        sources.toolPrecondition = precondition;
+        sources.toolCatalog      = catalog;
 
         auto const deployed = ProjectDeployment::create(sources);
         INFO(why(deployed));
         REQUIRE(deployed.has_value());
 
-        auto const validate = deployed->documentValidator();
-        CHECK(validate(
-            ProjectPluginFunction::Plan,
-            ProjectDocumentDirection::Input,
-            planEnvelope("{\"value\":1}")
-        ).has_value());
-        CHECK(validate(
-            ProjectPluginFunction::Reconcile,
-            ProjectDocumentDirection::Output,
-            "{\"disposition\":\"confirmed\"}"
-        ).has_value());
+        auto const judgeArguments = deployed->toolArgumentValidator();
+        CHECK(
+            judgeArguments("fixture.alpha.command-1", "{\"value\":1}").has_value()
+        );
 
-        // The named definitions still refuse what they refused, so the inert
-        // root is the root's own property rather than the whole document's.
-        CHECK_FALSE(validate(
-            ProjectPluginFunction::Plan,
-            ProjectDocumentDirection::Input,
-            planEnvelope("{\"value\":9}")
-        ).has_value());
-        CHECK_FALSE(validate(
-            ProjectPluginFunction::Reconcile,
-            ProjectDocumentDirection::Output,
-            "{\"disposition\":\"forged\"}"
-        ).has_value());
+        // The named definition still refuses what it refused, so the inert root
+        // is the root's own property rather than the whole document's.
+        CHECK_FALSE(
+            judgeArguments("fixture.alpha.command-1", "{\"value\":9}").has_value()
+        );
     }
 
     // The requirement the header states: every project-owned payload nested
@@ -1527,101 +1314,16 @@ namespace uf::deployment
     {
         auto const bundle   = umbraflow::DeploymentBundle{"fixture.alpha"};
         auto const validate = umbraflowDeployment(bundle).documentValidator();
-        auto const effectHex =
-            umbraflow::schemaHashHex(umbraflow::k_effectPayloadSchema);
 
         // A reduce envelope whose shape is exact and whose one event carries a
         // payload fixture.progress does not accept.
         CHECK(validate(
-            ProjectPluginFunction::Reduce,
             ProjectDocumentDirection::Input,
             reduceEnvelope("{\"value\":1}")
         ).has_value());
         CHECK_FALSE(validate(
-            ProjectPluginFunction::Reduce,
             ProjectDocumentDirection::Input,
             reduceEnvelope("{\"value\":2}")
-        ).has_value());
-
-        // A plan envelope whose arguments the invoked tool's own definition
-        // refuses: 0 is below the minimum FixtureArguments states.
-        CHECK_FALSE(validate(
-            ProjectPluginFunction::Plan,
-            ProjectDocumentDirection::Input,
-            planEnvelope("{\"value\":0}")
-        ).has_value());
-
-        // An OP:PlanProposal whose effect payload its own payload_schema_hash
-        // refuses, and one naming a payload schema this deployment does not
-        // carry at all.
-        CHECK(validate(
-            ProjectPluginFunction::Plan,
-            ProjectDocumentDirection::Output,
-            planProposal("{\"value\":1}", effectHex)
-        ).has_value());
-        CHECK_FALSE(validate(
-            ProjectPluginFunction::Plan,
-            ProjectDocumentDirection::Output,
-            planProposal("{\"value\":-1}", effectHex)
-        ).has_value());
-        CHECK_FALSE(validate(
-            ProjectPluginFunction::Plan,
-            ProjectDocumentDirection::Output,
-            planProposal(
-                "{\"value\":1}",
-                "00000000000000000000000000000000000000000000000000000000000000a1"
-            )
-        ).has_value());
-
-        // The derive envelope's two project members, and the framework's own
-        // ui_snapshot, are each judged where they sit.
-        constexpr auto deriveEnvelope = std::string_view{
-            "{\"pending_operation_transition\":null,"
-            "\"pinned_project_artifact_identities\":[],"
-            "\"prior_project_observation\":null,\"project_state\":{\"revision\":0},"
-            "\"ui_snapshot\":{\"kind\":\"resolved_state\","
-            "\"ordered_surface_stack\":[\"fixture.surface\"]}}"
-        };
-        CHECK(validate(
-            ProjectPluginFunction::Derive,
-            ProjectDocumentDirection::Input,
-            deriveEnvelope
-        ).has_value());
-        CHECK_FALSE(validate(
-            ProjectPluginFunction::Derive,
-            ProjectDocumentDirection::Input,
-            "{\"pending_operation_transition\":null,"
-            "\"pinned_project_artifact_identities\":[],"
-            "\"prior_project_observation\":null,\"project_state\":{\"turn\":0},"
-            "\"ui_snapshot\":{\"kind\":\"resolved_state\","
-            "\"ordered_surface_stack\":[\"fixture.surface\"]}}"
-        ).has_value());
-        CHECK_FALSE(validate(
-            ProjectPluginFunction::Derive,
-            ProjectDocumentDirection::Input,
-            "{\"pending_operation_transition\":null,"
-            "\"pinned_project_artifact_identities\":[],"
-            "\"prior_project_observation\":null,\"project_state\":{\"revision\":0},"
-            "\"ui_snapshot\":{\"kind\":\"invented_state\"}}"
-        ).has_value());
-
-        // The framework's Unknown-reason vocabulary is spelled three times --
-        // schema/umbraflow-runtime-v3.schema.json, modules/task/runtime/
-        // evidence.luau, and this module's own StateResolution definition --
-        // and nothing else holds the three together. budget_exhausted is what
-        // TaskHost::observe reports when a cycle stops reading, so a deployment
-        // that refused it here would refuse the documents the Host produces.
-        // The second row is the control: a validator that never read `reason`
-        // would accept both.
-        CHECK(validate(
-            ProjectPluginFunction::Derive,
-            ProjectDocumentDirection::Input,
-            deriveEnvelopeReading("budget_exhausted")
-        ).has_value());
-        CHECK_FALSE(validate(
-            ProjectPluginFunction::Derive,
-            ProjectDocumentDirection::Input,
-            deriveEnvelopeReading("budget_spent")
         ).has_value());
     }
 
@@ -1636,32 +1338,6 @@ namespace uf::deployment
             R"json({"$id":"https://umbraflow.dev/schema/project/elsewhere",)json"
             R"json("type":"object"})json";
         CHECK_FALSE(ProjectDeployment::create(foreignIdentity).has_value());
-
-        // The same refusal where nothing else can reach it. The reconcile
-        // schema is named by hash rather than by $ref, so a document declaring
-        // another identity, with a manifest that names its hash and its two
-        // definitions, closes every other link this deployment checks.
-        constexpr auto misidentifiedReconcile = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/project/elsewhere",
-    "$defs": {
-        "ReconcileRequest": {"type": "object"},
-        "ReconcileVerdict": {"type": "object"}
-    }
-})json"};
-        auto const misidentifiedManifest = std::string{
-            R"json({"dispositions":[{"disposition":"continue","value":"continue"}],)json"
-            R"json("plugin_id":"fixture.alpha","reconcile_schema_sha256":")json"
-        }
-            + umbraflow::schemaHashHex(misidentifiedReconcile)
-            + R"json(","request_definition":"ReconcileRequest",)json"
-              R"json("schema":"umbraflow-reconcile-manifest/v1",)json"
-              R"json("verdict_definition":"ReconcileVerdict",)json"
-              R"json("verdict_member":"disposition"})json";
-        auto misidentified              = bundle.sources();
-        misidentified.reconcile         = misidentifiedReconcile;
-        misidentified.reconcileManifest = misidentifiedManifest;
-        CHECK_FALSE(ProjectDeployment::create(misidentified).has_value());
 
         auto otherPlugin     = bundle.sources();
         otherPlugin.pluginId = "fixture.other";
@@ -1739,117 +1415,5 @@ namespace uf::deployment
         // And the unmodified sources do build one, so the refusals above are
         // about the link that was broken.
         CHECK(ProjectDeployment::create(bundle.sources()).has_value());
-    }
-
-    // Every document the two readers used to refuse, refused by whichever of
-    // the deployment's two validators refuses it now. Both run inside
-    // ProjectSchemaOwner before a ValidatedDocument exists, so none of these
-    // can reach a reader at all.
-    TEST_CASE("the operator protocol documents are judged before a reader sees them")
-    {
-        auto const bundle    = umbraflow::DeploymentBundle{"fixture.alpha"};
-        auto const validate  = umbraflowDeployment(bundle).documentValidator();
-        auto const canonical = canonicalJsonValidator();
-        auto const effectHex =
-            umbraflow::schemaHashHex(umbraflow::k_effectPayloadSchema);
-        auto const exact = planProposal("{\"value\":1}", effectHex);
-
-        auto const judgeProposal = [&validate](std::string_view document)
-        {
-            return validate(
-                ProjectPluginFunction::Plan,
-                ProjectDocumentDirection::Output,
-                document
-            ).has_value();
-        };
-        auto const judgeIntent = [&validate](std::string_view document)
-        {
-            return validate(
-                ProjectPluginFunction::NextStep,
-                ProjectDocumentDirection::Output,
-                document
-            ).has_value();
-        };
-
-        // The premise: unmodified, all three documents pass both gates, so
-        // every refusal below is about its own substitution and not about a
-        // fixture nothing can succeed against.
-        CHECK(canonical(exact).has_value());
-        CHECK(judgeProposal(exact));
-        CHECK(canonical(k_uiActionIntent).has_value());
-        CHECK(judgeIntent(k_uiActionIntent));
-        CHECK(canonical(k_waitIntent).has_value());
-        CHECK(judgeIntent(k_waitIntent));
-
-        // Not their own RFC 8785 form: one space, and one pair of members in
-        // the order a project would write them rather than the order JCS sorts
-        // them to. canonicalize refuses these, so they never become a
-        // CanonicalJson and cannot be stamped.
-        CHECK_FALSE(canonical(
-            substituted(exact, "\"risk\":\"low\"", "\"risk\": \"low\"")
-        ).has_value());
-        CHECK_FALSE(canonical(substituted(
-            exact,
-            "\"scope_key\":\"alpha\",\"scope_kind\":\"instance\"",
-            "\"scope_kind\":\"instance\",\"scope_key\":\"alpha\""
-        )).has_value());
-        CHECK_FALSE(canonical(
-            substituted(k_uiActionIntent, "\"step_key\":", "\"step_key\": ")
-        ).has_value());
-
-        // Each of the four ways the definition itself refuses a document that
-        // is canonical: a missing member, an extra one, a member of the wrong
-        // type, and a value outside an enum. "extra" sorts between "effects"
-        // and "tool_name", so the second of these stays canonical and only
-        // additionalProperties can answer it.
-        CHECK_FALSE(judgeProposal(substituted(exact, ",\"tool_version\":\"1\"", "")));
-        CHECK_FALSE(judgeProposal(
-            substituted(exact, "\"tool_name\":", "\"extra\":1,\"tool_name\":")
-        ));
-        CHECK_FALSE(judgeProposal(
-            substituted(exact, "\"tool_name\":\"fixture.alpha.command-1\"", "\"tool_name\":1")
-        ));
-        CHECK_FALSE(judgeProposal(
-            substituted(exact, "\"risk\":\"low\"", "\"risk\":\"unknown\"")
-        ));
-
-        // A payload schema identity that is not OP:`Hash`, refused by the
-        // definition's own pattern.
-        CHECK_FALSE(judgeProposal(
-            substituted(exact, effectHex, std::string(64U, 'z'))
-        ));
-
-        // The same three for a step intent, plus the case oneOf exists for: a
-        // document carrying both shapes' discriminating members satisfies
-        // neither, because each definition closes itself.
-        CHECK_FALSE(judgeIntent(substituted(
-            k_waitIntent,
-            "{\"condition\":",
-            "{\"action\":{\"action_id\":\"fixture.press\","
-            "\"canonical_parameters\":{},\"surface_id\":\"fixture.surface\","
-            "\"ui_target_id\":\"fixture.target\"},\"condition\":"
-        )));
-        CHECK_FALSE(
-            judgeIntent(substituted(k_waitIntent, ",\"observation_budget\":4", ""))
-        );
-        CHECK_FALSE(judgeIntent(substituted(
-            k_uiActionIntent,
-            "\"delivery_class\":\"delivery_safe\"",
-            "\"delivery_class\":\"invented\""
-        )));
-
-        // The one refusal that did not move, stated as the positive result it
-        // is: the definition bounds each workflow limit from below and none
-        // from above, so this document is canonical and conforming, and the
-        // reader whose own uint32 range refused it went with the plan
-        // proposal. Nothing asserts that refusal any more, and nothing can:
-        // the document type it read no longer has a producer.
-        auto const overflowing = substituted(
-            exact,
-            "\"maximum_steps\":8",
-            "\"maximum_steps\":4294967296"
-        );
-        CHECK(canonical(overflowing).has_value());
-        CHECK(judgeProposal(overflowing));
     }
 }

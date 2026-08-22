@@ -731,7 +731,6 @@ namespace uf::operator_runtime
         auto const takeover = prepared.store.takeoverLease(prepared.controller, "human");
         REQUIRE(takeover.has_value());
         CHECK(takeover->lease.fencingToken > prepared.lease.fencingToken);
-        CHECK(takeover->resolvedDispatches == 0U);
         prepared.lease = takeover->lease;
 
         auto const after = prepared.store.createSnapshot(

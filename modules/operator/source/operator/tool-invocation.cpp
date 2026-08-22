@@ -31,14 +31,8 @@ namespace uf::operator_runtime
         constexpr auto k_semanticInputTool = std::string_view{
             "framework.input.semantic_target"
         };
-        constexpr auto k_captureTool = std::string_view{
-            "framework.screen.capture"
-        };
         constexpr auto k_observeTool = std::string_view{
             "framework.screen.observe"
-        };
-        constexpr auto k_reconcileTool = std::string_view{
-            "framework.workflow.reconcile"
         };
         constexpr auto k_statusTool = std::string_view{
             "framework.workflow.status"
@@ -60,12 +54,10 @@ namespace uf::operator_runtime
 
         constexpr auto k_frameworkToolVersion = std::string_view{"1"};
         constexpr auto k_maximumObserveMillis = uint64{10'000U};
-        constexpr auto k_maximumCaptureMillis = uint64{10'000U};
         constexpr auto k_maximumWaitMillis = uint64{60'000U};
         constexpr auto k_maximumAuditMillis = uint64{1'000U};
         constexpr auto k_maximumStatusMillis = uint64{1'000U};
         constexpr auto k_maximumInputMillis = uint64{15'000U};
-        constexpr auto k_maximumReconcileMillis = uint64{30'000U};
         constexpr auto k_maximumCallerIdentityBytes = std::size_t{256U};
 
         auto appendIdentityPart(
@@ -261,36 +253,6 @@ namespace uf::operator_runtime
             };
         }
 
-        // Raw frame material, which is why the surface is Privileged while
-        // observe's is Semantic. Section 6 of the cycle SPI plan makes whether
-        // a profile may receive image bytes an offered-Tool decision, and the
-        // surface IS that decision: a second capability gate beside it would be
-        // two authorities over one question.
-        [[nodiscard]]
-        auto captureDescriptor() -> Result<ToolDescriptor>
-        {
-            return ToolDescriptor{
-                .toolVersion          = std::string{k_frameworkToolVersion},
-                .requiredCapabilities = {},
-                .effectBounds         = {},
-                .uiActionBounds       = {},
-                .limits               = WorkflowLimits{
-                    .maximumSteps         = 1U,
-                    .maximumDispatches    = 0U,
-                    .maximumObservations  = 1U,
-                    .maximumWaits         = 0U,
-                    .maximumElapsedMillis = k_maximumCaptureMillis,
-                },
-                .timeout = TimeoutPolicy{
-                    .maximumElapsedMillis = k_maximumCaptureMillis,
-                    .onTimeout            = TimeoutAction::Stop,
-                },
-                .mutability  = ToolMutability::ReadOnly,
-                .surface     = ToolSurface::Privileged,
-                .idempotency = ToolIdempotency::ReadSafe,
-            };
-        }
-
         // Run and call-tree status. It observes no frame and spends no
         // observation, so its limits admit neither.
         [[nodiscard]]
@@ -329,7 +291,7 @@ namespace uf::operator_runtime
         // read-only while persisting a durable snapshot reference: read-only
         // here means no external-world effect requiring plan authority and
         // approval grants. It therefore declares no effect bound and needs no
-        // OperatorPlanAuthority, while still spending Tool-call budget.
+        // OperatorPolicyAuthority, while still spending Tool-call budget.
         [[nodiscard]]
         auto auditDescriptor() -> Result<ToolDescriptor>
         {
@@ -351,36 +313,6 @@ namespace uf::operator_runtime
                 },
                 .mutability  = ToolMutability::ReadOnly,
                 .surface     = ToolSurface::Semantic,
-                .idempotency = ToolIdempotency::ReadSafe,
-            };
-        }
-
-        // The Framework-owned reconciliation Tool section 5.4 requires: the one
-        // transition that may consume fresh Host evidence and classify a
-        // previously possible mutating call. It observes and does not deliver,
-        // so it is ReadOnly; it is Privileged because resolving another call's
-        // ambiguity is Framework authority and not an ordinary actor's.
-        [[nodiscard]]
-        auto reconcileDescriptor() -> Result<ToolDescriptor>
-        {
-            return ToolDescriptor{
-                .toolVersion          = std::string{k_frameworkToolVersion},
-                .requiredCapabilities = {},
-                .effectBounds         = {},
-                .uiActionBounds       = {},
-                .limits               = WorkflowLimits{
-                    .maximumSteps         = 1U,
-                    .maximumDispatches    = 0U,
-                    .maximumObservations  = 1U,
-                    .maximumWaits         = 0U,
-                    .maximumElapsedMillis = k_maximumReconcileMillis,
-                },
-                .timeout = TimeoutPolicy{
-                    .maximumElapsedMillis = k_maximumReconcileMillis,
-                    .onTimeout            = TimeoutAction::Stop,
-                },
-                .mutability  = ToolMutability::ReadOnly,
-                .surface     = ToolSurface::Privileged,
                 .idempotency = ToolIdempotency::ReadSafe,
             };
         }
@@ -504,12 +436,6 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
-        auto validateCaptureArguments(CanonicalJson const& arguments) -> Status
-        {
-            return requireNoArguments(arguments, k_captureTool);
-        }
-
-        [[nodiscard]]
         auto validateStatusArguments(CanonicalJson const& arguments) -> Status
         {
             return requireNoArguments(arguments, k_statusTool);
@@ -534,28 +460,6 @@ namespace uf::operator_runtime
             {
                 return invalidFrameworkArguments(
                     "framework.audit.record requires only an object record"
-                );
-            }
-            return ok();
-        }
-
-        [[nodiscard]]
-        auto validateReconcileArguments(CanonicalJson const& arguments)
-            -> Status
-        {
-            auto const& value = arguments.value();
-            auto const* const p_call = value.find("call_identity");
-            if (
-                value.kind() != json::ValueKind::Object
-                || value.members().size() != 1U
-                || p_call == nullptr
-                || p_call->kind() != json::ValueKind::String
-                || !ContentHash::parse(p_call->string()).has_value()
-            )
-            {
-                return invalidFrameworkArguments(
-                    "framework.workflow.reconcile requires only a "
-                    "call_identity content hash"
                 );
             }
             return ok();
@@ -678,14 +582,6 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
-        auto reconcileArgumentMaterial() -> json::Value
-        {
-            return requiredMembersMaterial({
-                json::Value::ofString("call_identity"),
-            });
-        }
-
-        [[nodiscard]]
         auto semanticInputArgumentMaterial() -> json::Value
         {
             return requiredMembersMaterial({
@@ -747,22 +643,10 @@ namespace uf::operator_runtime
                 &semanticInputArgumentMaterial,
             },
             FrameworkToolDefinition{
-                k_captureTool,
-                &captureDescriptor,
-                &validateCaptureArguments,
-                &noArgumentsMaterial,
-            },
-            FrameworkToolDefinition{
                 k_observeTool,
                 &observeDescriptor,
                 &validateObserveArguments,
                 &noArgumentsMaterial,
-            },
-            FrameworkToolDefinition{
-                k_reconcileTool,
-                &reconcileDescriptor,
-                &validateReconcileArguments,
-                &reconcileArgumentMaterial,
             },
             FrameworkToolDefinition{
                 k_statusTool,

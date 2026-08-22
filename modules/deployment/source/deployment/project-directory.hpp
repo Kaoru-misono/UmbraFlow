@@ -6,7 +6,6 @@
 #include <operator/manifest.hpp>
 #include <operator/project-observation.hpp>
 #include <operator/project-plugin.hpp>
-#include <operator/reconcile-outcome.hpp>
 #include <operator/tool-invocation.hpp>
 
 #include <core/error/result.hpp>
@@ -75,11 +74,6 @@ namespace uf::deployment
         ProjectJournalDocument supersededEntry{};
         std::string            provenance{};
 
-        std::string continueInput{};
-        std::string confirmedInput{};
-        std::string rejectedInput{};
-        std::string ambiguousInput{};
-
         std::string approvalRequiredPlanTool{};
 
         ProjectUiAction uiAction{};
@@ -111,7 +105,7 @@ namespace uf::deployment
 
     // One deployment, loaded: the registration generation this loader derived
     // from the deployment's block and the digests of the files it read, and the
-    // six authorities built from it.
+    // authorities built from it.
     //
     // There is no authored registration document anywhere in a project
     // directory. The block states intent -- which closures, which schemas,
@@ -126,11 +120,10 @@ namespace uf::deployment
         operator_runtime::ProjectSchemaOwner              schemaOwner;
         operator_runtime::ProjectJournalSchemaOwner       journalSchemaOwner;
         operator_runtime::ProjectToolCatalogSchemaOwner   toolCatalogSchemaOwner;
-        operator_runtime::ProjectReconcileSchemaOwner     reconcileSchemaOwner;
         operator_runtime::ObservedInstanceIdentitySchemas observedInstanceIdentitySchemas;
 
-        // The compiled schemas and read manifests the six authorities above
-        // were built from, kept rather than dropped. Every authority judges a
+        // The compiled schemas and read manifests the authorities above were
+        // built from, kept rather than dropped. Every authority judges a
         // call and therefore needs its arguments; a document that names tools
         // without calling them -- a conformance vocabulary -- has none to
         // offer, and carriedTool is what lets such a document and this
@@ -156,16 +149,11 @@ namespace uf::deployment
     {
         mutable std::mutex m_mutex{};
         std::string        m_lastReduceInput{};
-        std::string        m_lastDeriveInput{};
 
     public:
-        auto record(
-            operator_runtime::ProjectPluginFunction function,
-            std::string_view exactJcs
-        ) -> void;
+        auto record(std::string_view exactJcs) -> void;
 
         [[nodiscard]] auto lastReduceInput() const -> std::string;
-        [[nodiscard]] auto lastDeriveInput() const -> std::string;
     };
 
     struct LoadedProject final
@@ -277,10 +265,10 @@ namespace uf::deployment
     };
 
     // The narrowest read of umbraflow-project.json that still opens files:
-    // every deployment's eight document members -- the tool catalog source,
-    // the four project schemas, the two manifests and the journal payload
-    // schemas -- opened with the same confinement, spelling rules and size
-    // bounds as the full load, and hashed. No deployment is constructed: no
+    // every deployment's document members -- the tool catalog source, the two
+    // project schemas, the journal event schema manifest and the journal
+    // payload schemas -- opened with the same confinement, spelling rules and
+    // size bounds as the full load, and hashed. No deployment is constructed: no
     // schema is compiled and no registration is derived, so a caller that only
     // needs the declared files can ask for them without the load.
     //

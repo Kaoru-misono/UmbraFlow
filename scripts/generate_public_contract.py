@@ -159,8 +159,8 @@ CLI_USAGE_DEFINITIONS = (
 EXAMPLES_DIRECTORY = "examples"
 ROOT_CMAKE = "CMakeLists.txt"
 
-# ``inline constexpr auto k_projectObservationSchemaId =
-#       std::string_view{"https://umbraflow.dev/schema/project/observation"};``
+# ``inline constexpr auto k_projectStateSchemaId =
+#       std::string_view{"https://umbraflow.dev/schema/project/state"};``
 PROJECT_SCHEMA_ID_CONSTANT = re.compile(
     r"k_([A-Za-z]+)SchemaId\s*=\s*\n?\s*std::string_view\{\"([^\"]+)\"\}"
 )

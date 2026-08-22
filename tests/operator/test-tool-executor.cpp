@@ -281,8 +281,8 @@ namespace uf::operator_runtime
                 .root       = firstRoot,
                 .call       = firstCall,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
             },
             // Stated by the provider rather than converted from a failure.
@@ -324,8 +324,8 @@ namespace uf::operator_runtime
                 .root       = secondRoot,
                 .call       = secondCall,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
             },
             [&blockedProviderCalls](ToolCallPositionIdentity const&)
@@ -493,8 +493,8 @@ namespace uf::operator_runtime
                 .root       = secondRoot,
                 .call       = secondCall,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
             },
             [&blockedProviderCalls](ToolCallPositionIdentity const&)
@@ -552,8 +552,8 @@ namespace uf::operator_runtime
                 .root       = root,
                 .call       = call,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
             },
             provider
@@ -568,7 +568,7 @@ namespace uf::operator_runtime
             approver,
             root,
             call,
-            prepared.planAuthority,
+            prepared.policyAuthority,
             effects,
             ToolApprovalRequest{
                 .approverCapability = "approve",
@@ -587,9 +587,9 @@ namespace uf::operator_runtime
                 .root       = root,
                 .call       = call,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
-                    .approvals     = approvals,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
+                    .approvals       = approvals,
                 },
             },
             provider
@@ -605,8 +605,8 @@ namespace uf::operator_runtime
                 .root       = root,
                 .call       = call,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
             },
             provider
@@ -639,8 +639,8 @@ namespace uf::operator_runtime
                 .root       = firstRoot,
                 .call       = firstCall,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
             },
             // Stated by the provider rather than converted from a failure:
@@ -696,8 +696,8 @@ namespace uf::operator_runtime
                 .root       = secondRoot,
                 .call       = secondCall,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
             },
             [](ToolCallPositionIdentity const&)
@@ -748,8 +748,8 @@ namespace uf::operator_runtime
                 .root       = root,
                 .call       = call,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
             },
             [&providerCalls](ToolCallPositionIdentity const&)
@@ -788,8 +788,8 @@ namespace uf::operator_runtime
                 .root       = firstRoot,
                 .call       = firstCall,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
             },
             // Stated rather than converted, for the reason the terminally
@@ -855,8 +855,8 @@ namespace uf::operator_runtime
                 .root       = secondRoot,
                 .call       = secondCall,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
             },
             [](ToolCallPositionIdentity const&)
@@ -902,8 +902,8 @@ namespace uf::operator_runtime
                 .root       = root,
                 .call       = call,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
             },
             [&explanation, &evidence](ToolCallPositionIdentity const&)
@@ -934,8 +934,8 @@ namespace uf::operator_runtime
                 .root       = secondRoot,
                 .call       = secondCall,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .planAuthority = prepared.planAuthority,
-                    .effects       = effects,
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
                 },
             },
             [](ToolCallPositionIdentity const&)
