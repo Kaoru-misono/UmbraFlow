@@ -11,7 +11,7 @@ Use `python` on Windows and `python3` on Linux or macOS in the commands below.
    contract/regression coverage or temporary implementation scaffolding; remove
    the temporary tests before completion.
 2. Run the whole gate with `scripts/ci-local.ps1` on Windows or
-   `scripts/ci-local.sh` on Linux and macOS. It runs the four checks in step 3,
+   `scripts/ci-local.sh` on Linux and macOS. It runs the seven checks in step 3,
    configures, builds, and runs `ctest -L CI` in that order, chooses the preset
    from the host, stops at the first failure, and prints `GATE: PASS` only when
    every step passed. Pass a target name to narrow the build while iterating;
@@ -19,7 +19,10 @@ Use `python` on Windows and `python3` on Linux or macOS in the commands below.
    MSVC-activated session — see `build-project`.
 3. Run a single check directly only while iterating on one failure:
    `python scripts/fix_format.py --check`, `python scripts/check_cpp_format.py`,
-   `python scripts/check_modules.py`, `python scripts/check_safety.py`. Passing
+   `python scripts/check_modules.py`, `python scripts/check_safety.py`,
+   `python scripts/check_luau_identity.py`,
+   `python scripts/generate_unicode_luau.py --check`,
+   `python scripts/generate_public_contract.py --check`. Passing
    one of them is not validation; only the aggregate script end to end is.
 4. Run any project-specific integration or hardware checks required by the changed subsystem.
 5. Report every command and its exit status. Do not call a change verified when a required toolchain or environment was unavailable.

@@ -36,10 +36,22 @@ line-count threshold measures design.
 
 ## Loader-enforced rules
 
+One embedded source can be admitted into more than one closure, and which
+closure admits it is a C++ declaration rather than a property of the file.
+`modules/task/source/task/framework-bundle.cpp` emits three lists over the same
+bundle: `frameworkScriptModules()` for the trusted Engine, `pureFrameworkScriptModules()`
+for `script::PureDataProgram`, and `scopedFrameworkScriptModules()` for
+`script::ScopedToolProgram`. The four scoped facades — `audit.luau`,
+`screen.luau`, `tools.luau`, `workflow.luau` — are in the recursive tree the
+reader collects but are admitted by the third list alone, so neither the trusted
+Engine nor a reducer can name one, and the refusal names the module. Do not read
+"every `.luau` file under `modules/task/runtime/`" as "every module every VM
+loads".
+
 `loadFrameworkModules` in `modules/script/source/script/ffi/environment.cpp`
 runs the bundle in the order `EngineConfig::frameworkModules` arrives in, which
 is not the reader's path order: `frameworkScriptModules()` re-emits the entries
-in non-decreasing declared dependency depth, stable within one depth.
+it admits in non-decreasing declared dependency depth, stable within one depth.
 
 - Every module declares one canonical reserved resolver name and one dependency
   depth; a case in `tests/task/test-framework-bundle.cpp` fails if an embedded

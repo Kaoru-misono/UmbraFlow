@@ -67,10 +67,17 @@ bare through `script::PureDataProgram::compile` and handed `next_step` a
 closes, carries `frozen_plan_hash`, the observation, the state and `step_index`
 and nothing else — so the generated `next_step` could never dispatch a UI action
 at the real boundary, and no green run could say so. What found it was putting
-the generated adapter through `ProjectPluginRegistrar::registerPlugin`
-(`tests/project/test-authoring-path-parity.cpp`), not another fixture. A test
-that assembles the subject's input by hand is testing the fixture's idea of the
-caller.
+the generated adapter through the registrar that admits a real closure, not
+another fixture. A test that assembles the subject's input by hand is testing
+the fixture's idea of the caller.
+
+That episode is from the five-function ProjectPlugin generation, and the
+registrar and the test it named went with it: a project now ships a reducer
+closure and a tool closure, admitted through
+`ProjectGenerationRegistrar::registerGeneration`. The lesson is unchanged and the
+same shape is available under the new boundary — a handler exercised only through
+a hand-built argument value rather than through an admitted Tool call is a
+subject exercised below its own boundary.
 
 `tests/CMakeLists.txt` owns the concrete doctest/CTest registration rules. When
 changing them, inspect the discovered test list in addition to running the
@@ -154,7 +161,7 @@ is present and false.
 
 The other half — anything expressible at the declarative tier must be demoted to
 it — has no gate and will not be given one. Deciding it means deciding whether a
-five-function Luau module and some `umbraflow-declarative-workflow-tool/v1`
+hand-written tool closure and some `umbraflow-declarative-workflow-tool/v1`
 declaration compute the same thing, which is program equivalence. Every
 syntactic approximation is one of the two failures this file exists to name: a
 Luau-to-declaration decompiler nobody will maintain, or a heuristic no authored

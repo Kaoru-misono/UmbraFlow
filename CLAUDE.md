@@ -104,7 +104,7 @@ multiply. Keep the number of live agents small.
 
 After code changes, use the `post-change-validation` skill. The whole gate is one
 command: `scripts/ci-local.ps1` on Windows, `scripts/ci-local.sh` on Linux and
-macOS. It runs the four checks below, configures, builds, and runs
+macOS. It runs the seven checks below, configures, builds, and runs
 `ctest -L CI`, chooses the preset from the host, and prints `GATE: PASS` only
 when every step passed. On Windows it needs the MSVC activation above.
 
@@ -115,6 +115,9 @@ python scripts/fix_format.py --check
 python scripts/check_cpp_format.py
 python scripts/check_modules.py
 python scripts/check_safety.py
+python scripts/check_luau_identity.py
+python scripts/generate_unicode_luau.py --check
+python scripts/generate_public_contract.py --check
 ```
 
 Use `python` on Windows and `python3` on Linux or macOS. The host presets are

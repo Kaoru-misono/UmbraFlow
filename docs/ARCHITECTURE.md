@@ -57,6 +57,7 @@ its home.
 | trusted RuntimeModel parser, evidence and two-stage resolution | `task/runtime` |
 | confined RuntimeArtifact verification and Host generation binding | `task` C++ boundary |
 | lease/fence, snapshots, plans, policy, approvals, Operation and reconciliation | `operator` |
+| the Tool Runtime: one admission path, the actor adapters that translate into it, the durable call ledger, dispatch and replay | `operator` |
 | production lifecycle composition from a project directory through Operator and Host | `service` |
 | ProjectPlugin protocol envelope schemas in the `operator/` identity namespace | `deployment`, as framework-owned protocol |
 | published framework schema files and their generated exact-byte runtime catalog | `schema` |
@@ -159,10 +160,16 @@ part of this file that cannot be recovered from anywhere else.
 - no game entity, tool name, state field, Journal event or content schema in
   this repository's generic core;
 - no ambient policy, filesystem, network, package-search or hidden input
-  reaching ProjectPlugin, which is a five-function data boundary. Closed module
-  resolution and registration-pinned read-only resources grant no ambient
-  authority; separately granted capability programs return durable evidence
-  through the Operator rather than entering a pure call;
+  reaching project code. A project's boundary is two closures and nothing else:
+  a reducer closure exporting exactly its `plugin_id` and `reduce`, compiled on
+  `script::PureDataProgram`, and a tool closure exporting the entries its
+  declared Tools bind to, compiled on `script::ScopedToolProgram`. Both slots are
+  mandatory and a project that binds no Tool ships an explicitly empty tool
+  closure, because an absent slot would be a second reading of the document.
+  Closed module resolution and registration-pinned read-only resources grant no
+  ambient authority; the tool closure's one native seam is a synchronous Tool
+  call, and the reducer's resolver carries no scoped module at all, so its
+  isolation is a property of the program type rather than a check;
 - no gate registered here that requires another repository to be present;
 - no developer-authored digest: a hash exists only where an automatically
   produced content identity sits at a real immutable-byte boundary and something

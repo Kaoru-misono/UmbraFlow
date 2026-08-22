@@ -3,12 +3,14 @@
 A reusable game-automation host: C++ owns target, capture, input and evidence
 safety; trusted Luau resolves a screenshot-free RuntimeModel; Operator holds the
 session, lease and journal authority; a game connects only through a data-only
-project plugin.
+project registration.
 
 This file is the terminology authority — a rename lands here first, then
 propagates. Every current entry names the constant, function, type or schema
 `$def` that pins it. A claim with nothing to point at does not belong here.
-Verified against the tree on 2026-08-11.
+Verified against the tree on 2026-08-11; the ProjectGeneration, Tool,
+LoadedProject, plugin-tier, project-document and schema-id entries re-verified
+2026-08-23 against the two-closure generation cut.
 
 Design authority for anything this file does not settle:
 [runtime hardening rewrite](docs/plans/2026-08-09-runtime-hardening-rewrite.md)
@@ -165,17 +167,85 @@ _Avoid_: page token, page proof, resolve result (token is reserved for
 `std::stop_token`; the other two lose that a Receipt is host-minted, not a value
 the framework can compute).
 
-**ProjectPlugin** — the only game extension boundary, data in and data out.
-`ProjectPluginHandle`, `ProjectPluginRegistrar` and `ProjectPluginFunction`
-(`Derive | Plan | NextStep | Reconcile | Reduce`) in
-`modules/operator/source/operator/project-plugin.hpp`; the pinned registration is
-`VerifiedProjectRegistration` in `modules/operator/source/operator/manifest.hpp`.
-A production registration supplies one entry plus a closed Luau module set and
-separately pinned typed resources. The entry alone returns the ProjectPlugin
-table; dependency modules carry no plugin authority. The host-owned `require`
-resolver executes exact registered bytes without concatenation, filesystem,
-package search or network fallback, and the registration separately pins the
-observable execution environment.
+**ProjectGeneration** — the only game extension boundary, data in and data out.
+`ProjectGenerationHandle` and `ProjectGenerationRegistrar` in
+`modules/operator/source/operator/project-generation.hpp`; the pinned
+registration is `VerifiedProjectGeneration` in
+`modules/operator/source/operator/manifest.hpp`, minted only by
+`validateGenerationClaims` in `manifest.cpp`.
+
+A registration carries **two closures, admitted together or not at all**, and
+holding a handle is proof of both halves of the export join:
+
+- the **reducer closure**, compiled on `script::PureDataProgram`
+  (`modules/script/source/script/pure-data-program.hpp`), exporting exactly
+  `reduce` — `k_reducerEntryPoint` in `manifest.hpp`;
+- the **tool closure**, compiled on `script::ScopedToolProgram`
+  (`modules/script/source/script/scoped-tool-program.hpp`), exporting exactly
+  the union of the entry points its `project_tool_bindings` name. A project
+  that binds no Tool ships this closure with an empty export set and an empty
+  binding table; the slot is never omitted.
+
+Two types rather than two spellings: reduction runs only on the pure type, whose
+resolver refuses every scoped module by name, and dispatch runs only on the
+scoped type, which is the only one holding a Tool Runtime seam
+(`script::ToolRuntimeInvoke`). Each closure is offered to
+`ProjectGenerationRegistrar::registerGeneration` as
+`ClosureModules{entryModule, modules}` — its entry module plus the exact blobs
+of the closed graph beneath it — beside **one** resource closure both program
+types read, and each states its own module manifest digest. The host-owned
+`require` resolves canonical Project logical names plus the reserved
+`@umbraflow/` Framework names, with no concatenation, filesystem, package search
+or network fallback; the `umbraflow.` namespace is likewise reserved for
+Framework resource names. The registration separately pins the observable
+execution environment (`plugin_environment_hash`) and the Framework Tool Catalog
+its scoped facades were compiled against (`tool_catalog_hash`).
+
+_Avoid_: `ProjectPluginHandle`, `ProjectPluginRegistrar`,
+`VerifiedProjectRegistration`, and the five-function contract
+`Derive | Plan | NextStep | Reconcile | Reduce` as executable entries — no
+closure of a generation exports `derive`, `plan`, `next_step` or `reconcile`,
+and the Tool Runtime replaced what they did. The enum `ProjectPluginFunction`
+survives in `modules/operator/source/operator/project-plugin.hpp`, but only as
+the label a `ProjectDocumentValidator` is told which document it is judging by;
+it names no callable entry.
+
+**Tool name** — the one spelling of a Tool wherever one is written: a namespaced
+dotted name whose namespace is its owner's registered namespace and whose local
+name is what follows the namespace-ending dot. `validateToolName` and
+`validateToolNameOwnership` in `modules/operator/source/operator/manifest.{hpp,cpp}`
+are the only judges; a Tool Catalog `name`, a registration `tool_name` and every
+child Tool name a `ChildEffectDeclaration` grants are this one type.
+**Ownership is the whole of the rule.** Framework owns `framework` —
+`k_frameworkToolNamespace` in `manifest.hpp` — and a Project owns its own
+registered namespace, which is its `plugin_id`. Because a registrant's namespace
+is stated once, `validateSharedClaims` refuses a `plugin_id` falling inside
+`framework.*` there rather than re-asking per Tool name. Spelled
+`$defs.namespaced_name` in
+`schema/umbraflow-project-registration-v3.schema.json` and `$defs.NamespacedName`
+in `schema/umbraflow-project-v2.schema.json`.
+
+**Tool admission** — the one path a Tool call is admitted through:
+`OperatorCoordinator::admitToolCall` (`modules/operator/source/operator/ledger.hpp`),
+which accepts exactly one value, `ToolAdmissionRequest`
+(`modules/operator/source/operator/tool-admission-request.hpp`). Policy,
+approvals, envelope intersection, session and target authority and budgets are
+evaluated once, inside admission, on that value.
+
+**Agent, human operator and project automation are all first-class callers of
+it**, and each is definitionally a *translator* into that value rather than a
+path of its own: `AgentToolAdapter`/`AgentToolUse`,
+`HumanToolAdapter`/`HumanToolCommand` and
+`ProjectAutomationAdapter`/`ProjectAutomationStart` in
+`modules/operator/source/operator/tool-actor-adapters.hpp`, beside the fourth
+producer the scoped seam has always been — one Tool calling another. An adapter
+resolves the actor's identity, canonicalises the arguments its transport
+carries, and is then out of the frame; it can state neither the caller
+idempotency namespace nor the call ordinal, so it can neither hang a request key
+on another principal's root nor alias another call's position. A fifth caller is
+a fifth translator. A proposed caller that cannot be expressed as a translation
+into `ToolAdmissionRequest` is a finding about the design and never a reason for
+a second admission path.
 
 **Operator protocol** — the session, lease, snapshot, operation and journal
 vocabulary. It exists **only** as JSON `$defs` in
@@ -214,26 +284,32 @@ constructed by `deployment::loadProductionProject(directory, expected)` in
 `modules/deployment/source/deployment/project-directory.hpp`. A project is a
 directory of data with no C++ of its own: `umbraflow-project.json` names every
 other file, and the loader derives each deployment's registration from that
-deployment's block and the digests of the files it read, then builds all five
-authorities from them. One deployment is enough and no tool has to be mutating.
+deployment's block and the digests of the files it read, then builds all **six**
+authorities from them — `VerifiedProjectGeneration`, `ProjectSchemaOwner`,
+`ProjectJournalSchemaOwner`, `ProjectToolCatalogSchemaOwner`,
+`ProjectReconcileSchemaOwner` and `ObservedInstanceIdentitySchemas`, the six
+members of `LoadedDeployment` in the same header. One deployment is enough and
+no tool has to be mutating.
+_Avoid_: "five authorities" (the pre-cut count; read `LoadedDeployment` rather
+than a number stated anywhere else).
 
 **plugin_authoring** — the deployment-block member that says which of the two
-authoring paths wrote the behavior `plugin` names: `generated` for an adapter
-the project kit produced from an `umbraflow-declarative-workflow-tool/v1`
-declaration, `hand-written` for author-owned ProjectPlugin behavior. The current
-directory generation represents that behavior as one Luau module; the accepted
-next generation represents it as an entry plus a closed module set. The author
-states the tier because only the author knows it: neither source bytes nor a path
-convention proves how the behavior was authored, and a rule the kit could apply
-but the runtime loader could not would make the two readers drift apart.
+authoring paths wrote the Luau modules `reducer_closure` and `tool_closure`
+name: `generated` for closures the project kit produced from an
+`umbraflow-declarative-workflow-tool/v1` declaration, `hand-written` for
+author-owned ones. It is stated per deployment and covers both closures
+together; there is no per-closure tier. The author states it because only the
+author knows it: neither source bytes nor a path convention proves how the
+behavior was authored, and a rule the kit could apply but the runtime loader
+could not would make the two readers drift apart.
 
 **plugin_justification** — the deployment-block member stating which member or
 semantic of `umbraflow-declarative-workflow-tool/v1` cannot express this
-hand-written plugin. Required of a deployment whose `plugin_authoring` is
-`hand-written` and refused from one whose `plugin_authoring` is `generated`: the
-declarative tier is the default and hand-written behavior is the exception,
-whether that behavior occupies one module or a module closure; demanding a
-reason from the default is demanding a false one.
+deployment's hand-written closures. Required of a deployment whose
+`plugin_authoring` is `hand-written` and refused from one whose
+`plugin_authoring` is `generated`: the declarative tier is the default and
+hand-written behavior is the exception; demanding a reason from the default is
+demanding a false one.
 Both `project check` and `loadProductionProject` refuse an absent or blank one,
 and neither judges whether the stated reason is true — that stays a review
 obligation at plugin acceptance
@@ -255,11 +331,21 @@ published bytes through the framework schema catalog. The two readers are
 root whether or not the author declared it as an input, and a source tree
 holding none is not a project.
 
-This implemented generation is the atomic module/resource cut:
-`umbraflow-project/v2` and registration format 3. No reader accepts a
-half-migrated single-file/module-closure hybrid.
-
-_Avoid_: `k_projectSchema` inside
+This implemented generation is the two-closure cut: `umbraflow-project/v2` — the
+`const` at `schema/umbraflow-project-v2.schema.json`'s `schema` member, whose
+`$id` is the unrelated `https://umbraflow.dev/schema/project/directory` — and
+registration format **5**, `k_projectGenerationFormat` in
+`modules/operator/source/operator/manifest.hpp`. There is exactly one reader of
+a registration document, `validateGenerationClaims` in `manifest.cpp`, and it
+refuses every other format rather than falling back to one, so the integer is an
+identity assertion inside that reader and never a dispatch key.
+`modules/deployment` is its production producer: `loadProductionProject` derives
+and renders the two-closure document for every deployment it loads.
+_Avoid_: registration format 3 and format 4, `plugin` as a deployment-block
+member naming one Luau module, and
+`schema/umbraflow-project-registration-v2.schema.json` (the one-closure
+registration; the file no longer exists and no reader accepts its format). Also
+`k_projectSchema` inside
 `modules/deployment/source/deployment/project-directory.cpp`, and
 `validatePluginJustifications` inside
 `modules/project/source/project/project-kit.cpp` (both retired 2026-08-14; the
@@ -344,12 +430,21 @@ actually travels in `runtime-model.toml` and is validated is the integer
 
 Every other file in `schema/` is identified by its `$id` alone and carries no
 in-band id. The `$id`s are not uniform, so read the file rather than guessing:
-`journal-v1`, `operator-v1`, `policy-v1`, `project-registration-v2` and
-`trace-v2` are short ids under `https://umbraflow.local/schema/`, while
+`journal-v1`, `operator-v1`, `policy-v1`, `project-registration-v3` and
+`trace-v2` are short ids under `https://umbraflow.local/schema/`;
 `umbraflow-annotation-workspace-v2.schema.json`,
 `umbraflow-runtime-artifact-v1.schema.json` and
 `umbraflow-runtime-v3.schema.json` spell the full file name under
-`https://umbraflow.dev/schema/`.
+`https://umbraflow.dev/schema/`; and the rest are `name/version` paths under
+that same host — `project/directory`, `collection-fact/v1`,
+`declarative-workflow-tool/v1`, `fact/v1`, `fact-provenance/v1`,
+`project-attestation/v2`, `project-observation/v1`,
+`project-observation-proposal/v1` and `project-tool-precondition/v1`. Note the
+first of those: the project directory document's `$id` carries no version at all
+while its in-band `schema` const is `umbraflow-project/v2`.
+_Avoid_: `project-registration-v2` (the `$id` until the two-closure cut, which
+renamed the file to `schema/umbraflow-project-registration-v3.schema.json` and
+deleted the v2 file rather than keeping it beside the new one).
 
 **No schema digest is pinned outside its schema file.** Editing any document
 under `schema/` moves no constant, refuses no recorded manifest and reddens no

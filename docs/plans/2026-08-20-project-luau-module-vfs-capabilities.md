@@ -26,13 +26,19 @@ The governing ruling is
 
 ## Implemented R1 invariants
 
-These invariants describe the current R1 generation. They remain executable
-until the accepted shared Tool Runtime replacement lands atomically; they do
-not constrain that future generation where the later decision explicitly
-supersedes them.
+These invariants describe the R1 generation. The shared Tool Runtime replacement
+they were written against has since landed, so read them as still binding
+wherever the later generation did not explicitly supersede them, and read the
+superseding notes inline. Where an invariant and the tree disagree, the tree and
+[`2026-08-21-project-plugin-cycle-spi.md`](2026-08-21-project-plugin-cycle-spi.md)
+decide.
 
-1. `derive`, `plan`, `nextStep`, `reconcile`, and `reduce` remain pure decoded
-   JSON-in/JSON-out calls in a fresh quota-bound VM.
+1. A closure's declared entry points are pure decoded JSON-in/JSON-out calls in
+   a fresh quota-bound VM. Superseded on the entry set: the Tool Runtime
+   generation replaced `derive`, `plan`, `nextStep` and `reconcile` with bound
+   Tool entries on a second closure, and `reduce` is the whole of the pure
+   type's contract. The purity and quota half of this invariant stands
+   unchanged.
 2. A registration pins both the module closure and the observable execution
    environment. Changing resolver, cache, cycle/error, bridge, Luau, compiler,
    globals, or host API semantics moves the registration identity.
@@ -105,10 +111,13 @@ The loader sorts by UTF-8 logical-name bytes and derives exact RFC 8785 JCS:
 }
 ```
 
-Its sha256 is `plugin_module_manifest_hash`. Changing any source byte, logical
-name, or entry changes the hash. Reordering declarations does not. A duplicate
-logical name/path, missing entry, invalid UTF-8 source, empty source, or limit
-violation is refused before registration.
+Its sha256 is the closure's module manifest hash. Changing any source byte,
+logical name, or entry changes the hash. Reordering declarations does not. A
+duplicate logical name/path, missing entry, invalid UTF-8 source, empty source,
+or limit violation is refused before registration. Superseded on arity and
+spelling: the Tool Runtime generation gives a registration two closures, so the
+single `plugin_module_manifest_hash` member this section named is now one
+`module_manifest_hash` inside each of `reducer_closure` and `tool_closure`.
 
 ### Module-name and request grammar
 
@@ -155,7 +164,9 @@ refuse at the reader; nothing is normalized.
 - Modules are precompiled at admission. Loading executes exact bytecode only
   from the sorted closure and returns exactly one non-`nil` Luau value.
 - The entry value alone is passed to the bridge and must be the exact plain
-  `plugin_id` plus five-function table. Dependency values have no such authority.
+  `plugin_id` plus the table of entry points that closure declares — `reduce`
+  alone for a reducer closure, the bound Tool entries for a tool closure.
+  Dependency values have no such authority.
 - State is keyed by resolved canonical name and is `unloaded`, `loading`,
   `loaded`, or `failed`. Repeated loaded requests return the same Luau identity.
 - Self-require and indirect cycles use one bounded stable cycle refusal. Every
@@ -257,9 +268,14 @@ resource; no Python enters runtime.
 
 - The active registration schema is `project-registration-v2`, but its document
   field is `project_registration_format: 3`; the predecessor used format 2.
+  Superseded: the Tool Runtime generation moved both, and
+  `schema/umbraflow-project-registration-v3.schema.json` and the format integer
+  its one reader accepts are the authority.
 - Required registration identity fields include
   `plugin_module_manifest_hash`, `plugin_environment_hash`, and
   `project_resources`. `plugin_hash` and `project_artifact_roots` disappear.
+  Superseded on the first: the single closure hash became one
+  `module_manifest_hash` per closure. The other two stand.
 - The attestation schema and `set_version` both become 2. Each attestation pins
   `project_registration_hash`; it does not restate plugin subset hashes.
 - In-memory names, diagnostics, observations, conformance fixtures, and comments
