@@ -688,6 +688,7 @@ if(TARGET ${PROJECT_NAME}_operator)
             operator/test-project-tool-program.cpp
             operator/test-tool-admission-funnel.cpp
             operator/test-tool-authority.cpp
+            operator/test-tool-automation-loop.cpp
             operator/test-tool-binding.cpp
             operator/test-tool-dispatch.cpp
             operator/test-tool-executor.cpp
@@ -718,7 +719,7 @@ if(TARGET ${PROJECT_NAME}_operator)
     # beside it.
     uf_shard_doctest_gates(
         TARGET test-operator
-        TOTAL_CASES 225
+        TOTAL_CASES 226
         SHARDS 6
     )
 

@@ -17,6 +17,15 @@ namespace uf::operator_runtime
 {
     class SnapshotObservationAuthority;
 
+    // The one argument member an observation-consuming Tool carries the
+    // reference in. It is stated once, here, because three boundaries read it:
+    // the Framework catalog validating the arguments, the seam joining the
+    // presented bytes back to this run's authority, and the provider resolving
+    // them. A second spelling would be a second place the member name can be
+    // wrong, and only one of them would be the one the minted document uses.
+    inline constexpr auto k_observationReferenceArgument =
+        std::string_view{"observation_reference"};
+
     // Why one presented observation reference was refused.
     //
     // Every enumerator is one named attack from experiment E5 plus the two the
@@ -270,6 +279,29 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto mint(SnapshotObservationSpec spec)
             -> Result<SnapshotObservationReference>;
+
+        // The observation one call's canonical arguments present, turned back
+        // into the reference this authority minted.
+        //
+        // This is the join between a reference a caller holds as DATA and the
+        // authority that can spend it. An Agent, a person and a Luau automation
+        // script all hold the same thing: the exact bytes an observation Tool
+        // answered with, which they may copy, store and pass along like any
+        // other JSON. None of them can hold an observation AUTHORITY, because
+        // only a mint produces a SnapshotObservationReference and only this
+        // object mints one. Recognition is byte equality against what was
+        // minted here and nothing else, so a caller-authored or caller-edited
+        // document is refused before a durable coordinate exists for it rather
+        // than inside a provider that would then have to explain a row nobody
+        // should have been able to open.
+        //
+        // std::nullopt is "this Tool consumes no observation", which is what a
+        // call whose arguments name no reference states. Bytes that name one
+        // this authority never minted are an error carrying the Unminted
+        // verdict; asking is free and spends nothing.
+        [[nodiscard]]
+        auto presented(CanonicalJson const& canonicalArgs) const
+            -> Result<std::optional<SnapshotObservationReference>>;
 
         // The complete refusal matrix, answered without spending anything.
         // std::nullopt is "this consumption would be admitted"; every other

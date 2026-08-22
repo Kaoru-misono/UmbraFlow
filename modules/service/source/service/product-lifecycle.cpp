@@ -73,14 +73,6 @@ namespace uf::service
             "framework.input.coordinate"
         };
 
-        // The member a Tool's canonical arguments carry exactly when the call
-        // consumes one observation authority. Which Tools those are is the
-        // catalog's statement and not this module's, so the seam reads the
-        // member rather than listing the names again.
-        constexpr auto k_observationArgument = std::string_view{
-            "observation_reference"
-        };
-
         // How long one minted observation authority may be presented for.
         // CALIBRATION: thirty seconds is a placeholder well above the time an
         // actor needs to interpret one observation and act on it, and well
@@ -347,15 +339,6 @@ namespace uf::service
         // nothing else can resolve one.
         operator_runtime::SnapshotObservationAuthority observations{};
 
-        // The reference values this run minted, kept because issuing a call
-        // AGAINST an observation takes the reference itself and the authority
-        // publishes no lookup. The authority still owns the spend: this is a
-        // handle store and answers only "were these exact bytes minted here",
-        // which is the one question that must be answered before a coordinate
-        // exists at all.
-        std::vector<operator_runtime::SnapshotObservationReference>
-            mintedObservations{};
-
         Impl(
             deployment::LoadedProject ownedLoaded,
             std::size_t ownedDeploymentIndex,
@@ -433,23 +416,6 @@ namespace uf::service
         [[nodiscard]] auto deployment() -> deployment::LoadedDeployment&
         {
             return loaded.deployments[deploymentIndex];
-        }
-
-        // A non-owning observation of one reference this run minted, or
-        // nullptr. It points into mintedObservations and stays valid until the
-        // next mint; every caller here consumes it before returning.
-        [[nodiscard]]
-        auto findObservation(std::string_view exactReferenceJcs) const noexcept
-            UF_LIFETIME_BOUND
-            -> operator_runtime::SnapshotObservationReference const*
-        {
-            auto const found = std::ranges::find_if(
-                mintedObservations,
-                [exactReferenceJcs](
-                    operator_runtime::SnapshotObservationReference const& minted
-                ) { return minted.wire().bytes() == exactReferenceJcs; }
-            );
-            return found == mintedObservations.end() ? nullptr : &*found;
         }
     };
 
@@ -736,9 +702,6 @@ namespace uf::service
                 }
             )
         );
-        auto const referenceWire = reference.wire().value();
-        m_impl->mintedObservations.emplace_back(std::move(reference));
-
         return confirmedToolResult(json::Value::ofObject({
             {"artifact_root_hash",
              json::Value::ofString(observed.ui.artifactRootHash().hex())},
@@ -749,7 +712,8 @@ namespace uf::service
             {"host_generation",
              counterMember(observed.ui.generation().value())},
             {"observation_id", json::Value::ofString(observed.ui.observationId())},
-            {"observation_reference", referenceWire},
+            {std::string{operator_runtime::k_observationReferenceArgument},
+             reference.wire().value()},
             {"project_registration_hash",
              json::Value::ofString(deployed.registration.hash().hex())},
             {"snapshot_identity_hash",
@@ -803,7 +767,7 @@ namespace uf::service
             requiredStringArgument(arguments.value(), "ui_action")
         );
         auto const* const p_reference = arguments.value().find(
-            k_observationArgument
+            operator_runtime::k_observationReferenceArgument
         );
         UF_CHECK(p_reference != nullptr);
 
@@ -1036,38 +1000,21 @@ namespace uf::service
 
         // A call whose canonical arguments carry an observation reference is
         // issued AGAINST the reference this run minted for those exact bytes.
-        // Recognition is byte equality and nothing else, so caller-authored or
-        // caller-edited observation JSON is refused here -- before a durable
-        // coordinate exists for it -- rather than inside a provider that would
-        // then have to explain a row nobody should have been able to open.
-        auto const* const p_presented = invocation.canonicalArgs().value().find(
-            k_observationArgument
+        // Recognition is the authority's and byte equality is the whole of it,
+        // so caller-authored or caller-edited observation JSON is refused here
+        // -- before a durable coordinate exists for it -- rather than inside a
+        // provider that would then have to explain a row nobody should have
+        // been able to open.
+        UF_TRY_VALUE(
+            presented,
+            m_impl->observations.presented(invocation.canonicalArgs())
         );
-        auto produced = p_presented == nullptr
-            ? m_impl->rootProducer.start(start)
-            : [this, &start, p_presented]()
-                -> Result<operator_runtime::ToolAdmissionRequest>
-              {
-                  auto const* const p_minted = m_impl->findObservation(
-                      json::canonicalBytes(*p_presented)
-                  );
-                  if (p_minted == nullptr)
-                  {
-                      return fail(
-                          AutomationErrorKind::InvalidResource,
-                          std::string{
-                              operator_runtime::observationRefusalDiagnostic(
-                                  operator_runtime::ObservationRefusal::Unminted
-                              )
-                          }
-                      );
-                  }
-                  return m_impl->rootProducer.startAgainstObservation(
-                      start,
-                      *p_minted
-                  );
-              }();
-        UF_TRY_VALUE(admission, std::move(produced));
+        UF_TRY_VALUE(
+            admission,
+            presented.has_value()
+                ? m_impl->rootProducer.startAgainstObservation(start, *presented)
+                : m_impl->rootProducer.start(start)
+        );
 
         auto executor = operator_runtime::ToolRuntimeExecutor{
             m_impl->operatorHost.coordinator(),

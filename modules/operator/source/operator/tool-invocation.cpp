@@ -571,7 +571,9 @@ namespace uf::operator_runtime
             -> Status
         {
             auto const& value = arguments.value();
-            auto const* const p_reference = value.find("observation_reference");
+            auto const* const p_reference = value.find(
+                k_observationReferenceArgument
+            );
             auto const* const p_target = value.find("semantic_target");
             auto const* const p_action = value.find("ui_action");
             if (
@@ -687,7 +689,9 @@ namespace uf::operator_runtime
         auto semanticInputArgumentMaterial() -> json::Value
         {
             return requiredMembersMaterial({
-                json::Value::ofString("observation_reference"),
+                json::Value::ofString(
+                    std::string{k_observationReferenceArgument}
+                ),
                 json::Value::ofString("semantic_target"),
                 json::Value::ofString("ui_action"),
             });

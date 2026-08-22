@@ -8,6 +8,7 @@
 #include "tool-runtime.hpp"
 
 #include <optional>
+#include <string_view>
 #include <vector>
 
 namespace uf::operator_runtime
@@ -97,4 +98,44 @@ namespace uf::operator_runtime
         // parent.
         [[nodiscard]] auto isRootPositioned() const -> bool;
     };
+
+    // What a mutating call proposes, wherever it is produced: one effect per
+    // bound the CATALOG declared for the Tool being called, scoped to the
+    // controlled target this run's authenticated binding holds the lease on,
+    // and judged by the policy the session pinned.
+    //
+    // Nothing here is the caller's. A producer names a Tool and an argument
+    // value; the descriptor says what that Tool may affect and the binding says
+    // which target this run controls, so an actor -- and a Luau automation
+    // script through the scoped seam -- cannot state an effect its Tool never
+    // declared, cannot aim one at another target, and cannot raise its risk.
+    // A read-only Tool proposes none, and that absence is the whole of the
+    // read-only/mutating difference in a request: there is no second function
+    // and no flag.
+    //
+    // Risk is at or below every bound's own maximumRisk, so what limits an
+    // admission is the pinned policy rather than a number a producer chose to
+    // be generous with. The opaque payload is the empty object: a producer
+    // proposes the effects its descriptor declared and interprets none of them,
+    // and the bytes exist only because the minted plan is the exact document
+    // the checked-in schema defines.
+    //
+    // Approvals are deliberately empty. An approval is a human decision a
+    // separate door mints, so a call that policy requires one for is refused by
+    // admission and the refusal is what the producer renders; pre-checking
+    // policy here to return a nicer error would duplicate the authority
+    // decision.
+    //
+    // A mutating descriptor that declares no effect bound therefore proposes an
+    // empty set, and admission refuses it by name. That is correct rather than
+    // a gap: the envelope is derived from the bounds, so a catalog that
+    // declared none has declared a Tool nothing can be admitted for.
+    //
+    // Both references are call-scoped borrows and nothing is retained.
+    [[nodiscard]]
+    auto proposedToolMutation(
+        ValidatedToolInvocation const& invocation,
+        OperatorPlanAuthority const& planAuthority,
+        std::string_view controlledTargetId
+    ) -> std::optional<ToolAdmissionRequest::Mutation>;
 }

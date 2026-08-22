@@ -1,70 +1,12 @@
 #include "tool-root-producer.hpp"
 
 #include "manifest.hpp"
-#include "tool-descriptor.hpp"
 
-#include <optional>
-#include <string_view>
+#include <string>
 #include <utility>
-#include <vector>
 
 namespace uf::operator_runtime
 {
-    namespace
-    {
-        // The risk one start proposes each of its descriptor's effect bounds
-        // at. It is at or below every bound's own maximumRisk, so what limits
-        // an admission is the policy the session pinned rather than a number a
-        // producer chose to be generous with.
-        constexpr auto k_startEffectRisk = Risk::Low;
-
-        // The opaque project payload a start carries per effect. A start
-        // proposes the effects its own descriptor declared and interprets none
-        // of them, so there is nothing for it to say here; the bytes exist
-        // because the minted plan is the exact document the schema defines.
-        constexpr auto k_startEffectPayload = std::string_view{"{}"};
-
-        // What a mutating start proposes: one effect per bound its own
-        // descriptor declares, scoped to the controlled target this actor holds
-        // the lease on, judged by the policy the session pinned. A read-only
-        // start proposes none, and that is the whole of the difference between
-        // the two admissions -- there is no second function and no flag.
-        //
-        // Approvals are deliberately empty. An approval is a human decision a
-        // separate door mints, so a start that a policy requires an approval
-        // for is refused by admission and the refusal is what the actor
-        // renders; a producer that pre-checked policy to return a nicer error
-        // would be duplicating the authority decision.
-        [[nodiscard]]
-        auto proposedMutation(ToolRootStart const& start)
-            -> std::optional<ToolAdmissionRequest::Mutation>
-        {
-            auto const& descriptor = start.invocation.descriptor();
-            if (descriptor.mutability != ToolMutability::Mutating)
-            {
-                return std::nullopt;
-            }
-            auto effects = std::vector<ProposedEffect>{};
-            effects.reserve(descriptor.effectBounds.size());
-            for (auto const& bound : descriptor.effectBounds)
-            {
-                effects.emplace_back(ProposedEffect{
-                    .namespacedType       = bound.namespacedType,
-                    .risk                 = k_startEffectRisk,
-                    .scopeKind            = bound.scopeKind,
-                    .scopeKey             = start.controller.controlledTargetId(),
-                    .payloadSchemaHash    = bound.payloadSchemaHash,
-                    .opaqueProjectPayload = std::string{k_startEffectPayload},
-                });
-            }
-            return ToolAdmissionRequest::Mutation{
-                .planAuthority = start.planAuthority,
-                .effects       = std::move(effects),
-                .approvals     = {},
-            };
-        }
-    } // namespace
-
     ToolStartCatalog::ToolStartCatalog(
         FrameworkToolCatalogOwner framework,
         ProjectToolCatalogSchemaOwner project
@@ -130,7 +72,11 @@ namespace uf::operator_runtime
             .lease      = start.lease,
             .root       = std::move(root),
             .call       = std::move(call),
-            .mutation   = proposedMutation(start),
+            .mutation   = proposedToolMutation(
+                start.invocation,
+                start.planAuthority,
+                start.controller.controlledTargetId()
+            ),
         };
     }
 

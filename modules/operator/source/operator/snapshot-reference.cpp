@@ -493,6 +493,32 @@ namespace uf::operator_runtime
         return m_minted.back();
     }
 
+    auto SnapshotObservationAuthority::presented(
+        CanonicalJson const& canonicalArgs
+    ) const -> Result<std::optional<SnapshotObservationReference>>
+    {
+        auto const* const p_presented = canonicalArgs.value().find(
+            k_observationReferenceArgument
+        );
+        if (p_presented == nullptr)
+        {
+            return std::optional<SnapshotObservationReference>{};
+        }
+        auto const* const p_minted = findMinted(
+            json::canonicalBytes(*p_presented)
+        );
+        if (p_minted == nullptr)
+        {
+            return fail(
+                refusalErrorKind(ObservationRefusal::Unminted),
+                std::string{
+                    observationRefusalDiagnostic(ObservationRefusal::Unminted)
+                }
+            );
+        }
+        return std::optional{*p_minted};
+    }
+
     auto SnapshotObservationAuthority::refuse(
         SnapshotObservationConsumption const& consumption
     ) const -> std::optional<ObservationRefusal>

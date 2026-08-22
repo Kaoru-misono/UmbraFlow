@@ -88,7 +88,13 @@ namespace uf::operator_runtime
         };
 
     private:
-        OperatorCoordinator&      m_coordinator;
+        OperatorCoordinator& m_coordinator;
+
+        // The run's observation authority, borrowed. It is the Framework
+        // providers' own, so what it recognises is exactly what they minted.
+        SnapshotObservationAuthority& m_observations;
+
+        OperatorPlanAuthority     m_planAuthority;
         ToolProvider              m_frameworkTools;
         FrameworkToolCatalogOwner m_frameworkCatalog;
 
@@ -97,10 +103,14 @@ namespace uf::operator_runtime
     public:
         State(
             OperatorCoordinator& coordinator,
+            SnapshotObservationAuthority& observations,
+            OperatorPlanAuthority planAuthority,
             ToolProvider frameworkTools,
             FrameworkToolCatalogOwner frameworkCatalog
         )
             : m_coordinator{coordinator}
+            , m_observations{observations}
+            , m_planAuthority{std::move(planAuthority)}
             , m_frameworkTools{std::move(frameworkTools)}
             , m_frameworkCatalog{std::move(frameworkCatalog)}
         {
@@ -187,21 +197,27 @@ namespace uf::operator_runtime
                   );
             UF_TRY_VALUE(invocation, std::move(validated));
 
-            // The scoped seam takes a name and one value, so a child that would
-            // have to propose an effect has nothing to propose it with. A
-            // mutating child therefore has no producer at this boundary yet,
-            // and saying so here is what keeps a mutating Tool from being
-            // admitted with an empty effect set.
-            if (invocation.descriptor().mutability != ToolMutability::ReadOnly)
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "the scoped Tool Runtime issues read-only child calls, and "
-                        + std::string{toolName} + " is declared mutating"
-                );
-            }
-
-            UF_TRY_VALUE(child, run.context.issue(invocation));
+            // The observation this child spends, if it spends one. The script
+            // handed the seam an ordinary JSON value it received from an
+            // earlier call; only the authority the Framework providers mint
+            // into can say those bytes are a reference at all, and only holding
+            // the reference it returns opens a coordinate against it. So the
+            // script supplies data and the host supplies authority, which is
+            // the only division that lets a script spend what observe returned
+            // without ever holding what spending it requires.
+            UF_TRY_VALUE(
+                observation,
+                m_observations.presented(invocation.canonicalArgs())
+            );
+            UF_TRY_VALUE(
+                child,
+                observation.has_value()
+                    ? run.context.issueAgainstObservation(
+                          invocation,
+                          *observation
+                      )
+                    : run.context.issue(invocation)
+            );
 
             // Re-derived from the durable parent row and the parent's own
             // descriptor on every child, never accumulated: the grant id is the
@@ -213,11 +229,25 @@ namespace uf::operator_runtime
                 m_coordinator.issueToolDelegationGrant(run.handlerCall)
             );
 
+            // What a mutating child proposes is derived, never stated: one
+            // effect per bound the CHILD'S OWN descriptor declares, scoped to
+            // the controlled target this dispatcher's binding holds the lease
+            // on. The script named a Tool and an argument value and nothing
+            // else, so the effect set, its scope and its risk are all the
+            // catalog's and the session's. Every ceiling above it -- the
+            // parent's child-effect declaration, the admitted root envelope,
+            // the pinned policy -- is then judged inside admission, which is
+            // where widening is refused.
             auto const childRequest = ToolAdmissionRequest{
                 .controller = run.controller,
                 .lease      = run.lease,
                 .root       = run.root,
                 .call       = child,
+                .mutation   = proposedToolMutation(
+                    invocation,
+                    m_planAuthority,
+                    run.controller.controlledTargetId()
+                ),
                 .delegation = std::move(grant),
             };
             if (bound.has_value())
@@ -315,6 +345,8 @@ namespace uf::operator_runtime
 
     auto ProjectToolDispatcher::create(
         OperatorCoordinator& coordinator,
+        SnapshotObservationAuthority& observations,
+        OperatorPlanAuthority planAuthority,
         ToolProvider frameworkTools
     ) -> Result<ProjectToolDispatcher>
     {
@@ -328,6 +360,8 @@ namespace uf::operator_runtime
         UF_TRY_VALUE(frameworkCatalog, FrameworkToolCatalogOwner::create());
         return ProjectToolDispatcher{std::make_shared<State>(
             coordinator,
+            observations,
+            std::move(planAuthority),
             std::move(frameworkTools),
             std::move(frameworkCatalog)
         )};

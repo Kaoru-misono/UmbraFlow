@@ -1,7 +1,9 @@
 #pragma once
 
+#include "effective-plan.hpp"
 #include "ledger.hpp"
 #include "project-tool-program.hpp"
+#include "snapshot-reference.hpp"
 #include "tool-admission-request.hpp"
 #include "tool-executor.hpp"
 #include "tool-invocation.hpp"
@@ -65,11 +67,25 @@ namespace uf::operator_runtime
         explicit ProjectToolDispatcher(std::shared_ptr<State> p_state) noexcept;
 
     public:
-        // `coordinator` is a borrow that must outlive this dispatcher and every
-        // program compiled with the seam it hands out, because the seam reaches
-        // it on every child call. `frameworkTools` answers the Framework Tools a
-        // scoped run reaches; production providers are a later stage, and today
-        // only a test installs one.
+        // `coordinator` and `observations` are borrows that must outlive this
+        // dispatcher and every program compiled with the seam it hands out,
+        // because the seam reaches both on every child call.
+        // `frameworkTools` answers the Framework Tools a scoped run reaches;
+        // production providers are a later stage, and today only a test
+        // installs one.
+        //
+        // `observations` must be the SAME authority the Framework observation
+        // and input providers mint into and spend from. It is what turns the
+        // reference bytes a script holds as data back into the authority a
+        // mutating input consumes; a second authority beside the providers'
+        // would recognise nothing they minted.
+        //
+        // `planAuthority` is the verified authority of the session this
+        // dispatcher serves, taken by value because it is one. A dispatcher
+        // cannot widen anything by holding one: admission refuses an authority
+        // whose registration or policy hash differs from the live session's,
+        // and what it is used for is evaluating policy over effects the
+        // catalog declared rather than granting any.
         //
         // Single-threaded by contract. One scoped run is synchronous on the
         // thread that dispatched it, and the seam is only ever re-entered from
@@ -78,6 +94,8 @@ namespace uf::operator_runtime
         [[nodiscard]]
         static auto create(
             OperatorCoordinator& coordinator,
+            SnapshotObservationAuthority& observations,
+            OperatorPlanAuthority planAuthority,
             ToolProvider frameworkTools
         ) -> Result<ProjectToolDispatcher>;
 
@@ -108,6 +126,11 @@ namespace uf::operator_runtime
         // delegation grant and a handler's child carries the grant that
         // handler is running under; admission is what judges which of the two
         // this is.
+        //
+        // A run started here may issue mutating children. Its proposed effects
+        // come from the child descriptor's own bounds and this dispatcher's
+        // controlled target -- see proposedToolMutation -- so the script that
+        // named the Tool states none of them.
         [[nodiscard]]
         auto dispatch(
             ProjectToolProgramHandle const& program,

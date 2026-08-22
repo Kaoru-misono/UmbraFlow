@@ -307,7 +307,19 @@ return {
             }
             if (name == k_mutatingTool)
             {
-                auto descriptor        = declaredDescriptor({});
+                // A mutating leaf that declares a bound, so the effect set a
+                // scoped child proposes for it is derived rather than empty.
+                // What then decides its admission is the admitted root
+                // envelope, which is the ceiling the seam cannot see.
+                auto descriptor         = declaredDescriptor({});
+                descriptor.effectBounds = {
+                    EffectBound{
+                        .namespacedType    = std::string{k_projectEffectType},
+                        .scopeKind         = std::string{k_effectScopeKind},
+                        .payloadSchemaHash = projectEffectPayloadSchemaHash(),
+                        .maximumRisk       = Risk::Medium,
+                    },
+                };
                 descriptor.mutability  = ToolMutability::Mutating;
                 descriptor.idempotency = ToolIdempotency::DeliverySafe;
                 return ToolCatalogEntry{
@@ -567,6 +579,16 @@ return {
         // One incarnation of the Operator over one runtime directory. It is
         // built in place and never moved after the dispatcher borrows its
         // store: the dispatcher reaches the coordinator on every child call.
+        //
+        // The observation and plan authorities are members for the same
+        // reason: a dispatcher borrows the first and holds the second, and
+        // both belong to the run rather than to a case. Building them here
+        // once per incarnation is also what keeps every case's dispatcher the
+        // same dispatcher.
+        //
+        // No in-class initializer for the plan authority: it has no default
+        // state, so every incarnation must construct one.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
         struct Incarnation final
         {
             OperatorCoordinator store;
@@ -574,6 +596,10 @@ return {
             SessionManifest     manifest;
             ControllerBinding   controller;
             ControlLease        lease;
+
+            OperatorPlanAuthority planAuthority;
+
+            SnapshotObservationAuthority observations{};
         };
 
         // The two effect types this fixture's mutating Tools propose: the
@@ -764,12 +790,15 @@ return {
             }
 
             auto session = openSession(store, registration, manifest, k_sessionId);
+            auto authority =
+                planAuthorityFor(store, registration, manifest, artifactRootHash);
             return Incarnation{
                 .store            = std::move(store),
                 .artifactRootHash = artifactRootHash,
                 .manifest         = manifest,
                 .controller       = std::move(session.first),
                 .lease            = std::move(session.second),
+                .planAuthority    = std::move(authority),
             };
         }
 
@@ -795,12 +824,15 @@ return {
                 policyBytes()
             );
             auto session = openSession(store, registration, manifest, sessionId);
+            auto authority =
+                planAuthorityFor(store, registration, manifest, artifactRootHash);
             return Incarnation{
                 .store            = std::move(store),
                 .artifactRootHash = artifactRootHash,
                 .manifest         = manifest,
                 .controller       = std::move(session.first),
                 .lease            = std::move(session.second),
+                .planAuthority    = std::move(authority),
             };
         }
 
@@ -965,6 +997,8 @@ return {
 
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
+            prepared.observations,
+            prepared.planAuthority,
             frameworkProvider(log)
         );
         REQUIRE_MESSAGE(dispatcher.has_value(), failureText(dispatcher));
@@ -1033,6 +1067,8 @@ return {
 
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
+            prepared.observations,
+            prepared.planAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -1091,6 +1127,8 @@ return {
 
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
+            prepared.observations,
+            prepared.planAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -1155,6 +1193,8 @@ return {
 
             auto dispatcher = ProjectToolDispatcher::create(
                 prepared.store,
+                prepared.observations,
+                prepared.planAuthority,
                 frameworkProvider(log)
             );
             REQUIRE(dispatcher.has_value());
@@ -1248,6 +1288,8 @@ return {
         auto const log = std::make_shared<RunLog>();
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
+            prepared.observations,
+            prepared.planAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -1333,6 +1375,8 @@ return {
 
             auto dispatcher = ProjectToolDispatcher::create(
                 prepared.store,
+                prepared.observations,
+                prepared.planAuthority,
                 frameworkProvider(log)
             );
             REQUIRE(dispatcher.has_value());
@@ -1390,6 +1434,8 @@ return {
         auto const log  = std::make_shared<RunLog>();
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
+            prepared.observations,
+            prepared.planAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -1434,6 +1480,8 @@ return {
 
             auto dispatcher = ProjectToolDispatcher::create(
                 prepared.store,
+                prepared.observations,
+                prepared.planAuthority,
                 frameworkProvider(log)
             );
             REQUIRE(dispatcher.has_value());
@@ -1489,6 +1537,8 @@ return {
         auto const log  = std::make_shared<RunLog>();
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
+            prepared.observations,
+            prepared.planAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -1528,6 +1578,8 @@ return {
 
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
+            prepared.observations,
+            prepared.planAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -1616,6 +1668,8 @@ return {
 
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
+            prepared.observations,
+            prepared.planAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -1744,12 +1798,7 @@ return {
                     .has_value()
             );
             auto const effects = std::vector{frameworkInputEffect(k_targetId)};
-            auto const authority = planAuthorityFor(
-                prepared.store,
-                registration,
-                prepared.manifest,
-                prepared.artifactRootHash
-            );
+            auto const authority = prepared.planAuthority;
             auto const admitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
                     .controller = prepared.controller,
@@ -1789,12 +1838,7 @@ return {
                 prepared.store.persistToolCallPosition(root, inputCall)
                     .has_value()
             );
-            auto const authority = planAuthorityFor(
-                prepared.store,
-                registration,
-                prepared.manifest,
-                prepared.artifactRootHash
-            );
+            auto const authority = prepared.planAuthority;
             auto const admitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
                     .controller = prepared.controller,
@@ -1830,12 +1874,7 @@ return {
             // -- and this is the one shape for which that conversion is right.
             auto const inputCall =
                 frameworkToolCall(program, root, k_inputTool, k_inputArguments);
-            auto const authority = planAuthorityFor(
-                prepared.store,
-                registration,
-                prepared.manifest,
-                prepared.artifactRootHash
-            );
+            auto const authority = prepared.planAuthority;
             auto const answered = ToolRuntimeExecutor{prepared.store}.invoke(
                 ToolAdmissionRequest{
                     .controller = prepared.controller,
@@ -1868,6 +1907,8 @@ return {
 
         auto const refused = ProjectToolDispatcher::create(
             prepared.store,
+            prepared.observations,
+            prepared.planAuthority,
             ToolProvider{}
         );
         REQUIRE_FALSE(refused.has_value());
@@ -1886,6 +1927,8 @@ return {
 
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
+            prepared.observations,
+            prepared.planAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -1922,6 +1965,8 @@ return {
 
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
+            prepared.observations,
+            prepared.planAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -1954,8 +1999,17 @@ return {
             ));
         }
 
-        SUBCASE("a mutating child has no producer at the scoped seam")
+        SUBCASE("a mutating child is produced and judged by the root envelope")
         {
+            // The seam refuses no mutating child of its own any more: it
+            // derives the effect set from the CHILD'S OWN descriptor bounds
+            // and hands the call to admission, which is the only place that
+            // holds the ceilings. Here the parent is a read-only root, so its
+            // admitted attempt carries no effect envelope at all and the
+            // child's derived effect lands outside it. The refusal therefore
+            // names the envelope rather than the seam -- and a seam that had
+            // proposed nothing would have been refused for having no envelope
+            // to judge, which is a different sentence.
             auto const root = rootFor("dispatch-mutating-child");
             auto const call = rootCall(
                 program,
@@ -1975,7 +2029,8 @@ return {
             REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
             CHECK(answered->state == ToolCallState::TerminalFailure);
             CHECK(payloadOf(*answered).contains(
-                "issues read-only child calls"
+                "Child Tool effect dispatch.write on dispatch-target is "
+                "outside the admitted root effect envelope"
             ));
         }
     }
@@ -2008,6 +2063,8 @@ return {
 
             auto dispatcher = ProjectToolDispatcher::create(
                 prepared.store,
+                prepared.observations,
+                prepared.planAuthority,
                 frameworkProvider(log)
             );
             REQUIRE(dispatcher.has_value());
@@ -2025,12 +2082,7 @@ return {
             REQUIRE(call.descriptor().mutability == ToolMutability::Mutating);
 
             REQUIRE(prepared.store.persistToolRootRequest(root).has_value());
-            auto const authority = planAuthorityFor(
-                prepared.store,
-                registration,
-                prepared.manifest,
-                prepared.artifactRootHash
-            );
+            auto const authority = prepared.planAuthority;
             auto const effects  = std::vector{projectEffect(k_targetId)};
             auto const admitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
@@ -2104,6 +2156,8 @@ return {
         auto const log  = std::make_shared<RunLog>();
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
+            prepared.observations,
+            prepared.planAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -2153,12 +2207,7 @@ return {
             R"({"children":[]})"
         );
         REQUIRE(prepared.store.persistToolRootRequest(nextRoot).has_value());
-        auto const authority = planAuthorityFor(
-            prepared.store,
-            registration,
-            prepared.manifest,
-            prepared.artifactRootHash
-        );
+        auto const authority = prepared.planAuthority;
         auto const effects   = std::vector{projectEffect(k_targetId)};
         auto const readmitted = prepared.store.admitToolCall(
             ToolAdmissionRequest{
@@ -2191,6 +2240,8 @@ return {
 
             auto dispatcher = ProjectToolDispatcher::create(
                 prepared.store,
+                prepared.observations,
+                prepared.planAuthority,
                 frameworkProvider(log)
             );
             REQUIRE(dispatcher.has_value());
@@ -2205,12 +2256,7 @@ return {
                 k_children
             );
             REQUIRE(prepared.store.persistToolRootRequest(root).has_value());
-            auto const authority = planAuthorityFor(
-                prepared.store,
-                registration,
-                prepared.manifest,
-                prepared.artifactRootHash
-            );
+            auto const authority = prepared.planAuthority;
             auto const effects  = std::vector{projectEffect(k_targetId)};
             auto const admitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
@@ -2260,6 +2306,8 @@ return {
         auto const log  = std::make_shared<RunLog>();
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
+            prepared.observations,
+            prepared.planAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -2307,12 +2355,7 @@ return {
         REQUIRE(
             prepared.store.persistToolCallPosition(nextRoot, nextCall).has_value()
         );
-        auto const authorityAfter = planAuthorityFor(
-            prepared.store,
-            registration,
-            prepared.manifest,
-            prepared.artifactRootHash
-        );
+        auto const authorityAfter = prepared.planAuthority;
         auto const readmitted = prepared.store.admitToolCall(
             ToolAdmissionRequest{
                 .controller = prepared.controller,
@@ -2349,18 +2392,15 @@ return {
 
             auto dispatcher = ProjectToolDispatcher::create(
                 prepared.store,
+                prepared.observations,
+                prepared.planAuthority,
                 frameworkProvider(log)
             );
             REQUIRE(dispatcher.has_value());
             auto registrar = ProjectToolProgramRegistrar{};
             auto const program =
                 loadProgram(registration, registrar, log, *dispatcher);
-            auto const authority = planAuthorityFor(
-                prepared.store,
-                registration,
-                prepared.manifest,
-                prepared.artifactRootHash
-            );
+            auto const authority = prepared.planAuthority;
 
             auto const composed = projectRootCall(
                 program,
@@ -2466,6 +2506,8 @@ return {
         auto const log  = std::make_shared<RunLog>();
         auto dispatcher = ProjectToolDispatcher::create(
             prepared.store,
+            prepared.observations,
+            prepared.planAuthority,
             frameworkProvider(log)
         );
         REQUIRE(dispatcher.has_value());
@@ -2927,6 +2969,8 @@ return {
             auto const log  = std::make_shared<RunLog>();
             auto dispatcher = ProjectToolDispatcher::create(
                 prepared.store,
+                prepared.observations,
+                prepared.planAuthority,
                 frameworkProvider(log)
             );
             REQUIRE_MESSAGE(dispatcher.has_value(), failureText(dispatcher));
@@ -2936,12 +2980,7 @@ return {
             auto const catalog =
                 ToolStartCatalog::create(toolCatalogOwner(registration));
             REQUIRE_MESSAGE(catalog.has_value(), failureText(catalog));
-            auto const authority = planAuthorityFor(
-                prepared.store,
-                registration,
-                prepared.manifest,
-                prepared.artifactRootHash
-            );
+            auto const authority = prepared.planAuthority;
             auto const execution = executionIdentity(program);
             auto world           = AdapterWorld{
                           .prepared     = prepared,
@@ -3187,6 +3226,8 @@ return {
             auto const log  = std::make_shared<RunLog>();
             auto dispatcher = ProjectToolDispatcher::create(
                 prepared.store,
+                prepared.observations,
+                prepared.planAuthority,
                 frameworkProvider(log)
             );
             REQUIRE_MESSAGE(dispatcher.has_value(), failureText(dispatcher));
@@ -3196,12 +3237,7 @@ return {
             auto const catalog =
                 ToolStartCatalog::create(toolCatalogOwner(registration));
             REQUIRE_MESSAGE(catalog.has_value(), failureText(catalog));
-            auto const authority = planAuthorityFor(
-                prepared.store,
-                registration,
-                prepared.manifest,
-                prepared.artifactRootHash
-            );
+            auto const authority = prepared.planAuthority;
             auto const execution = executionIdentity(program);
             auto world           = AdapterWorld{
                           .prepared     = prepared,
