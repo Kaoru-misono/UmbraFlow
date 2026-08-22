@@ -38,10 +38,17 @@ cd "$REPO_ROOT"
 "$PYTHON" scripts/generate_public_contract.py --check
 cmake --preset "$PRESET"
 
+# A developer works on this machine while the gate runs, so the build is capped
+# at half the logical processors rather than Ninja's default of all of them. CI
+# invokes `cmake --build --preset ...` directly and never this script, so its
+# runners stay uncapped.
+BUILD_JOBS=$(( $(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4) / 2 ))
+(( BUILD_JOBS < 2 )) && BUILD_JOBS=2
+
 if [[ -n "$TARGET" ]]; then
-    cmake --build --preset "$PRESET" --target "$TARGET"
+    cmake --build --preset "$PRESET" --target "$TARGET" -j "$BUILD_JOBS"
 else
-    cmake --build --preset "$PRESET"
+    cmake --build --preset "$PRESET" -j "$BUILD_JOBS"
 fi
 
 ctest --test-dir "build/$PRESET" -L CI --output-on-failure

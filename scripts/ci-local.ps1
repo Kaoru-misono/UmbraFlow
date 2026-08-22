@@ -39,10 +39,16 @@ try {
     cmake --preset $Preset
     Assert-NativeSuccess "CMake configure" $LASTEXITCODE
 
+    # A developer works on this machine while the gate runs, so the build is
+    # capped at half the logical processors rather than Ninja's default of all
+    # of them. CI invokes `cmake --build --preset ...` directly and never this
+    # script, so its runners stay uncapped.
+    $BuildJobs = [Math]::Max(2, [Environment]::ProcessorCount / 2)
+
     if ($Target) {
-        cmake --build --preset $Preset --target $Target
+        cmake --build --preset $Preset --target $Target -j $BuildJobs
     } else {
-        cmake --build --preset $Preset
+        cmake --build --preset $Preset -j $BuildJobs
     }
     Assert-NativeSuccess "CMake build" $LASTEXITCODE
 

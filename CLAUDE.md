@@ -67,6 +67,34 @@ generated with `cmake --preset vs2022`.
 Useful starter targets are `${PROJECT_NAME}_core`, `${PROJECT_NAME}`, and
 `test-core`.
 
+## Local parallelism is capped
+
+A developer works on the same machine that runs these commands, so a local
+build or test run must leave the machine usable. Ninja defaults to every core
+and `ctest` defaults to one test at a time; neither default is what we want
+locally.
+
+Pass an explicit job count on every local invocation, sized to leave at least
+half the logical processors free:
+
+```bash
+cmake --build --preset <host-debug-preset> -j <half the logical processors>
+ctest --test-dir build/<preset> -L CI --output-on-failure --parallel 6
+```
+
+Do **not** put `jobs` in `CMakePresets.json`. GitHub CI invokes
+`cmake --build --preset ...` directly, so a cap there would slow every runner
+as well. The cap belongs on the local command line and in `scripts/ci-local.*`,
+which CI does not use.
+
+Six is the right `ctest` figure rather than a larger one because the suite's
+critical path is its slowest single test; beyond roughly six workers the extra
+processes buy no wall-clock and only take the machine. Re-measure after
+splitting a slow binary.
+
+Concurrently dispatched agents each run their own builds, so their job counts
+multiply. Keep the number of live agents small.
+
 ## Verification
 
 After code changes, use the `post-change-validation` skill. The whole gate is one
