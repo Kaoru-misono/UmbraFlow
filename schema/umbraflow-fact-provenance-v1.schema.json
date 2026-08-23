@@ -23,10 +23,6 @@
       "minLength": 1,
       "maxLength": 512
     },
-    "project_revision": {
-      "type": "integer",
-      "minimum": 0
-    },
     "detail": {
       "type": "object"
     }

@@ -25,10 +25,6 @@
       "type": "array",
       "minItems": 2
     },
-    "confirmed_at_project_revision": {
-      "type": "integer",
-      "minimum": 0
-    },
     "confirmed_at_run_generation": {
       "type": "integer",
       "minimum": 1
@@ -67,11 +63,6 @@
           {
             "required": [
               "value"
-            ]
-          },
-          {
-            "required": [
-              "confirmed_at_project_revision"
             ]
           },
           {
@@ -135,17 +126,8 @@
           },
           {
             "not": {
-              "anyOf": [
-                {
-                  "required": [
-                    "confirmed_at_project_revision"
-                  ]
-                },
-                {
-                  "required": [
-                    "confirmed_at_run_generation"
-                  ]
-                }
+              "required": [
+                "confirmed_at_run_generation"
               ]
             }
           }
@@ -168,11 +150,6 @@
           {
             "required": [
               "value"
-            ]
-          },
-          {
-            "required": [
-              "confirmed_at_project_revision"
             ]
           },
           {
