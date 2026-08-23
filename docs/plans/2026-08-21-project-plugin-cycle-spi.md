@@ -4,8 +4,8 @@ Date: 2026-08-21
 Scope: `operator`, `service`, `script`, `deployment`, `task`, Agent bindings,
 Workbench/CLI, schemas, Project Kit, conformance, release publication, and
 consumer migration
-Status: **the generation landed at `afcebd2`; WP11 and WP12 and the obligations
-of section 14 remain open**
+Status: **the generation landed at `afcebd2`; WP9 and the shipped entry point
+followed; WP11, WP12 and the remaining obligations of section 14 are open**
 
 The ruling is frozen in
 [`tools are the shared game-driving boundary`](../decisions/2026-08-21-tools-are-the-shared-game-driving-boundary.md).
@@ -1186,84 +1186,108 @@ that true by hand.
 
 ### 14.1 Surfaces left standing with nothing behind them
 
-- **The Operation dispatch spine is uncallable.** `OperationMachine` in
-  `modules/operator/source/operator/operation.hpp` is reached only through
-  `OperatorCoordinator::recordExternalInput`, `transitionOperation`,
-  `reserveDispatch` and `recordDeliveryOutcome`. The first two have no non-test
-  caller; the other two are reached only through `OperatorTaskHost::dispatch` and
-  `conformance::deliverAndRecord`, and nothing calls either. The Operation
-  vocabulary is still load-bearing elsewhere — `submitCommand` writes Operation
-  rows and Tool admission reads the `operations` table for its target-wide
-  mutation barrier — so this is a spine to retire deliberately rather than dead
-  text to delete on sight. Decide which half survives and delete the other in one
-  change.
-- **Four `ProjectPluginFunction` members are dead.** `Derive`, `Plan`, `NextStep`
-  and `Reconcile` can no longer be dispatched: `ProjectSchemaOwner`'s validators
-  are private to `ProjectGenerationHandle`, whose only call passes `Reduce`. The
-  pinned documents those four judge are still compiled and still shipped — the
-  derive, plan and step input schemas, the step-intent schema, the `PlanProposal`
-  output schema, and the registration's own reconcile payload manifest — as are
-  the unreachable switch arms that select them, and
-  `ProjectReconcileSchemaOwner::validate` can therefore never mint a
-  `ValidatedReconcileOutcome` in production. Retire the enumerators and the
-  documents they judge together.
-- **`schema/umbraflow-operator-v1.schema.json` still publishes deleted types.** It
-  is the framework-owned protocol schema, so a type it defines is a published
-  claim; several of its definitions no longer have a producer anywhere in
-  `modules/` or `entry/`. Cut the published surface to what this generation
-  produces, in one change, and move whatever identity that cut moves with it.
-- **Two Framework Tools have no provider.** `framework.screen.capture` and
-  `framework.workflow.reconcile` are complete catalog entries — descriptor,
-  argument validation, catalog identity — that
-  `ProductLifecycle::Impl::answerFrameworkTool` does not answer, so an admitted
-  call to either reaches the terminal "Framework Tool Catalog admitted a Tool with
-  no provider". Section 5.4 additionally requires that
-  `framework.workflow.reconcile` be what `reconcileMutatingToolCall` consults,
-  which it is not: the transition still invokes an in-process
-  `ToolReconciliationQuery`.
+Closed at `2797241`, which cut them rather than filling them in: the Operation
+dispatch spine and the cascade of constants and unreachable states it was the
+only writer for; `ProjectPluginFunction` entirely, because with only `Reduce`
+left the refolded-function comparison was a check no test could redden; the
+reconcile subsystem and the observation schema `Derive`'s death left nothing
+judging; and `framework.screen.capture` and `framework.workflow.reconcile`,
+whose blockers had not expired at the flip — no public API recovers a position
+identity from the `call_identity` hash, and `ToolReconciliationQuery` is an
+oracle the Framework has no source for, so both were new capabilities rather
+than provider attachments.
+
+Also closed at `2797241`: **the three actor doors now have a shipped verb.**
+`umbra-flow invoke --actor agent|human|project` is the production entry point,
+and `--actor` names the principal rather than only the translator — `ProductStart`
+carries an explicit `ControllerKind` with no default, so every construction site
+states whose call it is, and the controller id is composed from the kind's own
+wire name so the two cannot disagree.
+
+What is still standing:
+
+- **`schema/umbraflow-operator-v1.schema.json` still publishes an
+  Operation-shaped surface.** `EffectivePlan`, `PlanVersion.effective_plan` and
+  three `DeliveryAuthority` members went with the spine, but `Operation`,
+  `DispatchRecord`, `AuthorityDecision`, `ApprovalToken`, `ReconcileProposal` and
+  `MutationChain` remain, and their only consumers are the contract tests that
+  assert on the published bytes. `submitCommand` and `transitionOperation` are
+  still test-reachable and the `operations` table still backs Tool admission's
+  target-wide mutation barrier, so this is a wider protocol cut to decide
+  deliberately, not dead text to delete on sight.
 - **No Framework input provider resolves an observation reference through
-  `SnapshotObservationAuthority`.** Section 6's eleven-way refusal matrix is built;
-  its input-authority sentences stay requirements on whatever resolves through it.
-- **The three actor doors have no shipped verb behind them.**
-  `ProductLifecycle::invokeAgentTool`, `invokeHumanTool` and
-  `startProjectAutomation` are the production composition root's one door per
-  actor class and each translates into the one admission request, but at the cut
-  no caller in `entry/` or `modules/cli` reached any of them: the shipped CLI
-  wires `approve`, `explore`, `observe`, `ocr`, `open`, `reclaim`, `targets` and
-  `upgrade`, and only `observe` touches the Operator. A downstream author
-  therefore has no way to start a run from a shipped binary. Confirm the state
-  before picking this up; it is the last step between the generation and a
-  usable product.
+  `SnapshotObservationAuthority`.** Section 6's eleven-way refusal matrix is
+  built; its input-authority sentences stay requirements on whatever resolves
+  through it.
+- **The two Journal commit doors have no production caller.**
+  `OperatorCoordinator::proposeJournalBatch` and `publishJournalProposal` are
+  test-reachable only: nothing in `entry/` or `modules/cli` proposes or
+  publishes, and a Project handler has no scoped seam to propose through. Under
+  section 9.1 that is a legitimate intermediate state rather than drift, but it
+  is the same shape as the actor-door gap this section just closed, and it
+  closes the same way.
 
 ### 14.2 The Journal reducer
 
-- **`commit_context` does not exist.** The implemented reduce envelope is exactly
-  `{"journal_events": [...], "prior_project_state": ...}`, and the symbol appears
-  in no source, schema or test. Section 8's block is the target envelope and WP9's
-  trusted commit context is the work that produces it.
-- **There are no call-bound provisional Journal proposals.** Section 7 requires
-  proposals persisted against the exact call tree and outcome revision, unable to
-  commit while any referenced effect is `possible`, published by one final CAS
-  that re-verifies those identities and the prior revision. Nothing first-party
-  implements it; Journal events are appended and never provisional. The
-  `provisional` spelling in `umbraflow-operator-v1.schema.json` is the operation
-  plan's lifecycle and is unrelated.
-- **Section 5.4's dependent-Journal-commit clause is unimplemented.**
-  `requireNoActiveToolMutation` has exactly two call sites, `submitCommand` and
-  `admitToolCall`; `commitReconciliation` and its `journal_events` insert never
-  consult it, so a frozen target does not block a dependent commit.
+Closed by WP9. The reduce envelope is now section 8's block byte for byte —
+`commit_context {prior_revision, next_revision}`, `prior_project_state`,
+`prospective_journal_batch` — and nothing a Project supplies reaches either
+revision: both are derived from the `project_state` row the Operator holds,
+through `nextProjectStateRevision`, the single statement of the increment rule.
+`prior_project_state` is carried as one optional value rather than two
+parameters, so "prior state absent if and only if prior revision null" is
+structural rather than checked.
+
+Call-bound proposals exist as three tables and two doors. A proposal may only be
+made from a dispatching Project-provided call of the named run; it records the
+ProjectInstance and the frozen prior revision from rows the Operator holds,
+never from the caller, and is content-addressed over everything the proposer
+stated, so the same batch from the same incarnation rejoins rather than
+duplicating. Publication is one `BEGIN IMMEDIATE` transaction that re-verifies
+durable-run authority, the call-tree identity, the referenced effect identities,
+section 5.4's barrier and the prior revision before the fold, then writes
+`journal_events`, `project_state` and the published revision together. The word
+`provisional` is deliberately absent from the schema: it already spells the
+operation plan's lifecycle, and one word for two lifecycles is a reader's trap.
+
+Section 5.4's dependent-commit clause is implemented, and what "dependent" means
+is now decided rather than assumed: `publishJournalProposal` consults
+`requireNoActiveToolMutation` **excluding the proposing call and its ancestors**.
+Consulting it unconditionally would freeze a commit proposed from inside a
+mutating parent that is merely still dispatching — section 3.3's one live
+mutation chain that the commit is part of, not a delivery it depends on.
+
+Two things this closure changed that were not in its brief. The envelope's third
+member was renamed from `journal_events` to `prospective_journal_batch`: section
+8 writes three snake_case names at one level and spells `prior_project_state`
+exactly as implemented, so reading the third as prose while the other two are
+names is not a reading the block supports. And the operator database schema
+identity moved to `f3462667`, with a registered migration and a fixture that
+winds a fresh schema back by dropping exactly the three new tables and asserts
+the old identity before reopening.
 
 ### 14.3 Verification and publication
 
-- **Conformance covers none of the Tool Runtime.** `modules/conformance/` names
-  `script::ToolRuntimeInvoke` only to supply a seam that refuses — "a conformance
-  run dispatches no Tool call" — and names no admission function, durable table,
-  call state or replay. The runnable cases the consumer contract is made of
-  therefore still describe the superseded generation. Unit coverage is wide, in
-  `tests/operator/test-tool-*.cpp` and `tests/script/test-scoped-tool-program.cpp`,
-  and under
-  [`conformance names the suite`](../decisions/2026-08-11-conformance-names-the-suite.md)
-  none of it is the consumer contract.
+- **Conformance covers the Tool Runtime in part, as of 2026-08-23.**
+  `suite-tool-runtime.cpp` names `admitToolCall`, `beginToolCallDispatch`,
+  `replayToolCall`, `persistToolRootRequest`, `persistToolCallPosition`,
+  `ToolCallState`, the three actor adapters and `ProjectToolDispatcher`, across
+  three cases: identical admission for every actor over this project's own
+  Tools, a recorded call answered again from the ledger alone after the whole
+  runtime is destroyed, and a call interrupted mid-dispatch re-entering to the
+  same answer. Still uncovered: nested calls and delegation,
+  observation-consuming calls, `possible` and reconciliation, the target-wide
+  mutation barrier, and anything needing a Framework provider.
+
+  The seam that refused was not refusing because a conformance run has no Host —
+  `prepareStore` activates a real `task::TaskHost`. It refused on an ordering
+  fact: provisioning needs the generation's fold and nothing else, and at that
+  point no session, controller, lease or observation authority exists. It is now
+  `provisioningToolRuntime()` and says so. What a conformance run genuinely
+  lacks is a Framework `ToolProvider`, and it cannot invent one: a second answer
+  for `framework.*` written in the suite would be a second account of what those
+  Tools do. That refusal names the Tool, and it is reachable only by a consumer
+  directory whose handler calls one.
 - **Three refusals have neither a caller nor a test**: the accept-side discovery
   checks in `admitToolCall`, the origin-principal continuation gate, and the
   root-namespace binding.
@@ -1275,11 +1299,32 @@ that true by hand.
 - **Most of section 10 is unrun.** E2's subject exists as
   `tests/operator/test-tool-automation-loop.cpp`; the dispatch and
   snapshot-reference fixtures cover parts of E3 and E5; and E1 has a three-actor
-  fixture in `tests/operator/test-tool-dispatch.cpp`, though whether it makes the
-  comparison E1 and section 7 describe — canonical argument bytes, admission
-  outcome, durable row attributes and result across all four producers — is
-  unaudited. E4, E6's cross-platform half, E7 and E8 have no runner, and E8
-  cannot pass while the `terminally_unresolved` item below stands.
+  fixture in `tests/operator/test-tool-dispatch.cpp`, and it is **audited and done**: it compares canonical
+  argument bytes and hash, the seven admission-attempt attributes, all thirteen
+  durable position columns and the result, across all four producers, with the
+  fourth's one recorded difference — a non-empty `delegation_grant_id` —
+  asserted rather than ignored. The caveat is that only the read-only fixture
+  drives all four; the mutating one drives the three adapters. E4, E6's cross-platform half, E7 and E8 have no runner.
+
+  E4 cannot be written in conformance today: every descriptor in both shipped
+  example catalogs declares `child_effects.maximum_child_calls: 0`, so no
+  handler can issue a child call and no delegation grant can be minted. Its
+  attack list is a set of Operator refusals over a synthetic catalog, which
+  `tests/operator/test-tool-nested-calls.cpp` is the right home for; the half
+  that is genuinely the consumer's — does this project's descriptor declare a
+  child-effect envelope its handler stays inside — needs an example directory
+  that declares one.
+
+  E7 belongs in conformance beside the existing Journal-prefix fold case, but
+  its subject is WP9's: there is no `commit_context` and no call-bound
+  provisional proposal to prove parity against yet.
+
+  **E8's blocker is upstream of the `terminally_unresolved` item below.** No
+  `possible` outcome has any producer a conformance run can reach:
+  `toolCallEffectMayBeUnrecorded(RecordedChildren, Mutating)` is false, so a
+  Project handler never goes uncertain, and only a mutating Framework leaf can —
+  which needs the Framework provider a conformance run does not have. E8 has no
+  starting state, not merely no exit.
 
 ### 14.4 Runtime obligations still open
 

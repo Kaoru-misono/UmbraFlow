@@ -112,3 +112,49 @@ cmd //c "echo probe"   # prints: probe
 If the first form ever prints `probe`, the path conversion is off in that shell
 and the workaround is unnecessary there — but check rather than assume, because
 the failing form's exit status cannot tell you.
+
+## An edit to `examples/` has no effect until CMake reconfigures
+
+### Symptom
+
+You change a file under `examples/` — a project document, a plugin module, a
+schema — rebuild the target that consumes it, and the test still reads the old
+bytes. Nothing errors. The build reports success, the test fails against the
+content you just replaced, and re-reading the source file confirms your edit is
+there. Reverting and re-applying the edit changes nothing.
+
+### Root cause
+
+`examples/` is not read from the source tree at test time. `CMakeLists.txt`
+stages it into `build/<preset>/examples/` at **configure** time, so the staged
+copy is a snapshot taken when `cmake --preset` last ran. `cmake --build` does
+not restage it: the module-source glob has `CONFIGURE_DEPENDS` and reconfigures
+itself when the source *set* changes, but editing the *contents* of an already
+staged example is invisible to that. The consuming test therefore keeps reading
+a copy that no longer matches the tree.
+
+This is the same failure shape as the `/c` swallowing above: everything
+downstream is consistent with success because the thing you changed never
+reached the thing you ran.
+
+### Fix
+
+Reconfigure before building whenever an `examples/` file changed:
+
+```bash
+cmd //c "call .claude\skills\build-project\script\windows\build-env.bat && cmake --preset x64-debug && cmake --build --preset x64-debug --target test-cli -j 6"
+```
+
+`scripts/ci-local.ps1` and `scripts/ci-local.sh` already configure before they
+build, so the full gate never sees this. It is targeted iteration that does.
+
+### Regression check
+
+Compare the staged copy against the source rather than trusting either:
+
+```bash
+diff -r examples build/x64-debug/examples
+```
+
+A difference means the staged snapshot is stale and any test reading it is
+reporting on bytes you did not write.

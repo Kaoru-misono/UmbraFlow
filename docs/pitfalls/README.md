@@ -15,8 +15,10 @@ Each entry should contain the symptom, root cause, fix, and a regression check. 
   rejects a cross-document schema or RuntimeArtifact inconsistency.
 - [Concurrent agent builds in one worktree](concurrent-agent-builds.md)
 - [Running the repository's own tooling](repository-tooling-invocation.md) — a
-  repo-wide formatter rewrites files another agent owns, and the documented
-  MSVC activation command runs nothing when invoked from the Bash tool.
+  repo-wide formatter rewrites files another agent owns, the documented MSVC
+  activation command runs nothing when invoked from the Bash tool, and an edit
+  under `examples/` is invisible until CMake reconfigures. All three fail by
+  looking like success.
 - [Cross-platform CI toolchain diagnostics](cross-platform-ci-toolchains.md)
 - [Capture and target selection](capture-and-target-selection.md)
 - [Page modeling and multi-step flows](page-modeling-and-multi-step.md)
