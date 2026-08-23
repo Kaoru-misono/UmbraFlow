@@ -191,6 +191,7 @@ rules above.
    `journal_payload_schemas` and `effect_payload_schemas`, and the schema files
    they named.
 8. Rewrite or drop every Luau module that folded, read or wrote project state.
-9. Run `project init` (the input ledger is derived from the declaration and is
-   stale after any of the above), then `project build`, `project check`, and
-   `umbra-flow open --project DIR`.
+9. Run `project build`, `project check`, and `umbra-flow open --project DIR`.
+   There is no input ledger to refresh: the file set is derived from the
+   declaration on every run. See
+   [the upgrade path release note](2026-08-23-project-upgrade-path.md).

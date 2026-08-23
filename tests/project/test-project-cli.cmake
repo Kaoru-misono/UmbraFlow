@@ -8,7 +8,10 @@ endif()
 
 set(SOURCE_DIRECTORY "${UF_PROJECT_TEST_ROOT}/source")
 set(BUILD_DIRECTORY "${UF_PROJECT_TEST_ROOT}/build")
-set(INPUT_PATH "${SOURCE_DIRECTORY}/declared.txt")
+# A declared input is a file the declaration names -- here the deployment's own
+# resource. There is no flag that adds one beside the declaration, so the file
+# whose removal a case below checks has to be one the document carries.
+set(INPUT_PATH "${SOURCE_DIRECTORY}/content/facts.txt")
 set(DECLARATIVE_DIRECTORY
     "${SOURCE_DIRECTORY}/declarative-tools/chaos.project"
 )
@@ -45,7 +48,6 @@ set(GENERATED_REGISTRATION_NAME
 
 file(REMOVE_RECURSE "${UF_PROJECT_TEST_ROOT}")
 file(MAKE_DIRECTORY "${SOURCE_DIRECTORY}" "${DECLARATIVE_DIRECTORY}")
-file(WRITE "${INPUT_PATH}" "declared input\n")
 
 # A source tree is a project only when it holds umbraflow-project.json at its
 # root, so the CLI's own rehearsal writes one. It is deliberately not declared
@@ -126,9 +128,6 @@ execute_process(
     COMMAND "${UF_PROJECT_EXECUTABLE}" init
         --source "${SOURCE_DIRECTORY}"
         --build "${BUILD_DIRECTORY}"
-        --input declared.txt
-        --input declarative-tools/chaos.project/dismiss-known-overlay.json
-        --input content/facts.txt
     RESULT_VARIABLE INIT_RESULT
     OUTPUT_VARIABLE INIT_OUTPUT
     ERROR_VARIABLE INIT_ERROR
@@ -264,10 +263,10 @@ if(MISSING_RESULT EQUAL 0)
         "project check must reject a removed declared input"
     )
 endif()
-string(FIND "${MISSING_ERROR}" "declared.txt" MISSING_NAME_INDEX)
+string(FIND "${MISSING_ERROR}" "content/facts.txt" MISSING_NAME_INDEX)
 if(MISSING_NAME_INDEX EQUAL -1)
     message(FATAL_ERROR
-        "missing-input diagnostic must name declared.txt; "
+        "missing-input diagnostic must name content/facts.txt; "
         "stderr=[${MISSING_ERROR}]"
     )
 endif()
@@ -314,12 +313,12 @@ endfunction()
 # generated/registrations/DEPLOYMENT.json identity record. A hand edit must be
 # named like every other generated artifact.
 #
-# The last build above happened before declared.txt was removed, so the tree
+# The last build above happened before the declared resource was removed, so the tree
 # still holds every generated artifact; this section restores the declared
 # input and then mutates one generated artifact at a time, checking that the
 # command names the exact file or blob and that a build replaces it.
 # ----------------------------------------------------------------------------
-file(WRITE "${INPUT_PATH}" "declared input\n")
+file(WRITE "${INPUT_PATH}" "declared facts\n")
 
 # G2. A deleted generated resource is refused by name.
 file(REMOVE "${GENERATED_BLOB}")
@@ -399,7 +398,7 @@ file(MAKE_DIRECTORY
     "${CUT_CORPUS}"
     "${CUT_LYING_CORPUS}"
 )
-file(WRITE "${CUT_SOURCE}/declared.txt" "declared input\n")
+
 file(WRITE "${CUT_SOURCE}/plugin/dream.luau" [=[return {
     plugin_id = "chaos.dream",
 }
@@ -459,7 +458,6 @@ foreach(CUT_BUILD_DIRECTORY
     run_project(CUT_INIT_RESULT CUT_INIT_DIAGNOSTIC init
         --source "${CUT_SOURCE}"
         --build "${CUT_BUILD_DIRECTORY}"
-        --input declared.txt
     )
     if(NOT CUT_INIT_RESULT EQUAL 0)
         message(FATAL_ERROR
@@ -633,7 +631,6 @@ file(GLOB_RECURSE BOOTSTRAP_BEFORE
 run_project(BOOTSTRAP_INIT_RESULT BOOTSTRAP_INIT_DIAGNOSTIC init
     --source "${BOOTSTRAP_SOURCE}"
     --build "${BOOTSTRAP_BUILD}"
-    --input declared.txt
 )
 if(BOOTSTRAP_INIT_RESULT EQUAL 0)
     message(FATAL_ERROR
@@ -685,7 +682,7 @@ foreach(SCAFFOLD_FORM IN ITEMS generated hand-written)
             )
         endif()
     endforeach()
-    if(NOT EXISTS "${SCAFFOLD_SOURCE}/work/build/project-kit.inputs")
+    if(NOT EXISTS "${SCAFFOLD_SOURCE}/work/build/project-kit.build")
         message(FATAL_ERROR
             "scaffolded ${SCAFFOLD_FORM} project must use source/work/build"
         )

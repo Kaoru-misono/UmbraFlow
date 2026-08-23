@@ -16,9 +16,6 @@
 
 namespace uf::project
 {
-    inline constexpr auto k_inputManifestName = std::string_view{
-        "project-kit.inputs"
-    };
     inline constexpr auto k_buildReceiptName = std::string_view{
         "project-kit.build"
     };
@@ -73,13 +70,10 @@ namespace uf::project
         Result<std::vector<std::byte>>(ContentHash const&)
     >;
 
-    struct ProjectInitSpec final
-    {
-        std::filesystem::path              sourceDirectory{};
-        std::filesystem::path              buildDirectory{};
-        std::vector<std::filesystem::path> inputs{};
-    };
-
+    // The two directories every action of the kit works between. There is no
+    // separate init spec: a project's source inputs are derived from its own
+    // declaration and from nothing else, so there is nothing an init could
+    // record that a build would not derive again.
     struct ProjectBuildSpec final
     {
         std::filesystem::path sourceDirectory{};
@@ -109,7 +103,7 @@ namespace uf::project
     auto scaffoldProject(ProjectScaffoldSpec const& spec) -> Status;
 
     [[nodiscard]]
-    auto initProject(ProjectInitSpec const& spec) -> Status;
+    auto initProject(ProjectBuildSpec const& spec) -> Status;
 
     [[nodiscard]]
     auto buildProject(

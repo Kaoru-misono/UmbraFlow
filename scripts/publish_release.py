@@ -3,8 +3,8 @@
 
 This script is the only writer of a release manifest. Its output is the
 immutable ``umbraflow-release/v1`` document that
-``docs/decisions/2026-08-20-project-init-owns-bootstrap.md`` rules, and the
-constants below are the shape authority: ``project init`` parses these exact
+``docs/decisions/2026-08-23-project-upgrade-owns-the-bundle.md`` rules, and the
+constants below are the shape authority: ``project upgrade`` parses these exact
 members, selects the artifact for its host platform and arch, and refuses a
 mismatch on the declared sha256. The framework schema catalog does not carry
 this publisher-owned document; its shipped C++ reader lives at the ``project``
@@ -22,7 +22,7 @@ id is a function of the exact bytes on disk.
 
 An artifact ``path`` is canonical, ``'/'``-only and relative to the release
 root, on the same terms the project manifest's path discipline demands: the
-publisher writes it and ``project init`` refuses anything else.
+publisher writes it and ``project upgrade`` refuses anything else.
 
 Run after a green local gate. This script computes and publishes; it does not
 verify the gate.
@@ -39,9 +39,11 @@ from pathlib import Path
 
 RELEASE_MANIFEST_SCHEMA = "umbraflow-release/v1"
 
-# The format versions this release's tooling understands. A project declares
-# the project contract it targets; project init accepts a release whose list
-# carries it. Compatibility selection uses format versions, never digests.
+# The format versions this release's tooling understands, stated so a reader
+# can see what a release targets. `project upgrade` deliberately does NOT gate
+# on this list: the binary it installs is the only thing that can tell a project
+# author whether their declaration matches, so it installs first and reports
+# afterwards rather than refusing and leaving the author to edit blind.
 RELEASE_MANIFEST_CONTRACT_VERSIONS = (
     "umbraflow-project/v3",
     "umbraflow-project-kit-artifact-manifest/v1",
@@ -69,7 +71,7 @@ RELEASE_BINARIES = ("project", "umbra-flow", "umbra-flow-conformance")
 # the executable's own directory, and the OCR models under models/ the way
 # umbra-flow answers `--ocr-models <bin>/models`. Each matched file becomes
 # one artifact row; the path in the manifest is the file's path relative to
-# the release root, which is what project init restores.
+# the release root, which is what project upgrade restores.
 RELEASE_PAYLOAD_PATTERNS = ("onnxruntime*.dll", "models/**/*")
 
 PLATFORMS = ("windows", "linux", "macos")
@@ -146,7 +148,7 @@ def artifact_rows(
                     "arch": arch,
                     "path": relative,
                     # GitHub release assets are flat, so a nested payload file
-                    # is uploaded under a name without '/'; project init
+                    # is uploaded under a name without '/'; project upgrade
                     # restores it at its path, not its asset name.
                     "asset": relative.replace("/", "-"),
                     "sha256": digest_of(path),

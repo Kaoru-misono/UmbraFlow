@@ -272,7 +272,7 @@ namespace uf::operator_runtime
         );
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().message().contains(
-            "bound to entry dismiss, which the Project closure does not export"
+            "bound to entry dismiss, which the tool closure does not declare"
         ));
     }
 

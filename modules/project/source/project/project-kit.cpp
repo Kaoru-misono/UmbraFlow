@@ -18,6 +18,7 @@
 #include <json/schema.hpp>
 #include <json/value.hpp>
 
+#include <operator/manifest.hpp>
 #include <operator/project-plugin.hpp>
 
 #include <schema/framework-schema-catalog.hpp>
@@ -43,9 +44,6 @@ namespace uf::project
 {
     namespace
     {
-        constexpr auto k_inputManifestHeader = std::string_view{
-            "umbraflow-project-kit-inputs-v1"
-        };
         constexpr auto k_buildReceiptHeader = std::string_view{
             "umbraflow-project-kit-build-v1"
         };
@@ -133,8 +131,18 @@ namespace uf::project
             std::vector<ProjectResourceSpec> resources{};
         };
 
+        // Everything one schema-validated parse of umbraflow-project.json says
+        // about what to build.
+        //
+        // `inputs` is derived here rather than read from anything on disk. It
+        // used to be a ledger only `project init` wrote, which went stale the
+        // moment a declaration named a module the ledger did not, and left
+        // `project build` unable to run at all until an init that reached the
+        // network had refreshed it. The declaration is the statement; the list
+        // is arithmetic over it, and arithmetic is redone rather than cached.
         struct ProjectManifest final
         {
+            std::vector<std::string>                  inputs{};
             std::vector<ProjectTemplateCutSpec>       templateCuts{};
             std::vector<ProjectRegistrationBuildSpec> registrations{};
         };
@@ -860,15 +868,16 @@ namespace uf::project
 
         [[nodiscard]]
         auto canonicalInputs(
-            ProjectInitSpec const& spec
+            std::filesystem::path const& sourceDirectory,
+            std::vector<std::string> const& declared
         ) -> Result<std::vector<std::string>>
         {
             auto inputs = std::vector<std::string>{};
-            inputs.reserve(spec.inputs.size());
-            for (auto const& input : spec.inputs)
+            inputs.reserve(declared.size());
+            for (auto const& input : declared)
             {
                 UF_TRY_VALUE(normalized, normalizeInputPath(input));
-                UF_TRY(validateDeclaredInput(spec.sourceDirectory, normalized));
+                UF_TRY(validateDeclaredInput(sourceDirectory, normalized));
                 inputs.emplace_back(std::move(normalized));
             }
 
@@ -1001,17 +1010,21 @@ namespace uf::project
             return writeText(path, bytes, "starter Project file");
         }
 
+        // The source files this declaration names, complete.
+        //
+        // Every entry is arithmetic over the document: the root document
+        // itself, each deployment's resources, and each module of its closure
+        // -- or, for a generated deployment, the declaration each generated
+        // module is rendered from. There is no way for a project to add a file
+        // to this set except by declaring it, which is what makes the set
+        // recomputable after any edit with nothing to refresh.
         [[nodiscard]]
-        auto initializedInputs(ProjectInitSpec const& spec)
-            -> Result<std::vector<std::string>>
+        auto derivedInputs(
+            std::filesystem::path const& sourceDirectory,
+            json::Value const& document
+        ) -> Result<std::vector<std::string>>
         {
-            UF_TRY_VALUE(document, readProjectRootDocument(spec.sourceDirectory));
             auto inputs = std::set<std::string>{};
-            for (auto const& input : spec.inputs)
-            {
-                UF_TRY_VALUE(normalized, normalizeInputPath(input));
-                inputs.emplace(std::move(normalized));
-            }
             inputs.emplace(std::string{k_projectManifestName});
 
             for (auto const& deployment : member(document, "deployments").items())
@@ -1054,13 +1067,11 @@ namespace uf::project
                 }
             }
 
-            auto expanded = ProjectInitSpec{
-                .sourceDirectory = spec.sourceDirectory,
-                .buildDirectory  = spec.buildDirectory,
-            };
+            auto declared = std::vector<std::string>{};
+            declared.reserve(inputs.size());
             for (auto const& input : inputs)
-                expanded.inputs.emplace_back(input);
-            return canonicalInputs(expanded);
+                declared.emplace_back(input);
+            return canonicalInputs(sourceDirectory, declared);
         }
 
         // One member of an object the published schema has already judged.
@@ -1219,8 +1230,10 @@ namespace uf::project
         ) -> Result<ProjectManifest>
         {
             UF_TRY_VALUE(document, readProjectRootDocument(sourceDirectory));
+            UF_TRY_VALUE(inputs, derivedInputs(sourceDirectory, document));
             UF_TRY_VALUE(templateCuts, declaredTemplateCuts(document));
             return ProjectManifest{
+                .inputs        = std::move(inputs),
                 .templateCuts  = std::move(templateCuts),
                 .registrations = declaredRegistrations(document),
             };
@@ -1595,17 +1608,16 @@ namespace uf::project
                 }
                 else
                 {
-                    if (!std::ranges::binary_search(inputs, sourcePath))
-                    {
-                        return fail(
-                            AutomationErrorKind::InvalidResource,
-                            std::format(
-                                "project module {} names undeclared source input \"{}\"",
-                                module.name,
-                                sourcePath
-                            )
-                        );
-                    }
+                    // Derived from this same declaration, so a module path is
+                    // in the input set by construction rather than by two
+                    // lists agreeing. It was a refusal while the set was a
+                    // ledger a separate command wrote and the two could drift;
+                    // with the ledger gone the refusal could not fire, and a
+                    // check that cannot fail is worse than none -- see
+                    // docs/pitfalls/checks-that-cannot-fail.md. What CAN fail
+                    // is the file being absent, which validateDeclaredInput
+                    // refuses by name before anything reaches here.
+                    UF_CHECK(std::ranges::binary_search(inputs, sourcePath));
                     UF_TRY_VALUE(
                         sourceBytes,
                         readText(sourceDirectory / module.sourceInput, "project module source")
@@ -2777,97 +2789,95 @@ namespace uf::project
             return text;
         }
 
+        // The rules about a deployment that no JSON Schema can state, because
+        // each one compares two members of the document with each other.
+        //
+        // They are applied HERE, on the read every extraction follows, rather
+        // than in build or in check, because the defect they close is a reader
+        // knowing less than a later reader: `project check` passed a real
+        // migration and `umbra-flow open` then refused the same directory with
+        // `Tool name chaos.get_current_event is outside the namespace
+        // chaos.dream its registrant owns`. An author working through a
+        // declaration must not be told twice, in two commands, hours apart.
+        //
+        // Neither rule is restated here. Both are the Operator's own functions,
+        // called by the loader on a verified registration and by this kit on
+        // the declaration that produces one, so the two readers cannot reach
+        // two verdicts.
         [[nodiscard]]
-        auto declaredInputs(
-            std::filesystem::path const& buildDirectory
-        ) -> Result<std::vector<std::string>>
+        auto validateDeploymentJoins(json::Value const& document) -> Status
         {
-            auto const manifestPath = buildDirectory / k_inputManifestName;
-            UF_TRY_VALUE(text, readText(manifestPath, "input manifest"));
+            for (auto const& deployment : member(document, "deployments").items())
+            {
+                auto const name     = member(deployment, "name").string();
+                auto const pluginId = member(deployment, "plugin_id").string();
 
-            auto lines  = std::istringstream{text};
-            auto header = std::string{};
-            std::getline(lines, header);
-            if (!header.empty() && header.back() == '\r')
-            {
-                header.pop_back();
-            }
-            if (header != k_inputManifestHeader)
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    std::format(
-                        "project input manifest \"{}\" has an unsupported header",
-                        manifestPath.string()
-                    )
-                );
-            }
-
-            auto inputs = std::vector<std::string>{};
-            auto line   = std::string{};
-            while (std::getline(lines, line))
-            {
-                if (!line.empty() && line.back() == '\r')
+                // Which deployment, in the message rather than in an error
+                // context nothing on this path prints -- and worded the way
+                // the loader words the same failure, so an author who meets it
+                // twice meets one sentence.
+                auto const inDeployment = [name](Status outcome) -> Status
                 {
-                    line.pop_back();
-                }
-                UF_TRY_VALUE(normalized, normalizeInputPath(line));
-                if (normalized != line)
-                {
+                    if (outcome.has_value())
+                    {
+                        return ok();
+                    }
                     return fail(
                         AutomationErrorKind::InvalidResource,
                         std::format(
-                            "project input manifest path is not canonical: \"{}\"",
-                            line
+                            "the deployment {} does not hold together: {}",
+                            name,
+                            outcome.error().message()
                         )
                     );
+                };
+
+                auto toolNames = std::vector<std::string>{};
+                for (auto const& tool : member(deployment, "tools").items())
+                {
+                    auto const toolName = member(tool, "name").string();
+                    UF_TRY(inDeployment(
+                        operator_runtime::validateToolNameOwnership(
+                            toolName,
+                            pluginId
+                        )
+                    ));
+                    toolNames.emplace_back(toolName);
                 }
-                inputs.emplace_back(std::move(normalized));
-            }
-            if (inputs.empty())
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    std::format(
-                        "project input manifest \"{}\" declares no inputs",
-                        manifestPath.string()
-                    )
-                );
-            }
 
-            if (!std::ranges::is_sorted(inputs))
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    std::format(
-                        "project input manifest \"{}\" is not sorted",
-                        manifestPath.string()
-                    )
-                );
-            }
-            auto const duplicate = std::ranges::adjacent_find(inputs);
-            if (duplicate != inputs.end())
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    std::format(
-                        "project input manifest repeats \"{}\"",
-                        *duplicate
-                    )
-                );
-            }
-            return inputs;
-        }
+                auto bindings = std::vector<operator_runtime::ProjectToolBinding>{};
+                for (
+                    auto const& binding
+                    : member(deployment, "tool_bindings").items()
+                )
+                {
+                    bindings.emplace_back(operator_runtime::ProjectToolBinding{
+                        .toolName = std::string{
+                            member(binding, "tool_name").string()
+                        },
+                        .entryPoint = std::string{
+                            member(binding, "entry_point").string()
+                        },
+                    });
+                }
 
-        [[nodiscard]]
-        auto validateDeclaredInputs(
-            std::filesystem::path const& sourceDirectory,
-            std::vector<std::string> const& inputs
-        ) -> Status
-        {
-            for (auto const& input : inputs)
-            {
-                UF_TRY(validateDeclaredInput(sourceDirectory, input));
+                auto entryPoints = std::vector<std::string>{};
+                auto const& closure = member(deployment, "tool_closure");
+                for (
+                    auto const& entryPoint
+                    : member(closure, "exported_entry_points").items()
+                )
+                {
+                    entryPoints.emplace_back(entryPoint.string());
+                }
+
+                UF_TRY(inDeployment(
+                    operator_runtime::validateProjectToolBindings(
+                        toolNames,
+                        bindings,
+                        entryPoints
+                    )
+                ));
             }
             return ok();
         }
@@ -2911,15 +2921,31 @@ namespace uf::project
             auto const judged = compiled->validate(document);
             if (!judged.has_value())
             {
+                // The verdict, then the work list. validate stays the only
+                // authority on whether this document is accepted; the account
+                // below never accepts anything and runs only because the
+                // verdict was already a refusal. It is attached to the refusal
+                // rather than printed separately so that every caller of this
+                // function -- build, check, the scaffold's own self-check, and
+                // the report an upgrade runs -- shows it without arranging to.
+                // An empty account is one with nothing to add to the refusal,
+                // which is most of them.
+                auto const account = compiled->explainRefusal(
+                    document,
+                    judged.error()
+                );
                 return fail(
                     AutomationErrorKind::InvalidResource,
                     std::format(
-                        "{}: {}",
+                        "{}: {}{}{}",
                         k_projectManifestName,
-                        judged.error().message()
+                        judged.error().message(),
+                        account.empty() ? "" : "\n\n",
+                        account
                     )
                 );
             }
+            UF_TRY(validateDeploymentJoins(document));
             return document;
         }
     }
@@ -3131,23 +3157,19 @@ namespace uf::project
         return ok();
     }
 
-    auto initProject(ProjectInitSpec const& spec) -> Status
+    // Makes a directory a project: judges what is there, and gives the build
+    // tree somewhere to land.
+    //
+    // It writes no input ledger, because there is none to write. The set of
+    // source files a project has is arithmetic over its declaration, and a copy
+    // of that arithmetic on disk could only ever be right until the next edit.
+    // It also acquires nothing: installing a framework release is `project
+    // upgrade`, which is destructive and says so in its name.
+    auto initProject(ProjectBuildSpec const& spec) -> Status
     {
-        UF_TRY(validateDirectories(
-            ProjectBuildSpec{
-                .sourceDirectory = spec.sourceDirectory,
-                .buildDirectory  = spec.buildDirectory,
-            }
-        ));
-        UF_TRY_VALUE(inputs, initializedInputs(spec));
-        UF_TRY(ensureBuildDirectory(spec.buildDirectory));
-
-        auto const manifestPath = spec.buildDirectory / k_inputManifestName;
-        return writeText(
-            manifestPath,
-            renderList(k_inputManifestHeader, inputs),
-            "input manifest"
-        );
+        UF_TRY(validateDirectories(spec));
+        UF_TRY(readProjectManifest(spec.sourceDirectory));
+        return ensureBuildDirectory(spec.buildDirectory);
     }
 
     auto buildProject(
@@ -3156,9 +3178,8 @@ namespace uf::project
     ) -> Status
     {
         UF_TRY(validateDirectories(spec));
-        UF_TRY_VALUE(inputs, declaredInputs(spec.buildDirectory));
-        UF_TRY(validateDeclaredInputs(spec.sourceDirectory, inputs));
         UF_TRY_VALUE(projectManifest, readProjectManifest(spec.sourceDirectory));
+        auto const& inputs = projectManifest.inputs;
         UF_TRY_VALUE(
             generated,
             generatedProjectBuild(
@@ -3189,15 +3210,21 @@ namespace uf::project
         );
     }
 
+    // The verb an author re-runs after every edit.
+    //
+    // Everything it needs comes out of the source tree: the declaration, the
+    // files that declaration names, and the artifacts a build of it would
+    // produce. It reaches no network and touches no installed release, so it is
+    // the one command that answers "what is still wrong" for as long as it
+    // takes to work through the answer.
     auto checkProject(
         ProjectBuildSpec const& spec,
         TemplateSourceResolver const& resolveTemplateSource
     ) -> Status
     {
         UF_TRY(validateDirectories(spec));
-        UF_TRY_VALUE(inputs, declaredInputs(spec.buildDirectory));
-        UF_TRY(validateDeclaredInputs(spec.sourceDirectory, inputs));
         UF_TRY_VALUE(projectManifest, readProjectManifest(spec.sourceDirectory));
+        auto const& inputs = projectManifest.inputs;
         UF_TRY_VALUE(
             generated,
             generatedProjectBuild(

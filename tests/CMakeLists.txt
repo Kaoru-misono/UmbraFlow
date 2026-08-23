@@ -973,14 +973,18 @@ set_tests_properties(test-project-cli PROPERTIES
 )
 
 add_test(
-    NAME test-project-init-release
+    NAME test-project-upgrade
     COMMAND ${CMAKE_COMMAND}
         -DUF_PROJECT_EXECUTABLE=$<TARGET_FILE:project>
-        -DUF_PROJECT_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/project-init-release-fixture
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/project/test-project-init-release.cmake
+        -DUF_PROJECT_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/project-upgrade-fixture
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/project/test-project-upgrade.cmake
 )
-set_tests_properties(test-project-init-release PROPERTIES
-    TIMEOUT 30
+# Longer than its siblings because two of its cases wait out curl's retry
+# schedule in full: --retry 5 --retry-delay 2 is what keeps a single TLS reset
+# from failing a whole upgrade, and a case that asks for bytes the host will not
+# serve pays for that on every attempt.
+set_tests_properties(test-project-upgrade PROPERTIES
+    TIMEOUT 120
     LABELS "CI"
 )
 

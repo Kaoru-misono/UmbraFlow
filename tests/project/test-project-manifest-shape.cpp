@@ -114,13 +114,24 @@ namespace uf::project
         // wrapped around it removed. Empty means this reader did not refuse the
         // document's shape -- either because it accepted the document, or
         // because it got past the shape and failed at a later rule.
+        //
+        // The reason is ONE LINE, and the cut is at its end rather than at the
+        // end of the message. What a reader prints after it is that reader's
+        // own account of the reason -- the kit adds the complete member-set
+        // arithmetic at the refused path, so an author editing a declaration
+        // sees the whole edit at once -- and an account is not a second
+        // verdict. Comparing whole messages here would make the two readers
+        // disagree the moment one of them explained itself better.
         [[nodiscard]]
         auto schemaComplaint(std::string_view message) -> std::string
         {
             auto const at = message.find(k_schemaLabel);
-            return at == std::string_view::npos
-                ? std::string{}
-                : std::string{message.substr(at)};
+            if (at == std::string_view::npos)
+            {
+                return std::string{};
+            }
+            auto const reason = message.substr(at);
+            return std::string{reason.substr(0U, reason.find('\n'))};
         }
 
         // The module a case names is the deployment's one closure. There is no
@@ -239,43 +250,38 @@ namespace uf::project
         }
 
         // The kit's verdict on one document: `project build` then
-        // `project check` over a source tree whose only declared input is a
-        // file the manifest has nothing to do with, so what this measures is
-        // the manifest and not the input list.
+        // `project check` over a source tree that holds exactly the files the
+        // manifest names, so what this measures is the manifest.
         [[nodiscard]]
         auto kitVerdict(std::string_view manifest) -> std::string
         {
             auto const workspace = TemporaryDirectory{"uf-manifest-shape-kit"};
             auto const source    = workspace.path() / "source";
             auto const build     = workspace.path() / "build";
-            writeFile(source / "dummy.txt", "dummy\n");
             writeFile(source / k_handWrittenTool, "return {}\n");
             writeFile(source / "umbraflow-project.json", manifest);
 
-            auto inputs = std::vector<std::filesystem::path>{"dummy.txt"};
             if (manifest.contains(k_generatedTool))
             {
-                auto const declaration = std::filesystem::path{
-                    "declarative-tools/acme.tool/do-work.json"
-                };
-                writeFile(source / declaration, generatedWorkflowDeclaration());
-                inputs.emplace_back(declaration);
-            }
-
-            auto const initialized = initProject(ProjectInitSpec{
-                .sourceDirectory = source,
-                .buildDirectory  = build,
-                .inputs          = std::move(inputs),
-            });
-            if (!initialized)
-            {
-                return messageOf(initialized);
+                writeFile(
+                    source
+                        / std::filesystem::path{
+                            "declarative-tools/acme.tool/do-work.json"
+                        },
+                    generatedWorkflowDeclaration()
+                );
             }
 
             auto const spec = ProjectBuildSpec{
                 .sourceDirectory = source,
                 .buildDirectory  = build,
             };
+            auto const initialized = initProject(spec);
+            if (!initialized)
+            {
+                return messageOf(initialized);
+            }
+
             // No resolver: every document below declares no template cut, so a
             // reachable resolver would answer nothing and prove nothing.
             auto built = messageOf(buildProject(spec, {}));
@@ -445,6 +451,69 @@ namespace uf::project
                     "the loader must refuse this document's shape"
                 );
             }
+        }
+
+        // The kit's account of one refusal, on a deployment wrong in several
+        // ways at once -- which is exactly what a declaration written against
+        // an older release is.
+        //
+        // The evaluator short-circuits, so the stated reason names ONE of these
+        // problems. The account names all of them at that one location, and
+        // prints each missing member's own $comment out of the schema, so the
+        // whole edit can be made from one run instead of six.
+        SUBCASE("a declaration wrong in several ways at once")
+        {
+            constexpr auto stale = std::string_view{
+                R"json([{"name":"dream","plugin_id":"chaos.dream",)json"
+                R"json("plugin_authoring":"hand-written",)json"
+                R"json("plugin_justification":"legacy",)json"
+                R"json("plugin":{},"tool_catalog":"catalog.json",)json"
+                R"json("resources":[]}])json"
+            };
+            auto const account = kitVerdict(manifestOf(stale));
+            INFO("kit: ", account);
+
+            for (auto const missing : {
+                     "observed_instance_identity_schemas",
+                     "tool_bindings",
+                     "tool_closure",
+                     "tools",
+                 })
+            {
+                CHECK_MESSAGE(
+                    account.find(missing) != std::string::npos,
+                    "the account must name every required member the "
+                    "deployment lacks"
+                );
+            }
+            // Counted rather than searched for: the refusal line already names
+            // the first undeclared member, so a search alone would pass on an
+            // account that said nothing.
+            CHECK_MESSAGE(
+                account.find(
+                    "must carry 4 member(s) it does not"
+                ) != std::string::npos,
+                "the account must count every required member the deployment "
+                "lacks"
+            );
+            CHECK_MESSAGE(
+                account.find(
+                    "carries 2 member(s) this closed object does not declare"
+                ) != std::string::npos,
+                "the account must count every member this closed object does "
+                "not declare"
+            );
+            CHECK_MESSAGE(
+                account.find("tool_catalog") != std::string::npos,
+                "the account must name the undeclared members the refusal "
+                "line did not"
+            );
+            CHECK_MESSAGE(
+                account.find("There is one slot because there is one program")
+                    != std::string::npos,
+                "each missing member must carry its own $comment out of the "
+                "schema, because that is where the explanation already is"
+            );
         }
     }
 

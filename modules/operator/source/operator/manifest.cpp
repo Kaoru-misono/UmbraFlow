@@ -381,6 +381,52 @@ namespace uf::operator_runtime
         return ok();
     }
 
+    auto validateProjectToolBindings(
+        std::span<std::string const> declaredToolNames,
+        std::span<ProjectToolBinding const> bindings,
+        std::span<std::string const> exportedEntryPoints
+    ) -> Status
+    {
+        for (auto const& binding : bindings)
+        {
+            if (!std::ranges::contains(declaredToolNames, binding.toolName))
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "Project Tool binding names " + binding.toolName
+                        + ", which this Tool Catalog does not declare"
+                );
+            }
+            if (!std::ranges::contains(exportedEntryPoints, binding.entryPoint))
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "Project Tool " + binding.toolName + " is bound to entry "
+                        + binding.entryPoint
+                        + ", which the tool closure does not declare"
+                );
+            }
+        }
+        for (auto const& entryPoint : exportedEntryPoints)
+        {
+            if (
+                !std::ranges::contains(
+                    bindings,
+                    entryPoint,
+                    &ProjectToolBinding::entryPoint
+                )
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "the tool closure declares entry " + entryPoint
+                        + ", which no Tool binds"
+                );
+            }
+        }
+        return ok();
+    }
+
     VerifiedProjectGeneration::VerifiedProjectGeneration(
         ProjectGenerationClaims claims,
         std::string canonicalJcs,

@@ -95,7 +95,7 @@ DDL_TABLE_CONSTRAINT = ("primary", "unique", "check", "foreign", "constraint")
 OBSERVATION_PROPOSAL_SCHEMA = "schema/umbraflow-project-observation-proposal-v1.schema.json"
 OBSERVATION_SCHEMA = "schema/umbraflow-project-observation-v1.schema.json"
 
-# The publisher script that writes the release manifest project init parses.
+# The publisher script that writes the release manifest project upgrade parses.
 # Its constants are the shape authority; the generator extracts the
 # wire tag and the member tuples from these bytes rather than restating them.
 RELEASE_SOURCE = "scripts/publish_release.py"
@@ -145,21 +145,21 @@ CLI_SURFACE_SOURCES = (
     ),
     ("project", "modules/project/source/project/command.cpp", ()),
     (
-        "project (release bootstrap)",
-        "entry/project/release-bootstrap.cpp",
+        "project upgrade",
+        "modules/project/source/project/release-bundle.cpp",
         (),
     ),
     (
-        "project (release transport on Windows)",
-        "entry/project/platform/curl-download-windows.cpp",
+        "project (process transport on Windows)",
+        "modules/project/source/project/platform/process-run-windows.cpp",
         (),
     ),
     (
-        "project (release transport on POSIX)",
-        "entry/project/platform/curl-download-posix.cpp",
+        "project (process transport on POSIX)",
+        "modules/project/source/project/platform/process-run-posix.cpp",
         (),
     ),
-    ("project (release bootstrap)", "entry/project/main.cpp", ()),
+    ("project (entry point)", "entry/project/main.cpp", ()),
     (
         "project directory loader",
         "modules/deployment/source/deployment/project-directory.cpp",
@@ -796,7 +796,7 @@ def written_wire_tags(root: Path) -> set[str]:
             tags.update(WIRE_TAG.findall(path.read_text(encoding="utf-8")))
     for path in sorted((root / SCHEMA_DIRECTORY).glob("*.json")):
         tags.update(WIRE_TAG.findall(path.read_text(encoding="utf-8")))
-    # A tag only the publisher spells is still a tag project init sees, on the
+    # A tag only the publisher spells is still a tag project upgrade sees, on the
     # same terms as a tag only an entry executable spells.
     tags.update(WIRE_TAG.findall(read(root, RELEASE_SOURCE)))
     if not tags:
@@ -1437,7 +1437,7 @@ def render(root: Path) -> str:
             "",
             f"A release bundle ships an immutable manifest tagged `{release_facts['tag']}`,",
             f"written by `{RELEASE_SOURCE}` and never authored by hand.",
-            "`project init` parses it, selects the artifact for the host",
+            "`project upgrade` parses it, selects the artifact for the host",
             "platform and arch, and refuses a mismatch on the declared sha256. The",
             "release id is the sha256 of the manifest's canonical bytes, derived",
             "rather than stored.",
@@ -1481,7 +1481,7 @@ def render(root: Path) -> str:
             + ", ".join(
                 f"`{value}`" for value in release_facts["payload_patterns"]
             )
-            + ", each matched file one artifact row whose path `project init` "
+            + ", each matched file one artifact row whose path `project upgrade` "
             + "restores beside the binaries.",
             "",
         ]

@@ -8,14 +8,17 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <format>
 #include <memory>
+#include <optional>
 #include <regex>
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -1745,6 +1748,494 @@ namespace uf::json
 
         auto const evaluator = Evaluator{m_state->resources, m_state->patterns};
         return evaluator.evaluate(0U, *p_schema, instance, std::string{}, 0U);
+    }
+
+    // -------------------------------------------------------------------
+    // Accounting for a refusal that has already happened.
+    //
+    // Nothing below decides anything. Every function here reads a schema and
+    // an instance the Evaluator above has already refused, and turns the one
+    // location it named into a list an author can work through. The boundary
+    // is stated on Schema::explainRefusal and is load-bearing: the moment
+    // something here answers "and therefore this document is fine", the
+    // repository has two readers of one schema and the weaker one decides.
+    // -------------------------------------------------------------------
+
+    namespace
+    {
+        // The width a wrapped `$comment` is folded to, minus its indent. The
+        // documents this repository publishes write paragraphs, and printing
+        // one as a single line makes the member it explains unreadable in the
+        // terminal the author is standing in.
+        constexpr auto k_reportColumns = std::size_t{76};
+
+        enum class PathStepKind : uint8
+        {
+            Member,
+            Index,
+        };
+
+        // One step of an instance path. refuseAt writes a member as `.name`
+        // and an array position as `[n]`, and writes nothing else, so these
+        // two are the whole vocabulary.
+        struct PathStep final
+        {
+            PathStepKind kind{PathStepKind::Member};
+            std::string  member{};
+            std::size_t  index{};
+        };
+
+        // The instance path this refusal names, or nothing when the message
+        // did not come from this schema.
+        //
+        // It reads back what refuseAt wrote. The two spellings sit in one file
+        // on purpose: this is the only coupling in the report, and a reader
+        // changing the refusal format has the parser in view while doing it.
+        // A caller is free to have wrapped the message in context of its own --
+        // the kit prefixes the file name -- so the marker is searched for
+        // rather than anchored at the front.
+        [[nodiscard]]
+        auto refusedPath(
+            std::string_view message,
+            std::string_view label
+        ) -> std::optional<std::string_view>
+        {
+            auto const marker = std::format("{} refused ", label);
+            auto const at     = message.find(marker);
+            if (at == std::string_view::npos)
+            {
+                return std::nullopt;
+            }
+            auto const from = at + marker.size();
+            auto const to   = message.find(": ", from);
+            if (to == std::string_view::npos)
+            {
+                return std::nullopt;
+            }
+            auto const path = message.substr(from, to - from);
+            if (path == "the document")
+            {
+                return std::string_view{};
+            }
+            return path;
+        }
+
+        [[nodiscard]]
+        auto pathSteps(std::string_view path)
+            -> std::optional<std::vector<PathStep>>
+        {
+            auto steps = std::vector<PathStep>{};
+            auto rest  = path;
+            while (!rest.empty())
+            {
+                if (rest.front() == '[')
+                {
+                    auto const close = rest.find(']');
+                    if (close == std::string_view::npos || close == 1U)
+                    {
+                        return std::nullopt;
+                    }
+                    auto const digits = rest.substr(1U, close - 1U);
+                    auto const last   = digits.data() + digits.size();
+                    auto index        = std::size_t{0};
+                    auto const parsed = std::from_chars(
+                        digits.data(),
+                        last,
+                        index
+                    );
+                    if (parsed.ec != std::errc{} || parsed.ptr != last)
+                    {
+                        return std::nullopt;
+                    }
+                    steps.emplace_back(PathStep{
+                        .kind  = PathStepKind::Index,
+                        .index = index,
+                    });
+                    rest.remove_prefix(close + 1U);
+                }
+                else
+                {
+                    auto const stop = rest.find_first_of(".[");
+                    auto const name = rest.substr(0U, stop);
+                    if (name.empty())
+                    {
+                        return std::nullopt;
+                    }
+                    steps.emplace_back(PathStep{
+                        .kind   = PathStepKind::Member,
+                        .member = std::string{name},
+                    });
+                    rest.remove_prefix(name.size());
+                }
+                if (!rest.empty() && rest.front() == '.')
+                {
+                    rest.remove_prefix(1U);
+                }
+            }
+            return steps;
+        }
+
+        // The node a `$ref` chain ends at.
+        //
+        // This is the one place the report resolves a reference, and it does so
+        // because nearly every member of the documents here states its shape as
+        // `{"$ref": "#/$defs/Something"}`. A walk that stopped at the reference
+        // would arrive with no `required`, no `properties` and no `$comment` to
+        // say anything about, so following it is what makes the arithmetic
+        // possible rather than an extension of it.
+        [[nodiscard]]
+        auto resolvedTarget(
+            std::span<Resource const> resources,
+            Target target
+        ) -> std::optional<Target>
+        {
+            for (auto hop = std::size_t{0}; hop < k_maximumEvaluationDepth; ++hop)
+            {
+                if (
+                    target.p_node == nullptr
+                    || target.p_node->kind() != ValueKind::Object
+                )
+                {
+                    return target;
+                }
+                auto const* const p_reference = target.p_node->find("$ref");
+                if (p_reference == nullptr)
+                {
+                    return target;
+                }
+                auto const next = resolveReference(
+                    resources,
+                    target.resource,
+                    p_reference->string()
+                );
+                if (!next.has_value())
+                {
+                    return std::nullopt;
+                }
+                target = *next;
+            }
+            return std::nullopt;
+        }
+
+        [[nodiscard]]
+        auto schemaAt(
+            std::span<Resource const> resources,
+            std::vector<PathStep> const& steps
+        ) -> std::optional<Target>
+        {
+            auto target = resolvedTarget(
+                resources,
+                Target{.resource = 0U, .p_node = &resources.front().root}
+            );
+            for (auto const& step : steps)
+            {
+                if (
+                    !target.has_value()
+                    || target->p_node == nullptr
+                    || target->p_node->kind() != ValueKind::Object
+                )
+                {
+                    return std::nullopt;
+                }
+                auto const& node   = *target->p_node;
+                auto const* p_next = static_cast<Value const*>(nullptr);
+                switch (step.kind)
+                {
+                case PathStepKind::Member:
+                {
+                    auto const* const p_properties = node.find("properties");
+                    p_next                         = p_properties == nullptr
+                                        ? nullptr
+                                        : p_properties->find(step.member);
+                    break;
+                }
+                case PathStepKind::Index:
+                {
+                    auto const* const p_prefix = node.find("prefixItems");
+                    if (
+                        p_prefix != nullptr
+                        && step.index < p_prefix->items().size()
+                    )
+                    {
+                        p_next = &p_prefix->items()[step.index];
+                        break;
+                    }
+                    p_next = node.find("items");
+                    break;
+                }
+                }
+                if (p_next == nullptr)
+                {
+                    return std::nullopt;
+                }
+                target = resolvedTarget(
+                    resources,
+                    Target{.resource = target->resource, .p_node = p_next}
+                );
+            }
+            return target;
+        }
+
+        [[nodiscard]]
+        auto instanceAt(
+            Value const& root,
+            std::vector<PathStep> const& steps
+        ) -> Value const*
+        {
+            auto const* p_node = &root;
+            for (auto const& step : steps)
+            {
+                switch (step.kind)
+                {
+                case PathStepKind::Member:
+                    if (p_node->kind() != ValueKind::Object)
+                    {
+                        return nullptr;
+                    }
+                    p_node = p_node->find(step.member);
+                    break;
+                case PathStepKind::Index:
+                    if (
+                        p_node->kind() != ValueKind::Array
+                        || step.index >= p_node->items().size()
+                    )
+                    {
+                        return nullptr;
+                    }
+                    p_node = &p_node->items()[step.index];
+                    break;
+                }
+                if (p_node == nullptr)
+                {
+                    return nullptr;
+                }
+            }
+            return p_node;
+        }
+
+        [[nodiscard]]
+        auto wrapped(std::string_view text, std::string_view indent) -> std::string
+        {
+            auto const width = k_reportColumns > indent.size()
+                ? k_reportColumns - indent.size()
+                : std::size_t{1};
+            auto output = std::string{};
+            auto column = std::size_t{0};
+            auto rest   = text;
+            while (!rest.empty())
+            {
+                auto const wordAt = rest.find_first_not_of(" \t\r\n");
+                if (wordAt == std::string_view::npos)
+                {
+                    break;
+                }
+                rest.remove_prefix(wordAt);
+                auto const end  = rest.find_first_of(" \t\r\n");
+                auto const word = rest.substr(0U, end);
+                if (column == 0U)
+                {
+                    output += indent;
+                }
+                else if (column + 1U + word.size() > width)
+                {
+                    output += '\n';
+                    output += indent;
+                    column = 0U;
+                }
+                else
+                {
+                    output += ' ';
+                    ++column;
+                }
+                output += word;
+                column += word.size();
+                rest.remove_prefix(word.size());
+            }
+            if (!output.empty())
+            {
+                output += '\n';
+            }
+            return output;
+        }
+
+        // What this schema itself says about one member it required, folded to
+        // a paragraph. The member's own `$comment` first, and the `$comment` of
+        // whatever its `$ref` names when it has none of its own, because a
+        // member stated as a bare reference carries its explanation at the
+        // definition.
+        [[nodiscard]]
+        auto memberExplanation(
+            std::span<Resource const> resources,
+            Target const& owner,
+            std::string_view member
+        ) -> std::string
+        {
+            auto const* const p_properties = owner.p_node->find("properties");
+            if (p_properties == nullptr)
+            {
+                return {};
+            }
+            auto const* const p_member = p_properties->find(member);
+            if (p_member == nullptr || p_member->kind() != ValueKind::Object)
+            {
+                return {};
+            }
+            if (auto const* const p_own = p_member->find("$comment"))
+            {
+                return std::string{p_own->string()};
+            }
+            auto const target = resolvedTarget(
+                resources,
+                Target{.resource = owner.resource, .p_node = p_member}
+            );
+            if (
+                !target.has_value()
+                || target->p_node == nullptr
+                || target->p_node->kind() != ValueKind::Object
+            )
+            {
+                return {};
+            }
+            auto const* const p_comment = target->p_node->find("$comment");
+            return p_comment == nullptr
+                ? std::string{}
+                : std::string{p_comment->string()};
+        }
+
+        [[nodiscard]]
+        auto declaresNoOtherMember(Value const& node) -> bool
+        {
+            auto const* const p_additional = node.find("additionalProperties");
+            return (
+                p_additional != nullptr
+                && p_additional->kind() == ValueKind::Boolean
+                && !p_additional->boolean()
+            );
+        }
+    }
+
+    auto Schema::explainRefusal(Value const& instance, Error const& refusal) const
+        -> std::string
+    {
+        auto const label   = std::string_view{m_state->resources.front().label};
+        auto const refused = refusedPath(refusal.message(), label);
+        if (!refused.has_value())
+        {
+            return {};
+        }
+        auto const where = refused->empty()
+            ? std::string_view{"the document"}
+            : *refused;
+
+        auto const steps = pathSteps(*refused);
+        if (!steps.has_value())
+        {
+            return {};
+        }
+        auto const schemaNode        = schemaAt(m_state->resources, *steps);
+        auto const* const p_instance = instanceAt(instance, *steps);
+        if (
+            !schemaNode.has_value()
+            || schemaNode->p_node == nullptr
+            || schemaNode->p_node->kind() != ValueKind::Object
+            || p_instance == nullptr
+            || p_instance->kind() != ValueKind::Object
+        )
+        {
+            return {};
+        }
+
+        auto const& node = *schemaNode->p_node;
+        auto present     = std::vector<std::string_view>{};
+        present.reserve(p_instance->members().size());
+        for (auto const& member : p_instance->members())
+        {
+            present.emplace_back(member.first);
+        }
+
+        auto missing = std::vector<std::string_view>{};
+        if (auto const* const p_required = node.find("required"))
+        {
+            for (auto const& name : p_required->items())
+            {
+                if (!std::ranges::contains(present, name.string()))
+                {
+                    missing.emplace_back(name.string());
+                }
+            }
+        }
+
+        auto undeclared = std::vector<std::string_view>{};
+        if (declaresNoOtherMember(node))
+        {
+            auto const* const p_properties = node.find("properties");
+            for (auto const& name : present)
+            {
+                if (
+                    p_properties == nullptr
+                    || p_properties->find(name) == nullptr
+                )
+                {
+                    undeclared.emplace_back(name);
+                }
+            }
+        }
+
+        if (missing.empty() && undeclared.empty())
+        {
+            return {};
+        }
+
+        auto report = wrapped(
+            std::format(
+                "{} refused {}. Every member problem at that one location "
+                "follows, so the whole edit can be made at once.",
+                label,
+                where
+            ),
+            ""
+        );
+        if (!missing.empty())
+        {
+            report += std::format(
+                "\n{} must carry {} member(s) it does not:\n",
+                where,
+                missing.size()
+            );
+            for (auto const name : missing)
+            {
+                report += std::format("\n  {}\n", name);
+                report += wrapped(
+                    memberExplanation(m_state->resources, *schemaNode, name),
+                    "    "
+                );
+            }
+        }
+        if (!undeclared.empty())
+        {
+            report += std::format(
+                "\n{} carries {} member(s) this closed object does not "
+                "declare:\n\n",
+                where,
+                undeclared.size()
+            );
+            for (auto const name : undeclared)
+            {
+                report += std::format("  {}\n", name);
+            }
+        }
+        report += '\n';
+        report += wrapped(
+            std::format(
+                "That is the whole of what this schema says about {}. It is not "
+                "a verdict on the document: validation stops at the first "
+                "refusal, so another location may be refused once these are "
+                "fixed.",
+                where
+            ),
+            ""
+        );
+        return report;
     }
 
     auto Schema::implementedKeywords() -> std::span<std::string_view const>

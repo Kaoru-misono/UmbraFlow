@@ -3,7 +3,6 @@
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
 
-#include <filesystem>
 #include <span>
 #include <string>
 #include <string_view>
@@ -16,23 +15,10 @@ namespace uf::project
         Failure = 1,
     };
 
-    // The two directories the `project` executable's composition wiring opens:
-    // the source tree init may acquire into and the deployment declaration
-    // names its files in, plus the build tree whose record build/check own.
-    // Parsed under the action's own flag rules, so the executable does not
-    // spell the command line a second time.
-    struct ProjectDirectories final
-    {
-        std::filesystem::path sourceDirectory{};
-        std::filesystem::path buildDirectory{};
-    };
-
-    [[nodiscard]]
-    auto parseProjectDirectories(
-        std::span<std::string const> raw,
-        std::string_view action
-    ) -> Result<ProjectDirectories>;
-
+    // Every verb of the `project` executable, dispatched from its own table.
+    // There is nothing for the executable to wire on top: an entry point that
+    // intercepted a verb to run something extra before it would be a second
+    // place a verb's meaning is written.
     [[nodiscard]]
     auto runProjectCommand(
         std::span<std::string const> raw

@@ -238,15 +238,28 @@ namespace uf::project
         // A cut is declared here and nowhere else: there is no spec member a
         // caller can fill in, so a test that wants one written it the way a
         // project author writes it.
+        //
+        // It also declares one resource, because the input set a build acts on
+        // is derived from this document: a file no member names is a file no
+        // build has any reason to read.
         [[nodiscard]]
         auto manifestDeclaringCuts(std::string_view cuts) -> std::string
         {
-            return deploymentManifest(
+            constexpr auto empty = std::string_view{R"json("resources": [])json"};
+            auto manifest        = deploymentManifest(
                 k_handWrittenPlugin,
                 k_handWrittenAuthoring,
                 k_statedJustification,
                 cuts
             );
+            auto const at = manifest.find(empty);
+            REQUIRE(at != std::string::npos);
+            manifest.replace(
+                at,
+                empty.size(),
+                R"json("resources": [{"kind":"utf8","name":"facts","path":"content/facts.txt"}])json"
+            );
+            return manifest;
         }
 
         auto writeRootManifest(
@@ -268,25 +281,20 @@ namespace uf::project
         {
             writeFile(workspace.source() / k_handWrittenPlugin, "return {}\n");
             writeRootManifest(workspace, manifest);
-            auto spec = ProjectInitSpec{
-                .sourceDirectory = workspace.source(),
-                .buildDirectory  = workspace.build(),
-                .inputs          = {
-                    std::filesystem::path{k_deploymentManifestInput},
-                },
-            };
             if (manifest.contains(k_generatedPlugin))
             {
-                auto const declaration = std::filesystem::path{
-                    "declarative-tools/acme.tool/do-work.json"
-                };
                 writeFile(
-                    workspace.source() / declaration,
+                    workspace.source()
+                        / std::filesystem::path{
+                            "declarative-tools/acme.tool/do-work.json"
+                        },
                     validWorkflowDeclaration()
                 );
-                spec.inputs.emplace_back(declaration);
             }
-            return initProject(spec);
+            return initProject(ProjectBuildSpec{
+                .sourceDirectory = workspace.source(),
+                .buildDirectory  = workspace.build(),
+            });
         }
 
         [[nodiscard]]
@@ -296,17 +304,12 @@ namespace uf::project
         ) -> Status
         {
             writeFile(workspace.source() / "content" / "facts.txt", "facts\n");
-            writeFile(workspace.source() / "decisions.txt", "decisions\n");
             writeFile(workspace.source() / k_handWrittenPlugin, "return {}\n");
             writeRootManifest(workspace, manifestDeclaringCuts(templateCuts));
             return initProject(
-                ProjectInitSpec{
+                ProjectBuildSpec{
                     .sourceDirectory = workspace.source(),
                     .buildDirectory  = workspace.build(),
-                    .inputs          = {
-                        "decisions.txt",
-                        "content/facts.txt",
-                    },
                 }
             );
         }
@@ -377,15 +380,24 @@ namespace uf::project
                 workspace.source() / k_workflowDeclarationInput,
                 validWorkflowDeclaration()
             );
-            writeFile(workspace.source() / k_handWrittenPlugin, "return {}\n");
-            writeRootManifest(workspace, acceptedDeploymentManifest());
+            // A generated deployment, because that is the only way a workflow
+            // declaration enters a build: the deployment names the module the
+            // generator writes, and the declaration is derived back from that
+            // module's path. There is no flag that adds a source the
+            // declaration does not carry.
+            writeRootManifest(
+                workspace,
+                deploymentManifest(
+                    k_generatedWorkflowAdapter,
+                    k_generatedAuthoring,
+                    "",
+                    "[]"
+                )
+            );
             return initProject(
-                ProjectInitSpec{
+                ProjectBuildSpec{
                     .sourceDirectory = workspace.source(),
                     .buildDirectory  = workspace.build(),
-                    .inputs          = {
-                        std::filesystem::path{k_workflowDeclarationInput},
-                    },
                 }
             );
         }
@@ -423,31 +435,63 @@ namespace uf::project
         }
     }
 
-    TEST_CASE("project init records canonical declared inputs outside the source tree")
+    // The whole of the iterate loop's first requirement: edit the declaration,
+    // re-run one command, and be told what is left -- with no earlier command
+    // repeated first.
+    //
+    // Every assertion here was a failure in the field. A build derived its file
+    // set from a ledger only `project init` wrote, so naming a new module in
+    // the declaration made `project build` refuse the module it had just been
+    // told about, and a source tree with no build directory could not be built
+    // at all. Both are one bug: a cached derivation.
+    TEST_CASE("project build derives its input set from the declaration alone")
     {
-        auto const workspace   = TemporaryWorkspace{"uf-project-init"};
+        auto const workspace = TemporaryWorkspace{"uf-project-derived-inputs"};
         auto const initialized = initializedWorkspace(workspace);
         REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
 
         auto const sourceSnapshot = snapshotTree(workspace.source());
-        REQUIRE_FALSE_MESSAGE(
-            sourceSnapshot.contains(std::string{k_inputManifestName}),
-            "project init must not write its input manifest into the source tree"
+        CHECK_FALSE_MESSAGE(
+            sourceSnapshot.contains(std::string{k_buildReceiptName}),
+            "project init must write nothing into the source tree"
         );
 
-        auto const snapshot = snapshotTree(workspace.build());
-        REQUIRE_MESSAGE(
-            snapshot.contains(std::string{k_inputManifestName}),
-            "project init must write its input manifest into the build directory"
+        auto const directories = ProjectBuildSpec{
+            .sourceDirectory = workspace.source(),
+            .buildDirectory  = workspace.build(),
+        };
+        auto const built = buildProject(directories, {});
+        REQUIRE_MESSAGE(built.has_value(), messageOf(built));
+
+        // A module the declaration did not name a moment ago, with no init
+        // between the edit and the build.
+        writeFile(workspace.source() / "plugin/added.luau", "return {}\n");
+        writeRootManifest(
+            workspace,
+            replacedOnce(
+                manifestDeclaringCuts("[]"),
+                R"json({"name":"main","path":"plugin/dream.luau"})json",
+                R"json({"name":"added","path":"plugin/added.luau"},)json"
+                R"json({"name":"main","path":"plugin/dream.luau"})json"
+            )
         );
+        auto const rebuilt = buildProject(directories, {});
+        REQUIRE_MESSAGE(rebuilt.has_value(), messageOf(rebuilt));
         CHECK_MESSAGE(
-            snapshot.at(std::string{k_inputManifestName})
-            == "umbraflow-project-kit-inputs-v1\n"
-               "content/facts.txt\n"
-               "decisions.txt\n"
-               "plugin/dream.luau\n"
-               "umbraflow-project.json\n",
-            "project init must record declared inputs in canonical sorted order"
+            snapshotTree(workspace.build())
+                .contains("generated/modules/dream/tool/added.luau"),
+            "a module named by the declaration must reach the build that "
+            "follows the edit"
+        );
+
+        // And with the whole build tree gone, which is what a fresh clone is.
+        auto error = std::error_code{};
+        std::filesystem::remove_all(workspace.build(), error);
+        REQUIRE_FALSE(error);
+        auto const fromNothing = buildProject(directories, {});
+        CHECK_MESSAGE(
+            fromNothing.has_value(),
+            messageOf(fromNothing)
         );
     }
 
@@ -461,10 +505,9 @@ namespace uf::project
         );
         writeRootManifest(workspace, manifest);
 
-        auto const initialized = initProject(ProjectInitSpec{
+        auto const initialized = initProject(ProjectBuildSpec{
             .sourceDirectory = workspace.source(),
             .buildDirectory  = workspace.build(),
-            .inputs          = {std::filesystem::path{k_deploymentManifestInput}},
         });
         REQUIRE_FALSE(initialized.has_value());
         CHECK(messageOf(initialized).contains("plugin/main.luau"));
@@ -472,9 +515,6 @@ namespace uf::project
         auto const source = snapshotTree(workspace.source());
         CHECK_FALSE(source.contains("plugin/main.luau"));
         CHECK_FALSE(source.contains("plugin/support.luau"));
-        CHECK_FALSE(std::filesystem::exists(
-            workspace.build() / k_inputManifestName
-        ));
     }
 
     TEST_CASE("project scaffold creates buildable generated and hand-written projects")
@@ -498,7 +538,7 @@ namespace uf::project
             });
             REQUIRE_MESSAGE(scaffolded.has_value(), messageOf(scaffolded));
 
-            auto const initialized = initProject(ProjectInitSpec{
+            auto const initialized = initProject(ProjectBuildSpec{
                 .sourceDirectory = workspace.source(),
                 .buildDirectory  = workspace.build(),
             });
@@ -573,10 +613,9 @@ namespace uf::project
         writeFile(workspace.source() / "plugin/main.luau", "return require(\"./support\")\n");
         writeFile(workspace.source() / "plugin/support.luau", "return {}\n");
         writeFile(workspace.source() / "runtime/corpus.json", "{\"answer\":42}\n");
-        auto const initialized = initProject(ProjectInitSpec{
+        auto const initialized = initProject(ProjectBuildSpec{
             .sourceDirectory = workspace.source(),
             .buildDirectory  = workspace.build(),
-            .inputs          = {"runtime/corpus.json"},
         });
         REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
 
@@ -944,7 +983,7 @@ namespace uf::project
         auto const* artifacts = manifest.find("artifacts");
         REQUIRE(inputs != nullptr);
         REQUIRE(artifacts != nullptr);
-        REQUIRE(inputs->items().size() == 3U);
+        REQUIRE(inputs->items().size() == 2U);
         CHECK_MESSAGE(
             std::ranges::any_of(
                 inputs->items(),
@@ -978,20 +1017,27 @@ namespace uf::project
         );
     }
 
-    TEST_CASE("project build rejects a registration outside the RuntimeArtifact closure")
+    // A module the declaration names and the tree does not hold. It replaces a
+    // case that used to name a module outside a separately written input
+    // ledger: with the input set derived from this document, a module the
+    // document names is in it by construction and that refusal could no longer
+    // fire. What remains reachable -- and is what a migration actually hits --
+    // is the file simply not being there.
+    TEST_CASE("project build names a declared module the source tree lacks")
     {
         auto const workspace = TemporaryWorkspace{
             "uf-project-artifact-closure-negative"
         };
         auto const initialized = initializedWorkspace(workspace);
         REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
-        auto manifest = replacedOnce(
-            acceptedDeploymentManifest(),
-            std::string{k_handWrittenPlugin},
-            "outside.luau"
+        writeRootManifest(
+            workspace,
+            replacedOnce(
+                manifestDeclaringCuts("[]"),
+                std::string{k_handWrittenPlugin},
+                "plugin/absent.luau"
+            )
         );
-        writeRootManifest(workspace, manifest);
-        writeFile(workspace.source() / "outside.luau", "return {}\n");
         auto const built = buildProject(
             ProjectBuildSpec{
                 .sourceDirectory = workspace.source(),
@@ -1002,18 +1048,17 @@ namespace uf::project
 
         REQUIRE_FALSE_MESSAGE(
             built.has_value(),
-            "project build must reject a module outside the declared inputs"
+            "project build must reject a module the source tree does not hold"
         );
         CHECK_MESSAGE(
-            messageOf(built).find("undeclared source input")
-                != std::string::npos,
-            "closure refusal must name the undeclared module source"
+            messageOf(built).find("plugin/absent.luau") != std::string::npos,
+            "the refusal must name the module source"
         );
         CHECK_FALSE_MESSAGE(
             std::filesystem::exists(
                 workspace.build() / k_artifactManifestName
             ),
-            "closure refusal must happen before build artifacts are written"
+            "the refusal must happen before build artifacts are written"
         );
     }
 
@@ -1098,7 +1143,7 @@ namespace uf::project
         writeRootManifest(workspace, manifest);
         writeFile(workspace.source() / k_handWrittenPlugin, "return {}\n");
         writeFile(workspace.source() / "runtime/corpus.blob", acceptedBytes);
-        auto const initialized = initProject(ProjectInitSpec{
+        auto const initialized = initProject(ProjectBuildSpec{
             .sourceDirectory = workspace.source(),
             .buildDirectory  = workspace.build(),
         });
@@ -1312,12 +1357,11 @@ namespace uf::project
         }
     }
 
-    // The root document is what makes a source tree a project, so init reads and
-    // derives it whether or not the author repeats it as an explicit input.
-    TEST_CASE("project init judges the root document without an explicit input")
+    // The root document is what makes a source tree a project, so every action
+    // reads and judges it.
+    TEST_CASE("project init judges the root document")
     {
         auto const workspace = TemporaryWorkspace{"uf-project-manifest-undeclared"};
-        writeFile(workspace.source() / "dummy.txt", "dummy\n");
         writeFile(workspace.source() / k_handWrittenPlugin, "return {}\n");
         writeRootManifest(
             workspace,
@@ -1330,16 +1374,14 @@ namespace uf::project
         );
 
         auto const initialized = initProject(
-            ProjectInitSpec{
+            ProjectBuildSpec{
                 .sourceDirectory = workspace.source(),
                 .buildDirectory  = workspace.build(),
-                .inputs          = {std::filesystem::path{"dummy.txt"}},
             }
         );
         CHECK_FALSE_MESSAGE(
             initialized.has_value(),
-            "project init must judge umbraflow-project.json even when --input "
-            "does not name it"
+            "project init must judge umbraflow-project.json"
         );
         CHECK_MESSAGE(
             messageOf(initialized).find("plugin_justification") != std::string::npos,
@@ -1349,13 +1391,11 @@ namespace uf::project
 
         // And a source tree with no root document at all is not a project,
         // rather than a project whose gate is vacuous.
-        auto const bare = TemporaryWorkspace{"uf-project-manifest-absent"};
-        writeFile(bare.source() / "dummy.txt", "dummy\n");
+        auto const bare    = TemporaryWorkspace{"uf-project-manifest-absent"};
         auto const bareInit = initProject(
-            ProjectInitSpec{
+            ProjectBuildSpec{
                 .sourceDirectory = bare.source(),
                 .buildDirectory  = bare.build(),
-                .inputs          = {std::filesystem::path{"dummy.txt"}},
             }
         );
         REQUIRE_FALSE_MESSAGE(
@@ -1558,12 +1598,6 @@ namespace uf::project
         auto const nestedBuild = workspace.source() / "generated";
         auto error             = std::error_code{};
         REQUIRE(std::filesystem::create_directories(nestedBuild, error));
-        REQUIRE_FALSE(error);
-        REQUIRE(std::filesystem::copy_file(
-            workspace.build() / k_inputManifestName,
-            nestedBuild / k_inputManifestName,
-            error
-        ));
         REQUIRE_FALSE(error);
 
         auto const built = buildProject(

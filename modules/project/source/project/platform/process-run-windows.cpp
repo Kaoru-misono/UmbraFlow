@@ -1,20 +1,22 @@
-#include "curl-download.hpp"
+#include "process-run.hpp"
 
 #include <core/numeric/checked-cast.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/error.hpp>
 
 #include <cerrno>
-#include <filesystem>
+#include <cstddef>
 #include <format>
 #include <process.h>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <vector>
 #include <windows.h>
 
-namespace uf::project_entry
+namespace uf::project
 {
     namespace
     {
@@ -26,7 +28,7 @@ namespace uf::project_entry
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "release URL exceeds the Windows process argument limit"
+                    "a process argument exceeds the Windows argument limit"
                 );
             }
             // SAFETY: text.data() is readable for exactly size bytes, the
@@ -47,7 +49,7 @@ namespace uf::project_entry
                         static_cast<int>(GetLastError()),
                         std::system_category(),
                     },
-                    "cannot convert a release URL from UTF-8"
+                    "cannot convert a process argument from UTF-8"
                 );
             }
             auto wide = std::wstring(
@@ -72,7 +74,7 @@ namespace uf::project_entry
                         static_cast<int>(GetLastError()),
                         std::system_category(),
                     },
-                    "cannot convert a release URL from UTF-8"
+                    "cannot convert a process argument from UTF-8"
                 );
             }
             return wide;
@@ -113,37 +115,36 @@ namespace uf::project_entry
         }
     }
 
-    auto downloadFile(
-        std::string_view url,
-        std::filesystem::path const& target,
-        std::uintmax_t maximumBytes
-    ) -> Status
+    auto runProcess(std::span<std::string const> commandLine) -> Result<int32>
     {
-        UF_TRY_VALUE(wideUrl, utf8ToWide(url));
-        auto arguments = std::vector<std::wstring>{
-            L"curl.exe",
-            L"--fail",
-            L"--location",
-            L"--silent",
-            L"--show-error",
-            L"--connect-timeout",
-            L"15",
-            L"--max-time",
-            L"600",
-            L"--proto",
-            L"=https,file",
-            L"--proto-redir",
-            L"=https",
-            L"--header",
-            L"Accept:application/octet-stream",
-            L"--max-filesize",
-            std::to_wstring(maximumBytes),
-            L"--output",
-            target.wstring(),
-            std::move(wideUrl),
-        };
-        for (auto iterator = arguments.begin() + 1; iterator != arguments.end(); ++iterator)
-            *iterator = quotedProcessArgument(*iterator);
+        if (commandLine.empty())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "a process command line must name a program"
+            );
+        }
+
+        auto arguments = std::vector<std::wstring>{};
+        arguments.reserve(commandLine.size());
+        for (auto const& argument : commandLine)
+        {
+            UF_TRY_VALUE(wide, utf8ToWide(argument));
+            arguments.emplace_back(std::move(wide));
+        }
+        // EVERY element is quoted, argv[0] included. The spawn call locates the
+        // program from its own cmdname parameter, which takes the path as
+        // written, while the vector below is joined into the command line the
+        // child's CRT parses back apart -- so an unquoted argv[0] holding a
+        // space makes the child read its own program path as its first two
+        // arguments. That is invisible until a project lives somewhere with a
+        // space in the path, and then every argument is off by one.
+        auto const program = arguments.front();
+        for (auto& argument : arguments)
+        {
+            argument = quotedProcessArgument(argument);
+        }
+
         auto pointers = std::vector<wchar_t const*>{};
         pointers.reserve(arguments.size() + 1U);
         for (auto const& argument : arguments)
@@ -157,27 +158,27 @@ namespace uf::project_entry
         // The CRT copies the argument vector into the child and retains none.
         auto const result = _wspawnvp(
             _P_WAIT,
-            arguments.front().c_str(),
+            program.c_str(),
             pointers.data()
         );
         if (result == -1)
         {
             return fail(
                 std::error_code{errno, std::generic_category()},
-                "cannot start curl while acquiring the UmbraFlow release"
+                std::format("cannot start \"{}\"", commandLine.front())
             );
         }
-        if (result != 0)
+        auto const status = checkedCast<int32>(result);
+        if (!status)
         {
             return fail(
                 AutomationErrorKind::IoFailure,
                 std::format(
-                    "curl refused release URL \"{}\" with exit code {}",
-                    url,
-                    result
+                    "\"{}\" exited with a status this platform cannot report",
+                    commandLine.front()
                 )
             );
         }
-        return ok();
+        return *status;
     }
 }

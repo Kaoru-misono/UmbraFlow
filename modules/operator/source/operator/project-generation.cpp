@@ -60,56 +60,6 @@ namespace uf::operator_runtime
             return views;
         }
 
-        // The tool closure's leg of the join, refused from both sides. An
-        // understatement leaves a bound Tool with no entry to run; an
-        // overstatement leaves an entry nothing declared, which the bridge
-        // would then compile into a reachable handler no Tool name addresses.
-        //
-        // The two sources stay apart here on purpose. Deriving the declaration
-        // from the binding table would make this compare the table with
-        // itself, and the refusals below could never fire.
-        [[nodiscard]]
-        auto joinToolDeclaration(
-            ProjectClosureClaims const& toolClosure,
-            std::vector<ProjectToolBinding> const& bindings
-        ) -> Status
-        {
-            for (auto const& binding : bindings)
-            {
-                if (
-                    !std::ranges::contains(
-                        toolClosure.exportedEntryPoints,
-                        binding.entryPoint
-                    )
-                )
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "Project Tool " + binding.toolName
-                            + " is bound to entry " + binding.entryPoint
-                            + ", which the tool closure does not declare"
-                    );
-                }
-            }
-            for (auto const& entryPoint : toolClosure.exportedEntryPoints)
-            {
-                if (
-                    !std::ranges::contains(
-                        bindings,
-                        entryPoint,
-                        &ProjectToolBinding::entryPoint
-                    )
-                )
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "the tool closure declares entry " + entryPoint
-                            + ", which no Tool of this generation binds"
-                    );
-                }
-            }
-            return ok();
-        }
     } // namespace
 
     class ProjectGenerationHandle::State final
@@ -221,20 +171,12 @@ namespace uf::operator_runtime
         }
 
         // The join, before anything is compiled. It is about the DOCUMENT:
-        // what it claims the closure offers against what a generation's
-        // closure may offer. What the closure actually exports is the bridge's
-        // question, asked when it is compiled against the very set checked
-        // here.
-        UF_TRY(joinToolDeclaration(
-            generation.toolClosure(),
-            generation.projectToolBindings()
-        ));
-
-        // The other join, against the authority that DECLARES the Tools. The
-        // one above holds the binding table to the code; this holds it to the
-        // contract, and neither can stand in for the other: a Tool declared
-        // with no binding is invisible to the first check while a binding for
-        // a Tool nothing declares is invisible to it too.
+        // what it claims the closure offers, what it declares as Tools, and
+        // what its binding table pairs. All three legs are inside bind, in the
+        // one function the offline project kit also calls, so a directory the
+        // kit accepted cannot be refused here for a reason the kit could have
+        // stated. What the closure ACTUALLY exports is the bridge's question,
+        // asked when it is compiled against the very set checked here.
         UF_TRY_VALUE(
             bindings,
             ProjectToolBindingTable::bind(

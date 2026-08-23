@@ -1522,26 +1522,16 @@ namespace uf::operator_runtime
 
         auto const& bindings = project.projectToolBindings();
         auto const names     = catalog.toolNames();
-        for (auto const& binding : bindings)
-        {
-            if (!std::ranges::contains(names, binding.toolName))
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "Project Tool binding names " + binding.toolName
-                        + ", which this Tool Catalog does not declare"
-                );
-            }
-            if (!std::ranges::contains(exportedEntryPoints, binding.entryPoint))
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "Project Tool " + binding.toolName + " is bound to entry "
-                        + binding.entryPoint
-                        + ", which the Project closure does not export"
-                );
-            }
-        }
+
+        // The three-way join, in the one place that states it. The offline
+        // project kit calls the same function against a declaration under
+        // edit, so a directory this refuses is a directory `project check`
+        // refuses first.
+        UF_TRY(validateProjectToolBindings(names, bindings, exportedEntryPoints));
+
+        // The registration's own half of the rule, which only a registration
+        // can apply: a Tool declared here is a Tool a caller may address, and
+        // one with no binding is a call nothing could answer.
         for (auto const& name : names)
         {
             auto const bound = std::ranges::find(

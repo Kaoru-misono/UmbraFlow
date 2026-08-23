@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <span>
+#include <string>
 #include <string_view>
 
 namespace uf::json
@@ -75,6 +76,40 @@ namespace uf::json
         ) -> Result<Schema>;
 
         [[nodiscard]] auto validate(Value const& instance) const -> Status;
+
+        // The whole of one refusal, in the terms the author has to act on.
+        //
+        // THIS NEVER ACCEPTS ANYTHING. validate above stays the sole authority
+        // on accept and refuse; this runs only after it has already refused,
+        // and only explains that refusal. A report that finds nothing to say
+        // while validate refuses is a bug in the report and never permission to
+        // install the document.
+        //
+        // It exists because validate short-circuits, which is right for a
+        // verdict and wrong for a work list: a declaration with six problems
+        // reports one, and the author edits six times. So this reads the one
+        // instance path the refusal names and does pure set arithmetic there --
+        // `required` minus the instance's member set is what is missing, and
+        // for a closed object the instance's member set minus the `properties`
+        // keys is what is not declared. Each missing member is printed with its
+        // own `$comment`, because that is where the explanation an author needs
+        // is already written.
+        //
+        // It is deliberately not a second evaluator, and must not grow into
+        // one. It resolves `$ref` only along the path it walks, implements no
+        // format, pattern, numeric or combinator semantics, and says nothing
+        // about any location other than the one the refusal named.
+        //
+        // The answer is EMPTY when there is nothing to add -- a refusal about a
+        // value rather than a member set, or a location this cannot read. That
+        // is "I have nothing further to say about the refusal above", never
+        // "the document is fine", and a caller must print the refusal either
+        // way. A paragraph announcing that it had nothing to say would be noise
+        // on the majority of refusals and would make two readers of one schema
+        // disagree by wording alone.
+        [[nodiscard]]
+        auto explainRefusal(Value const& instance, Error const& refusal) const
+            -> std::string;
 
         // Validates against `#/$defs/<name>`. One document holding one
         // subschema per case is how a tool-precondition schema is written: the

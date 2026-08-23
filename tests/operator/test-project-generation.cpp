@@ -829,8 +829,7 @@ return {
             );
             REQUIRE_FALSE(refused.has_value());
             CHECK(refused.error().message().contains(
-                "the tool closure declares entry sweep, which no Tool of this "
-                "generation binds"
+                "the tool closure declares entry sweep, which no Tool binds"
             ));
         }
 

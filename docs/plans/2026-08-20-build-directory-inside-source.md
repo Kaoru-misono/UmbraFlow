@@ -50,7 +50,8 @@ Minimal change list:
    own `check` already compares exactly those). Other tests assuming an
    outside build get the same sweep.
 3. `project` defaults its generated state to `<source>/work/build` and
-   `<source>/work/release`; `project init` also installs the release bundle.
+   `<source>/work/release`; `project upgrade` installs the release bundle into
+   `<source>/umbraflow-bin` and stages it under `<source>/work/release-staging`.
 4. Consumer repositories ignore `work/` and `umbraflow-bin/`.
 5. Public contract §3 and the template README restate the directory
    relationship and the refusal text.

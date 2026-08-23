@@ -11,3 +11,15 @@ version = 0.1.0
 [dependencies]
 public = core domain operator
 private = image json schema
+
+# The one thing this module does that is not arithmetic over files: starting a
+# process. `project upgrade` fetches a release through curl and then runs the
+# binary it just installed, because the schema a declaration is judged against
+# is compiled into an executable and the process that installed one cannot
+# speak for it. Everything platform-specific about doing that is under
+# platform/, on the same terms as every other boundary in this repository.
+[sources.windows]
+include = platform/process-run-windows.cpp
+
+[sources.other]
+include = platform/process-run-posix.cpp

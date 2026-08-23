@@ -1,6 +1,8 @@
 #include "command.hpp"
 
+#include "platform/process-run.hpp"
 #include "project-kit.hpp"
+#include "release-bundle.hpp"
 
 #include <core/error/contracts.hpp>
 #include <core/error/error.hpp>
@@ -40,7 +42,6 @@ namespace uf::project
         {
             Source,
             Build,
-            Input,
             Release,
             FramesRoot,
             Plugin,
@@ -53,13 +54,17 @@ namespace uf::project
             ProjectFlag      flag{};
         };
 
+        // --release is carried as text rather than as a path because the two
+        // verbs that take it mean two different things by it: freeze and run
+        // name a directory of this project's own frozen output, and upgrade
+        // names a framework release on the host. Each verb converts what it
+        // was given; nothing here decides which of the two it is.
         struct ParsedProjectFlags final
         {
             std::optional<std::filesystem::path> source{};
             std::optional<std::filesystem::path> build{};
-            std::optional<std::filesystem::path> release{};
+            std::optional<std::string>           release{};
             std::optional<std::filesystem::path> framesRoot{};
-            std::vector<std::filesystem::path>   inputs{};
             std::optional<std::string>           plugin{};
             std::optional<std::string>           pluginId{};
         };
@@ -67,7 +72,6 @@ namespace uf::project
         constexpr auto k_projectFlags = std::array{
             ProjectFlagDefinition{"--source", ProjectFlag::Source},
             ProjectFlagDefinition{"--build", ProjectFlag::Build},
-            ProjectFlagDefinition{"--input", ProjectFlag::Input},
             ProjectFlagDefinition{"--release", ProjectFlag::Release},
             ProjectFlagDefinition{"--frames-root", ProjectFlag::FramesRoot},
             ProjectFlagDefinition{"--plugin", ProjectFlag::Plugin},
@@ -131,9 +135,6 @@ namespace uf::project
                     }
                     parsed.build = std::filesystem::path{value};
                     break;
-                case ProjectFlag::Input:
-                    parsed.inputs.emplace_back(value);
-                    break;
                 case ProjectFlag::Release:
                     if (parsed.release)
                     {
@@ -142,7 +143,7 @@ namespace uf::project
                             "project argument \"--release\" appears more than once"
                         );
                     }
-                    parsed.release = std::filesystem::path{value};
+                    parsed.release = value;
                     break;
                 case ProjectFlag::FramesRoot:
                     if (parsed.framesRoot)
@@ -179,6 +180,15 @@ namespace uf::project
             }
             return parsed;
         }
+
+        // The two directories every verb works between: the source tree the
+        // declaration and its files live in, and the build tree the generated
+        // artifacts and the build receipt live in.
+        struct ProjectDirectories final
+        {
+            std::filesystem::path sourceDirectory{};
+            std::filesystem::path buildDirectory{};
+        };
 
         [[nodiscard]]
         auto projectDirectories(
@@ -302,7 +312,7 @@ namespace uf::project
 
         struct ParsedProjectInit final
         {
-            ProjectInitSpec                    spec{};
+            ProjectBuildSpec                   spec{};
             std::optional<ProjectScaffoldSpec> scaffold{};
         };
 
@@ -367,10 +377,9 @@ namespace uf::project
                 });
             }
             return ParsedProjectInit{
-                .spec = ProjectInitSpec{
+                .spec = ProjectBuildSpec{
                     .sourceDirectory = std::move(directories.sourceDirectory),
                     .buildDirectory  = std::move(directories.buildDirectory),
-                    .inputs          = std::move(parsed.inputs),
                 },
                 .scaffold = std::move(scaffold),
             };
@@ -400,12 +409,7 @@ namespace uf::project
         ) -> Result<ParsedProjectBuild>
         {
             UF_TRY_VALUE(parsed, parseProjectFlags(raw));
-            if (
-                !parsed.inputs.empty()
-                || parsed.release
-                || parsed.plugin
-                || parsed.pluginId
-            )
+            if (parsed.release || parsed.plugin || parsed.pluginId)
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
@@ -432,21 +436,16 @@ namespace uf::project
         ) -> Result<ParsedProjectFreeze>
         {
             UF_TRY_VALUE(parsed, parseProjectFlags(raw));
-            if (
-                !parsed.inputs.empty()
-                || parsed.plugin
-                || parsed.pluginId
-            )
+            if (parsed.plugin || parsed.pluginId)
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "project freeze does not accept --input, --plugin or "
-                    "--plugin-id"
+                    "project freeze does not accept --plugin or --plugin-id"
                 );
             }
             UF_TRY_VALUE(directories, projectDirectories(parsed));
             auto release = parsed.release
-                ? std::move(*parsed.release)
+                ? std::filesystem::path{*parsed.release}
                 : directories.sourceDirectory / "work" / "release";
             return ParsedProjectFreeze{
                 .spec = ProjectFreezeSpec{
@@ -471,7 +470,6 @@ namespace uf::project
                 || parsed.source
                 || parsed.build
                 || parsed.framesRoot
-                || !parsed.inputs.empty()
                 || parsed.plugin
                 || parsed.pluginId
             )
@@ -481,7 +479,29 @@ namespace uf::project
                     "project run requires only --release PATH"
                 );
             }
-            return std::move(*parsed.release);
+            return std::filesystem::path{*parsed.release};
+        }
+
+        [[nodiscard]]
+        auto parseProjectUpgrade(
+            std::span<std::string const> raw
+        ) -> Result<ProjectUpgradeSpec>
+        {
+            UF_TRY_VALUE(parsed, parseProjectFlags(raw));
+            if (parsed.build || parsed.framesRoot || parsed.plugin || parsed.pluginId)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "project upgrade accepts only --source and --release"
+                );
+            }
+            UF_TRY_VALUE(directories, projectDirectories(parsed));
+            return ProjectUpgradeSpec{
+                .sourceDirectory = std::move(directories.sourceDirectory),
+                .releaseOverride = parsed.release
+                    ? std::move(*parsed.release)
+                    : std::string{},
+            };
         }
 
         [[nodiscard]]
@@ -640,6 +660,60 @@ namespace uf::project
             return ProjectExitCode::Success;
         }
 
+        // Pull the new binaries, then read what is left to do.
+        //
+        // The two halves are one command because separating them costs the
+        // author a round trip they cannot skip: the schema a declaration is
+        // judged against is compiled into the binary, so nothing can say what a
+        // release expects until that release is installed. Install first,
+        // report second -- and never the other way round, because a refusal to
+        // install would leave the author editing against a shape no binary
+        // present can confirm.
+        //
+        // The report is produced by RUNNING the installed binary rather than by
+        // this process, for the same reason. `check` is what it runs, because
+        // `check` is what the author runs next anyway.
+        [[nodiscard]]
+        auto runProjectUpgrade(
+            std::span<std::string const> raw
+        ) -> ProjectExitCode
+        {
+            auto const parsed = parseProjectUpgrade(raw);
+            if (!parsed)
+            {
+                std::cerr << parsed.error().message() << '\n';
+                std::cerr << projectUsageText();
+                return ProjectExitCode::Failure;
+            }
+
+            auto const installed = upgradeReleaseBundle(*parsed);
+            if (!installed)
+            {
+                return reportProjectError(installed.error());
+            }
+            std::cout << std::format(
+                "project upgrade: release={} bundle=\"{}\"\n",
+                installed->release,
+                installed->bundleDirectory.string()
+            );
+            std::cout.flush();
+
+            auto const arguments = std::vector<std::string>{
+                installed->projectExecutable.string(),
+                "check",
+                "--source",
+                parsed->sourceDirectory.string(),
+            };
+            auto const status = runProcess(arguments);
+            if (!status)
+            {
+                return reportProjectError(status.error());
+            }
+            return *status == 0
+                ? ProjectExitCode::Success
+                : ProjectExitCode::Failure;
+        }
+
         using ProjectCommandHandler = ProjectExitCode (*)(
             std::span<std::string const>
         );
@@ -651,38 +725,62 @@ namespace uf::project
         };
 
         constexpr auto k_projectCommands = std::array{
+            ProjectCommand{"upgrade", &runProjectUpgrade},
             ProjectCommand{"init", &runProjectInit},
             ProjectCommand{"build", &runProjectBuild},
             ProjectCommand{"check", &runProjectCheck},
             ProjectCommand{"freeze", &runProjectFreeze},
             ProjectCommand{"run", &runProjectRun},
         };
-    }
 
-    auto parseProjectDirectories(
-        std::span<std::string const> raw,
-        std::string_view action
-    ) -> Result<ProjectDirectories>
-    {
-        if (action == "init")
+        // Which source tree this invocation is about, established before any
+        // verb runs and without judging the command line.
+        //
+        // It exists for one job: every invocation reconciles the bundle
+        // directories first, and that has to happen even when the rest of the
+        // command line turns out to be wrong. A verb's own parser is the
+        // authority on what it accepts and refuses; this only looks for the
+        // one flag that says where.
+        [[nodiscard]]
+        auto sourceDirectoryOf(
+            std::span<std::string const> raw
+        ) -> std::filesystem::path
         {
-            UF_TRY_VALUE(parsed, parseProjectInit(raw));
-            return ProjectDirectories{
-                .sourceDirectory = std::move(parsed.spec.sourceDirectory),
-                .buildDirectory  = std::move(parsed.spec.buildDirectory),
-            };
+            for (auto index = std::size_t{0}; index + 1U < raw.size(); ++index)
+            {
+                if (raw[index] == "--source")
+                {
+                    return std::filesystem::path{raw[index + 1U]};
+                }
+            }
+            auto error         = std::error_code{};
+            auto const current = std::filesystem::current_path(error);
+            return error ? std::filesystem::path{} : current;
         }
-        UF_TRY_VALUE(parsed, parseProjectBuildSpec(raw, action));
-        return ProjectDirectories{
-            .sourceDirectory = std::move(parsed.spec.sourceDirectory),
-            .buildDirectory  = std::move(parsed.spec.buildDirectory),
-        };
     }
 
     auto runProjectCommand(
         std::span<std::string const> raw
     ) -> ProjectExitCode
     {
+        // The first act of every invocation, before the command line is even
+        // judged. A completed upgrade leaves the previous bundle beside the new
+        // one because a directory holding a running executable cannot be
+        // deleted on this platform; by the time any later command runs, nothing
+        // holds it and the delete succeeds. Doing it here rather than in
+        // upgrade is what makes that true of the NEXT command whichever one it
+        // is.
+        auto const source = sourceDirectoryOf(raw);
+        if (!source.empty())
+        {
+            auto const reconciled = reconcileBundleDirectories(source);
+            if (!reconciled)
+            {
+                return reportProjectError(reconciled.error());
+            }
+            std::cerr << *reconciled;
+        }
+
         if (raw.empty())
         {
             std::cerr << projectUsageText();
@@ -710,9 +808,9 @@ namespace uf::project
     {
         return
             "Usage:\n"
+            "  project upgrade [--source PATH] [--release NAME]\n"
             "  project init [--source PATH] [--build PATH] "
-            "[--plugin generated|hand-written --plugin-id NAME] "
-            "[--input RELATIVE_PATH ...]\n"
+            "[--plugin generated|hand-written --plugin-id NAME]\n"
             "  project build [--source PATH] [--build PATH] "
             "[--frames-root PATH]\n"
             "  project check [--source PATH] [--build PATH] "
@@ -721,25 +819,45 @@ namespace uf::project
             "[--frames-root PATH]\n"
             "  project run --release RELEASE_DIRECTORY\n"
             "\n"
+            "upgrade installs the framework release umbraflow-kit.json selects\n"
+            "-- or the one --release NAME names for this run -- under\n"
+            "<source>/umbraflow-bin, verifying every artifact against the\n"
+            "sha256 its manifest declares before anything is swapped into\n"
+            "place. It installs a release whether or not this project's\n"
+            "declaration already matches it, and then runs the newly installed\n"
+            "binary's own check so one command yields new binaries plus the\n"
+            "whole remaining work list. The previous bundle is left beside the\n"
+            "new one as umbraflow-bin.PREVIOUS_RELEASE, because a directory\n"
+            "holding a running executable cannot be deleted; the next project\n"
+            "command removes it. That leftover is not a rollback -- to go back,\n"
+            "pin release in umbraflow-kit.json to the older name and upgrade\n"
+            "again.\n"
+            "\n"
             "init creates a starter Project when umbraflow-project.json is\n"
-            "absent, then derives its ordinary inputs from that document.\n"
-            "--plugin and --plugin-id are required together only for that first\n"
-            "init; --input adds an authoring-generator source that the runtime\n"
-            "declaration does not carry. Source defaults to the current\n"
-            "directory, build to <source>/work/build and release to\n"
-            "<source>/work/release. When umbraflow-kit.json is present, init\n"
-            "installs and verifies its release under <source>/umbraflow-bin; a\n"
-            "later init verifies that immutable local bundle without following\n"
-            "a newer release. build materializes generated artifacts, check\n"
-            "judges them, freeze publishes a content-addressed read-only\n"
-            "release, and run accepts only a verified immutable release.\n"
+            "absent and gives the build tree somewhere to land. --plugin and\n"
+            "--plugin-id are required together only for that first init.\n"
+            "Source defaults to the current directory, build to\n"
+            "<source>/work/build and release to <source>/work/release. build\n"
+            "materializes generated artifacts, check judges them, freeze\n"
+            "publishes a content-addressed read-only release, and run accepts\n"
+            "only a verified immutable release.\n"
+            "\n"
+            "check is the verb to re-run after every edit: it reaches no\n"
+            "network, writes nothing into umbraflow-bin, and derives the file\n"
+            "set it judges from umbraflow-project.json itself, so no earlier\n"
+            "command has to be repeated first.\n"
+            "\n"
             "A derived declarative-tools/PLUGIN_ID/NAME.json input generates\n"
             "generated/adapters/PLUGIN_ID/NAME.luau. The source directory must\n"
             "hold umbraflow-project.json after init; build\n"
             "and check judge it against the published project schema, which\n"
             "requires a plugin_justification of every deployment whose\n"
             "plugin_authoring is hand-written and refuses one from every\n"
-            "deployment whose plugin_authoring is generated.\n"
+            "deployment whose plugin_authoring is generated. They also apply\n"
+            "the two joins no schema can state -- every Tool name inside the\n"
+            "namespace its deployment's plugin_id owns, and every tool binding\n"
+            "paired with a declared Tool and an exported closure entry -- so a\n"
+            "declaration check accepts is one umbra-flow open accepts.\n"
             "\n"
             "Every deployment also names its declared tool catalog, closed\n"
             "module set and typed resources. build and check materialize the\n"
@@ -749,11 +867,14 @@ namespace uf::project
             "plus every resource kind, digest and size; project authors type no\n"
             "digest in umbraflow-project.json.\n"
             "\n"
-            "build also records every other file a deployment declaration\n"
-            "names -- the four project schemas, the two manifests and the\n"
-            "journal payload schemas -- by digest, and check holds each against\n"
-            "that record: a declared file the tree does not hold, or whose\n"
-            "bytes differ from what the build recorded, is refused by name.\n"
+            "The file set a build acts on is derived from\n"
+            "umbraflow-project.json itself -- the document, every module of\n"
+            "every closure or the declaration a generated module is rendered\n"
+            "from, and every resource -- and never from a list kept beside it.\n"
+            "build records each of those by digest, and check holds each\n"
+            "against that record: a declared file the tree does not hold, or\n"
+            "whose bytes differ from what the build recorded, is refused by\n"
+            "name.\n"
             "\n"
             "Its template_cuts declare the Locator templates the build cuts\n"
             "into generated/templates/, naming each source image by sha256 and\n"

@@ -50,15 +50,11 @@ namespace uf::operator_runtime::conformance::expedition
             std::filesystem::path const& buildDirectory
         ) -> Status
         {
-            UF_TRY(project::initProject(project::ProjectInitSpec{
-                .sourceDirectory = sourceDirectory,
-                .buildDirectory  = buildDirectory,
-                .inputs          = {"umbraflow-project.json"},
-            }));
             auto const spec = project::ProjectBuildSpec{
                 .sourceDirectory = sourceDirectory,
                 .buildDirectory  = buildDirectory,
             };
+            UF_TRY(project::initProject(spec));
             UF_TRY(project::buildProject(spec, {}));
             UF_TRY(project::checkProject(spec, {}));
             constexpr auto expected = std::array{

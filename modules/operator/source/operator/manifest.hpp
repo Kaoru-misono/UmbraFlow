@@ -7,6 +7,7 @@
 #include <domain/content-hash.hpp>
 
 #include <functional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -118,6 +119,32 @@ namespace uf::operator_runtime
 
         auto operator==(ProjectToolBinding const&) const -> bool = default;
     };
+
+    // The join between the Tool names a deployment declares, the entry points
+    // its closure states it exports, and the binding table that pairs them.
+    // Three separate statements, held against each other; deriving any one of
+    // them from another would make a comparison read one table twice and none
+    // of the refusals below could fire.
+    //
+    // It is here, above every loader, because two readers need it. The Operator
+    // applies it to a verified registration when a generation registers, and
+    // the offline project kit applies it to the declaration an author is still
+    // editing. A kit that accepted a declaration the registrar refuses is the
+    // defect this closes -- `project check` passing and `umbra-flow open`
+    // refusing the same directory -- and a second implementation for the second
+    // caller would reopen it, so there is one.
+    //
+    // It deliberately does NOT require every declared Tool to be bound. That
+    // rule belongs to a registration, where a Tool nothing implements is a call
+    // that cannot be answered, and ProjectToolBindingTable::bind states it
+    // there. A declaration under edit legitimately declares a Tool before it
+    // binds one.
+    [[nodiscard]]
+    auto validateProjectToolBindings(
+        std::span<std::string const> declaredToolNames,
+        std::span<ProjectToolBinding const> bindings,
+        std::span<std::string const> exportedEntryPoints
+    ) -> Status;
 
     class VerifiedProjectGeneration;
 

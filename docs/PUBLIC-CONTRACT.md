@@ -74,7 +74,7 @@ statement.
 
 A release bundle ships an immutable manifest tagged `umbraflow-release/v1`,
 written by `scripts/publish_release.py` and never authored by hand.
-`project init` parses it, selects the artifact for the host
+`project upgrade` parses it, selects the artifact for the host
 platform and arch, and refuses a mismatch on the declared sha256. The
 release id is the sha256 of the manifest's canonical bytes, derived
 rather than stored.
@@ -95,7 +95,7 @@ rather than stored.
 | `asset` | the flat asset name a GitHub release carries it under |
 | `sha256` | lowercase hex content digest, no prefix |
 
-`contract_versions` carries `umbraflow-project/v3`, `umbraflow-project-kit-artifact-manifest/v1`; the shipped binaries are `project`, `umbra-flow`, `umbra-flow-conformance`. The release also carries the runtime payload `onnxruntime*.dll`, `models/**/*`, each matched file one artifact row whose path `project init` restores beside the binaries.
+`contract_versions` carries `umbraflow-project/v3`, `umbraflow-project-kit-artifact-manifest/v1`; the shipped binaries are `project`, `umbra-flow`, `umbra-flow-conformance`. The release also carries the runtime payload `onnxruntime*.dll`, `models/**/*`, each matched file one artifact row whose path `project upgrade` restores beside the binaries.
 
 
 ## 2. What a consumer must declare
@@ -200,7 +200,8 @@ umbra-flow-conformance --project <directory> [doctest arguments]
 ```
 
 ```
-project init [--source PATH] [--build PATH] [--plugin generated|hand-written --plugin-id NAME] [--input RELATIVE_PATH ...]
+project upgrade [--source PATH] [--release NAME]
+project init [--source PATH] [--build PATH] [--plugin generated|hand-written --plugin-id NAME]
 project build [--source PATH] [--build PATH] [--frames-root PATH]
 project check [--source PATH] [--build PATH] [--frames-root PATH]
 project freeze [--source PATH] [--build PATH] [--release PATH] [--frames-root PATH]
@@ -293,14 +294,15 @@ project init does not accept --release or --frames-root
 a starter Project requires --plugin and --plugin-id together
 project --plugin must be generated or hand-written
 project {} accepts only --source, --build and --frames-root
-project freeze does not accept --input, --plugin or --plugin-id
+project freeze does not accept --plugin or --plugin-id
 project run requires only --release PATH
+project upgrade accepts only --source and --release
 unknown project action "{}"
 ```
 
-#### project (release bootstrap)
+#### project upgrade
 
-`entry/project/release-bootstrap.cpp`
+`modules/project/source/project/release-bundle.cpp`
 
 ```text
 cannot inspect {} "{}": {}
@@ -308,21 +310,23 @@ cannot inspect {} "{}": {}
 {} "{}" cannot be represented in memory
 cannot open {} "{}"
 cannot read {} "{}"
+curl refused release URL "{}" with exit code {}
 {} must carry a non-empty "{}"
 cannot resolve {} path "{}": {}
 cannot canonicalize {} path "{}": {}
 release artifact path is not canonical: "{}"
+a project needs {} at the root of its source directory to upgrade, and "{}" holds none
 cannot inspect {} at "{}": {}
 {} is not a regular file
-{} has the wrong member set
+{} must carry exactly "host", "manifest" and "release"
 {} host must be an https:// or file:// URL
 {} host must not end with '/'
 {} manifest must be one canonical asset name
+{} release must be "{}" or one canonical release name
 release manifest has the wrong top-level member set
 release manifest schema is not {}
 release manifest carries a non-canonical release name
 release manifest contract_versions must be a string array
-release does not carry required contract {}
 release manifest must carry 1..128 artifacts
 release artifact has the wrong member set
 release artifact {} has a non-canonical asset name
@@ -333,42 +337,48 @@ cannot inspect release artifact {}: {}
 release artifact {} is not a regular file
 release artifact {} has sha256 {}, not {}
 release bundle exceeds {} bytes
-cannot inspect cached release manifest: {}
-cached release manifest is not a regular file
-release artifact path collides with its manifest
-release bundle path leaves the project source tree
-release bundle path is not a directory: "{}"
-cannot inspect release bundle "{}": {}
-release staging path leaves the project source tree
-release staging path already exists: "{}"
-cannot inspect release staging path "{}": {}
+{} path leaves the project source tree: "{}"
+cannot inspect "{}": {}
+"{}" exists and is not a directory
+cannot list the project source directory "{}": {}
+the installed release manifest carries a non-canonical release name
+"{}" holds no installed bundle and more than one superseded one, so nothing here can choose between them:{}
+cannot finish the interrupted upgrade that left "{}" with no installed bundle: {}
+project upgrade --release must be "{}" or one canonical release name
+cannot clear the release staging path "{}": {}
 cannot create release staging path "{}": {}
+release {} was requested and the host served the manifest of release {}
+release artifact path collides with its manifest
 cannot create release artifact directory "{}": {}
+cannot set the installed release {} aside as "{}": {}
 cannot install release bundle at "{}": {}
 ```
 
-#### project (release transport on Windows)
+#### project (process transport on Windows)
 
-`entry/project/platform/curl-download-windows.cpp`
-
-```text
-release URL exceeds the Windows process argument limit
-cannot convert a release URL from UTF-8
-cannot start curl while acquiring the UmbraFlow release
-curl refused release URL "{}" with exit code {}
-```
-
-#### project (release transport on POSIX)
-
-`entry/project/platform/curl-download-posix.cpp`
+`modules/project/source/project/platform/process-run-windows.cpp`
 
 ```text
-cannot start curl while acquiring the UmbraFlow release
-cannot wait for curl while acquiring the UmbraFlow release
-curl refused release URL "{}" with exit code {}
+a process argument exceeds the Windows argument limit
+cannot convert a process argument from UTF-8
+a process command line must name a program
+cannot start "{}"
+"{}" exited with a status this platform cannot report
 ```
 
-#### project (release bootstrap)
+#### project (process transport on POSIX)
+
+`modules/project/source/project/platform/process-run-posix.cpp`
+
+```text
+a process command line must name a program
+cannot start "{}"
+cannot wait for "{}"
+"{}" did not exit normally
+"{}" exited with a status this platform cannot report
+```
+
+#### project (entry point)
 
 `entry/project/main.cpp`
 
@@ -468,7 +478,6 @@ resolved template source {} has content hash {}
 generated template path appears more than once: "{}"
 project deployment {} uses module path "{}" more than once in its {} closure
 project module {} names missing generated adapter "{}"
-project module {} names undeclared source input "{}"
 project deployment {} appears more than once
 project resource {} names undeclared source input "{}"
 project deployment {} names resource {} more than once
@@ -501,11 +510,7 @@ project release artifact is not read-only: "{}"
 project release artifact manifest is missing
 project release artifact is missing: "{}"
 project release artifact digest does not match: "{}"
-project input manifest "{}" has an unsupported header
-project input manifest path is not canonical: "{}"
-project input manifest "{}" declares no inputs
-project input manifest "{}" is not sorted
-project input manifest repeats "{}"
+the deployment {} does not hold together: {}
 generated framework schema catalog is missing
 {} is not a schema this kit can apply: {}
 a project needs {} at the root of its source directory, and "{}" holds none
