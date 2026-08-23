@@ -4,6 +4,7 @@
 #include "tool-descriptor.hpp"
 
 #include <core/error/contracts.hpp>
+#include <core/numeric/checked-cast.hpp>
 #include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
 
@@ -18,10 +19,14 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <filesystem>
 #include <format>
+#include <fstream>
+#include <ios>
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -32,6 +37,11 @@ namespace uf::operator_runtime
         constexpr auto k_policyArtifactSchemaPath = std::string_view{
             "schema/umbraflow-policy-v1.schema.json"
         };
+
+        // The ceiling on the artifact the production root states. It is the
+        // same order as every other root document this repository reads, and
+        // an artifact past it is refused by name rather than truncated.
+        constexpr auto k_maximumPolicyArtifactBytes = std::size_t{1U} << 20U;
 
         struct DecisionName final
         {
@@ -221,9 +231,86 @@ namespace uf::operator_runtime
             "\"operator_protocol_schema_hash\":\"{}\","
             "\"ordered_rules\":[],\"owned_by\":\"operator\","
             "\"policy_id\":\"operator-deny-all\",\"policy_version\":\"1\","
+            "\"privileged_surface_tools\":[],"
             "\"unknown_effect_decision\":\"deny\"}}",
             operatorProtocolSchemaHash.hex()
         );
+    }
+
+    auto operatorPolicyArtifact(
+        std::filesystem::path const& runtimeDirectory,
+        ContentHash const& operatorProtocolSchemaHash
+    ) -> Result<std::string>
+    {
+        auto const path = runtimeDirectory
+            / std::string{k_operatorPolicyArtifactFileName};
+        auto error        = std::error_code{};
+        auto const status = std::filesystem::symlink_status(path, error);
+        // Absence is answered before the error code is read, because a missing
+        // file is reported through both and only one of them is a failure.
+        if (status.type() == std::filesystem::file_type::not_found)
+        {
+            return denyAllPolicyArtifact(operatorProtocolSchemaHash);
+        }
+        if (error)
+        {
+            return fail(
+                AutomationErrorKind::IoFailure,
+                std::format("Could not inspect {}", path.string()),
+                error
+            );
+        }
+        if (status.type() != std::filesystem::file_type::regular)
+        {
+            return refuse(
+                std::format("{} must be a plain file", path.string())
+            );
+        }
+        auto const size = std::filesystem::file_size(path, error);
+        if (error)
+        {
+            return fail(
+                AutomationErrorKind::IoFailure,
+                std::format("Could not measure {}", path.string()),
+                error
+            );
+        }
+        auto const checked = checkedCast<std::size_t>(size);
+        if (!checked || *checked > k_maximumPolicyArtifactBytes)
+        {
+            return refuse(std::format(
+                "{} exceeds the {} byte PolicyArtifact ceiling",
+                path.string(),
+                k_maximumPolicyArtifactBytes
+            ));
+        }
+        auto stream = std::ifstream{path, std::ios::binary};
+        if (!stream)
+        {
+            return fail(
+                AutomationErrorKind::IoFailure,
+                std::format("Could not open {}", path.string())
+            );
+        }
+        auto bytes = std::string(*checked, '\0');
+        if (!bytes.empty())
+        {
+            stream.read(
+                bytes.data(),
+                static_cast<std::streamsize>(bytes.size())
+            );
+        }
+        if (
+            !stream
+            || stream.gcount() != static_cast<std::streamsize>(bytes.size())
+        )
+        {
+            return fail(
+                AutomationErrorKind::IoFailure,
+                std::format("Could not read {}", path.string())
+            );
+        }
+        return bytes;
     }
 
     VerifiedPolicyArtifact::VerifiedPolicyArtifact(
@@ -300,7 +387,10 @@ namespace uf::operator_runtime
             .policyVersion = std::string{
                 member(document, "policy_version").string()
             },
-            .orderedRules = {},
+            .orderedRules           = {},
+            .privilegedSurfaceTools = stringList(
+                member(document, "privileged_surface_tools")
+            ),
         };
         for (auto const& rule : member(document, "ordered_rules").items())
         {
@@ -360,6 +450,13 @@ namespace uf::operator_runtime
         -> std::string const&
     {
         return m_canonicalJcs;
+    }
+
+    auto VerifiedPolicyArtifact::grantsPrivilegedSurface(
+        std::string_view toolName
+    ) const -> bool
+    {
+        return std::ranges::contains(m_claims.privilegedSurfaceTools, toolName);
     }
 
     auto VerifiedPolicyArtifact::evaluate(

@@ -786,8 +786,12 @@ namespace uf::service
 
         UF_TRY_VALUE(operatorSchema, publishedSchema(k_operatorSchemaPath));
         UF_TRY_VALUE(operatorSchemaHash, hashOf(operatorSchema.exactBytes));
-        auto policyBytes = loaded.policyArtifactBytes.value_or(
-            operator_runtime::denyAllPolicyArtifact(operatorSchemaHash)
+        UF_TRY_VALUE(
+            policyBytes,
+            operator_runtime::operatorPolicyArtifact(
+                start.runtimeDirectory,
+                operatorSchemaHash
+            )
         );
         UF_TRY_VALUE(policyHash, hashOf(policyBytes));
 
@@ -1554,8 +1558,12 @@ namespace uf::service
 
         UF_TRY_VALUE(operatorSchema, publishedSchema(k_operatorSchemaPath));
         UF_TRY_VALUE(operatorSchemaHash, hashOf(operatorSchema.exactBytes));
-        auto policyBytes = loaded.policyArtifactBytes.value_or(
-            operator_runtime::denyAllPolicyArtifact(operatorSchemaHash)
+        UF_TRY_VALUE(
+            policyBytes,
+            operator_runtime::operatorPolicyArtifact(
+                upgrade.runtimeDirectory,
+                operatorSchemaHash
+            )
         );
         UF_TRY_VALUE(policyHash, hashOf(policyBytes));
         UF_TRY_VALUE(noAgentProfileHash, hashOf(k_noAgentProfile));

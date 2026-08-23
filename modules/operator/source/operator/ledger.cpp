@@ -8932,20 +8932,54 @@ namespace uf::operator_runtime
                 "Tool call was minted for a different ProjectRegistration"
             );
         }
+        auto const policyHash = columnText(sessionQuery.get(), 6);
+        if (
+            request.policyAuthority.projectRegistrationHash().hex()
+                != projectRegistrationHash
+            || request.policyAuthority.policyHash().hex() != policyHash
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool admission authority differs from the active session"
+            );
+        }
         // Direct visibility and delegated authority are distinct: an actor
         // admitted to a high-level Project Tool may reach that Tool's declared
         // low-level child without the child ever becoming directly callable by
         // that actor. The child's surface is judged against the parent's
         // child-effect declaration above, and never a second time here.
-        if (
-            !delegation.has_value()
-            && !toolSurfaceAllowed(controller.profile(), call.descriptor().surface)
-        )
+        //
+        // The two questions a top-level surface raises are asked together
+        // because they are one decision about one call. The first is the
+        // controller's own profile. The second is the Operator's: a Project
+        // classifies its own Tool `privileged` honestly, and that label is
+        // a declaration rather than a permission, so reaching the machine
+        // surface at the top of a run needs a grant from the party the
+        // machine belongs to. Absent that grant the artifact denies, which
+        // is what every other unstated policy question here does.
+        if (!delegation.has_value())
         {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Controller profile does not admit this Tool surface"
-            );
+            if (!toolSurfaceAllowed(controller.profile(), call.descriptor().surface))
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Controller profile does not admit this Tool surface"
+                );
+            }
+            if (
+                call.descriptor().surface == ToolSurface::Privileged
+                && !request.policyAuthority.m_policy.grantsPrivilegedSurface(
+                    call.toolName()
+                )
+            )
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Operator policy grants no Privileged surface to tool "
+                        + call.toolName()
+                );
+            }
         }
         UF_TRY_VALUE(
             heldCapabilities,
@@ -8962,28 +8996,16 @@ namespace uf::operator_runtime
                     + "' for tool " + call.toolName()
             );
         }
-        auto const policyHash = columnText(sessionQuery.get(), 6);
         auto effectEnvelope    = std::optional<EffectiveEffectEnvelope>{};
         auto requiredApprovals = std::vector<std::string>{};
         auto approvalTokens    = std::vector<std::string>{};
         auto approvalExpiry    = std::optional<uint64>{};
         if (requiredMutability == ToolMutability::Mutating)
         {
-            if (
-                mutation->policyAuthority.projectRegistrationHash().hex()
-                    != projectRegistrationHash
-                || mutation->policyAuthority.policyHash().hex() != policyHash
-            )
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "Tool mutation authority differs from the active session"
-                );
-            }
             UF_TRY_VALUE(
                 evaluated,
                 evaluateToolMutation(
-                    mutation->policyAuthority.m_policy,
+                    request.policyAuthority.m_policy,
                     call.descriptor(),
                     call.toolName(),
                     effects,

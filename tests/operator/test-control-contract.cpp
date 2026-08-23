@@ -388,10 +388,11 @@ namespace uf::operator_runtime
         );
         REQUIRE(call.has_value());
         auto const refused = prepared.store.admitToolCall(ToolAdmissionRequest{
-            .controller = prepared.controller,
-            .lease      = prepared.lease,
-            .root       = *root,
-            .call       = *call,
+            .controller      = prepared.controller,
+            .lease           = prepared.lease,
+            .root            = *root,
+            .call            = *call,
+            .policyAuthority = prepared.policyAuthority,
         });
         REQUIRE_FALSE(refused.has_value());
         CHECK(

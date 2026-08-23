@@ -723,11 +723,22 @@ namespace uf::operator_runtime::test_support
     // names, because the artifact declares which protocol it answers for and
     // verifyExact refuses one that answers for another. The one effect type it
     // speaks about is the one this project's plugin proposes.
+    //
+    // It grants no Privileged surface unless a case names one, which is the
+    // production default rather than a fixture convenience: this project
+    // declares a machine-surface Tool and the Operator has to say so before
+    // admission will take a top-level call of it.
     [[nodiscard]]
-    inline auto policyArtifactBytes() -> std::string
+    inline auto policyArtifactBytes(
+        std::span<std::string const> privilegedSurfaceTools = {}
+    ) -> std::string
     {
         auto const types = std::vector<std::string>{std::string{k_effectType}};
-        return conformance::policyArtifactBytes(hashOf("operator"), types);
+        return conformance::policyArtifactBytes(
+            hashOf("operator"),
+            types,
+            privilegedSurfaceTools
+        );
     }
 
     [[nodiscard]]
@@ -1030,6 +1041,13 @@ identity = ["fixture.panel.anchor"]
         SessionManifest         manifest;
         OperatorPolicyAuthority policyAuthority;
 
+        // The exact artifact bytes the manifest above attests to. They travel
+        // with the store because anything that re-derives a manifest for this
+        // session -- an Agent's own, above all -- has to attest to the same
+        // policy, and a second call of the free helper would silently attest to
+        // a differently granted one.
+        std::string policyArtifact{};
+
         // The authenticated controller every entry point is reached through.
         // bindController is its only mint, so a case cannot assert its own
         // identity, and the kind it carries is the one pinSession pinned.
@@ -1077,7 +1095,7 @@ identity = ["fixture.panel.anchor"]
             prepared.project.registration,
             prepared.runtimeArtifactRootHash,
             hashOf(bytes),
-            policyArtifactBytes()
+            prepared.policyArtifact
         );
         auto profile = AgentProfile::verifyExact(
             manifest,
@@ -1183,7 +1201,8 @@ identity = ["fixture.panel.anchor"]
     [[nodiscard]]
     inline auto prepareStore(
         std::filesystem::path const& path,
-        std::string const& pluginId = "fixture.control"
+        std::string const& pluginId = "fixture.control",
+        std::span<std::string const> privilegedSurfaceTools = {}
     ) -> PreparedStore
     {
         auto const release = runtimeRelease(path / "session-handoff");
@@ -1207,11 +1226,12 @@ identity = ["fixture.panel.anchor"]
         auto const artifactRootHash    = installed->rootHash();
         auto const installedGeneration = installed->installedGeneration();
         auto const project = makeProject(pluginId);
-        auto const manifest = sessionManifest(
+        auto const policyArtifact = policyArtifactBytes(privilegedSurfaceTools);
+        auto const manifest       = sessionManifest(
             project.registration,
             installed->rootHash(),
             hashOf("agent"),
-            policyArtifactBytes()
+            policyArtifact
         );
         auto const generation = loadGeneration(project);
         REQUIRE(store.registerProject(project.registration).has_value());
@@ -1272,7 +1292,7 @@ identity = ["fixture.panel.anchor"]
             manifest,
             *runtimeModel,
             "operator",
-            policyArtifactBytes()
+            policyArtifact
         );
         REQUIRE(policyAuthority.has_value());
         return PreparedStore{
@@ -1281,6 +1301,7 @@ identity = ["fixture.panel.anchor"]
             .project                 = project,
             .manifest                = manifest,
             .policyAuthority         = *std::move(policyAuthority),
+            .policyArtifact          = policyArtifact,
             .controller              = *controller,
             .lease                   = *lease,
             .snapshot                = *std::move(snapshot),

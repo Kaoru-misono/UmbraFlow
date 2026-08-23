@@ -125,19 +125,19 @@ namespace uf::operator_runtime::test_support
         if (invocation.descriptor().mutability == ToolMutability::Mutating)
         {
             mutation = ToolAdmissionRequest::Mutation{
-                .policyAuthority = prepared.policyAuthority,
-                .effects         = {
+                .effects = {
                     routineToolEffect(prepared.project, std::string{toolName}),
                 },
             };
         }
 
         auto admission = prepared.store.admitToolCall(ToolAdmissionRequest{
-            .controller = controller,
-            .lease      = lease,
-            .root       = *root,
-            .call       = *call,
-            .mutation   = std::move(mutation),
+            .controller      = controller,
+            .lease           = lease,
+            .root            = *root,
+            .call            = *call,
+            .policyAuthority = prepared.policyAuthority,
+            .mutation        = std::move(mutation),
         });
         if (!admission.has_value())
         {

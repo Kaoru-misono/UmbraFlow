@@ -129,10 +129,11 @@ namespace uf::operator_runtime
             auto executor = ToolRuntimeExecutor{prepared.store};
             auto replay = executor.invoke(
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = *root,
-                    .call       = call,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = *root,
+                    .call            = call,
+                    .policyAuthority = prepared.policyAuthority,
                 },
                 [&providerCalls, &result](ToolCallPositionIdentity const& presented)
                 {
@@ -160,10 +161,11 @@ namespace uf::operator_runtime
             auto failureCall = frameworkCall(*failureRoot, "executor-failure-run");
             auto failed = executor.invoke(
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = *failureRoot,
-                    .call       = failureCall,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = *failureRoot,
+                    .call            = failureCall,
+                    .policyAuthority = prepared.policyAuthority,
                 },
                 [](ToolCallPositionIdentity const&) -> Result<ToolCallCompletion>
                 {
@@ -183,10 +185,11 @@ namespace uf::operator_runtime
             auto refusedReplayExecutions = uint64{};
             auto replayedFailure = executor.invoke(
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = *failureRoot,
-                    .call       = failureCall,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = *failureRoot,
+                    .call            = failureCall,
+                    .policyAuthority = prepared.policyAuthority,
                 },
                 [&refusedReplayExecutions](ToolCallPositionIdentity const&)
                 {
@@ -211,10 +214,11 @@ namespace uf::operator_runtime
         auto executor = ToolRuntimeExecutor{*restarted};
         auto replay = executor.invoke(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = *root,
-                .call       = call,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = *root,
+                .call            = call,
+                .policyAuthority = prepared.policyAuthority,
             },
             [&providerCalls](ToolCallPositionIdentity const&)
             {
@@ -242,10 +246,11 @@ namespace uf::operator_runtime
         auto missingCall = frameworkCall(*missingRoot, "executor-missing-run");
         auto refused = executor.invoke(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = *missingRoot,
-                .call       = missingCall,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = *missingRoot,
+                .call            = missingCall,
+                .policyAuthority = prepared.policyAuthority,
             },
             {}
         );
@@ -276,12 +281,12 @@ namespace uf::operator_runtime
         auto providerCalls = uint64{};
         auto possible = executor.invoke(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = firstRoot,
-                .call       = firstCall,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = firstRoot,
+                .call            = firstCall,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
                     .effects         = effects,
                 },
             },
@@ -319,12 +324,12 @@ namespace uf::operator_runtime
         auto blockedProviderCalls = uint64{};
         auto blocked = executor.invoke(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = secondRoot,
-                .call       = secondCall,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = secondRoot,
+                .call            = secondCall,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
                     .effects         = effects,
                 },
             },
@@ -352,12 +357,12 @@ namespace uf::operator_runtime
         );
         auto directlyBlocked = prepared.store.admitToolCall(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = directRoot,
-                .call       = directCall,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = directRoot,
+                .call            = directCall,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
                     .effects         = effects,
                 },
             }
@@ -377,10 +382,11 @@ namespace uf::operator_runtime
         REQUIRE(observation.has_value());
         auto observed = executor.invoke(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = observeRoot,
-                .call       = observeCall,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = observeRoot,
+                .call            = observeCall,
+                .policyAuthority = prepared.policyAuthority,
             },
             [&observation](ToolCallPositionIdentity const&)
             {
@@ -498,12 +504,12 @@ namespace uf::operator_runtime
 
         auto unblocked = executor.invoke(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = secondRoot,
-                .call       = secondCall,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = secondRoot,
+                .call            = secondCall,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
                     .effects         = effects,
                 },
             },
@@ -557,12 +563,12 @@ namespace uf::operator_runtime
 
         auto refused = executor.invoke(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = root,
-                .call       = call,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = root,
+                .call            = call,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
                     .effects         = effects,
                 },
             },
@@ -592,14 +598,14 @@ namespace uf::operator_runtime
         auto approvals = std::vector{*approval};
         auto invoked = executor.invoke(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = root,
-                .call       = call,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = root,
+                .call            = call,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
-                    .effects         = effects,
-                    .approvals       = approvals,
+                    .effects   = effects,
+                    .approvals = approvals,
                 },
             },
             provider
@@ -610,12 +616,12 @@ namespace uf::operator_runtime
 
         auto replayed = executor.invoke(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = root,
-                .call       = call,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = root,
+                .call            = call,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
                     .effects         = effects,
                 },
             },
@@ -644,12 +650,12 @@ namespace uf::operator_runtime
         REQUIRE(error.has_value());
         auto possible = executor.invoke(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = firstRoot,
-                .call       = firstCall,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = firstRoot,
+                .call            = firstCall,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
                     .effects         = effects,
                 },
             },
@@ -701,12 +707,12 @@ namespace uf::operator_runtime
         );
         auto blocked = executor.invoke(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = secondRoot,
-                .call       = secondCall,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = secondRoot,
+                .call            = secondCall,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
                     .effects         = effects,
                 },
             },
@@ -748,12 +754,12 @@ namespace uf::operator_runtime
         auto executor      = ToolRuntimeExecutor{prepared.store};
         auto blocked = executor.invoke(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = root,
-                .call       = call,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = root,
+                .call            = call,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
                     .effects         = effects,
                 },
             },
@@ -777,12 +783,12 @@ namespace uf::operator_runtime
         test_support::confirmToolCall(prepared, holding);
         auto released = executor.invoke(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = root,
-                .call       = call,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = root,
+                .call            = call,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
                     .effects         = effects,
                 },
             },
@@ -818,12 +824,12 @@ namespace uf::operator_runtime
         auto executor = ToolRuntimeExecutor{prepared.store};
         auto possible = executor.invoke(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = firstRoot,
-                .call       = firstCall,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = firstRoot,
+                .call            = firstCall,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
                     .effects         = effects,
                 },
             },
@@ -885,12 +891,12 @@ namespace uf::operator_runtime
         );
         auto delivered = executor.invoke(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = secondRoot,
-                .call       = secondCall,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = secondRoot,
+                .call            = secondCall,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
                     .effects         = effects,
                 },
             },
@@ -932,12 +938,12 @@ namespace uf::operator_runtime
         auto executor = ToolRuntimeExecutor{prepared.store};
         auto absent   = executor.invoke(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = root,
-                .call       = call,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = root,
+                .call            = call,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
                     .effects         = effects,
                 },
             },
@@ -964,12 +970,12 @@ namespace uf::operator_runtime
         );
         auto delivered = executor.invoke(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = secondRoot,
-                .call       = secondCall,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = secondRoot,
+                .call            = secondCall,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
                     .effects         = effects,
                 },
             },
@@ -1002,10 +1008,11 @@ namespace uf::operator_runtime
             auto call = frameworkCall(root, "read-only-possible-run");
             auto refused = executor.invoke(
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = root,
-                    .call       = call,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = call,
+                    .policyAuthority = prepared.policyAuthority,
                 },
                 [&explanation](ToolCallPositionIdentity const&)
                 {
@@ -1024,10 +1031,11 @@ namespace uf::operator_runtime
             auto call = frameworkCall(root, "read-only-proven-absent-run");
             auto refused = executor.invoke(
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = root,
-                    .call       = call,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = call,
+                    .policyAuthority = prepared.policyAuthority,
                 },
                 [&explanation, &evidence](ToolCallPositionIdentity const&)
                 {

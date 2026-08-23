@@ -9,6 +9,7 @@
 
 #include <domain/content-hash.hpp>
 
+#include <filesystem>
 #include <span>
 #include <string>
 #include <string_view>
@@ -28,15 +29,36 @@ namespace uf::operator_runtime
     auto policyDecisionWireName(PolicyDecision decision) noexcept
         -> std::string_view;
 
-    // A project that declares no policy gets this exact Operator-owned
-    // artifact: no rules, with both defaults fixed to deny. It is parameterized
-    // only by the exact Operator protocol schema it answers for. Projects may
-    // supply policy bytes as deployment input, but only Operator evaluates
-    // either form.
+    // An Operator that has stated no policy gets this exact artifact: no rules,
+    // no Privileged surface granted, with both defaults fixed to deny. It is
+    // parameterized only by the exact Operator protocol schema it answers for.
     [[nodiscard]]
     auto denyAllPolicyArtifact(
         ContentHash const& operatorProtocolSchemaHash
     ) -> std::string;
+
+    // Where the Operator writes the artifact, inside the production root it
+    // already administers. The name is fixed rather than passed, for the same
+    // reason the ledger and the RuntimeArtifact root are: a verb's caller does
+    // not choose which policy judges it.
+    inline constexpr auto k_operatorPolicyArtifactFileName = std::string_view{
+        "policy-artifact.json"
+    };
+
+    // The PolicyArtifact this production root states, or the deny-all artifact
+    // when the root states none.
+    //
+    // A PolicyArtifact governs who may act on this machine, so the party it
+    // protects is the machine's owner and the supply path has to be that
+    // party's. The production root is the one directory that party already
+    // administers and every verb already opens, which is why the artifact is
+    // read out of it rather than named by a flag on a command line the
+    // requester writes.
+    [[nodiscard]]
+    auto operatorPolicyArtifact(
+        std::filesystem::path const& runtimeDirectory,
+        ContentHash const& operatorProtocolSchemaHash
+    ) -> Result<std::string>;
 
     // Which effects one rule speaks about. An empty list does not constrain its
     // dimension, which is why the artifact schema requires at least one of the
@@ -83,6 +105,15 @@ namespace uf::operator_runtime
         std::string             policyId{};
         std::string             policyVersion{};
         std::vector<PolicyRule> orderedRules{};
+
+        // Every Tool this Operator permits to be reached on the Privileged
+        // surface at the top of a run, by name. A Project classifies its own
+        // Tools honestly and the framework keeps parsing that classification;
+        // what the classification cannot do is authorise itself, so a name
+        // absent from this list is refused at admission however the Project
+        // labelled it. The list is stated even when empty, because an Operator
+        // that grants no machine surface is saying so.
+        std::vector<std::string> privilegedSurfaceTools{};
     };
 
     // What one policy evaluation is asked about. Every member is a call-scoped
@@ -142,6 +173,12 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto canonicalJcs() const noexcept UF_LIFETIME_BOUND
             -> std::string const&;
+
+        // Whether this artifact names the Tool among the ones it permits on
+        // the Privileged surface. It answers only the grant: whether the call
+        // is a top-level one, and what a denied answer costs, are admission's.
+        [[nodiscard]]
+        auto grantsPrivilegedSurface(std::string_view toolName) const -> bool;
 
         // Runs every declared effect past the ordered rules and returns what
         // they ruled, or refuses. A refusal is the artifact's `deny`: either a

@@ -608,16 +608,17 @@ namespace uf::cli
                 };
             }
 
-            // Gives this world an Operator-owned PolicyArtifact that admits the
-            // one effect a Framework input Tool declares, and points the project
-            // manifest at it.
+            // Gives this world the PolicyArtifact its Operator states: the one
+            // effect a Framework input Tool declares, and the Privileged
+            // surface of the bare-coordinate Tool that declares it.
             //
-            // Without it every mutating admission falls to the deny-all
-            // artifact ProductLifecycle substitutes for an absent one, and no
-            // mutating provider is ever reached. The artifact is built against
-            // the published Operator protocol schema's hash because that is the
-            // one ProductLifecycle pins into the SessionManifest a policy is
-            // verified against.
+            // It is written into the production root and nowhere else, because
+            // that root is the Operator's. Without it every mutating admission
+            // falls to the deny-all artifact ProductLifecycle substitutes for
+            // an absent one, and no mutating provider is ever reached. The
+            // artifact is built against the published Operator protocol
+            // schema's hash because that is the one ProductLifecycle pins into
+            // the SessionManifest a policy is verified against.
             auto authorizeMutation() const -> void
             {
                 constexpr auto k_operatorSchema = std::string_view{
@@ -641,44 +642,25 @@ namespace uf::cli
                 auto const effects = std::vector<std::string>{
                     std::string{"framework.input.deliver"},
                 };
+                auto const granted = std::vector<std::string>{
+                    std::string{"framework.input.coordinate"},
+                };
                 auto const policy =
                     operator_runtime::conformance::policyArtifactBytes(
                         *schemaHash,
-                        effects
+                        effects,
+                        granted
                     );
-                {
-                    auto stream = std::ofstream{
-                        m_project / "policy.json",
-                        std::ios::binary,
-                    };
-                    REQUIRE(stream.good());
-                    stream << policy;
-                    REQUIRE(stream.good());
-                }
-
-                auto const manifestPath = m_project / "umbraflow-project.json";
-                auto manifest = std::string{};
-                {
-                    auto stream = std::ifstream{manifestPath, std::ios::binary};
-                    REQUIRE(stream.good());
-                    manifest = std::string{
-                        std::istreambuf_iterator<char>{stream},
-                        std::istreambuf_iterator<char>{},
-                    };
-                }
-                auto const opening = manifest.find('{');
-                REQUIRE(opening != std::string::npos);
-                manifest.insert(
-                    opening + 1U,
-                    R"(
-  "policy_artifact": "policy.json",)"
-                );
+                std::filesystem::create_directories(m_runtime);
                 auto stream = std::ofstream{
-                    manifestPath,
+                    m_runtime
+                        / std::string{
+                            operator_runtime::k_operatorPolicyArtifactFileName
+                        },
                     std::ios::binary | std::ios::trunc,
                 };
                 REQUIRE(stream.good());
-                stream << manifest;
+                stream << policy;
                 REQUIRE(stream.good());
             }
         };

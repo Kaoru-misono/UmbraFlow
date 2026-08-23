@@ -1018,10 +1018,11 @@ namespace uf::operator_runtime
         auto first = toolCallAt(*root, nullptr, 1U, recorded, invocation);
         REQUIRE(first.has_value());
         auto const admitted = prepared.store.admitToolCall(ToolAdmissionRequest{
-            .controller = prepared.controller,
-            .lease      = prepared.lease,
-            .root       = *root,
-            .call       = *first,
+            .controller      = prepared.controller,
+            .lease           = prepared.lease,
+            .root            = *root,
+            .call            = *first,
+            .policyAuthority = prepared.policyAuthority,
         });
         if (!admitted.has_value())
         {
@@ -1035,10 +1036,11 @@ namespace uf::operator_runtime
         REQUIRE(rejoined.has_value());
         CHECK(rejoined->identity() == first->identity());
         auto const continued = prepared.store.admitToolCall(ToolAdmissionRequest{
-            .controller = prepared.controller,
-            .lease      = prepared.lease,
-            .root       = *root,
-            .call       = *rejoined,
+            .controller      = prepared.controller,
+            .lease           = prepared.lease,
+            .root            = *root,
+            .call            = *rejoined,
+            .policyAuthority = prepared.policyAuthority,
         });
         if (!continued.has_value())
         {
@@ -1057,10 +1059,11 @@ namespace uf::operator_runtime
         REQUIRE(second.has_value());
         CHECK(second->identity() != first->identity());
         auto const refused = prepared.store.admitToolCall(ToolAdmissionRequest{
-            .controller = prepared.controller,
-            .lease      = prepared.lease,
-            .root       = *root,
-            .call       = *second,
+            .controller      = prepared.controller,
+            .lease           = prepared.lease,
+            .root            = *root,
+            .call            = *second,
+            .policyAuthority = prepared.policyAuthority,
         });
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().message().contains(

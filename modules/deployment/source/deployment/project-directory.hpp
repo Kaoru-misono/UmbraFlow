@@ -13,7 +13,6 @@
 
 #include <cstddef>
 #include <filesystem>
-#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -128,11 +127,6 @@ namespace uf::deployment
         // shared by every deployment: the model covers every surface a
         // deployment drives, and a second root would be a second world.
         std::filesystem::path runtimeArtifactRoot{};
-
-        // Exact PolicyArtifact bytes supplied as deployment input. Absence has
-        // one meaning: the Operator uses denyAllPolicyArtifact for the exact
-        // protocol schema it loaded. Deployment never evaluates either form.
-        std::optional<std::string> policyArtifactBytes{};
 
         std::string                   primaryDeployment{};
         std::vector<LoadedDeployment> deployments{};

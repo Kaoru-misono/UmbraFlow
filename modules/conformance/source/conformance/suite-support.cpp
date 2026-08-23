@@ -293,7 +293,10 @@ namespace uf::operator_runtime::conformance
         std::ranges::sort(types);
         types.erase(std::ranges::unique(types).begin(), types.end());
         REQUIRE_FALSE(types.empty());
-        return policyArtifactBytes(hashOf("operator"), types);
+        // No Privileged surface is granted: this project's conformance
+        // vocabulary names only semantic Tools, so a suite that reached the
+        // machine surface would be reaching one no case asked for.
+        return policyArtifactBytes(hashOf("operator"), types, {});
     }
 
     auto agentProfileBytes() -> std::string

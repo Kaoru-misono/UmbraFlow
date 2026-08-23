@@ -727,7 +727,11 @@ return {
         {
             auto const types =
                 std::vector<std::string>{std::string{k_inputEffectType}};
-            return conformance::policyArtifactBytes(hashOf("operator"), types);
+            return conformance::policyArtifactBytes(
+                hashOf("operator"),
+                types,
+                {}
+            );
         }
 
         [[nodiscard]]

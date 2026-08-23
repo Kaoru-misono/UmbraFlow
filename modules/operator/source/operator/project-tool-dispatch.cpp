@@ -239,16 +239,16 @@ namespace uf::operator_runtime
             // the pinned policy -- is then judged inside admission, which is
             // where widening is refused.
             auto const childRequest = ToolAdmissionRequest{
-                .controller = run.controller,
-                .lease      = run.lease,
-                .root       = run.root,
-                .call       = child,
-                .mutation   = proposedToolMutation(
+                .controller      = run.controller,
+                .lease           = run.lease,
+                .root            = run.root,
+                .call            = child,
+                .policyAuthority = m_policyAuthority,
+                .mutation        = proposedToolMutation(
                     invocation,
-                    m_policyAuthority,
                     run.controller.controlledTargetId()
                 ),
-                .delegation = std::move(grant),
+                .delegation      = std::move(grant),
             };
             if (bound.has_value())
             {

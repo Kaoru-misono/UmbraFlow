@@ -19,10 +19,6 @@
       "$comment": "A directory, not a file: the installer reads runtime-model.toml and runtime-artifact.manifest.json out of a root by those fixed names.",
       "$ref": "#/$defs/Path"
     },
-    "policy_artifact": {
-      "$comment": "Optional exact PolicyArtifact bytes. When absent, production uses the Operator-owned deny-all artifact; the project never evaluates policy.",
-      "$ref": "#/$defs/Path"
-    },
     "primary_deployment": {"$ref": "#/$defs/DeploymentName"},
     "deployments": {
       "type": "array",

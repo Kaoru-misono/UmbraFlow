@@ -624,7 +624,17 @@ return {
                 std::string{k_projectEffectType},
                 std::string{k_inputEffectType},
             };
-            return conformance::policyArtifactBytes(hashOf("operator"), types);
+            // The Framework input Tool this fixture dispatches is a
+            // Privileged one, and every case here presents it at the top of a
+            // run, so the Operator artifact has to name it.
+            auto const granted = std::vector<std::string>{
+                std::string{k_inputTool},
+            };
+            return conformance::policyArtifactBytes(
+                hashOf("operator"),
+                types,
+                granted
+            );
         }
 
         // The authority a mutating admission is judged under, built the way a
@@ -1011,10 +1021,11 @@ return {
         auto const answered = dispatcher->dispatch(
             program,
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = root,
-                .call       = call,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = root,
+                .call            = call,
+                .policyAuthority = prepared.policyAuthority,
             },
             std::stop_token{}
         );
@@ -1080,10 +1091,11 @@ return {
         auto const first = dispatcher->dispatch(
             program,
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = root,
-                .call       = call,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = root,
+                .call            = call,
+                .policyAuthority = prepared.policyAuthority,
             },
             std::stop_token{}
         );
@@ -1097,10 +1109,11 @@ return {
         auto const again = dispatcher->dispatch(
             program,
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = root,
-                .call       = call,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = root,
+                .call            = call,
+                .policyAuthority = prepared.policyAuthority,
             },
             std::stop_token{}
         );
@@ -1140,10 +1153,11 @@ return {
         REQUIRE(prepared.store.persistToolRootRequest(root).has_value());
         auto const admitted = prepared.store.admitToolCall(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = root,
-                .call       = call,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = root,
+                .call            = call,
+                .policyAuthority = prepared.policyAuthority,
             }
         );
         REQUIRE_MESSAGE(admitted.has_value(), failureText(admitted));
@@ -1154,10 +1168,11 @@ return {
         auto const answered = dispatcher->dispatch(
             program,
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = root,
-                .call       = call,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = root,
+                .call            = call,
+                .policyAuthority = prepared.policyAuthority,
             },
             std::stop_token{}
         );
@@ -1203,10 +1218,11 @@ return {
             REQUIRE(prepared.store.persistToolRootRequest(root).has_value());
             auto const admitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = root,
-                    .call       = call,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = call,
+                    .policyAuthority = prepared.policyAuthority,
                 }
             );
             REQUIRE_MESSAGE(admitted.has_value(), failureText(admitted));
@@ -1223,11 +1239,12 @@ return {
             auto const first = dispatcher->dispatch(
                 program,
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = root,
-                    .call       = *one,
-                    .delegation = *grant,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = *one,
+                    .policyAuthority = prepared.policyAuthority,
+                    .delegation      = *grant,
                 },
                 std::stop_token{}
             );
@@ -1246,11 +1263,12 @@ return {
             REQUIRE(second.has_value());
             auto const audited = ToolRuntimeExecutor{prepared.store}.invoke(
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = root,
-                    .call       = *second,
-                    .delegation = *grant,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = *second,
+                    .policyAuthority = prepared.policyAuthority,
+                    .delegation      = *grant,
                 },
                 frameworkProvider(log)
             );
@@ -1305,10 +1323,11 @@ return {
         auto const answered = dispatcher->dispatch(
             program,
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = root,
-                .call       = call,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = root,
+                .call            = call,
+                .policyAuthority = prepared.policyAuthority,
             },
             std::stop_token{}
         );
@@ -1378,10 +1397,11 @@ return {
             REQUIRE(prepared.store.persistToolRootRequest(root).has_value());
             auto const admitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = root,
-                    .call       = call,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = call,
+                    .policyAuthority = prepared.policyAuthority,
                 }
             );
             REQUIRE_MESSAGE(admitted.has_value(), failureText(admitted));
@@ -1402,11 +1422,12 @@ return {
                 REQUIRE(dispatcher->dispatch(
                     program,
                     ToolAdmissionRequest{
-                        .controller = prepared.controller,
-                        .lease      = prepared.lease,
-                        .root       = root,
-                        .call       = *child,
-                        .delegation = *grant,
+                        .controller      = prepared.controller,
+                        .lease           = prepared.lease,
+                        .root            = root,
+                        .call            = *child,
+                        .policyAuthority = prepared.policyAuthority,
+                        .delegation      = *grant,
                     },
                     std::stop_token{}
                 ).has_value());
@@ -1437,10 +1458,11 @@ return {
         auto const answered = dispatcher->dispatch(
             program,
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = root,
-                .call       = call,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = root,
+                .call            = call,
+                .policyAuthority = prepared.policyAuthority,
             },
             std::stop_token{}
         );
@@ -1486,10 +1508,11 @@ return {
             REQUIRE(prepared.store.persistToolRootRequest(root).has_value());
             auto const admitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = root,
-                    .call       = call,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = call,
+                    .policyAuthority = prepared.policyAuthority,
                 }
             );
             REQUIRE_MESSAGE(admitted.has_value(), failureText(admitted));
@@ -1506,11 +1529,12 @@ return {
             REQUIRE(dispatcher->dispatch(
                 program,
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = root,
-                    .call       = *other,
-                    .delegation = *grant,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = *other,
+                    .policyAuthority = prepared.policyAuthority,
+                    .delegation      = *grant,
                 },
                 std::stop_token{}
             ).has_value());
@@ -1540,10 +1564,11 @@ return {
         auto const answered = dispatcher->dispatch(
             program,
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = root,
-                .call       = call,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = root,
+                .call            = call,
+                .policyAuthority = prepared.policyAuthority,
             },
             std::stop_token{}
         );
@@ -1582,10 +1607,11 @@ return {
         REQUIRE(prepared.store.persistToolRootRequest(root).has_value());
         auto const admitted = prepared.store.admitToolCall(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = root,
-                .call       = call,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = root,
+                .call            = call,
+                .policyAuthority = prepared.policyAuthority,
             }
         );
         REQUIRE_MESSAGE(admitted.has_value(), failureText(admitted));
@@ -1709,10 +1735,11 @@ return {
             REQUIRE(prepared.store.persistToolCallPosition(root, call).has_value());
             auto const admitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = root,
-                    .call       = call,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = call,
+                    .policyAuthority = prepared.policyAuthority,
                 }
             );
             REQUIRE_MESSAGE(admitted.has_value(), failureText(admitted));
@@ -1758,10 +1785,11 @@ return {
             );
             auto const admitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = root,
-                    .call       = frameworkCall,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = frameworkCall,
+                    .policyAuthority = prepared.policyAuthority,
                 }
             );
             REQUIRE_MESSAGE(admitted.has_value(), failureText(admitted));
@@ -1789,12 +1817,12 @@ return {
             auto const authority = prepared.policyAuthority;
             auto const admitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = root,
-                    .call       = inputCall,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = inputCall,
+                    .policyAuthority = authority,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .policyAuthority = authority,
                         .effects         = effects,
                     },
                 }
@@ -1829,12 +1857,12 @@ return {
             auto const authority = prepared.policyAuthority;
             auto const admitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = root,
-                    .call       = inputCall,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = inputCall,
+                    .policyAuthority = authority,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .policyAuthority = authority,
                         .effects         = std::vector{frameworkInputEffect(k_targetId)},
                     },
                 }
@@ -1877,12 +1905,12 @@ return {
             auto const answered  = dispatcher->dispatch(
                 program,
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = failingRoot,
-                    .call       = failing,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = failingRoot,
+                    .call            = failing,
+                    .policyAuthority = authority,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .policyAuthority = authority,
                         .effects         = effects,
                     },
                 },
@@ -1907,12 +1935,12 @@ return {
             );
             auto const readmitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = nextRoot,
-                    .call       = nextCall,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = nextRoot,
+                    .call            = nextCall,
+                    .policyAuthority = authority,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .policyAuthority = authority,
                         .effects         = effects,
                     },
                 }
@@ -1931,12 +1959,12 @@ return {
             auto const authority = prepared.policyAuthority;
             auto const answered = ToolRuntimeExecutor{prepared.store}.invoke(
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = root,
-                    .call       = inputCall,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = inputCall,
+                    .policyAuthority = authority,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .policyAuthority = authority,
                         .effects         = std::vector{frameworkInputEffect(k_targetId)},
                     },
                 },
@@ -2034,10 +2062,11 @@ return {
             auto const answered = dispatcher->dispatch(
                 program,
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = root,
-                    .call       = call,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = call,
+                    .policyAuthority = prepared.policyAuthority,
                 },
                 std::stop_token{}
             );
@@ -2101,12 +2130,12 @@ return {
             auto const effects  = std::vector{projectEffect(k_targetId)};
             auto const admitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = root,
-                    .call       = call,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = call,
+                    .policyAuthority = authority,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .policyAuthority = authority,
                         .effects         = effects,
                     },
                 }
@@ -2126,11 +2155,12 @@ return {
                 dispatcher->dispatch(
                     program,
                     ToolAdmissionRequest{
-                        .controller = prepared.controller,
-                        .lease      = prepared.lease,
-                        .root       = root,
-                        .call       = *one,
-                        .delegation = *grant,
+                        .controller      = prepared.controller,
+                        .lease           = prepared.lease,
+                        .root            = root,
+                        .call            = *one,
+                        .policyAuthority = prepared.policyAuthority,
+                        .delegation      = *grant,
                     },
                     std::stop_token{}
                 ).has_value(),
@@ -2143,11 +2173,12 @@ return {
             REQUIRE(second.has_value());
             auto const audited = ToolRuntimeExecutor{prepared.store}.invoke(
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = root,
-                    .call       = *second,
-                    .delegation = *grant,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = *second,
+                    .policyAuthority = prepared.policyAuthority,
+                    .delegation      = *grant,
                 },
                 frameworkProvider(log)
             );
@@ -2193,10 +2224,11 @@ return {
         auto const answered = dispatcher->dispatch(
             program,
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = root,
-                .call       = call,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = root,
+                .call            = call,
+                .policyAuthority = prepared.policyAuthority,
             },
             std::stop_token{}
         );
@@ -2224,12 +2256,12 @@ return {
         auto const effects   = std::vector{projectEffect(k_targetId)};
         auto const readmitted = prepared.store.admitToolCall(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = nextRoot,
-                .call       = nextCall,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = nextRoot,
+                .call            = nextCall,
+                .policyAuthority = authority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = authority,
                     .effects         = effects,
                 },
             }
@@ -2273,12 +2305,12 @@ return {
             auto const effects  = std::vector{projectEffect(k_targetId)};
             auto const admitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = root,
-                    .call       = call,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = call,
+                    .policyAuthority = authority,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .policyAuthority = authority,
                         .effects         = effects,
                     },
                 }
@@ -2299,11 +2331,12 @@ return {
             REQUIRE(dispatcher->dispatch(
                 program,
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = root,
-                    .call       = *other,
-                    .delegation = *grant,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = *other,
+                    .policyAuthority = prepared.policyAuthority,
+                    .delegation      = *grant,
                 },
                 std::stop_token{}
             ).has_value());
@@ -2333,10 +2366,11 @@ return {
         auto const answered = dispatcher->dispatch(
             program,
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = root,
-                .call       = call,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = root,
+                .call            = call,
+                .policyAuthority = prepared.policyAuthority,
             },
             std::stop_token{}
         );
@@ -2370,12 +2404,12 @@ return {
         auto const authorityAfter = prepared.policyAuthority;
         auto const readmitted = prepared.store.admitToolCall(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = nextRoot,
-                .call       = nextCall,
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = nextRoot,
+                .call            = nextCall,
+                .policyAuthority = authorityAfter,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = authorityAfter,
                     .effects         = std::vector{projectEffect(k_targetId)},
                 },
             }
@@ -2427,12 +2461,12 @@ return {
             auto const composedEffects = std::vector{projectEffect(k_targetId)};
             auto const composedAdmitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = composedRoot,
-                    .call       = composed,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = composedRoot,
+                    .call            = composed,
+                    .policyAuthority = authority,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .policyAuthority = authority,
                         .effects         = composedEffects,
                     },
                 }
@@ -2456,10 +2490,11 @@ return {
             );
             auto const readAdmitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = prepared.controller,
-                    .lease      = prepared.lease,
-                    .root       = readLeafRoot,
-                    .call       = readLeaf,
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = readLeafRoot,
+                    .call            = readLeaf,
+                    .policyAuthority = prepared.policyAuthority,
                 }
             );
             REQUIRE_MESSAGE(readAdmitted.has_value(), failureText(readAdmitted));
@@ -2492,12 +2527,12 @@ return {
                 std::vector{frameworkInputEffect(k_otherTargetId)};
             auto const inputAdmitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = elsewhere.first,
-                    .lease      = elsewhere.second,
-                    .root       = inputRoot,
-                    .call       = inputCall,
+                    .controller      = elsewhere.first,
+                    .lease           = elsewhere.second,
+                    .root            = inputRoot,
+                    .call            = inputCall,
+                    .policyAuthority = authority,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .policyAuthority = authority,
                         .effects         = inputEffects,
                     },
                 }
@@ -3281,7 +3316,8 @@ return {
         // risk under the same authority -- and none of them presents an
         // approval, because an approval is a human decision another door mints
         // and a policy that required one would refuse these admissions.
-        auto const& expected = *starts.front().request.mutation;
+        auto const& expected  = *starts.front().request.mutation;
+        auto const& expectedAuthority = starts.front().request.policyAuthority;
         for (auto const& start : starts)
         {
             CHECK(start.request.requiredMutability() == ToolMutability::Mutating);
@@ -3289,12 +3325,12 @@ return {
             auto const& mutation = *start.request.mutation;
             CHECK(mutation.approvals.empty());
             CHECK(
-                mutation.policyAuthority.projectRegistrationHash()
-                == expected.policyAuthority.projectRegistrationHash()
+                start.request.policyAuthority.projectRegistrationHash()
+                == expectedAuthority.projectRegistrationHash()
             );
             CHECK(
-                mutation.policyAuthority.policyHash()
-                == expected.policyAuthority.policyHash()
+                start.request.policyAuthority.policyHash()
+                == expectedAuthority.policyHash()
             );
             REQUIRE(mutation.effects.size() == 1U);
             REQUIRE(expected.effects.size() == 1U);

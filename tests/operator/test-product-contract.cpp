@@ -234,11 +234,12 @@ namespace uf::operator_runtime
             );
             REQUIRE(call.has_value());
             return prepared.store.admitToolCall(ToolAdmissionRequest{
-                .controller = controller,
-                .lease      = lease,
-                .root       = *root,
-                .call       = *call,
-                .mutation   = std::move(mutation),
+                .controller      = controller,
+                .lease           = lease,
+                .root            = *root,
+                .call            = *call,
+                .policyAuthority = prepared.policyAuthority,
+                .mutation        = std::move(mutation),
             });
         }
 
@@ -497,7 +498,6 @@ namespace uf::operator_runtime
                 prepared.project.toolName("command-1")
             ),
             ToolAdmissionRequest::Mutation{
-                .policyAuthority = prepared.policyAuthority,
                 .effects         = humanEffects,
             }
         );
@@ -692,8 +692,23 @@ namespace uf::operator_runtime
             ToolSurface::Privileged
         ));
 
+        constexpr auto k_pluginId = std::string_view{"fixture.control"};
+
+        // What this run's Operator opened. The profile above answers who may
+        // reach the machine surface; the artifact answers whether the surface
+        // was opened at all, and the two are separate refusals -- so this store
+        // grants exactly the one Tool this case presents on that surface, and
+        // the ungranted store below shows what the same call meets without it.
+        auto const machineSurfaceGrant = std::vector<std::string>{
+            test_support::fixtureToolName(k_pluginId, "raw-coordinate-click"),
+        };
+
         auto const temporary = test_support::TemporaryDirectory{};
-        auto prepared        = test_support::prepareStore(temporary.path());
+        auto prepared        = test_support::prepareStore(
+            temporary.path(),
+            std::string{k_pluginId},
+            machineSurfaceGrant
+        );
 
         // The four catalog names this case reads off a snapshot and presents at
         // admission. A fixture tool's namespace is its registration's
@@ -880,6 +895,54 @@ namespace uf::operator_runtime
             *agentLease,
             "request-4",
             *silent
+        ).has_value());
+
+        // The Operator's half of the same decision, on a production root that
+        // opened nothing. Same catalog, same unrestricted Human profile, same
+        // Tool: what changed is that this root's PolicyArtifact names no
+        // Privileged Tool, so the Project's own `privileged` label reaches
+        // admission as the classification it is and grants nothing. Without
+        // this the admission above would pass over a door that admits the
+        // machine surface to anyone whose profile does not forbid it.
+        auto const ungrantedTemporary = test_support::TemporaryDirectory{};
+        auto ungranted                = test_support::prepareStore(
+            ungrantedTemporary.path(),
+            std::string{k_pluginId}
+        );
+        auto const ungrantedHuman = test_support::addController(
+            ungranted,
+            ControllerKind::Human,
+            SessionMode::Write,
+            "session-2",
+            "instance-2",
+            "target-2"
+        );
+        auto const ungrantedLease = ungranted.store.acquireLease(ungrantedHuman);
+        REQUIRE(ungrantedLease.has_value());
+        auto const ungrantedRefusal = admitToolCallDirectly(
+            ungranted,
+            ungrantedHuman,
+            *ungrantedLease,
+            "request-1",
+            test_support::toolInvocation(ungranted.project, rawCoordinateTool)
+        );
+        REQUIRE_FALSE(ungrantedRefusal.has_value());
+        CHECK(
+            automationErrorKind(ungrantedRefusal.error())
+            == AutomationErrorKind::ActionRejected
+        );
+        CHECK(ungrantedRefusal.error().message().contains(
+            "grants no Privileged surface to tool " + rawCoordinateTool
+        ));
+
+        // The same root still admits a semantic Tool, so the refusal above is
+        // about the surface rather than about a root that admits nothing.
+        CHECK(admitToolCallDirectly(
+            ungranted,
+            ungrantedHuman,
+            *ungrantedLease,
+            "request-2",
+            test_support::toolInvocation(ungranted.project, observeTool)
         ).has_value());
     }
 

@@ -79,7 +79,15 @@ namespace uf::operator_runtime
             auto const types = std::vector<std::string>{
                 std::string{k_inputEffectType},
             };
-            return conformance::policyArtifactBytes(hashOf("operator"), types);
+            // The privileged input Tool is granted no top-level surface
+            // here: every case that reaches it reaches it as a delegated
+            // child, and the one that presents it as a root call is the case
+            // that proves a root call of it is refused.
+            return conformance::policyArtifactBytes(
+                hashOf("operator"),
+                types,
+                {}
+            );
         }
 
         [[nodiscard]]
@@ -325,6 +333,7 @@ namespace uf::operator_runtime
                 .project                 = project,
                 .manifest                = manifest,
                 .policyAuthority         = *std::move(policyAuthority),
+                .policyArtifact          = policy,
                 .controller              = *controller,
                 .lease                   = *lease,
                 .snapshot                = *std::move(snapshot),
@@ -502,12 +511,12 @@ namespace uf::operator_runtime
                 admitted,
                 prepared.store.admitToolCall(
                     ToolAdmissionRequest{
-                        .controller = controller,
-                        .lease      = lease,
-                        .root       = root,
-                        .call       = call,
+                        .controller      = controller,
+                        .lease           = lease,
+                        .root            = root,
+                        .call            = call,
+                        .policyAuthority = prepared.policyAuthority,
                         .mutation   = ToolAdmissionRequest::Mutation{
-                            .policyAuthority = prepared.policyAuthority,
                             .effects         = effects,
                         },
                     }
@@ -541,10 +550,11 @@ namespace uf::operator_runtime
                 admitted,
                 prepared.store.admitToolCall(
                     ToolAdmissionRequest{
-                        .controller = controller,
-                        .lease      = lease,
-                        .root       = root,
-                        .call       = call,
+                        .controller      = controller,
+                        .lease           = lease,
+                        .root            = root,
+                        .call            = call,
+                        .policyAuthority = prepared.policyAuthority,
                     }
                 )
             );
@@ -651,12 +661,12 @@ namespace uf::operator_runtime
             REQUIRE(directCall.has_value());
             auto direct = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = agent,
-                    .lease      = *lease,
-                    .root       = directRoot,
-                    .call       = *directCall,
+                    .controller      = agent,
+                    .lease           = *lease,
+                    .root            = directRoot,
+                    .call            = *directCall,
+                    .policyAuthority = prepared.policyAuthority,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .policyAuthority = prepared.policyAuthority,
                         .effects         = childEffects,
                     },
                 }
@@ -684,10 +694,11 @@ namespace uf::operator_runtime
             REQUIRE(projectChild.has_value());
             auto projectChildAdmission = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = agent,
-                    .lease      = *lease,
-                    .root       = root,
-                    .call       = *projectChild,
+                    .controller      = agent,
+                    .lease           = *lease,
+                    .root            = root,
+                    .call            = *projectChild,
+                    .policyAuthority = prepared.policyAuthority,
                     .delegation = handler->grant,
                 }
             );
@@ -701,10 +712,11 @@ namespace uf::operator_runtime
             REQUIRE(observeChild.has_value());
             auto observeAdmission = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = agent,
-                    .lease      = *lease,
-                    .root       = root,
-                    .call       = *observeChild,
+                    .controller      = agent,
+                    .lease           = *lease,
+                    .root            = root,
+                    .call            = *observeChild,
+                    .policyAuthority = prepared.policyAuthority,
                     .delegation = handler->grant,
                 }
             );
@@ -717,12 +729,12 @@ namespace uf::operator_runtime
             REQUIRE(inputChild.has_value());
             auto inputAdmission = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = agent,
-                    .lease      = *lease,
-                    .root       = root,
-                    .call       = *inputChild,
+                    .controller      = agent,
+                    .lease           = *lease,
+                    .root            = root,
+                    .call            = *inputChild,
+                    .policyAuthority = prepared.policyAuthority,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .policyAuthority = prepared.policyAuthority,
                         .effects         = childEffects,
                     },
                     .delegation = handler->grant,
@@ -797,12 +809,12 @@ namespace uf::operator_runtime
             auto const widened = std::vector{inputEffect(target, Risk::High)};
             auto refused = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = controller,
-                    .lease      = lease,
-                    .root       = root,
-                    .call       = *child,
+                    .controller      = controller,
+                    .lease           = lease,
+                    .root            = root,
+                    .call            = *child,
+                    .policyAuthority = prepared.policyAuthority,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .policyAuthority = prepared.policyAuthority,
                         .effects         = widened,
                     },
                     .delegation = handler->grant,
@@ -823,12 +835,12 @@ namespace uf::operator_runtime
             auto const moved = std::vector{elsewhere};
             auto refused = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = controller,
-                    .lease      = lease,
-                    .root       = root,
-                    .call       = *child,
+                    .controller      = controller,
+                    .lease           = lease,
+                    .root            = root,
+                    .call            = *child,
+                    .policyAuthority = prepared.policyAuthority,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .policyAuthority = prepared.policyAuthority,
                         .effects         = moved,
                     },
                     .delegation = handler->grant,
@@ -861,10 +873,11 @@ namespace uf::operator_runtime
             REQUIRE(child.has_value());
             auto refused = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = controller,
-                    .lease      = lease,
-                    .root       = root,
-                    .call       = *child,
+                    .controller      = controller,
+                    .lease           = lease,
+                    .root            = root,
+                    .call            = *child,
+                    .policyAuthority = prepared.policyAuthority,
                     .delegation = handler->grant,
                 }
             );
@@ -892,10 +905,11 @@ namespace uf::operator_runtime
             REQUIRE(child.has_value());
             auto refused = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = elsewhere,
-                    .lease      = *otherLease,
-                    .root       = root,
-                    .call       = *child,
+                    .controller      = elsewhere,
+                    .lease           = *otherLease,
+                    .root            = root,
+                    .call            = *child,
+                    .policyAuthority = prepared.policyAuthority,
                     .delegation = handler->grant,
                 }
             );
@@ -913,12 +927,12 @@ namespace uf::operator_runtime
             REQUIRE(child.has_value());
             auto refused = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = controller,
-                    .lease      = lease,
-                    .root       = root,
-                    .call       = *child,
+                    .controller      = controller,
+                    .lease           = lease,
+                    .root            = root,
+                    .call            = *child,
+                    .policyAuthority = prepared.policyAuthority,
                     .mutation   = ToolAdmissionRequest::Mutation{
-                        .policyAuthority = prepared.policyAuthority,
                         .effects         = rootEffects,
                     },
                     .delegation = handler->grant,
@@ -977,10 +991,11 @@ namespace uf::operator_runtime
             REQUIRE(first.has_value());
             auto admitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = controller,
-                    .lease      = lease,
-                    .root       = narrowRoot,
-                    .call       = *first,
+                    .controller      = controller,
+                    .lease           = lease,
+                    .root            = narrowRoot,
+                    .call            = *first,
+                    .policyAuthority = prepared.policyAuthority,
                     .delegation = narrowHandler->grant,
                 }
             );
@@ -992,10 +1007,11 @@ namespace uf::operator_runtime
             REQUIRE(second.has_value());
             auto refused = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = controller,
-                    .lease      = lease,
-                    .root       = narrowRoot,
-                    .call       = *second,
+                    .controller      = controller,
+                    .lease           = lease,
+                    .root            = narrowRoot,
+                    .call            = *second,
+                    .policyAuthority = prepared.policyAuthority,
                     .delegation = narrowHandler->grant,
                 }
             );
@@ -1013,10 +1029,11 @@ namespace uf::operator_runtime
             REQUIRE(child.has_value());
             auto refused = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = controller,
-                    .lease      = lease,
-                    .root       = root,
-                    .call       = *child,
+                    .controller      = controller,
+                    .lease           = lease,
+                    .root            = root,
+                    .call            = *child,
+                    .policyAuthority = prepared.policyAuthority,
                     .delegation = handler->grant,
                 }
             );
@@ -1034,10 +1051,11 @@ namespace uf::operator_runtime
             REQUIRE(orphan.has_value());
             auto refusedGrant = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = controller,
-                    .lease      = lease,
-                    .root       = root,
-                    .call       = *orphan,
+                    .controller      = controller,
+                    .lease           = lease,
+                    .root            = root,
+                    .call            = *orphan,
+                    .policyAuthority = prepared.policyAuthority,
                     .delegation = handler->grant,
                 }
             );
@@ -1052,10 +1070,11 @@ namespace uf::operator_runtime
             REQUIRE(child.has_value());
             auto refusedChild = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = controller,
-                    .lease      = lease,
-                    .root       = root,
-                    .call       = *child,
+                    .controller      = controller,
+                    .lease           = lease,
+                    .root            = root,
+                    .call            = *child,
+                    .policyAuthority = prepared.policyAuthority,
                 }
             );
             REQUIRE_FALSE(refusedChild.has_value());
@@ -1085,12 +1104,12 @@ namespace uf::operator_runtime
         REQUIRE(call.has_value());
         auto admitted = prepared.store.admitToolCall(
             ToolAdmissionRequest{
-                .controller = controller,
-                .lease      = lease,
-                .root       = root,
-                .call       = *call,
+                .controller      = controller,
+                .lease           = lease,
+                .root            = root,
+                .call            = *call,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
                     .effects         = rootEffects,
                 },
             }
@@ -1129,10 +1148,11 @@ namespace uf::operator_runtime
         REQUIRE(parent.has_value());
         auto admitted = prepared.store.admitToolCall(
             ToolAdmissionRequest{
-                .controller = controller,
-                .lease      = lease,
-                .root       = root,
-                .call       = *parent,
+                .controller      = controller,
+                .lease           = lease,
+                .root            = root,
+                .call            = *parent,
+                .policyAuthority = prepared.policyAuthority,
             }
         );
         REQUIRE(admitted.has_value());
@@ -1151,12 +1171,12 @@ namespace uf::operator_runtime
         };
         auto refused = prepared.store.admitToolCall(
             ToolAdmissionRequest{
-                .controller = controller,
-                .lease      = lease,
-                .root       = root,
-                .call       = *child,
+                .controller      = controller,
+                .lease           = lease,
+                .root            = root,
+                .call            = *child,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
                     .effects         = effects,
                 },
                 .delegation = *grant,
@@ -1216,11 +1236,12 @@ namespace uf::operator_runtime
             REQUIRE(call.has_value());
             auto admitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = controller,
-                    .lease      = lease,
-                    .root       = root,
-                    .call       = *call,
-                    .delegation = grant,
+                    .controller      = controller,
+                    .lease           = lease,
+                    .root            = root,
+                    .call            = *call,
+                    .policyAuthority = prepared.policyAuthority,
+                    .delegation      = grant,
                 }
             );
             if (index + 1U == k_levels.size())
@@ -1289,10 +1310,11 @@ namespace uf::operator_runtime
         REQUIRE(child.has_value());
         auto refused = prepared.store.admitToolCall(
             ToolAdmissionRequest{
-                .controller = agent,
-                .lease      = *lease,
-                .root       = root,
-                .call       = *child,
+                .controller      = agent,
+                .lease           = *lease,
+                .root            = root,
+                .call            = *child,
+                .policyAuthority = prepared.policyAuthority,
                 .delegation = handler->grant,
             }
         );
@@ -1330,10 +1352,11 @@ namespace uf::operator_runtime
         REQUIRE(parent.has_value());
         auto admitted = prepared.store.admitToolCall(
             ToolAdmissionRequest{
-                .controller = controller,
-                .lease      = lease,
-                .root       = root,
-                .call       = *parent,
+                .controller      = controller,
+                .lease           = lease,
+                .root            = root,
+                .call            = *parent,
+                .policyAuthority = prepared.policyAuthority,
             }
         );
         REQUIRE(admitted.has_value());
@@ -1358,11 +1381,12 @@ namespace uf::operator_runtime
 
         auto refused = prepared.store.admitToolCall(
             ToolAdmissionRequest{
-                .controller = controller,
-                .lease      = lease,
-                .root       = root,
-                .call       = *child,
-                .delegation = *grant,
+                .controller      = controller,
+                .lease           = lease,
+                .root            = root,
+                .call            = *child,
+                .policyAuthority = prepared.policyAuthority,
+                .delegation      = *grant,
             }
         );
         REQUIRE_FALSE(refused.has_value());
@@ -1402,10 +1426,11 @@ namespace uf::operator_runtime
             REQUIRE(call.has_value());
             auto admitted = prepared.store.admitToolCall(
                 ToolAdmissionRequest{
-                    .controller = controller,
-                    .lease      = lease,
-                    .root       = root,
-                    .call       = *call,
+                    .controller      = controller,
+                    .lease           = lease,
+                    .root            = root,
+                    .call            = *call,
+                    .policyAuthority = prepared.policyAuthority,
                 }
             );
             REQUIRE_MESSAGE(admitted.has_value(), failureText(admitted));
@@ -1652,14 +1677,14 @@ namespace uf::operator_runtime
         auto const approvals = std::vector{*approval};
         auto admitted = prepared.store.admitToolCall(
             ToolAdmissionRequest{
-                .controller = controller,
-                .lease      = lease,
-                .root       = root,
-                .call       = *parent,
+                .controller      = controller,
+                .lease           = lease,
+                .root            = root,
+                .call            = *parent,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
-                    .effects         = rootEffects,
-                    .approvals       = approvals,
+                    .effects   = rootEffects,
+                    .approvals = approvals,
                 },
             }
         );
@@ -1676,12 +1701,12 @@ namespace uf::operator_runtime
         REQUIRE(child.has_value());
         auto refused = prepared.store.admitToolCall(
             ToolAdmissionRequest{
-                .controller = controller,
-                .lease      = lease,
-                .root       = root,
-                .call       = *child,
+                .controller      = controller,
+                .lease           = lease,
+                .root            = root,
+                .call            = *child,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
                     .effects         = rootEffects,
                 },
                 .delegation = *grant,
@@ -1749,10 +1774,11 @@ namespace uf::operator_runtime
         REQUIRE(siblingChild.has_value());
         auto crossed = prepared.store.admitToolCall(
             ToolAdmissionRequest{
-                .controller = controller,
-                .lease      = lease,
-                .root       = siblingRoot,
-                .call       = *siblingChild,
+                .controller      = controller,
+                .lease           = lease,
+                .root            = siblingRoot,
+                .call            = *siblingChild,
+                .policyAuthority = prepared.policyAuthority,
                 .delegation = first->grant,
             }
         );
@@ -1787,10 +1813,11 @@ namespace uf::operator_runtime
         ));
         auto admitted = prepared.store.admitToolCall(
             ToolAdmissionRequest{
-                .controller = controller,
-                .lease      = lease,
-                .root       = pendingRoot,
-                .call       = *pending,
+                .controller      = controller,
+                .lease           = lease,
+                .root            = pendingRoot,
+                .call            = *pending,
+                .policyAuthority = prepared.policyAuthority,
             }
         );
         REQUIRE_MESSAGE(admitted.has_value(), failureText(admitted));
@@ -1860,12 +1887,12 @@ namespace uf::operator_runtime
         };
         auto refusedSurface = prepared.store.admitToolCall(
             ToolAdmissionRequest{
-                .controller = controller,
-                .lease      = lease,
-                .root       = root,
-                .call       = *privilegedChild,
+                .controller      = controller,
+                .lease           = lease,
+                .root            = root,
+                .call            = *privilegedChild,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
                     .effects         = privilegedEffects,
                 },
                 .delegation = handler->grant,
@@ -1887,12 +1914,12 @@ namespace uf::operator_runtime
         auto const effects = std::vector{inputEffect(target, Risk::Medium)};
         auto refusedMutability = prepared.store.admitToolCall(
             ToolAdmissionRequest{
-                .controller = controller,
-                .lease      = lease,
-                .root       = root,
-                .call       = *mutatingChild,
+                .controller      = controller,
+                .lease           = lease,
+                .root            = root,
+                .call            = *mutatingChild,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
                     .effects         = effects,
                 },
                 .delegation = handler->grant,
@@ -1945,12 +1972,12 @@ namespace uf::operator_runtime
         auto const raised = std::vector{inputEffect(target, Risk::Medium)};
         auto refused = prepared.store.admitToolCall(
             ToolAdmissionRequest{
-                .controller = controller,
-                .lease      = lease,
-                .root       = root,
-                .call       = *child,
+                .controller      = controller,
+                .lease           = lease,
+                .root            = root,
+                .call            = *child,
+                .policyAuthority = prepared.policyAuthority,
                 .mutation   = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
                     .effects         = raised,
                 },
                 .delegation = handler->grant,

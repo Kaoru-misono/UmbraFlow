@@ -207,10 +207,11 @@ namespace uf::operator_runtime
 
         auto admitted = owner->coordinator().admitToolCall(
             ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = lease,
-                .root       = *root,
-                .call       = *call,
+                .controller      = prepared.controller,
+                .lease           = lease,
+                .root            = *root,
+                .call            = *call,
+                .policyAuthority = prepared.policyAuthority,
             }
         );
         REQUIRE(admitted.has_value());

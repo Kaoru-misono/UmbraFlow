@@ -26,12 +26,14 @@ namespace uf::operator_runtime::conformance
 
     // A PolicyArtifact for a run of the framework's own fixtures, in exact JCS.
     //
-    // It is written here rather than in a project directory because policy is
-    // Operator-owned: `owned_by` is `operator` in the artifact's own schema, and
-    // a project that could supply the rules judging its own effects would be
-    // deciding whether it may act. What a run does supply is which effect
-    // types the rules speak about, because a rule selecting nothing would
-    // speak about every effect of every tool.
+    // It stands in for the artifact an Operator writes into its production
+    // root, because policy is Operator-owned: `owned_by` is `operator` in the
+    // artifact's own schema, and a project that could supply the rules judging
+    // its own effects would be deciding whether it may act. What a run does
+    // supply is which effect types the rules speak about, because a rule
+    // selecting nothing would speak about every effect of every tool, and which
+    // Tools this Operator permits on the Privileged surface, because a Project
+    // labelling its own Tool `privileged` states a fact and grants nothing.
     //
     // The three tiers it establishes are what the suites depend on: an effect at
     // or below medium risk is allowed, one at high risk needs an approver
@@ -40,7 +42,8 @@ namespace uf::operator_runtime::conformance
     [[nodiscard]]
     inline auto policyArtifactBytes(
         ContentHash const& operatorProtocolSchemaHash,
-        std::span<std::string const> effectTypes
+        std::span<std::string const> effectTypes,
+        std::span<std::string const> privilegedSurfaceTools
     ) -> std::string
     {
         auto selector = std::string{R"("selector":{"effect_types":[)"};
@@ -74,13 +77,30 @@ namespace uf::operator_runtime::conformance
         rules += selector;
         rules += "}]";
 
+        auto granted = std::string{"["};
+        first        = true;
+        for (auto const& tool : privilegedSurfaceTools)
+        {
+            if (!first)
+            {
+                granted.push_back(',');
+            }
+            first = false;
+            granted.push_back('"');
+            granted += tool;
+            granted.push_back('"');
+        }
+        granted.push_back(']');
+
         auto artifact = std::string{R"({"default_decision":"deny",)"
                                     R"("operator_protocol_schema_hash":")"};
         artifact += operatorProtocolSchemaHash.hex();
         artifact += R"(","ordered_rules":)";
         artifact += rules;
         artifact += R"(,"owned_by":"operator","policy_id":"conformance-fixture",)"
-                    R"("policy_version":"1","unknown_effect_decision":"deny"})";
+                    R"("policy_version":"1","privileged_surface_tools":)";
+        artifact += granted;
+        artifact += R"(,"unknown_effect_decision":"deny"})";
         return artifact;
     }
 

@@ -47,33 +47,21 @@ namespace uf::operator_runtime
     // producer to look. Admission states all of it, once, and what a producer
     // renders is the refusal that came back.
     //
-    // No in-class initializer for controller, lease, root and call: an actor,
-    // a lease and a coordinate must all come from construction, and there is no
-    // default any of them could carry. Three of the four have no default
-    // constructor at all, so the aggregate has none either and cannot be left
-    // indeterminate.
+    // No in-class initializer for controller, lease, root, call and the policy
+    // authority: an actor, a lease, a coordinate and the policy that judges it
+    // must all come from construction, and there is no default any of them
+    // could carry. Four of the five have no default constructor at all, so the
+    // aggregate has none either and cannot be left indeterminate.
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
     struct ToolAdmissionRequest final
     {
-        // What a mutating call proposes, and what judges it. It is absent for
-        // a read-only Tool and required for a mutating one, which is the whole
-        // of the read-only/mutating distinction in this value: the mutability
-        // itself is read off the descriptor the coordinate carries, so no
-        // producer can state one the catalog disagrees with.
-        //
-        // The plan authority is present because policy is evaluated rather than
-        // named. A producer cannot widen anything by supplying its own:
-        // admission refuses an authority whose registration or policy hash
-        // differs from the live session's.
-        //
-        // No in-class initializer for the authority: OperatorPolicyAuthority has
-        // no default state, and a mutation with no authority to judge it is not
-        // a value this type should be able to hold.
-        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+        // What a mutating call proposes. It is absent for a read-only Tool and
+        // required for a mutating one, which is the whole of the
+        // read-only/mutating distinction in this value: the mutability itself
+        // is read off the descriptor the coordinate carries, so no producer can
+        // state one the catalog disagrees with.
         struct Mutation final
         {
-            OperatorPolicyAuthority policyAuthority;
-
             std::vector<ProposedEffect>    effects{};
             std::vector<ToolApprovalGrant> approvals{};
         };
@@ -82,6 +70,14 @@ namespace uf::operator_runtime
         ControlLease             lease;
         ToolRootRequestIdentity  root;
         ToolCallPositionIdentity call;
+
+        // The session's own PolicyArtifact, present on every request rather
+        // than only on a mutating one, because policy is evaluated rather than
+        // named and a read-only Tool has a surface to answer for even when it
+        // proposes no effect. A producer cannot widen anything by supplying its
+        // own: admission refuses an authority whose registration or policy hash
+        // differs from the live session's.
+        OperatorPolicyAuthority policyAuthority;
 
         std::optional<Mutation>            mutation{};
         std::optional<ToolDelegationGrant> delegation{};
@@ -131,11 +127,10 @@ namespace uf::operator_runtime
     // a gap: the envelope is derived from the bounds, so a catalog that
     // declared none has declared a Tool nothing can be admitted for.
     //
-    // Both references are call-scoped borrows and nothing is retained.
+    // Both borrows are call-scoped and nothing is retained.
     [[nodiscard]]
     auto proposedToolMutation(
         ValidatedToolInvocation const& invocation,
-        OperatorPolicyAuthority const& policyAuthority,
         std::string_view controlledTargetId
     ) -> std::optional<ToolAdmissionRequest::Mutation>;
 }

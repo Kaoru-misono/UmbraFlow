@@ -68,13 +68,13 @@ namespace uf::operator_runtime
         // which admission decides from the coordinate rather than from anything
         // stated here.
         return ToolAdmissionRequest{
-            .controller = start.controller,
-            .lease      = start.lease,
-            .root       = std::move(root),
-            .call       = std::move(call),
-            .mutation   = proposedToolMutation(
+            .controller      = start.controller,
+            .lease           = start.lease,
+            .root            = std::move(root),
+            .call            = std::move(call),
+            .policyAuthority = start.policyAuthority,
+            .mutation        = proposedToolMutation(
                 start.invocation,
-                start.policyAuthority,
                 start.controller.controlledTargetId()
             ),
         };

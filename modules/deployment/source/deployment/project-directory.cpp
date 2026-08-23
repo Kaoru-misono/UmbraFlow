@@ -1158,7 +1158,6 @@ namespace uf::deployment
         auto loaded = LoadedProject{
             .directory           = directory,
             .runtimeArtifactRoot = {},
-            .policyArtifactBytes = std::nullopt,
             .primaryDeployment   = text(manifest, "primary_deployment"),
             .deployments         = {},
         };
@@ -1187,22 +1186,6 @@ namespace uf::deployment
             ));
         }
         loaded.runtimeArtifactRoot = directory / artifactRoot;
-
-        if (auto const* const p_policy = manifest.find("policy_artifact"))
-        {
-            auto const policyPath = std::string{p_policy->string()};
-            UF_TRY(requireManifestSpelling("policy_artifact", policyPath));
-            UF_TRY_VALUE(
-                policyBytes,
-                readFile(
-                    root,
-                    "the PolicyArtifact policy_artifact names",
-                    policyPath,
-                    k_maximumDocumentBytes
-                )
-            );
-            loaded.policyArtifactBytes = std::move(policyBytes);
-        }
 
         for (auto const& block : member(manifest, "deployments").items())
         {

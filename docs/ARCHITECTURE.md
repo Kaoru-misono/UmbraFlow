@@ -134,7 +134,14 @@ offline authoring
 production
   RuntimeArtifact (runtime-model.toml + manifest-listed assets)
   operator-runtime.sqlite
+  policy-artifact.json (optional; absent is the Operator deny-all)
 ```
+
+`policy-artifact.json` is the Operator's, and it is the only supply path for a
+PolicyArtifact. It sits in the production root rather than in a project
+directory or behind a CLI flag because the party a policy protects is the party
+that must give it: the machine's owner administers this root, while a project
+directory and a command line both belong to whoever is asking to act.
 
 Production cannot attach, traverse or read the authoring workspace. Runtime
 artifacts, sessions and traces never carry annotation screenshots. The two

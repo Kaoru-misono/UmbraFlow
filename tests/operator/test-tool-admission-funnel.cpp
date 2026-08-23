@@ -191,9 +191,23 @@ namespace uf::operator_runtime
                 ControllerBinding,
                 ControlLease,
                 ToolRootRequestIdentity,
-                ToolCallPositionIdentity
+                ToolCallPositionIdentity,
+                OperatorPolicyAuthority
             >,
             "A producer must be able to build the request it translates into"
+        );
+
+        // And the policy is not optional in that value. A request without one
+        // is a call nothing could judge the surface of, so the aggregate must
+        // refuse to be built without it rather than admitting on a default.
+        static_assert(
+            !RequestBuildableFrom<
+                ControllerBinding,
+                ControlLease,
+                ToolRootRequestIdentity,
+                ToolCallPositionIdentity
+            >,
+            "A request carries the policy that judges it"
         );
     }
 }
