@@ -693,18 +693,25 @@ frozen view object `explore.cycle` passes to its callback — **not** a top-leve
 `explore.crop`. `explore.cycle` clears its own `live` flag before closing, so a
 view kept past the callback refuses rather than cropping a frame that is gone.
 
-It has **no click and no input verb of any kind**: the exploration private
-surface carries none, so an agent cannot name a bare coordinate today. When one
-is reintroduced it belongs here rather than on a business surface, because a bare
-click has no binding and no surface behind it and the vocabulary has to stay
-honest.
-_Avoid_: handing a task raw pixels or a bare click, "operator mode" (the `drive`
-front-end was a separate consumer with no model access at all; it was retired
-into this one on 2026-08-03 in `eafc273`, so the phrase now names nothing)
+Input is on that same view object and nowhere else: `view:click_point`,
+`view:long_press`, `view:drag`, `view:move_pointer`, `view:scroll` and
+`view:key`, all in `modules/task/runtime/explore.luau`. A bare coordinate is
+nameable **here and only here**, which is the point rather than an oversight:
+this surface is authoring-only and is never published to a business VM, so a
+click with no binding and no surface behind it stays where the vocabulary can
+afford to be that blunt. A business Tool reaches input through
+`framework.input.semantic_target`, which the framework can tie back to what it
+observed.
+_Avoid_: handing a business task raw pixels or a bare click, "operator mode" (the
+`drive` front-end was a separate consumer with no model access at all; it was
+retired into this one on 2026-08-03 in `eafc273`, so the phrase now names
+nothing)
 
-**CLI verbs** — the product dispatches exactly two, `explore` and `targets`
-(`entry/cli/main.cpp`). `check`, `replay` and `run` are retired and enforced as
-such by `RETIRED_COMMANDS` and `ALLOWED_COMMANDS` in
+**CLI verbs** — the command table in `entry/cli/main.cpp` is the list; read it
+there rather than here, because a count copied into prose is the fact this
+document already got wrong once. Two of them are the authoring pair `explore`
+and `targets`; the rest reach production. `check`, `replay` and `run` are
+retired and enforced as such by `RETIRED_COMMANDS` and `ALLOWED_COMMANDS` in
 `tests/test-runtime-surface.py`.
 
 ## Retired vocabulary
