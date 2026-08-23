@@ -16,6 +16,27 @@ project build              # materialise, then check again
 umbra-flow open --project .
 ```
 
+## Reaching this release costs one manual step, once
+
+`project upgrade` did not exist before this release, so the `project` executable
+already in your `umbraflow-bin/` cannot run it:
+
+```text
+> umbraflow-bin/project upgrade --source .
+unknown project action "upgrade"
+```
+
+Download `project` from this release's assets by hand and run `upgrade` from
+wherever you put it, once. It installs the whole bundle, and the `project` it
+installs knows the verb, so every later upgrade is `project upgrade` from
+`umbraflow-bin/` and nothing else. Measured on the only existing consumer: the
+hand-run binary installed the bundle, and the installed one answered `upgrade`
+in its own usage immediately afterwards.
+
+This is the last release that will cost that step, and it is the reason
+`umbraflow-kit.json` also needs `release` added by hand before the first
+upgrade — the member is new here, and the parser requires it.
+
 ## `project upgrade` is a new verb, and `project init` no longer acquires
 
 `project init` used to install the release `umbraflow-kit.json` names. It does
