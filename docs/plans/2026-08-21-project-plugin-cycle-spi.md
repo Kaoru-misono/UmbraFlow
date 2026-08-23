@@ -522,7 +522,7 @@ entry's declared result schema.
 
 The Operator persists each call position as a state machine. At minimum it
 distinguishes proposed, admitted, dispatching, confirmed result, proven absent,
-possible/unknown delivery, rejected, terminally unresolved, and terminal
+possible/unknown delivery, terminally unresolved, and terminal
 failure. The exact transition must be durable before an external effect can
 cross its corresponding boundary.
 
@@ -609,7 +609,7 @@ recorded result:
 | `admitted` with durable proof dispatch never began | Recheck current continuation authority, append a new admission attempt, and dispatch once under the same call id. |
 | `dispatching` or provider state with no terminal outcome, for a **mutating direct-effect leaf** — both halves required, and each read off a durable column: `tool_call_positions.provider_kind` names an answerer that reaches the world directly rather than through recorded children (today only `framework`), **and** `tool_call_history.mutating` is 1 | Atomically classify `possible/unknown` and never redispatch that attempt. A trusted idempotent provider query may instead prove `confirmed` or `proven_absent`; only a later explicit call may act after proven absence. |
 | `dispatching` with no terminal outcome, for **every call the row above does not name** — a composed call, whose `provider_kind` names an answerer that reaches the world only through recorded children (today `project`, a bound handler), at either mutability; or a direct-effect leaf whose row carries `mutating` 0 | Left `dispatching` and re-entered under the same call id, because neither shape can have moved the world without a durable row saying so. A composed call's bound handler runs again from the top on a fresh issuing context numbering from 1, meets its recorded children without executing them, and executes only the first position beyond history; re-running the handler is replay and not redispatch, because every external effect it caused is one of those recorded children, and that holds however mutating the handler's own descriptor is. A read-only leaf has no recorded children and needs none: it declares no external effect for a delivery to be uncertain about, so running its provider again delivers nothing twice. The restart itself never classifies either `possible`. |
-| `confirmed`, `proven_absent`, `rejected`, or terminal failure | Replay the exact durable outcome without provider execution. |
+| `confirmed`, `proven_absent`, or terminal failure | Replay the exact durable outcome without provider execution. |
 | `possible/unknown` | Replay that classification and keep the target-wide mutation barrier. |
 
 No startup path may infer `proven_absent` merely from a process crash. The
@@ -1291,11 +1291,26 @@ the old identity before reopening.
 - **Three refusals have neither a caller nor a test**: the accept-side discovery
   checks in `admitToolCall`, the origin-principal continuation gate, and the
   root-namespace binding.
-- **WP11 and WP12's release-facing gates have nothing to gate against.** Neither
-  `schema/` nor the generated public contract describes a Tool Runtime call state,
-  envelope or identity preimage, and `tool_runtime_protocol_identity` has no
-  published definition. WP12's positive, negative, tamper, replay, recovery and
-  production-admission gates are unstarted.
+- **WP11's release-facing gates have nothing to gate against, and what to
+  publish is now ruled on.** Neither `schema/` nor the generated public contract
+  describes a Tool Runtime call state, envelope or identity preimage. What must
+  be published, and which bytes each fact is read from, is settled in
+  [`what the framework publishes for the Tool Runtime`](../decisions/2026-08-23-what-the-framework-publishes-for-the-tool-runtime.md),
+  along with the order the three pieces land in. WP12's positive, negative,
+  tamper, replay, recovery and production-admission gates are unstarted, and
+  WP12's subject is the consumer, so it follows the release rather than
+  preceding it.
+- **`tool_runtime_protocol_identity` is derived from the wrong preimage**, which
+  is a sharper defect than the "no published definition" this section recorded
+  before. It *is* derived, at `product-lifecycle.cpp:623`, from the framework
+  Tool catalog hash — but that hash covers framework Tool descriptors and
+  nothing else, so the state vocabulary, the preimage tags, the completion
+  kinds, the durable record split and the JCS contract can each change without
+  moving it. The equality at `ledger.cpp:10236` is therefore named for a
+  property it cannot observe. The provider identity for a framework call is the
+  same hash, so the preimage additionally carries a same-source duplicate that
+  cannot mismatch. The ruling above replaces the derivation with protocol
+  material of its own.
 - **Most of section 10 is unrun.** E2's subject exists as
   `tests/operator/test-tool-automation-loop.cpp`; the dispatch and
   snapshot-reference fixtures cover parts of E3 and E5; and E1 has a three-actor
@@ -1326,73 +1341,67 @@ the old identity before reopening.
   which needs the Framework provider a conformance run does not have. E8 has no
   starting state, not merely no exit.
 
-### 14.4 Runtime obligations still open
+### 14.4 Runtime obligations
 
-- `rejected` has no producer. Every admission refusal returns before any `UPDATE`
-  and no completion or reconciliation kind maps to it, so the state exists in
-  `ToolCallState` and in the `tool_call_history` CHECK constraint and nothing
-  writes it.
-- A divergence stops one call, not the run. `tool_runs` has no state column and
-  nothing marks a root terminated, so section 5.3's "terminates the run" stays a
-  requirement.
-- A call arriving under a different parent is caught — it is a coordinate miss —
-  but is reported as an absent position rather than as a changed parent.
-- Completion-time classification is keyed on mutability alone.
-  `completeToolCallDispatch` and `ToolRuntimeExecutor::invoke` both read the
-  descriptor's mutability and neither reads the answerer, so a mutating handler
-  that fails cleanly is over-classified into a target-wide barrier only
-  reconciliation can lift. Re-key it on the composed-versus-leaf property that
-  already decides a restart.
-- The `tests/operator/test-tool-executor.cpp` cases that answer a
-  Project-provided call with an arbitrary lambda must become real bound handlers
-  before anything leans on "project-provided implies bound handler". A completion
-  re-key is exactly such a change, and the conversion belongs in it rather than
-  after it.
-- Neither release path for `terminally_unresolved` exists.
-  `reconcileMutatingToolCall`'s CAS requires `state='possible'`, and there is no
-  controlled-target-generation retirement API anywhere in `operator`, so that
-  barrier is a permanent irreversible freeze.
-- `tool_runs` stores no admitted root effect envelope, policy hash or capability
-  profile. A restarted continuation at a new sequence under the same root is
-  therefore admitted under whatever the current session holds, including a widened
-  one; non-expansion is enforced only when re-admitting the same already-admitted
-  call. Section 12's "restart cannot reuse expired authority or expand the
-  original root envelope" is not satisfiable until the run record carries that
-  envelope, and section 3.3's root-envelope intersection lacks the same value.
-- Reconciliation evidence is durable and mandatory but bound to nothing — no
-  snapshot, observation, Host generation or lease-fresh capture verifies it.
-- Section 5.3's item 6 budget set is far from met. There is no instruction, memory
-  or nesting budget; no-progress is read only on the legacy Operation path; the
-  budgets that exist are session-scoped rather than run-scoped; and a `Script`
-  controller is charged nothing at all, because its profile sets
-  `budgetsRequired = false`.
-- `ToolExecutionIdentity` carries no identity of its own for the compiled scoped
-  program a Luau caller runs, and `environmentIdentity` and
-  `toolRuntimeProtocolIdentity` arrive at the production seam as opaque
-  caller-supplied hashes that nothing derives from release bytes.
-- `currentScopedToolEnvironmentHash()` reaches no registration-level digest, so
-  the scoped tier's module source hashes and topology are pinned nowhere that
-  refuses on inequality. That is what section 9's "Project registration and
-  SessionManifest transitively pinning the new roots" owes.
-- Native-backed resolver *behaviour* enters both environment preimages only as
-  fixed contract literals, so a resolver behaviour change can still ship under an
-  unmoved digest. E6 requires that it cannot.
-- A scoped run executes on its caller's thread. Section 4.2's "the run executes on
-  a structured worker owned by the run context" is unimplemented, and only the
-  stop token and the interrupt hook of the cancellation contract exist.
-- `timeout_policy` is a published, digest-bearing contract that nothing enforces.
-  `on_timeout` is produced by the two `framework.screen.*_input` descriptors in
-  `tool-invocation.cpp`, round-trips through `timeoutActionWireName` /
-  `parseTimeoutAction`, and is parsed out of an authored catalog by
-  `tool-catalog.cpp` — but **no reader branches on it**. Both readers only
-  serialize it back out, so `Reconcile`, `Reobserve` and `Stop` are behaviourally
-  identical: no dispatcher consults the policy when a Tool actually times out.
-  This is `checks-that-cannot-fail`'s "a name claims a semantic property, nothing
-  executable backs it" at the schema level, and it applies to all three
-  enumerators equally rather than being residue of the reconcile cut. Either a
-  timeout dispatcher reads it, or the contract stops being published.
-- Section 4.3's environment-identity list claims "SDK generation and Unicode data
-  version" enter the identity, but `currentProjectPluginEnvironmentMaterial()`
-  emits no generation literal: the identity is carried by module source hashes
-  and contract literals. The remedy is to enrich the derived material, never to
-  add an authored field — see the ruling in that section.
+Four of the five are discharged, and one of those four was already discharged
+before it was picked up.
+
+**Completion-time classification was never keyed on mutability alone.**
+`completeToolCallDispatch` already joins `tool_call_positions` for
+`provider_kind` and asks `toolCallEffectMayBeUnrecorded`, and
+`ToolRuntimeExecutor::invoke` already computes the composition from
+`call.provider()`. The restart filter, the re-entry gate, the completion refusal
+and the executor conversion are all four generated from the one predicate. What
+was actually missing was the proof for the composed direction — that a mutating
+composed handler failing cleanly leaves no barrier — and that now exists as a
+subcase driving a real bound handler. Breaking the predicate to
+`mutability == Mutating` reproduces exactly the over-refusal this bullet
+described: the call lands in `possible` and the target freezes.
+
+**`rejected` is deleted rather than given a producer.** A durable `rejected`
+would be a terminal row, but every admission refusal is a function of live
+authority — lease, epoch, policy, budget, approvals — so writing one would
+permanently freeze a call a fresh lease legitimately re-admits. Section 5.3's
+`proposed` recovery rule is already the right recovery for a refused admission.
+It also could not satisfy the history CHECK, since terminal states require a
+non-null outcome payload and a refusal has no provider payload. The value is
+gone from the enum, the wire names, both CHECK clauses, and the two Luau
+facades. Two of its three pins are independently breakable — the exhaustive
+switches refuse at compile time, and the Luau state list reddens a task test;
+the durable pin is not, because restoring the value in the CHECK moves the
+schema identity and `initialize()` refuses before any assertion runs, so it is
+pinned by the migration fixture asserting the rebuilt DDL instead.
+
+**A divergence now terminates the run, and the state lives on
+`tool_root_requests` rather than `tool_runs`.** `tool_runs` was the wrong home:
+it exists only after the first successful admission, while a divergence is
+detectable at a coordinate that was never admitted — so keying on it would have
+needed a "no run row yet" branch whose false arm nothing could redden. What
+terminated means is decided rather than implied: a new position, an admission
+and a re-entry are refused, while an already-recorded coordinate still rejoins,
+`replayToolCall` still answers from the durable outcome, and a dispatch already
+across its boundary is still recorded. `beginToolCallDispatch` and
+`reserveToolCallDispatch` are deliberately ungated, standing downstream of a
+gated admission — a second gate would be a second copy of one rule. The persist
+site commits the termination mark before returning the failure, because its
+transaction is otherwise read-only and the RAII rollback would discard the only
+record that the run stopped.
+
+**A changed parent is reported as one.** The coordinate-miss branch now asks
+whether the presented parent is a coordinate this run recorded — R4 admits
+exactly two parent shapes and no third, so a miss whose parent is neither is a
+call arriving under a parent this run never had. The other half says what it is
+honestly: an ordinal past that context's frontier, rather than "call position is
+not durable" for both. The writer keeps the original message, because a writer
+hanging a new position off a coordinate that does not exist is an ordering
+mistake inside a live run, not a replay divergence. The production-reachable
+form of this defect was **already** correctly reported: a child whose delegation
+grant names a parent that is no longer dispatching is refused by name in
+`admitToolCall`.
+
+Still open:
+
+- `tests/operator/test-tool-executor.cpp` answers Project calls with arbitrary
+  lambdas rather than through a bound handler. The composed side is now covered
+  by real bound handlers in `test-tool-dispatch.cpp`, but the executor's own
+  cases still stand on a stand-in.
