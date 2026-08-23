@@ -23,11 +23,20 @@ int main(int argc, char** argv)
 #if defined(_WIN32)
     _set_abort_behavior(0U, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+
+    // Only the debug CRT has a report destination to redirect. In a release
+    // build _CrtSetReportMode and _CrtSetReportFile compile to nothing, which
+    // empties the loop and leaves `report` unreferenced -- a /WX error rather
+    // than a harmless no-op. The two calls above are not debug-only: abort
+    // behaviour and the Windows error box are what a release test binary has to
+    // silence too.
+#    if defined(_DEBUG)
     for (auto const report : {_CRT_WARN, _CRT_ERROR, _CRT_ASSERT})
     {
         _CrtSetReportMode(report, _CRTDBG_MODE_FILE);
         _CrtSetReportFile(report, _CRTDBG_FILE_STDERR);
     }
+#    endif
 #endif
 
     return doctest::Context{argc, argv}.run();
