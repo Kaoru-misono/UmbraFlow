@@ -113,6 +113,24 @@ namespace uf::operator_runtime
             );
         }
 
+        // Every migration fixture below constructs the exact schema of the
+        // generation its pair migrates FROM, and all of those generations
+        // predate the call-bound Journal proposal tables. Dropping them is part
+        // of winding a fresh database back, exactly as restoring a dropped
+        // table is: the identity is taken over the stored DDL text, so a table
+        // the wind-back left in place fails the pinned source hash even though
+        // no row is ever touched.
+        auto dropJournalProposalTables(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void
+        {
+            database.execute(
+                "DROP TABLE journal_proposal_effects;"
+                "DROP TABLE journal_proposal_events;"
+                "DROP TABLE journal_batch_proposals;"
+            );
+        }
+
         // Where SQLite keeps PRAGMA user_version, and a value the Operator's
         // DDL never writes there.
         constexpr auto k_userVersionOffset      = std::streamoff{60};
@@ -3411,6 +3429,7 @@ namespace uf::operator_runtime
                 "FROM operations WHERE operation_id='" + operationId + "'"
             );
             removeToolIdentityPersistence(prior);
+            dropJournalProposalTables(prior);
             sourceIdentity = exactSchemaIdentity(prior);
         }
         CHECK(
@@ -3426,7 +3445,7 @@ namespace uf::operator_runtime
         auto const targetIdentity = exactSchemaIdentity(target);
         CHECK(
             targetIdentity
-            == "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235fa0a077598f8016fb11c02"
+            == "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07882e0481946f73f41d2df"
         );
         CHECK(
             target.readRows(
@@ -4808,6 +4827,7 @@ namespace uf::operator_runtime
                 "policy_hash, budget_snapshot_hash FROM tool_admission_attempts"
             );
             restorePriorToolAdmissionAuthority(prior);
+            dropJournalProposalTables(prior);
             sourceIdentity = exactSchemaIdentity(prior);
         }
         CHECK(
@@ -4822,7 +4842,7 @@ namespace uf::operator_runtime
         auto target = test_support::OperatorDatabaseProbe{databasePath};
         CHECK(
             exactSchemaIdentity(target)
-            == "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235fa0a077598f8016fb11c02"
+            == "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07882e0481946f73f41d2df"
         );
         CHECK(
             target.readRows(
@@ -4845,7 +4865,7 @@ namespace uf::operator_runtime
             ) == std::vector<std::vector<std::string>>{
                 {
                     sourceIdentity,
-                    "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235fa0a077598f8016fb11c02",
+                    "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07882e0481946f73f41d2df",
                 },
             }
         );
@@ -5010,6 +5030,7 @@ namespace uf::operator_runtime
                 "execution_principal_id FROM tool_admission_attempts"
             );
             restorePriorNestedToolCallSchema(prior);
+            dropJournalProposalTables(prior);
             sourceIdentity = exactSchemaIdentity(prior);
         }
         REQUIRE_FALSE(positionRows.empty());
@@ -5132,6 +5153,7 @@ namespace uf::operator_runtime
                 "tool_admission_attempts"
             );
             restorePriorToolApprovalSchema(prior);
+            dropJournalProposalTables(prior);
             sourceIdentity = exactSchemaIdentity(prior);
         }
         CHECK(
@@ -5224,6 +5246,7 @@ namespace uf::operator_runtime
                 "canonical_args FROM tool_call_positions"
             );
             restorePriorNullRootedToolCallPositions(prior);
+            dropJournalProposalTables(prior);
             sourceIdentity = exactSchemaIdentity(prior);
 
             // The generation this reproduces really did store the run's own
@@ -5248,7 +5271,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235fa0a077598f8016fb11c02"
+                == "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07882e0481946f73f41d2df"
             );
             CHECK(
                 target.readRows(
@@ -5277,8 +5300,8 @@ namespace uf::operator_runtime
                 ) == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235f"
-                        "a0a077598f8016fb11c02",
+                        "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07"
+                        "882e0481946f73f41d2df",
                     },
                 }
             );
@@ -5329,6 +5352,7 @@ namespace uf::operator_runtime
             eventRows = prior.readRows(
                 "SELECT kind, subject_id FROM ledger_events ORDER BY sequence"
             );
+            dropJournalProposalTables(prior);
             sourceIdentity = exactSchemaIdentity(prior);
         }
         REQUIRE_FALSE(auditRows.empty());
@@ -5347,7 +5371,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235fa0a077598f8016fb11c02"
+                == "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07882e0481946f73f41d2df"
             );
 
             // The five tables are gone rather than emptied.
@@ -5381,13 +5405,93 @@ namespace uf::operator_runtime
                 == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235f"
-                        "a0a077598f8016fb11c02",
+                        "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07"
+                        "882e0481946f73f41d2df",
                     },
                 }
             );
         }
     }
+    // The pair that gave call-bound Journal batch proposals a durable home.
+    // Its three tables have no predecessor, so the migration creates them and
+    // moves nothing else. The fixture proves both halves: it winds a fresh
+    // schema back by dropping exactly those three tables, which must reproduce
+    // the immediately prior identity, and it reads the Journal back across the
+    // upgrade.
+    TEST_CASE("call-bound Journal proposal tables are added under their exact pair")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        {
+            auto prepared = prepareStore(temporary.path());
+            CHECK(prepared.store.databasePath() == databasePath);
+        }
+
+        auto sourceIdentity = std::string{};
+        auto journalRows    = std::vector<std::vector<std::string>>{};
+        {
+            auto prior  = test_support::OperatorDatabaseProbe{databasePath};
+            journalRows = prior.readRows(
+                "SELECT event_id, namespaced_event_type, opaque_project_payload "
+                "FROM journal_events ORDER BY sequence"
+            );
+            dropJournalProposalTables(prior);
+            sourceIdentity = exactSchemaIdentity(prior);
+        }
+        REQUIRE_FALSE(journalRows.empty());
+        CHECK_MESSAGE(
+            sourceIdentity
+                == "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235fa0a077598f8016fb11c02",
+            "the fixture must reproduce the exact identity this pair migrates from"
+        );
+
+        {
+            auto migrated = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(migrated.has_value(), migrated.error().message());
+        }
+        {
+            auto target = test_support::OperatorDatabaseProbe{databasePath};
+            CHECK(
+                exactSchemaIdentity(target)
+                == "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07882e0481946f73f41d2df"
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT name FROM sqlite_schema WHERE type='table' AND "
+                    "name IN ('journal_batch_proposals', "
+                    "'journal_proposal_effects', 'journal_proposal_events') "
+                    "ORDER BY name"
+                )
+                == std::vector<std::vector<std::string>>{
+                    {"journal_batch_proposals"},
+                    {"journal_proposal_effects"},
+                    {"journal_proposal_events"},
+                }
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT event_id, namespaced_event_type, opaque_project_payload "
+                    "FROM journal_events ORDER BY sequence"
+                ) == journalRows
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT source_identity, target_identity FROM "
+                    "schema_identity_transitions WHERE source_identity='"
+                    + sourceIdentity + "'"
+                )
+                == std::vector<std::vector<std::string>>{
+                    {
+                        sourceIdentity,
+                        "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07"
+                        "882e0481946f73f41d2df",
+                    },
+                }
+            );
+        }
+    }
+
     TEST_CASE("the immediate-prior Tool runtime schema migrates identity rows exactly")
     {
         auto temporary          = TemporaryDirectory{};
@@ -5439,6 +5543,7 @@ namespace uf::operator_runtime
                 "FROM tool_call_positions"
             );
             removeToolRuntimePersistence(prior);
+            dropJournalProposalTables(prior);
             sourceIdentity = exactSchemaIdentity(prior);
         }
         CHECK(
@@ -5454,7 +5559,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235fa0a077598f8016fb11c02"
+                == "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07882e0481946f73f41d2df"
             );
             CHECK(
                 target.readRows(
@@ -5474,7 +5579,7 @@ namespace uf::operator_runtime
                 == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235fa0a077598f8016fb11c02",
+                        "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07882e0481946f73f41d2df",
                     },
                 }
             );
@@ -5502,6 +5607,7 @@ namespace uf::operator_runtime
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
             restoreOperationDispatchSchema(prior);
             restoreFormat2RegistrationIdentity(prior);
+            dropJournalProposalTables(prior);
             sourceIdentity = exactSchemaIdentity(prior);
             historicalRows = prior.readRows(
                 "SELECT registration_hash, plugin_id, plugin_hash, canonical_manifest "
@@ -5609,6 +5715,7 @@ namespace uf::operator_runtime
             restorePriorRegistrationStateSchemaHash(source);
             removeSessionWorldScopeColumns(source);
             removeObservedInstanceBindingLocalRefColumn(source);
+            dropJournalProposalTables(source);
             sourceIdentity = exactSchemaIdentity(source);
             replayBefore = source.readRows(
                 "SELECT sequence, event_id, namespaced_event_type, "
@@ -5683,6 +5790,7 @@ namespace uf::operator_runtime
             restoreFormat2RegistrationIdentity(prior);
             removeSessionWorldScopeColumns(prior);
             removeObservedInstanceBindingLocalRefColumn(prior);
+            dropJournalProposalTables(prior);
             sourceIdentity = exactSchemaIdentity(prior);
             sessionRows = prior.readRows(
                 "SELECT session_id, controlled_target_id, active FROM sessions "
@@ -5786,6 +5894,7 @@ namespace uf::operator_runtime
             restoreOperationDispatchSchema(prior);
             restoreFormat2RegistrationIdentity(prior);
             removeObservedInstanceBindingLocalRefColumn(prior);
+            dropJournalProposalTables(prior);
             sourceIdentity = exactSchemaIdentity(prior);
             bindingRows = prior.readRows(
                 "SELECT observed_instance_id FROM observed_instance_bindings "
@@ -5875,6 +5984,7 @@ namespace uf::operator_runtime
             restorePriorRegistrationStateSchemaHash(prior);
             removeSessionWorldScopeColumns(prior);
             removeObservedInstanceBindingLocalRefColumn(prior);
+            dropJournalProposalTables(prior);
             sourceIdentity   = exactSchemaIdentity(prior);
             registrationRows = prior.readRows(
                 "SELECT registration_hash, plugin_id, plugin_hash, "
@@ -5939,6 +6049,7 @@ namespace uf::operator_runtime
             restorePriorRegistrationStateSchemaHash(prior);
             removeSessionWorldScopeColumns(prior);
             removeObservedInstanceBindingLocalRefColumn(prior);
+            dropJournalProposalTables(prior);
             sourceIdentity = exactSchemaIdentity(prior);
         }
         CHECK_MESSAGE(
@@ -6063,6 +6174,7 @@ namespace uf::operator_runtime
             restorePriorRegistrationStateSchemaHash(priorSchema);
             removeSessionWorldScopeColumns(priorSchema);
             removeObservedInstanceBindingLocalRefColumn(priorSchema);
+            dropJournalProposalTables(priorSchema);
             sourceIdentity = exactSchemaIdentity(priorSchema);
         }
         CHECK_MESSAGE(

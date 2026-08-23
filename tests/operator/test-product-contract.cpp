@@ -240,7 +240,8 @@ return {
         ) -> void
         {
             auto const input = program.canonicalize(
-                R"({"journal_events":[],"prior_project_state":null})"
+                R"({"commit_context":{"next_revision":0,"prior_revision":null},)"
+                R"("prior_project_state":null,"prospective_journal_batch":[]})"
             );
             REQUIRE(input.has_value());
             auto const folded = program.reduce(*input);

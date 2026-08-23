@@ -1212,7 +1212,7 @@ namespace uf::operator_runtime
         // "Delete-on-open has a deadline" section owns
         // the exact-pair migration policy.
         constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
-            "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235fa0a077598f8016fb11c02"
+            "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07882e0481946f73f41d2df"
         };
 
         // A transition row records the applied exact pair; neither the row nor
@@ -1517,6 +1517,100 @@ namespace uf::operator_runtime
             "CHECK((consumed=0 AND consumed_by_attempt IS NULL) OR "
             "(consumed=1 AND consumed_by_attempt IS NOT NULL "
             "AND consumed_by_attempt > 0))"
+            ") STRICT"
+        };
+
+        // One call-bound Journal batch proposal: section 7's record that is
+        // neither a Journal event nor a durable Project fact until the final
+        // CAS publishes it.
+        //
+        // It hangs from the call AND from the revision that call's outcome
+        // must carry, because the call alone does not say which incarnation
+        // proposed. A handler proposes while its dispatch is live, so the
+        // outcome that publishes the proposal is the completion of exactly that
+        // dispatch and lands one revision later; re-entering the dispatch moves
+        // the revision too, so the completion of a RE-ENTERED dispatch lands
+        // past this number. The row a dead incarnation left behind can
+        // therefore never publish, and the re-entered handler proposes its own.
+        //
+        // prior_project_state_revision is the revision the batch was frozen
+        // against. It is a column rather than a value the publisher recomputes
+        // because that is the whole of the final CAS's prior-revision test: the
+        // proposal says which revision its facts were computed from, and the
+        // project_state row says which revision the instance is actually at.
+        //
+        // published_revision is null while the proposal stands and carries the
+        // revision it published at afterwards. It is positive rather than
+        // non-negative because revision 0 belongs to provisioning: an instance
+        // has a reduced state before any handler can run against it, so no
+        // proposal can produce that revision.
+        constexpr auto k_journalBatchProposalsDdl = std::string_view{
+            "CREATE TABLE journal_batch_proposals("
+            "proposal_identity TEXT PRIMARY KEY CHECK(length(proposal_identity)=64 "
+            "AND proposal_identity NOT GLOB '*[^0-9a-f]*'),"
+            "root_identity TEXT NOT NULL REFERENCES tool_runs(root_identity),"
+            "call_identity TEXT NOT NULL REFERENCES tool_call_history(call_identity),"
+            "call_outcome_revision INTEGER NOT NULL "
+            "CHECK(call_outcome_revision > 0),"
+            "plugin_id TEXT NOT NULL,"
+            "project_instance_key TEXT NOT NULL,"
+            "prior_project_state_revision INTEGER NOT NULL "
+            "CHECK(prior_project_state_revision >= 0),"
+            "published_revision INTEGER CHECK(published_revision IS NULL OR "
+            "published_revision > 0),"
+            "FOREIGN KEY(plugin_id, project_instance_key) "
+            "REFERENCES project_instances(plugin_id, project_instance_key)"
+            ") STRICT"
+        };
+
+        // The ordered events one proposal would append, as rows rather than as
+        // one blob. Every member is a value journal_events already has a column
+        // for, so the publisher copies them across and needs neither a renderer
+        // here nor a reader there.
+        //
+        // There is deliberately no payload_schema_hash. Publication puts these
+        // bytes back through the Journal schema owner this registration pinned,
+        // and that owner answers with the digest of the schema it applied, so a
+        // column here would be a second spelling of a value the publication
+        // derives anyway -- and the one nothing would notice going stale.
+        constexpr auto k_journalProposalEventsDdl = std::string_view{
+            "CREATE TABLE journal_proposal_events("
+            "proposal_identity TEXT NOT NULL REFERENCES "
+            "journal_batch_proposals(proposal_identity),"
+            "batch_index INTEGER NOT NULL CHECK(batch_index >= 0),"
+            "event_id TEXT NOT NULL,"
+            "namespaced_event_type TEXT NOT NULL,"
+            "opaque_project_payload TEXT NOT NULL,"
+            "provenance TEXT NOT NULL,"
+            "PRIMARY KEY(proposal_identity, batch_index)"
+            ") STRICT"
+        };
+
+        // The effects one proposal's facts interpret, frozen at the outcome
+        // revision each carried when the proposal was made.
+        //
+        // The revision is the whole of the recorded identity, and the outcome
+        // state, result payload and evidence deliberately are not beside it.
+        // tool_call_history moves all four in one UPDATE, so a row whose
+        // revision still matches carries the same outcome and the same evidence
+        // by construction, and comparing those as well would be three conjuncts
+        // that cannot fail on their own. Re-verifying the revision IS
+        // re-verifying the outcome and evidence identities the proposal was
+        // computed from.
+        //
+        // The comparison has two independently written sources: this row was
+        // written when the handler proposed, and the history row moves whenever
+        // a completion or a reconciliation lands. A proposal made over an
+        // uncertain effect therefore cannot survive that effect being resolved
+        // -- resolution moves the outcome the facts were computed from, and the
+        // facts have to be computed again.
+        constexpr auto k_journalProposalEffectsDdl = std::string_view{
+            "CREATE TABLE journal_proposal_effects("
+            "proposal_identity TEXT NOT NULL REFERENCES "
+            "journal_batch_proposals(proposal_identity),"
+            "call_identity TEXT NOT NULL REFERENCES tool_call_history(call_identity),"
+            "outcome_revision INTEGER NOT NULL CHECK(outcome_revision > 0),"
+            "PRIMARY KEY(proposal_identity, call_identity)"
             ") STRICT"
         };
 
@@ -1844,6 +1938,14 @@ namespace uf::operator_runtime
             UF_TRY(execute(database, k_toolRootRequestsDdl));
             UF_TRY(execute(database, k_toolCallPositionsDdl));
             return addToolRuntimePersistence(database);
+        }
+
+        [[nodiscard]]
+        auto addJournalProposals(sqlite3* database) -> Status
+        {
+            UF_TRY(execute(database, k_journalBatchProposalsDdl));
+            UF_TRY(execute(database, k_journalProposalEventsDdl));
+            return execute(database, k_journalProposalEffectsDdl);
         }
 
         // Rebuilds tool_call_positions into the exact current DDL, carrying
@@ -2275,6 +2377,7 @@ namespace uf::operator_runtime
             UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
             UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(dropOperationDispatchTables(database));
+            UF_TRY(addJournalProposals(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2315,6 +2418,7 @@ namespace uf::operator_runtime
             UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
             UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(dropOperationDispatchTables(database));
+            UF_TRY(addJournalProposals(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
 
             // No migration commits under an identity other than the exact
@@ -2339,6 +2443,7 @@ namespace uf::operator_runtime
             UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
             UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(dropOperationDispatchTables(database));
+            UF_TRY(addJournalProposals(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2358,6 +2463,7 @@ namespace uf::operator_runtime
             UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
             UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(dropOperationDispatchTables(database));
+            UF_TRY(addJournalProposals(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2376,6 +2482,7 @@ namespace uf::operator_runtime
             UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
             UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(dropOperationDispatchTables(database));
+            UF_TRY(addJournalProposals(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2392,6 +2499,7 @@ namespace uf::operator_runtime
             UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
             UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(dropOperationDispatchTables(database));
+            UF_TRY(addJournalProposals(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2407,6 +2515,7 @@ namespace uf::operator_runtime
             UF_TRY(makeRegistrationIdentityGenerationNeutral(database));
             UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(dropOperationDispatchTables(database));
+            UF_TRY(addJournalProposals(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2421,6 +2530,7 @@ namespace uf::operator_runtime
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(dropOperationDispatchTables(database));
+            UF_TRY(addJournalProposals(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2436,6 +2546,7 @@ namespace uf::operator_runtime
             UF_TRY(rebuildToolCallPositions(database, "NULL"));
             UF_TRY(addToolRuntimePersistence(database));
             UF_TRY(dropOperationDispatchTables(database));
+            UF_TRY(addJournalProposals(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2475,6 +2586,7 @@ namespace uf::operator_runtime
             UF_TRY(execute(database, "DROP TABLE prior_tool_admission_attempts"));
             UF_TRY(execute(database, k_toolApprovalsDdl));
             UF_TRY(dropOperationDispatchTables(database));
+            UF_TRY(addJournalProposals(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2543,6 +2655,7 @@ namespace uf::operator_runtime
             UF_TRY(execute(database, "DROP TABLE prior_tool_admission_attempts"));
             UF_TRY(execute(database, k_toolApprovalsDdl));
             UF_TRY(dropOperationDispatchTables(database));
+            UF_TRY(addJournalProposals(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2558,6 +2671,7 @@ namespace uf::operator_runtime
             UF_TRY(addNestedToolCallSchema(database));
             UF_TRY(addToolAdmissionDelegationColumn(database));
             UF_TRY(dropOperationDispatchTables(database));
+            UF_TRY(addJournalProposals(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2582,6 +2696,7 @@ namespace uf::operator_runtime
                 "observation_reference_hash"
             ));
             UF_TRY(dropOperationDispatchTables(database));
+            UF_TRY(addJournalProposals(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2599,6 +2714,25 @@ namespace uf::operator_runtime
         {
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(dropOperationDispatchTables(database));
+            UF_TRY(addJournalProposals(database));
+            UF_TRY(recordSchemaIdentityTransition(database, migration));
+            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
+            return transaction.commit();
+        }
+
+        // The generation that gave call-bound Journal batch proposals a
+        // durable home, and the one whose source identity is the schema the
+        // immediately prior generation created. It carries no step of its own
+        // beyond the three creations, because nothing else about the schema
+        // moved with it.
+        [[nodiscard]]
+        auto migrateJournalBatchProposals(
+            sqlite3* database,
+            SchemaMigration const& migration
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY(addJournalProposals(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2610,6 +2744,12 @@ namespace uf::operator_runtime
         // a guard nothing can reach is the mirror of a guard production does
         // not reach.
         constexpr auto k_schemaMigrations = std::array{
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235fa0a077598f8016fb11c02",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = migrateJournalBatchProposals,
+            },
             SchemaMigration{
                 .sourceIdentity =
                     "sha256:5c0e9a22691b36600cf861157a8b08385e4ec546a86ad0c29849adc5584014ee",
@@ -4360,6 +4500,7 @@ namespace uf::operator_runtime
             UF_TRY(execute(database, k_releaseCapabilityApprovalsDdl));
             UF_TRY(execute(database, k_runtimeUpgradeFailuresDdl));
             UF_TRY(addToolIdentityPersistence(database));
+            UF_TRY(addJournalProposals(database));
             UF_TRY(verifyExactDatabaseSchema(database));
             return transaction.commit();
         }
@@ -4965,30 +5106,87 @@ namespace uf::operator_runtime
             return parseSessionMode(columnText(query.get(), 0));
         }
 
-        // The exact bytes the reducer is called with. JCS orders members by
-        // their UTF-16 code units, which is why journal_events precedes
-        // prior_project_state and, inside an event, namespaced_event_type
-        // precedes opaque_project_payload precedes provenance.
+        // The state one reduction folds onto, and the revision that state
+        // stands at. They are one value rather than two parameters because
+        // they are one fact: a baseline reduction has neither, and every later
+        // reduction has both. Split apart, a caller could state a prior
+        // revision beside an absent prior state, and the commit context would
+        // claim a revision no stored row is at.
+        //
+        // canonicalJcs is a call-scoped borrow of the caller's own exact
+        // bytes; nothing here retains it.
+        struct PriorProjectState final
+        {
+            std::string_view canonicalJcs{};
+            uint64           revision{};
+        };
+
+        // Framework's revision increment, stated once. A ProjectState is
+        // published at revision 0 by provisioning and at prior + 1 by every
+        // later commit, and both the commit context handed to the reducer and
+        // the row the publisher writes read that rule from here rather than
+        // each spelling it.
+        [[nodiscard]]
+        auto nextProjectStateRevision(
+            std::optional<PriorProjectState> const& prior
+        ) -> Result<uint64>
+        {
+            if (!prior.has_value())
+            {
+                return uint64{};
+            }
+            return checkedSqlIncrement(prior->revision, "ProjectState revision");
+        }
+
+        // The exact bytes the reducer is called with, and the whole of section
+        // 8's envelope: the trusted commit context, the prior state, and the
+        // prospective batch. JCS orders members by their UTF-16 code units,
+        // which is why commit_context precedes prior_project_state precedes
+        // prospective_journal_batch, why next_revision precedes prior_revision
+        // inside the context, and why namespaced_event_type precedes
+        // opaque_project_payload precedes provenance inside an event.
         //
         // The Operator assembles this instead of accepting it, because a caller
         // that supplied the reducer's input could have the Journal record event
         // A while the materialized ProjectState was reduced from event B, and
         // the Journal prefix would no longer be the only source of
-        // ProjectState. Every part comes from a value the schema owner minted
+        // ProjectState. That is what makes the commit context TRUSTED: both
+        // revisions are derived here from the project_state row this Operator
+        // holds and from its own increment rule, and no Project value reaches
+        // either. Every other part comes from a value the schema owner minted
         // or from a column the database already holds.
         //
-        // priorProjectStateJcs carries the literal `null` for a baseline, which
-        // is a JSON value here rather than an absent member: a reducer must be
-        // able to tell "no state yet" from "a state I failed to read".
+        // prior_project_state and prior_revision carry the literal `null`
+        // together for a baseline, which is a JSON value here rather than an
+        // absent member: a reducer must be able to tell "no state yet" from "a
+        // state I failed to read", and a prior revision beside an absent state
+        // would be a revision nothing is at. next_revision is never null,
+        // because every reduction produces a candidate for exactly one
+        // revision.
+        //
+        // The batch is `prospective` and not `journal_events` because reduction
+        // commits nothing: these bytes are a batch the Operator has frozen and
+        // not yet published, and a reducer that read them as recorded Journal
+        // history would be reading a fact that does not exist until the final
+        // CAS lands.
         [[nodiscard]]
         auto reduceEnvelopeJcs(
-            std::span<JournalAppend const> journalEvents,
-            std::string_view priorProjectStateJcs
-        ) -> std::string
+            std::optional<PriorProjectState> const& prior,
+            std::span<JournalAppend const> prospectiveBatch
+        ) -> Result<std::string>
         {
-            auto envelope = std::string{"{\"journal_events\":["};
-            auto first    = true;
-            for (auto const& append : journalEvents)
+            UF_TRY_VALUE(nextRevision, nextProjectStateRevision(prior));
+            auto envelope = std::string{"{\"commit_context\":{\"next_revision\":"};
+            envelope += std::to_string(nextRevision);
+            envelope += ",\"prior_revision\":";
+            envelope += prior.has_value()
+                ? std::to_string(prior->revision)
+                : std::string{"null"};
+            envelope += "},\"prior_project_state\":";
+            envelope += prior.has_value() ? prior->canonicalJcs : "null";
+            envelope += ",\"prospective_journal_batch\":[";
+            auto first = true;
+            for (auto const& append : prospectiveBatch)
             {
                 if (!first)
                 {
@@ -5004,9 +5202,7 @@ namespace uf::operator_runtime
                 envelope += append.entry.provenance().bytes();
                 envelope += '}';
             }
-            envelope += "],\"prior_project_state\":";
-            envelope += priorProjectStateJcs;
-            envelope += '}';
+            envelope += "]}";
             return envelope;
         }
 
@@ -5285,19 +5481,24 @@ namespace uf::operator_runtime
         // registration, under a session that is still active on the same
         // registration. It reads only, so it needs no transaction of its own
         // and can run before the query rather than around it.
+        //
+        // `operation` names the door in every refusal it raises, because the
+        // two doors that ask this question are read apart and a caller has to
+        // be told which of them refused.
         [[nodiscard]]
-        auto requireReconciliationAuthority(
+        auto requireDurableRunAuthority(
             sqlite3* database,
+            std::string_view operation,
             ControllerBinding const& controller,
             ControlLease const& lease,
-            ToolRootRequestIdentity const& root
+            std::string_view rootIdentityHex
         ) -> Status
         {
             UF_TRY(requireLiveBinding(database, controller));
             UF_TRY(requireLiveLease(
                 database,
                 lease,
-                "Tool reconciliation control lease was superseded"
+                std::format("{} control lease was superseded", operation)
             ));
             UF_TRY_VALUE(
                 authorityQuery,
@@ -5310,12 +5511,7 @@ namespace uf::operator_runtime
                     "WHERE run.root_identity=?1 AND session.active=1"
                 )
             );
-            UF_TRY(bindText(
-                database,
-                authorityQuery.get(),
-                1,
-                root.identity().hex()
-            ));
+            UF_TRY(bindText(database, authorityQuery.get(), 1, rootIdentityHex));
             UF_TRY(bindText(
                 database,
                 authorityQuery.get(),
@@ -5326,7 +5522,10 @@ namespace uf::operator_runtime
             {
                 return fail(
                     AutomationErrorKind::ActionRejected,
-                    "Tool reconciliation requires its durable run and active session"
+                    std::format(
+                        "{} requires its durable run and active session",
+                        operation
+                    )
                 );
             }
             auto const exactAuthority =
@@ -5341,7 +5540,10 @@ namespace uf::operator_runtime
             {
                 return fail(
                     AutomationErrorKind::ActionRejected,
-                    "Tool reconciliation authority differs from the durable run"
+                    std::format(
+                        "{} authority differs from the durable run",
+                        operation
+                    )
                 );
             }
             return ok();
@@ -6372,8 +6574,12 @@ namespace uf::operator_runtime
             });
         }
         UF_TRY_VALUE(
+            baselineEnvelope,
+            reduceEnvelopeJcs(std::nullopt, baselineEvents)
+        );
+        UF_TRY_VALUE(
             reducerInput,
-            reducer.canonicalize(reduceEnvelopeJcs(baselineEvents, "null"))
+            reducer.canonicalize(std::move(baselineEnvelope))
         );
         UF_TRY_VALUE(reducedState, reducer.reduce(reducerInput));
         if (
@@ -6674,15 +6880,25 @@ namespace uf::operator_runtime
             prepare(
                 m_impl->database.get(),
                 "SELECT event_id, namespaced_event_type, opaque_project_payload, "
-                "provenance FROM journal_events "
+                "provenance, prior_project_state_revision FROM journal_events "
                 "WHERE plugin_id=?1 AND project_instance_key=?2 ORDER BY sequence"
             )
         );
         UF_TRY(bindText(m_impl->database.get(), eventQuery.get(), 1, project.pluginId()));
         UF_TRY(bindText(m_impl->database.get(), eventQuery.get(), 2, projectInstanceKey));
 
-        auto prefix = std::vector<JournalAppend>{};
-        auto step   = sqlite3_step(eventQuery.get());
+        // The prefix, cut into the batches it was committed as. A batch is the
+        // run of consecutive events sharing one prior_project_state_revision,
+        // and that column is not a second spelling of the grouping: it is what
+        // the publisher wrote to say which revision each event was folded onto.
+        // The baseline batch is the one whose column is null, and it is folded
+        // first whether or not it holds an event -- a ProjectInstance declaring
+        // no baseline entry still has a revision 0 that is the fold of nothing.
+        auto batches = std::vector<std::vector<JournalAppend>>{};
+        batches.emplace_back();
+        auto batchPriorRevisions = std::vector<std::optional<uint64>>{std::nullopt};
+        auto eventCount          = uint64{};
+        auto step                = sqlite3_step(eventQuery.get());
         while (step == SQLITE_ROW)
         {
             // The stored payload and provenance go back through the owner this
@@ -6705,10 +6921,22 @@ namespace uf::operator_runtime
                     std::move(provenance)
                 )
             );
-            prefix.emplace_back(JournalAppend{
+            auto const priorRevision =
+                sqlite3_column_type(eventQuery.get(), 4) == SQLITE_NULL
+                ? std::optional<uint64>{}
+                : std::optional<uint64>{static_cast<uint64>(
+                      sqlite3_column_int64(eventQuery.get(), 4)
+                  )};
+            if (priorRevision != batchPriorRevisions.back())
+            {
+                batches.emplace_back();
+                batchPriorRevisions.emplace_back(priorRevision);
+            }
+            batches.back().emplace_back(JournalAppend{
                 .eventId = columnText(eventQuery.get(), 0),
                 .entry   = std::move(entry),
             });
+            ++eventCount;
             step = sqlite3_step(eventQuery.get());
         }
         if (step != SQLITE_DONE)
@@ -6719,35 +6947,54 @@ namespace uf::operator_runtime
             );
         }
 
-        // The complete prefix against no prior state, which is the definition
-        // of a baseline: every later revision is derived from this one, so a
-        // refold that started from a stored intermediate would be testing the
-        // increment rather than the fold.
-        UF_TRY_VALUE(
-            envelope,
-            reducer.canonicalize(reduceEnvelopeJcs(prefix, "null"))
-        );
-        UF_TRY_VALUE(refolded, reducer.reduce(envelope));
-        if (
-            refolded.projectRegistrationHash() != project.hash()
-            || refolded.direction() != ProjectDocumentDirection::Output
-        )
+        // Each batch folded onto the state the batch before it published,
+        // which is what the increment chain is. Folding the whole prefix at
+        // once would answer a different question: a reducer is a function of
+        // one prior state and one batch, so a single fold over every event
+        // tests an associativity nothing promised.
+        //
+        // Nothing here compares the recorded prior revision of a batch against
+        // the revision the batches before it reach, and nothing compares the
+        // chain's length against project_state.revision. One transaction of one
+        // publisher writes both sides of each of those, so neither could be
+        // made to disagree; what this function answers is the comparison it
+        // returns, and a fold that grouped the prefix wrongly reaches a
+        // different state hash there.
+        auto prior    = std::optional<PriorProjectState>{};
+        auto refolded = std::optional<ValidatedDocument>{};
+        for (auto const& batch : batches)
         {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Refolded ProjectState does not match the registered "
-                "ProjectState schema"
-            );
+            UF_TRY_VALUE(envelopeJcs, reduceEnvelopeJcs(prior, batch));
+            UF_TRY_VALUE(envelope, reducer.canonicalize(std::move(envelopeJcs)));
+            UF_TRY_VALUE(folded, reducer.reduce(envelope));
+            if (
+                folded.projectRegistrationHash() != project.hash()
+                || folded.direction() != ProjectDocumentDirection::Output
+            )
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Refolded ProjectState does not match the registered "
+                    "ProjectState schema"
+                );
+            }
+            UF_TRY_VALUE(nextRevision, nextProjectStateRevision(prior));
+            refolded = std::move(folded);
+            prior    = PriorProjectState{
+                   .canonicalJcs = refolded->bytes(),
+                   .revision     = nextRevision,
+            };
         }
+        UF_CHECK(refolded.has_value());
 
         UF_TRY(transaction.commit());
         return RefoldedProjectState{
-            .projectInstanceKey       = projectInstanceKey,
-            .journalEventCount        = static_cast<uint64>(prefix.size()),
-            .storedStateHash          = storedHash,
-            .refoldedStateHash        = refolded.contentHash(),
+            .projectInstanceKey = projectInstanceKey,
+            .journalEventCount  = eventCount,
+            .storedStateHash    = storedHash,
+            .refoldedStateHash        = refolded->contentHash(),
             .storedCanonicalPayload   = storedPayload,
-            .refoldedCanonicalPayload = refolded.bytes(),
+            .refoldedCanonicalPayload = refolded->bytes(),
         };
     }
 
@@ -11942,11 +12189,12 @@ namespace uf::operator_runtime
                 )
             );
         }
-        UF_TRY(requireReconciliationAuthority(
+        UF_TRY(requireDurableRunAuthority(
             m_impl->database.get(),
+            "Tool reconciliation",
             controller,
             lease,
-            root
+            root.identity().hex()
         ));
 
         // The query runs here, outside any ledger transaction and only after
@@ -12015,6 +12263,887 @@ namespace uf::operator_runtime
         }
         UF_TRY(transaction.commit());
         return replayToolCall(root, call);
+    }
+
+    auto OperatorCoordinator::proposeJournalBatch(
+        ControllerBinding const& controller,
+        ToolRootRequestIdentity const& root,
+        ToolCallPositionIdentity const& call,
+        JournalBatchProposal const& proposal
+    ) -> Result<StoredJournalProposal>
+    {
+        if (proposal.events.empty())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "A Journal batch proposal must carry at least one event"
+            );
+        }
+        if (call.rootIdentity() != root.identity())
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Journal batch proposal names a call of another root request"
+            );
+        }
+        for (auto const& append : proposal.events)
+        {
+            UF_TRY(requireName(append.eventId, "Journal event_id"));
+        }
+
+        auto* const database = m_impl->database.get();
+        UF_TRY_VALUE(transaction, Transaction::begin(database));
+        UF_TRY(requireLiveBinding(database, controller));
+        UF_TRY_VALUE(
+            sessionQuery,
+            prepare(
+                database,
+                "SELECT session.project_registration_hash, "
+                "session.project_instance_key, registration.plugin_id "
+                "FROM sessions session JOIN project_registrations registration "
+                "ON registration.registration_hash=session.project_registration_hash "
+                "WHERE session.session_id=?1 AND session.active=1"
+            )
+        );
+        UF_TRY(bindText(database, sessionQuery.get(), 1, controller.sessionId()));
+        if (sqlite3_step(sessionQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "A Journal batch proposal requires an active authenticated session"
+            );
+        }
+        auto const registrationHash   = columnText(sessionQuery.get(), 0);
+        auto const projectInstanceKey = columnText(sessionQuery.get(), 1);
+        auto const pluginId           = columnText(sessionQuery.get(), 2);
+
+        // Which ProjectInstance a proposal is for is read here rather than
+        // stated, for the reason the reduce envelope is assembled rather than
+        // accepted: a proposer able to name the instance could write one
+        // project's facts into another's Journal while every other check
+        // passed.
+        //
+        // The entries are the other half of that join. Each was stamped by the
+        // Journal schema owner of some registration and the session says which
+        // registration this instance holds, so the two values are produced
+        // independently and an entry minted under another project's owner is
+        // refused here.
+        for (auto const& append : proposal.events)
+        {
+            if (append.entry.projectRegistrationHash().hex() != registrationHash)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Journal batch proposal carries an event of another "
+                    "ProjectRegistration"
+                );
+            }
+        }
+
+        UF_TRY_VALUE(
+            positionQuery,
+            prepare(
+                database,
+                "SELECT position.provider_kind, position.project_registration_hash, "
+                "history.state, history.revision "
+                "FROM tool_call_positions position "
+                "JOIN tool_call_history history "
+                "ON history.call_identity=position.call_identity "
+                "WHERE position.call_identity=?1 AND position.root_identity=?2"
+            )
+        );
+        UF_TRY(bindText(database, positionQuery.get(), 1, call.identity().hex()));
+        UF_TRY(bindText(database, positionQuery.get(), 2, root.identity().hex()));
+        if (sqlite3_step(positionQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Journal batch proposal names no durable call of this run"
+            );
+        }
+
+        // Only a Project entry may author a Project's durable facts. A
+        // Framework provider answering a call has no project semantics to
+        // record, and the registration comparison beside it is what keeps one
+        // project's handler out of another's Journal.
+        if (
+            columnText(positionQuery.get(), 0) != "project"
+            || optionalColumnText(positionQuery.get(), 1)
+                != std::optional<std::string>{registrationHash}
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Only a Tool call answered by this ProjectRegistration may "
+                "propose its Journal facts"
+            );
+        }
+        UF_TRY_VALUE(
+            callState,
+            parseToolCallState(columnText(positionQuery.get(), 2))
+        );
+        if (callState != ToolCallState::Dispatching)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                std::format(
+                    "A Journal batch is proposed by a running handler; call {} "
+                    "is {}",
+                    call.identity().hex(),
+                    toolCallStateWireName(callState)
+                )
+            );
+        }
+        auto const dispatchRevision = static_cast<uint64>(
+            sqlite3_column_int64(positionQuery.get(), 3)
+        );
+
+        // The revision this call's outcome must carry for the proposal to be
+        // publishable, derived here once. Completing the dispatch this proposal
+        // was made inside moves the history revision by one, and so does
+        // re-entering it -- so a proposal that outlives its own incarnation
+        // names a revision the call has already moved past, and the test at
+        // publication is a plain equality with no rule restated beside it.
+        UF_TRY_VALUE(
+            outcomeRevision,
+            checkedSqlIncrement(dispatchRevision, "Tool call history revision")
+        );
+
+        UF_TRY_VALUE(
+            stateQuery,
+            prepare(
+                database,
+                "SELECT revision FROM project_state "
+                "WHERE plugin_id=?1 AND project_instance_key=?2"
+            )
+        );
+        UF_TRY(bindText(database, stateQuery.get(), 1, pluginId));
+        UF_TRY(bindText(database, stateQuery.get(), 2, projectInstanceKey));
+        if (sqlite3_step(stateQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "A Journal batch proposal requires a provisioned ProjectState"
+            );
+        }
+        auto const priorRevision = static_cast<uint64>(
+            sqlite3_column_int64(stateQuery.get(), 0)
+        );
+
+        // The content address of everything the proposer stated, and of
+        // nothing the Operator read. Re-proposing the same batch from the same
+        // incarnation therefore rejoins the stored row instead of freezing a
+        // second copy against a later instant, and a batch whose events or
+        // referenced effects differ is a different proposal rather than an
+        // overwrite of this one.
+        auto material = std::string{"umbraflow-internal-journal-batch-proposal-v0"};
+        material += '\0';
+        material += root.identity().hex();
+        material += '\0';
+        material += call.identity().hex();
+        material += '\0';
+        material += std::to_string(dispatchRevision);
+        material += '\0';
+        material += pluginId;
+        material += '\0';
+        material += projectInstanceKey;
+        material += '\0';
+        material += std::to_string(proposal.events.size());
+        for (auto const& append : proposal.events)
+        {
+            material += '\0';
+            material += append.eventId;
+            material += '\0';
+            material += append.entry.namespacedEventType();
+            material += '\0';
+            material += append.entry.payloadSchemaHash().hex();
+            material += '\0';
+            material += append.entry.payload().contentHash().hex();
+            material += '\0';
+            material += append.entry.provenance().contentHash().hex();
+        }
+        material += '\0';
+        material += std::to_string(proposal.referencedCalls.size());
+        for (auto const& referenced : proposal.referencedCalls)
+        {
+            material += '\0';
+            material += referenced.hex();
+        }
+        UF_TRY_VALUE(
+            proposalIdentity,
+            sha256(std::as_bytes(std::span{material}))
+        );
+
+        UF_TRY_VALUE(
+            existingQuery,
+            prepare(
+                database,
+                "SELECT prior_project_state_revision FROM journal_batch_proposals "
+                "WHERE proposal_identity=?1"
+            )
+        );
+        UF_TRY(bindText(
+            database,
+            existingQuery.get(),
+            1,
+            proposalIdentity.hex()
+        ));
+        if (sqlite3_step(existingQuery.get()) == SQLITE_ROW)
+        {
+            auto const storedRevision = static_cast<uint64>(
+                sqlite3_column_int64(existingQuery.get(), 0)
+            );
+            UF_TRY(transaction.commit());
+            return StoredJournalProposal{
+                .proposalIdentity          = proposalIdentity,
+                .lookup                    = ToolIdentityLookup::Existing,
+                .priorProjectStateRevision = storedRevision,
+            };
+        }
+
+        UF_TRY_VALUE(
+            proposalInsert,
+            prepare(
+                database,
+                "INSERT INTO journal_batch_proposals(proposal_identity, "
+                "root_identity, call_identity, call_outcome_revision, plugin_id, "
+                "project_instance_key, prior_project_state_revision, "
+                "published_revision) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)"
+            )
+        );
+        UF_TRY(bindText(database, proposalInsert.get(), 1, proposalIdentity.hex()));
+        UF_TRY(bindText(database, proposalInsert.get(), 2, root.identity().hex()));
+        UF_TRY(bindText(database, proposalInsert.get(), 3, call.identity().hex()));
+        UF_TRY(bindInteger(database, proposalInsert.get(), 4, outcomeRevision));
+        UF_TRY(bindText(database, proposalInsert.get(), 5, pluginId));
+        UF_TRY(bindText(database, proposalInsert.get(), 6, projectInstanceKey));
+        UF_TRY(bindInteger(database, proposalInsert.get(), 7, priorRevision));
+        UF_TRY(expectDone(database, proposalInsert.get()));
+
+        for (auto index = std::size_t{}; index < proposal.events.size(); ++index)
+        {
+            auto const& append = proposal.events[index];
+            UF_TRY_VALUE(
+                eventInsert,
+                prepare(
+                    database,
+                    "INSERT INTO journal_proposal_events(proposal_identity, "
+                    "batch_index, event_id, namespaced_event_type, "
+                    "opaque_project_payload, provenance) "
+                    "VALUES(?1, ?2, ?3, ?4, ?5, ?6)"
+                )
+            );
+            UF_TRY(bindText(database, eventInsert.get(), 1, proposalIdentity.hex()));
+            UF_TRY(bindInteger(database, eventInsert.get(), 2, index));
+            UF_TRY(bindText(database, eventInsert.get(), 3, append.eventId));
+            UF_TRY(bindText(
+                database,
+                eventInsert.get(),
+                4,
+                append.entry.namespacedEventType()
+            ));
+            UF_TRY(bindText(
+                database,
+                eventInsert.get(),
+                5,
+                append.entry.payload().bytes()
+            ));
+            UF_TRY(bindText(
+                database,
+                eventInsert.get(),
+                6,
+                append.entry.provenance().bytes()
+            ));
+            UF_TRY(expectDone(database, eventInsert.get()));
+        }
+
+        // Each referenced effect is frozen at the identity it carries now.
+        // An effect with no outcome yet has no identity to freeze, so a
+        // proposal cannot be bound to one: what section 7 permits is a
+        // proposal over an uncertain outcome, not over an absent one.
+        for (auto const& referenced : proposal.referencedCalls)
+        {
+            UF_TRY_VALUE(
+                effectQuery,
+                prepare(
+                    database,
+                    "SELECT history.state, history.revision "
+                    "FROM tool_call_history history "
+                    "JOIN tool_call_positions position "
+                    "ON position.call_identity=history.call_identity "
+                    "WHERE history.call_identity=?1 AND position.root_identity=?2"
+                )
+            );
+            UF_TRY(bindText(database, effectQuery.get(), 1, referenced.hex()));
+            UF_TRY(bindText(database, effectQuery.get(), 2, root.identity().hex()));
+            if (sqlite3_step(effectQuery.get()) != SQLITE_ROW)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    std::format(
+                        "Journal batch proposal references Tool call {}, which "
+                        "is no call of this run",
+                        referenced.hex()
+                    )
+                );
+            }
+            UF_TRY_VALUE(
+                effectState,
+                parseToolCallState(columnText(effectQuery.get(), 0))
+            );
+            if (!toolCallStateHasOutcome(effectState))
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    std::format(
+                        "Journal batch proposal references Tool call {}, which "
+                        "is {} and carries no outcome to be bound to",
+                        referenced.hex(),
+                        toolCallStateWireName(effectState)
+                    )
+                );
+            }
+            UF_TRY_VALUE(
+                effectInsert,
+                prepare(
+                    database,
+                    "INSERT INTO journal_proposal_effects(proposal_identity, "
+                    "call_identity, outcome_revision) VALUES(?1, ?2, ?3)"
+                )
+            );
+            UF_TRY(bindText(
+                database,
+                effectInsert.get(),
+                1,
+                proposalIdentity.hex()
+            ));
+            UF_TRY(bindText(database, effectInsert.get(), 2, referenced.hex()));
+            UF_TRY(bindInteger(
+                database,
+                effectInsert.get(),
+                3,
+                static_cast<uint64>(sqlite3_column_int64(effectQuery.get(), 1))
+            ));
+            UF_TRY(expectDone(database, effectInsert.get()));
+        }
+
+        UF_TRY(transaction.commit());
+        return StoredJournalProposal{
+            .proposalIdentity          = proposalIdentity,
+            .lookup                    = ToolIdentityLookup::Created,
+            .priorProjectStateRevision = priorRevision,
+        };
+    }
+
+    auto OperatorCoordinator::publishJournalProposal(
+        ControllerBinding const& controller,
+        ControlLease const& lease,
+        ProjectJournalSchemaOwner const& journal,
+        ProjectBaselineReducer const& reducer,
+        ContentHash const& proposalIdentity
+    ) -> Result<PublishedJournalBatch>
+    {
+        if (
+            controller.sessionId() != lease.sessionId
+            || controller.controllerId() != lease.controllerId
+            || controller.controlledTargetId() != lease.controlledTargetId
+            || controller.sessionEpoch() != lease.sessionEpoch
+            || controller.capabilityProfileHash() != lease.capabilityProfileHash
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Journal publication binding and lease name different authority"
+            );
+        }
+
+        // One transaction for the whole publication, which is what "one final
+        // CAS" is: every identity this proposal was frozen against is compared
+        // against the live row here, the fold runs on the state those
+        // comparisons proved, and the events and the state land together. A
+        // crash anywhere inside it publishes neither.
+        //
+        // Each comparison is made once, in C++, and is deliberately not
+        // restated as a WHERE clause on the write beside it. The transaction is
+        // BEGIN IMMEDIATE, so the write lock is already held when the row is
+        // read: a restatement inside it could not be made to fail and would be
+        // a guard nothing can reach.
+        auto* const database = m_impl->database.get();
+        UF_TRY_VALUE(transaction, Transaction::begin(database));
+
+        UF_TRY_VALUE(
+            proposalQuery,
+            prepare(
+                database,
+                "SELECT root_identity, call_identity, call_outcome_revision, "
+                "plugin_id, project_instance_key, prior_project_state_revision, "
+                "published_revision FROM journal_batch_proposals "
+                "WHERE proposal_identity=?1"
+            )
+        );
+        UF_TRY(bindText(database, proposalQuery.get(), 1, proposalIdentity.hex()));
+        if (sqlite3_step(proposalQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Journal publication names no stored batch proposal"
+            );
+        }
+        auto const proposalRoot    = columnText(proposalQuery.get(), 0);
+        auto const proposalCall    = columnText(proposalQuery.get(), 1);
+        auto const proposalOutcome = static_cast<uint64>(
+            sqlite3_column_int64(proposalQuery.get(), 2)
+        );
+        auto const pluginId           = columnText(proposalQuery.get(), 3);
+        auto const projectInstanceKey = columnText(proposalQuery.get(), 4);
+        auto const priorRevision      = static_cast<uint64>(
+            sqlite3_column_int64(proposalQuery.get(), 5)
+        );
+        if (sqlite3_column_type(proposalQuery.get(), 6) != SQLITE_NULL)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                std::format(
+                    "Journal batch proposal {} was already published at "
+                    "ProjectState revision {}",
+                    proposalIdentity.hex(),
+                    sqlite3_column_int64(proposalQuery.get(), 6)
+                )
+            );
+        }
+
+        // The same durable-run authority a reconciliation is held to, asked of
+        // the run the proposal belongs to: the origin principal, the controlled
+        // target and the registration must all still be this binding's. That is
+        // what makes the ProjectInstance the proposal names this session's
+        // business, and it is why nothing here compares the two -- one active
+        // write session per target, one instance per session.
+        UF_TRY(requireDurableRunAuthority(
+            database,
+            "Journal publication",
+            controller,
+            lease,
+            proposalRoot
+        ));
+
+        UF_TRY_VALUE(
+            sessionQuery,
+            prepare(
+                database,
+                "SELECT project_registration_hash, manifest_hash FROM sessions "
+                "WHERE session_id=?1 AND active=1"
+            )
+        );
+        UF_TRY(bindText(database, sessionQuery.get(), 1, controller.sessionId()));
+        if (sqlite3_step(sessionQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Journal publication requires an active authenticated session"
+            );
+        }
+        auto const registrationHash    = columnText(sessionQuery.get(), 0);
+        auto const sessionManifestHash = columnText(sessionQuery.get(), 1);
+
+        // The registration root, joined rather than stated. The reducer is
+        // built from the generation a loader compiled and this column is
+        // written when a session is pinned, so the two are independently
+        // produced and another registration's reducer is refused here rather
+        // than folding this project's Journal.
+        if (reducer.projectRegistrationHash().hex() != registrationHash)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Journal publication requires the reducer of the registration "
+                "this session is pinned to"
+            );
+        }
+
+        // The call-tree identity, re-verified against what the proposal was
+        // persisted with. The outcome revision is what says which incarnation
+        // proposed: re-entering a dispatch moves the history revision, so the
+        // completion of a re-entered dispatch lands past the revision the
+        // proposal named, and a proposal left behind by an incarnation that
+        // died inside its dispatch can never publish.
+        UF_TRY_VALUE(
+            callQuery,
+            prepare(
+                database,
+                "SELECT history.state, history.revision, "
+                "position.parent_call_identity FROM tool_call_history history "
+                "JOIN tool_call_positions position "
+                "ON position.call_identity=history.call_identity "
+                "WHERE history.call_identity=?1 AND position.root_identity=?2"
+            )
+        );
+        UF_TRY(bindText(database, callQuery.get(), 1, proposalCall));
+        UF_TRY(bindText(database, callQuery.get(), 2, proposalRoot));
+        if (sqlite3_step(callQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "Journal batch proposal names no durable call position"
+            );
+        }
+        UF_TRY_VALUE(
+            callState,
+            parseToolCallState(columnText(callQuery.get(), 0))
+        );
+        auto const liveRevision = static_cast<uint64>(
+            sqlite3_column_int64(callQuery.get(), 1)
+        );
+        auto const parentCallIdentity = columnText(callQuery.get(), 2);
+        if (callState != ToolCallState::Confirmed)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                std::format(
+                    "Journal batch proposal {} is published by the confirmed "
+                    "outcome of Tool call {}, which is {}",
+                    proposalIdentity.hex(),
+                    proposalCall,
+                    toolCallStateWireName(callState)
+                )
+            );
+        }
+        if (liveRevision != proposalOutcome)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                std::format(
+                    "Journal batch proposal {} names outcome revision {} of Tool "
+                    "call {}, which is at revision {}",
+                    proposalIdentity.hex(),
+                    proposalOutcome,
+                    proposalCall,
+                    liveRevision
+                )
+            );
+        }
+
+        // Every referenced effect, re-verified against the outcome revision
+        // the proposal froze it at. One comparison, because one is all there
+        // is: tool_call_history moves state, result and evidence together with
+        // the revision, so a row still at the recorded revision carries the
+        // outcome the facts were computed from.
+        UF_TRY_VALUE(
+            effectQuery,
+            prepare(
+                database,
+                "SELECT effect.call_identity, effect.outcome_revision, "
+                "history.revision, history.state "
+                "FROM journal_proposal_effects effect "
+                "JOIN tool_call_history history "
+                "ON history.call_identity=effect.call_identity "
+                "WHERE effect.proposal_identity=?1 ORDER BY effect.call_identity"
+            )
+        );
+        UF_TRY(bindText(database, effectQuery.get(), 1, proposalIdentity.hex()));
+        auto effectStep = sqlite3_step(effectQuery.get());
+        while (effectStep == SQLITE_ROW)
+        {
+            if (
+                sqlite3_column_int64(effectQuery.get(), 1)
+                != sqlite3_column_int64(effectQuery.get(), 2)
+            )
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    std::format(
+                        "Journal batch proposal {} was computed from Tool call "
+                        "{} at outcome revision {}, which is now {} at revision "
+                        "{}",
+                        proposalIdentity.hex(),
+                        columnText(effectQuery.get(), 0),
+                        sqlite3_column_int64(effectQuery.get(), 1),
+                        columnText(effectQuery.get(), 3),
+                        sqlite3_column_int64(effectQuery.get(), 2)
+                    )
+                );
+            }
+            effectStep = sqlite3_step(effectQuery.get());
+        }
+        if (effectStep != SQLITE_DONE)
+        {
+            return databaseFailure(
+                database,
+                "could not re-verify the effects a Journal batch proposal names"
+            );
+        }
+
+        // Section 5.4's dependent-Journal-commit clause, and section 7's "a
+        // proposal cannot commit while that effect or any relevant child is
+        // possible" with it. The two are one rule here rather than two: every
+        // uncertain call is mutating -- a read-only Tool declares no effect for
+        // a delivery classification to be about -- and every call of this run
+        // sits on this run's controlled target, so a referenced effect that is
+        // still uncertain is already one of the calls this barrier names. A
+        // separate test for it beside this one would be a check no case could
+        // make fail on its own.
+        //
+        // The target is the binding's, which the authority join above already
+        // proved is the run's own: reading tool_runs for it a second time here
+        // would be a second spelling of a value that comparison established.
+        //
+        // The exclusion is the one live mutation chain this commit is PART of
+        // rather than dependent on: the proposing call and its ancestors are
+        // the frame that produced these facts, and an enclosing handler still
+        // dispatching is not an uncertain delivery for the commit to be frozen
+        // behind. Everything outside that chain is.
+        auto mutationChain = std::vector<std::string>{proposalCall};
+        UF_TRY_VALUE(
+            ancestors,
+            readToolCallAncestors(database, proposalRoot, parentCallIdentity)
+        );
+        for (auto const& ancestor : ancestors)
+        {
+            mutationChain.emplace_back(ancestor.callIdentity);
+        }
+        UF_TRY(requireNoActiveToolMutation(
+            database,
+            controller.controlledTargetId(),
+            mutationChain
+        ));
+
+        UF_TRY_VALUE(
+            stateQuery,
+            prepare(
+                database,
+                "SELECT revision, canonical_opaque_payload FROM project_state "
+                "WHERE plugin_id=?1 AND project_instance_key=?2"
+            )
+        );
+        UF_TRY(bindText(database, stateQuery.get(), 1, pluginId));
+        UF_TRY(bindText(database, stateQuery.get(), 2, projectInstanceKey));
+        if (sqlite3_step(stateQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Journal publication requires a provisioned ProjectState"
+            );
+        }
+        auto const liveStateRevision = static_cast<uint64>(
+            sqlite3_column_int64(stateQuery.get(), 0)
+        );
+        if (liveStateRevision != priorRevision)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                std::format(
+                    "Journal batch proposal {} was frozen against ProjectState "
+                    "revision {} of {}, which is now at revision {}",
+                    proposalIdentity.hex(),
+                    priorRevision,
+                    projectInstanceKey,
+                    liveStateRevision
+                )
+            );
+        }
+        auto const priorStatePayload = columnText(stateQuery.get(), 1);
+
+        // The stored payload and provenance go back through the owner this
+        // registration pinned rather than being trusted as rows, for the reason
+        // a refold does the same: a publication that skipped the schemas would
+        // append bytes the registration no longer admits.
+        UF_TRY_VALUE(
+            batchQuery,
+            prepare(
+                database,
+                "SELECT event_id, namespaced_event_type, "
+                "opaque_project_payload, provenance FROM journal_proposal_events "
+                "WHERE proposal_identity=?1 ORDER BY batch_index"
+            )
+        );
+        UF_TRY(bindText(database, batchQuery.get(), 1, proposalIdentity.hex()));
+        auto batch     = std::vector<JournalAppend>{};
+        auto batchStep = sqlite3_step(batchQuery.get());
+        while (batchStep == SQLITE_ROW)
+        {
+            UF_TRY_VALUE(
+                payload,
+                CanonicalJson::parseExact(columnText(batchQuery.get(), 2))
+            );
+            UF_TRY_VALUE(
+                provenance,
+                CanonicalJson::parseExact(columnText(batchQuery.get(), 3))
+            );
+            UF_TRY_VALUE(
+                entry,
+                journal.validate(
+                    columnText(batchQuery.get(), 1),
+                    std::move(payload),
+                    std::move(provenance)
+                )
+            );
+            batch.emplace_back(JournalAppend{
+                .eventId = columnText(batchQuery.get(), 0),
+                .entry   = std::move(entry),
+            });
+            batchStep = sqlite3_step(batchQuery.get());
+        }
+        if (batchStep != SQLITE_DONE)
+        {
+            return databaseFailure(
+                database,
+                "could not read the Journal batch a proposal froze"
+            );
+        }
+
+        auto const prior = std::optional<PriorProjectState>{PriorProjectState{
+            .canonicalJcs = priorStatePayload,
+            .revision     = priorRevision,
+        }};
+        UF_TRY_VALUE(nextRevision, nextProjectStateRevision(prior));
+        UF_TRY_VALUE(envelopeJcs, reduceEnvelopeJcs(prior, batch));
+        UF_TRY_VALUE(envelope, reducer.canonicalize(std::move(envelopeJcs)));
+        UF_TRY_VALUE(candidate, reducer.reduce(envelope));
+        if (
+            candidate.projectRegistrationHash().hex() != registrationHash
+            || candidate.direction() != ProjectDocumentDirection::Output
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Published ProjectState does not match the registered "
+                "ProjectState schema"
+            );
+        }
+
+        // Sequence 0 is the baseline's slot, and the Journal contract reads a
+        // sequence of 0 as the event that stands at no prior revision. A
+        // published batch therefore starts at 1 even for a ProjectInstance
+        // whose registration declared no baseline entry to occupy it.
+        UF_TRY_VALUE(
+            sequenceQuery,
+            prepare(
+                database,
+                "SELECT max(sequence) FROM journal_events "
+                "WHERE plugin_id=?1 AND project_instance_key=?2"
+            )
+        );
+        UF_TRY(bindText(database, sequenceQuery.get(), 1, pluginId));
+        UF_TRY(bindText(database, sequenceQuery.get(), 2, projectInstanceKey));
+        if (sqlite3_step(sequenceQuery.get()) != SQLITE_ROW)
+        {
+            return databaseFailure(
+                database,
+                "could not read the Journal sequence of this ProjectInstance"
+            );
+        }
+        auto nextSequence = uint64{1};
+        if (sqlite3_column_type(sequenceQuery.get(), 0) != SQLITE_NULL)
+        {
+            UF_TRY_VALUE(
+                afterHighest,
+                checkedSqlIncrement(
+                    static_cast<uint64>(
+                        sqlite3_column_int64(sequenceQuery.get(), 0)
+                    ),
+                    "Journal sequence"
+                )
+            );
+            nextSequence = afterHighest;
+        }
+
+        auto lastSequence = uint64{};
+        for (auto index = std::size_t{}; index < batch.size(); ++index)
+        {
+            UF_TRY_VALUE(
+                eventInsert,
+                prepare(
+                    database,
+                    "INSERT INTO journal_events(event_id, plugin_id, "
+                    "project_instance_key, sequence, prior_project_state_revision, "
+                    "session_manifest_hash, operation_id, namespaced_event_type, "
+                    "payload_schema_hash, opaque_project_payload, provenance) "
+                    "VALUES(?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?8, ?9, ?10)"
+                )
+            );
+            lastSequence = nextSequence + index;
+            UF_TRY(bindText(database, eventInsert.get(), 1, batch[index].eventId));
+            UF_TRY(bindText(database, eventInsert.get(), 2, pluginId));
+            UF_TRY(bindText(database, eventInsert.get(), 3, projectInstanceKey));
+            UF_TRY(bindInteger(database, eventInsert.get(), 4, lastSequence));
+            UF_TRY(bindInteger(database, eventInsert.get(), 5, priorRevision));
+            UF_TRY(bindText(
+                database,
+                eventInsert.get(),
+                6,
+                sessionManifestHash
+            ));
+            UF_TRY(bindText(
+                database,
+                eventInsert.get(),
+                7,
+                batch[index].entry.namespacedEventType()
+            ));
+            UF_TRY(bindText(
+                database,
+                eventInsert.get(),
+                8,
+                batch[index].entry.payloadSchemaHash().hex()
+            ));
+            UF_TRY(bindText(
+                database,
+                eventInsert.get(),
+                9,
+                batch[index].entry.payload().bytes()
+            ));
+            UF_TRY(bindText(
+                database,
+                eventInsert.get(),
+                10,
+                batch[index].entry.provenance().bytes()
+            ));
+            UF_TRY(expectDone(database, eventInsert.get()));
+        }
+
+        UF_TRY_VALUE(
+            stateUpdate,
+            prepare(
+                database,
+                "UPDATE project_state SET revision=?3, last_journal_sequence=?4, "
+                "canonical_opaque_payload=?5, state_hash=?6 "
+                "WHERE plugin_id=?1 AND project_instance_key=?2"
+            )
+        );
+        UF_TRY(bindText(database, stateUpdate.get(), 1, pluginId));
+        UF_TRY(bindText(database, stateUpdate.get(), 2, projectInstanceKey));
+        UF_TRY(bindInteger(database, stateUpdate.get(), 3, nextRevision));
+        UF_TRY(bindInteger(database, stateUpdate.get(), 4, lastSequence));
+        UF_TRY(bindText(database, stateUpdate.get(), 5, candidate.bytes()));
+        UF_TRY(bindText(
+            database,
+            stateUpdate.get(),
+            6,
+            candidate.contentHash().hex()
+        ));
+        UF_TRY(expectDone(database, stateUpdate.get()));
+
+        UF_TRY_VALUE(
+            proposalUpdate,
+            prepare(
+                database,
+                "UPDATE journal_batch_proposals SET published_revision=?2 "
+                "WHERE proposal_identity=?1"
+            )
+        );
+        UF_TRY(bindText(
+            database,
+            proposalUpdate.get(),
+            1,
+            proposalIdentity.hex()
+        ));
+        UF_TRY(bindInteger(database, proposalUpdate.get(), 2, nextRevision));
+        UF_TRY(expectDone(database, proposalUpdate.get()));
+
+        UF_TRY(transaction.commit());
+        return PublishedJournalBatch{
+            .proposalIdentity    = proposalIdentity,
+            .projectStateHash    = candidate.contentHash(),
+            .revision            = nextRevision,
+            .lastJournalSequence = lastSequence,
+        };
     }
 
     auto OperatorCoordinator::recordExternalInput(

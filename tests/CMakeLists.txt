@@ -699,6 +699,7 @@ if(TARGET ${PROJECT_NAME}_operator)
         NO_CTEST
         SOURCES
             operator/test-host-controller.cpp
+            operator/test-journal-commit.cpp
             operator/test-ledger.cpp
             operator/test-lifecycle-facade.cpp
             operator/test-manifest.cpp
@@ -737,7 +738,7 @@ if(TARGET ${PROJECT_NAME}_operator)
     # beside it.
     uf_shard_doctest_gates(
         TARGET test-operator
-        TOTAL_CASES 171
+        TOTAL_CASES 178
         SHARDS 6
     )
 

@@ -1,7 +1,7 @@
 return {
     plugin_id = "fixture.foreign",
     reduce = function(input)
-        for _, event in ipairs(input.journal_events) do
+        for _, event in ipairs(input.prospective_journal_batch) do
             if event.namespaced_event_type == "fixture.confirmed" then
                 return { revision = 1 }
             end

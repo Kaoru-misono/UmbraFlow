@@ -217,18 +217,22 @@ namespace uf::deployment
             return *value;
         }
 
-        // One reduce envelope carrying one fixture.progress event.
+        // One reduce envelope carrying one fixture.progress event, folded onto
+        // the state at revision 0 and therefore published at revision 1.
         [[nodiscard]]
         auto reduceEnvelope(std::string_view payload) -> std::string
         {
             auto envelope = std::string{
-                "{\"journal_events\":[{\"namespaced_event_type\":\"fixture.progress\","
+                "{\"commit_context\":{\"next_revision\":1,\"prior_revision\":0},"
+                "\"prior_project_state\":{\"revision\":0},"
+                "\"prospective_journal_batch\":["
+                "{\"namespaced_event_type\":\"fixture.progress\","
                 "\"opaque_project_payload\":"
             };
             envelope += payload;
             envelope += ",\"provenance\":";
             envelope += k_provenance;
-            envelope += "}],\"prior_project_state\":{\"revision\":0}}";
+            envelope += "}]}";
             return envelope;
         }
 

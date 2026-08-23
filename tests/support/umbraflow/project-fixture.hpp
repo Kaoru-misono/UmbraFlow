@@ -1135,8 +1135,8 @@ identity = ["fixture.panel.anchor"]
     // registration's, so the id is inserted rather than fixed.
     //
     // The fold is the whole of the pure type's contract now: it reads the
-    // Journal prefix the Operator assembled and answers a ProjectState the
-    // pinned schema accepts. `fixture.confirmed` in that prefix is what moves
+    // prospective batch the Operator froze and answers a ProjectState the
+    // pinned schema accepts. `fixture.confirmed` in that batch is what moves
     // the revision, so a case makes the fold answer differently by writing an
     // entry rather than by substituting an expression.
     [[nodiscard]]
@@ -1146,7 +1146,7 @@ identity = ["fixture.panel.anchor"]
         source += pluginId;
         source += R"LUAU(",
     reduce = function(input)
-        for _, event in ipairs(input.journal_events) do
+        for _, event in ipairs(input.prospective_journal_batch) do
             if event.namespaced_event_type == "fixture.confirmed" then
                 return { revision = 1 }
             end

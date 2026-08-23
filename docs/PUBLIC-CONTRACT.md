@@ -68,7 +68,7 @@ call boundary. `unclassified` means none is true of it in these bytes.
 | --- | --- | --- | --- | --- |
 | `https://umbraflow.dev/schema/operator/common` | embedded_fragment | -- | `modules/deployment/source/deployment/project-deployment.cpp` | no top-level requirement |
 | `https://umbraflow.dev/schema/operator/journal-event-schema-manifest` | wire_tag_owned | `umbraflow-journal-event-schema-manifest/v1` | `modules/deployment/source/deployment/project-deployment.cpp` | `payload_schemas`, `plugin_id`, `schema` |
-| `https://umbraflow.dev/schema/operator/reduce-input` | operator_protocol | -- | `modules/deployment/source/deployment/project-deployment.cpp` | `journal_events`, `prior_project_state` |
+| `https://umbraflow.dev/schema/operator/reduce-input` | operator_protocol | -- | `modules/deployment/source/deployment/project-deployment.cpp` | `commit_context`, `prior_project_state`, `prospective_journal_batch` |
 | `https://umbraflow.dev/schema/operator/tool-catalog` | wire_tag_owned | `umbraflow-tool-catalog/v1` | `modules/deployment/source/deployment/project-deployment.cpp` | `effect_payload_sha256s`, `plugin_id`, `schema`, `tool_precondition_sha256`, `tools` |
 | `https://umbraflow.dev/schema/project/conformance` | wire_tag_owned | `umbraflow-conformance/v2` | `modules/deployment/source/deployment/project-directory.cpp` | `foreign`, `probe_frame`, `schema`, `under_test` |
 

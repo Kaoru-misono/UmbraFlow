@@ -449,6 +449,59 @@ namespace uf::operator_runtime
         ValidatedJournalEntryData entry;
     };
 
+    // What one running Tool call proposes to commit to its ProjectInstance's
+    // Journal, and the whole of what a proposer is allowed to state.
+    //
+    // Section 7 makes a proposal call-bound: it is not a Journal event and not
+    // a durable Project fact until one final CAS publishes it, and until then
+    // it hangs from the exact call and incarnation that made it. The
+    // ProjectInstance, the revision the batch is proposed against and the
+    // recorded identity of every referenced outcome are therefore NOT here --
+    // the Operator reads all three from rows it already holds, for the reason
+    // the reduce envelope is assembled rather than accepted.
+    //
+    // referencedCalls names the effects these facts interpret, by call
+    // identity. It is a declaration and never a derivation: a proposal that let
+    // the ledger work out which effects it depended on would be compared
+    // against itself at publication, and section 7's "cannot commit while that
+    // effect is possible" would have nothing independent to be about.
+    struct JournalBatchProposal final
+    {
+        std::vector<JournalAppend> events{};
+        std::vector<ContentHash>   referencedCalls{};
+    };
+
+    // One persisted call-bound proposal, as the ledger holds it.
+    //
+    // priorProjectStateRevision is the revision the batch was frozen against
+    // and is read here rather than stated: it is what the publishing CAS
+    // compares the live ProjectState row to, so a caller able to name it could
+    // publish onto a revision its facts were never computed from.
+    //
+    // No in-class initializer for the identity: ContentHash has no default
+    // state.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+    struct StoredJournalProposal final
+    {
+        ContentHash        proposalIdentity;
+        ToolIdentityLookup lookup{ToolIdentityLookup::Created};
+        uint64             priorProjectStateRevision{};
+    };
+
+    // What one published batch left behind: the revision the candidate state
+    // was published at, and the Journal sequence the batch reached. Both are
+    // the ledger's own, and both are reported because "the commit landed" and
+    // "it landed here" are different facts.
+    //
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+    struct PublishedJournalBatch final
+    {
+        ContentHash proposalIdentity;
+        ContentHash projectStateHash;
+        uint64      revision{};
+        uint64      lastJournalSequence{};
+    };
+
     // What one refold of a ProjectInstance's baseline found: the ProjectState
     // the database stores for it, and the ProjectState its complete retained
     // Journal prefix folds to when that prefix is read back out of the
@@ -1075,6 +1128,62 @@ namespace uf::operator_runtime
             ToolCallPositionIdentity const& call,
             ToolReconciliationQuery const& query
         ) -> Result<ToolCallReplay>;
+
+        // Persists one call-bound Journal batch proposal. Section 7: a
+        // proposal is not a Journal event and not a durable Project fact at
+        // this stage, so nothing here appends to the Journal or moves
+        // ProjectState.
+        //
+        // The proposing call must be DISPATCHING, because a proposal is
+        // something a running handler makes; the row records the revision that
+        // call's outcome must carry, which is what binds the proposal to one
+        // incarnation. A crashed incarnation's re-entry moves the history
+        // revision, so the proposal it left behind names a revision the call
+        // has moved past and the re-entered handler proposes its own.
+        //
+        // The identity is the content address of everything the proposer
+        // stated, so re-proposing the same batch from the same incarnation
+        // rejoins the stored row rather than freezing a second copy against a
+        // later instant.
+        [[nodiscard]]
+        auto proposeJournalBatch(
+            ControllerBinding const& controller,
+            ToolRootRequestIdentity const& root,
+            ToolCallPositionIdentity const& call,
+            JournalBatchProposal const& proposal
+        ) -> Result<StoredJournalProposal>;
+
+        // The one final CAS of section 7. It re-verifies, against what the
+        // proposal recorded, that the proposing call is still the same
+        // confirmed incarnation, that every referenced effect still stands at
+        // the outcome revision its facts were computed from, and that the
+        // ProjectState is still at the revision the batch was frozen against;
+        // it refuses while the run's controlled target is frozen, which is the
+        // same statement as section 7's "cannot commit while that effect is
+        // possible" because every uncertain call is a mutating call of this
+        // run; it folds the frozen prior state and the prospective batch
+        // through the registration's own reducer; and it appends the Journal
+        // events and publishes the candidate state in one transaction. A crash
+        // before it publishes neither fact nor state; a crash after it observes
+        // both.
+        //
+        // The registration root is joined rather than stated: it is read from
+        // the reducer this generation loaded and from the session row the
+        // Operator pinned, which are two independently produced values, so a
+        // reducer belonging to another registration is refused here.
+        //
+        // `journal` is required for the reason a refold requires one: the
+        // frozen batch goes back through the schema owner this registration
+        // pinned rather than being trusted as rows, so a publication cannot
+        // append bytes the registration no longer admits.
+        [[nodiscard]]
+        auto publishJournalProposal(
+            ControllerBinding const& controller,
+            ControlLease const& lease,
+            ProjectJournalSchemaOwner const& journal,
+            ProjectBaselineReducer const& reducer,
+            ContentHash const& proposalIdentity
+        ) -> Result<PublishedJournalBatch>;
 
         // Records that the world moved under us, which is what out-of-band
         // human input is. It is not an Operation and cannot become one: it

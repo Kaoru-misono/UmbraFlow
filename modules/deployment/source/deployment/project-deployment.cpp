@@ -209,21 +209,41 @@ namespace uf::deployment
         constexpr auto k_reduceInputSchema = std::string_view{R"json({
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://umbraflow.dev/schema/operator/reduce-input",
-    "title": "ProjectPlugin.reduce input",
+    "title": "Project reducer input",
     "type": "object",
     "additionalProperties": false,
-    "required": ["journal_events", "prior_project_state"],
+    "required": [
+        "commit_context",
+        "prior_project_state",
+        "prospective_journal_batch"
+    ],
     "properties": {
-        "journal_events": {
-            "type": "array",
-            "items": {"$ref": "#/$defs/JournalEvent"}
+        "commit_context": {
+            "$comment": "The trusted commit context: the revision prior_project_state stands at, and the revision the candidate this fold returns will be published at. Both are assembled by the Operator from the project_state row it holds and from its own increment rule, and no Project value reaches either -- a reducer handed a context it could influence could describe one revision while the ledger published another. prior_revision is null exactly when prior_project_state is null, because a baseline stands at no revision; next_revision is never null, because every fold produces the candidate for exactly one revision.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["next_revision", "prior_revision"],
+            "properties": {
+                "next_revision": {"type": "integer", "minimum": 0},
+                "prior_revision": {
+                    "oneOf": [
+                        {"type": "null"},
+                        {"type": "integer", "minimum": 0}
+                    ]
+                }
+            }
         },
         "prior_project_state": {
-            "$comment": "null for initial reduction. journal_events contains the declared baseline or is empty when the project declares none.",
+            "$comment": "null for the initial reduction. prospective_journal_batch then contains the declared baseline entry, or is empty when the project declares none.",
             "oneOf": [
                 {"type": "null"},
                 {"$ref": "https://umbraflow.dev/schema/project/state"}
             ]
+        },
+        "prospective_journal_batch": {
+            "$comment": "The exact batch the Operator has frozen for this commit, and never recorded Journal history: reduction commits nothing, so these events are facts only once the final CAS publishes them beside the state this fold returns.",
+            "type": "array",
+            "items": {"$ref": "#/$defs/JournalEvent"}
         }
     },
     "$defs": {
@@ -1032,7 +1052,10 @@ namespace uf::deployment
     ) const -> Status
     {
         UF_TRY(adopt(reduceInput.validate(document), "reduce input"));
-        for (auto const& event : member(document, "journal_events").items())
+        for (
+            auto const& event
+            : member(document, "prospective_journal_batch").items()
+        )
         {
             UF_TRY(validateJournalPayload(
                 member(event, "namespaced_event_type").string(),
