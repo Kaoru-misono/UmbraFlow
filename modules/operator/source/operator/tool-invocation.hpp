@@ -636,4 +636,25 @@ namespace uf::operator_runtime
             std::span<std::string const> heldCapabilities
         ) const -> std::vector<OfferedTool>;
     };
+
+    // The two Tool identity preimages, rendered as the exact bytes they are
+    // built from over one fixed synthetic coordinate.
+    //
+    // It renders SAMPLES rather than a description of the preimage shape, and
+    // that is the whole point. A list of member names beside the appends would
+    // be a second spelling: a member reordered, a member added, a domain tag
+    // renamed or the length-prefix framing changed would move the identity and
+    // leave the list untouched. These bytes come out of the same functions the
+    // identity comes out of, so none of those changes can move one without
+    // moving the other.
+    //
+    // The coordinate is synthetic and fixed -- probe digests, a probe caller
+    // namespace, a probe request key -- so nothing about a live session,
+    // project or release reaches these bytes. The one live input is the
+    // Framework Tool catalog, because a ValidatedToolInvocation can only be
+    // minted by a catalog owner; a Framework Tool descriptor change therefore
+    // also moves this material, which is broader than the protocol but never
+    // narrower.
+    [[nodiscard]]
+    auto toolIdentityPreimageMaterial() -> Result<std::string>;
 }

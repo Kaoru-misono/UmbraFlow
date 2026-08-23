@@ -1,8 +1,12 @@
 #include <operator/controller.hpp>
+#include <operator/ledger.hpp>
 #include <operator/manifest.hpp>
+#include <operator/tool-admission-request.hpp>
 #include <operator/tool-invocation.hpp>
+#include <operator/tool-runtime.hpp>
 
 #include "project-fixture.hpp"
+#include "tool-call-fixture.hpp"
 
 #include <core/error/result.hpp>
 
@@ -16,9 +20,11 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace uf::operator_runtime
@@ -74,9 +80,18 @@ namespace uf::operator_runtime
 
         // The stored DDL of one table, read out of the source that creates it.
         // p02's guarantee is an ABSENCE -- the finding table has no column a
-        // command could be spelled in -- and an absence has to be asserted
+        // Tool call could be spelled in -- and an absence has to be asserted
         // against the declaration, because no run of the code can demonstrate a
         // column that is not there.
+        //
+        // Two spellings of CREATE TABLE live in that source: the migrating
+        // schema states IF NOT EXISTS, and the Tool Runtime's tables are
+        // constexpr DDL strings that do not. The LAST declaration of a name is
+        // the one a fresh production root is created from, because a
+        // migration's rebuild of a table is written above the block that
+        // creates it. The terminator carries no semicolon for the same reason:
+        // a DDL string that is one statement of a C++ literal ends at STRICT
+        // with nothing after it.
         [[nodiscard]]
         auto tableDeclaration(std::string_view tableName) -> std::string
         {
@@ -90,12 +105,14 @@ namespace uf::operator_runtime
                 std::istreambuf_iterator<char>{stream},
                 std::istreambuf_iterator<char>{},
             };
-            auto const opening =
-                std::string{"CREATE TABLE IF NOT EXISTS "} + std::string{tableName}
-                + "(";
-            auto const begin = source.find(opening);
+            auto const named = std::string{tableName} + "(";
+            auto begin = source.rfind("CREATE TABLE IF NOT EXISTS " + named);
+            if (begin == std::string::npos)
+            {
+                begin = source.rfind("CREATE TABLE " + named);
+            }
             REQUIRE(begin != std::string::npos);
-            auto const end = source.find(") STRICT;", begin);
+            auto const end = source.find(") STRICT", begin);
             REQUIRE(end != std::string::npos);
             return source.substr(begin, end - begin);
         }
@@ -171,6 +188,58 @@ namespace uf::operator_runtime
             auto const hash = sha256(std::as_bytes(std::span{value}));
             REQUIRE(hash.has_value());
             return *hash;
+        }
+
+        // One Tool call presented straight at the admission door, for the cases
+        // whose property IS the answer that comes back.
+        // test_support::startToolCall requires success, so a refusal has to be
+        // built here; what it builds is the request that helper builds, so an
+        // accepted and a refused call below differ in who presents what and
+        // never in the shape of the request.
+        //
+        // prepared is mutated because admitting a call is a durable write to
+        // its store, which is this function's whole operation.
+        [[nodiscard]]
+        auto admitToolCallDirectly(
+            test_support::PreparedStore& prepared,
+            ControllerBinding const& controller,
+            ControlLease const& lease,
+            std::string_view requestKey,
+            ValidatedToolInvocation const& invocation,
+            std::optional<ToolAdmissionRequest::Mutation> mutation = std::nullopt
+        ) -> Result<ToolCallAdmission>
+        {
+            auto preimage = CanonicalJson::parseExact(
+                R"({"objective":"fixture-tool-call"})"
+            );
+            REQUIRE(preimage.has_value());
+            auto root = ToolRootRequestIdentity::create(
+                std::string{controller.controllerId()},
+                std::string{requestKey},
+                *std::move(preimage)
+            );
+            REQUIRE(root.has_value());
+            auto const execution = ToolExecutionIdentity{
+                .runIdentity                 = prepared.manifest.hash(),
+                .frameworkReleaseIdentity    = prepared.runtimeArtifactRootHash,
+                .toolRuntimeProtocolIdentity = hashOf("fixture-tool-protocol"),
+                .environmentIdentity         = hashOf("fixture-tool-environment"),
+            };
+            auto call = test_support::toolCallAt(
+                *root,
+                nullptr,
+                1U,
+                execution,
+                invocation
+            );
+            REQUIRE(call.has_value());
+            return prepared.store.admitToolCall(ToolAdmissionRequest{
+                .controller = controller,
+                .lease      = lease,
+                .root       = *root,
+                .call       = *call,
+                .mutation   = std::move(mutation),
+            });
         }
 
         [[nodiscard]]
@@ -317,18 +386,17 @@ return {
     {
         auto const schema     = readSchema("umbraflow-operator-v1.schema.json");
         auto const invocation = definition(schema, "ToolInvocation");
-        auto const command    = definition(schema, "CommandRecord");
-        auto const operation  = definition(schema, "Operation");
+        auto const session    = definition(schema, "OperatorSession");
         checkStrictObject(invocation);
-        checkStrictObject(command);
-        checkStrictObject(operation);
+        checkStrictObject(session);
         CHECK(invocation.find("\"snapshot_token\"") != std::string::npos);
         CHECK(invocation.find("authenticated_controller_id") == std::string::npos);
         CHECK(invocation.find("receipt_ref") == std::string::npos);
-        CHECK(command.find("\"authenticated_controller_id\"") != std::string::npos);
-        CHECK(command.find("\"command_fingerprint\"") != std::string::npos);
-        CHECK(operation.find("\"plan_versions\"") != std::string::npos);
-        CHECK(operation.find("\"dispatches\"") != std::string::npos);
+
+        // Who is asking is the session's to state and never the invocation's.
+        // Read here so that the absence above is a fact about where identity
+        // lives, rather than a name this schema happens to use nowhere at all.
+        CHECK(session.find("\"authenticated_controller_id\"") != std::string::npos);
     }
 
     TEST_CASE("schema-product-p02")
@@ -363,39 +431,26 @@ return {
         auto prepared        = test_support::prepareStore(temporary.path());
         REQUIRE(prepared.controller.kind() == ControllerKind::Script);
 
-        // A read-only command from the Script, and the identical one from a
-        // Human later. Read-only so that the fingerprint comparison is not
-        // entangled with the mutation chain the second half of this case is
-        // about.
-        auto const scriptRead = prepared.store.submitCommand(
-            prepared.controller,
-            test_support::command(prepared.snapshot, "request-1"),
-            test_support::toolInvocation(
-                prepared.project,
-                prepared.project.toolName("observe-1")
-            )
+        // A read-only Tool call from the Script, and the same tool from a Human
+        // below. Read-only so that neither of them holds the target's mutation
+        // barrier, which the second half of this case is about.
+        auto const scriptRead = test_support::startToolCall(
+            prepared,
+            "request-1",
+            prepared.project.toolName("observe-1")
         );
-        REQUIRE(scriptRead.has_value());
 
-        auto const scriptWrite = prepared.store.submitCommand(
-            prepared.controller,
-            test_support::command(prepared.snapshot, "request-2"),
-            test_support::toolInvocation(
-                prepared.project,
-                prepared.project.toolName("command-1")
-            )
+        // The Script's mutating call, left dispatching. It is the claim on
+        // target-1 that the Human's mutating call contends with at the end.
+        auto const scriptWrite = test_support::startToolCall(
+            prepared,
+            "request-2",
+            prepared.project.toolName("command-1")
         );
-        REQUIRE(scriptWrite.has_value());
 
-        // The Script's read-only Operation reaches a terminal disposition
-        // through one named signal, before control moves.
-        auto const scriptConfirmed = prepared.store.transitionOperation(
-            scriptRead->operation.operationId,
-            scriptRead->operation.revision,
-            OperationSignal::ReadCompleted
-        );
-        REQUIRE(scriptConfirmed.has_value());
-        CHECK(scriptConfirmed->state == OperationState::Confirmed);
+        // The Script's read-only call reaches a terminal disposition through
+        // the one completion door, before control moves.
+        test_support::confirmToolCall(prepared, scriptRead);
 
         // A Human on its own ProjectInstance and the same controlled target.
         auto const human = test_support::addController(
@@ -408,58 +463,60 @@ return {
         );
         auto const takeover = prepared.store.takeoverLease(human, "a human sat down");
         REQUIRE(takeover.has_value());
-        auto humanSnapshot = prepared.store.createSnapshot(
-            takeover->lease,
-            prepared.project.registration,
-            prepared.project.toolCatalogSchemaOwner,
-            prepared.project.observedInstanceIdentitySchemas,
-            test_support::observeAgain(prepared)
-        );
-        REQUIRE(humanSnapshot.has_value());
 
-        auto const humanRead = prepared.store.submitCommand(
+        // One shared door: startToolCall is admitToolCall, and a Human reaches
+        // it with the request a Script reaches it with. There is no
+        // kind-specific entry point for either to have taken instead.
+        //
+        // The two calls are deliberately NOT compared for identity. A call
+        // coordinate is minted per root request and position, so two calls are
+        // two coordinates by construction; asserting an equality here would
+        // assert the opposite of what the Tool Runtime guarantees. What is
+        // shared is the door and the state machine behind it, and that is what
+        // the lines around this one read.
+        auto const humanRead = test_support::startToolCall(
+            prepared,
             human,
-            test_support::command(*humanSnapshot, "request-3"),
-            test_support::toolInvocation(
-                prepared.project,
-                prepared.project.toolName("observe-1")
-            )
+            takeover->lease,
+            "request-3",
+            prepared.project.toolName("observe-1")
         );
-        REQUIRE(humanRead.has_value());
 
-        // One command fingerprint for one command. Who submitted it is not
-        // among the hashed bytes, so two kinds naming the identical tool and
-        // arguments produce the identical value.
-        CHECK(humanRead->commandFingerprint == scriptRead->commandFingerprint);
-
-        // And one state machine: the same signal takes the Human's Operation to
-        // the same disposition the Script's reached.
-        auto const humanConfirmed = prepared.store.transitionOperation(
-            humanRead->operation.operationId,
-            humanRead->operation.revision,
-            OperationSignal::ReadCompleted
-        );
-        REQUIRE(humanConfirmed.has_value());
-        CHECK(humanConfirmed->state == scriptConfirmed->state);
+        // The same completion takes the Human's call to the terminal the
+        // Script's reached; confirmToolCall asserts that terminal for both.
+        test_support::confirmToolCall(prepared, humanRead);
 
         // One mutation chain, contended across kinds: the Script still holds a
-        // non-terminal mutating Operation on target-1, so the Human's mutating
-        // command is refused. The kind is checked rather than only the failure,
-        // because the unique index would refuse it too and an Operator that had
-        // stopped looking would fail as a database error instead.
-        auto const humanWrite = prepared.store.submitCommand(
+        // dispatching mutating call on target-1, so the Human's mutating call
+        // is refused. The refusal names the barring call rather than only
+        // failing, because a dead lease or a duplicated coordinate would refuse
+        // this too and an Operator that had stopped looking at the barrier
+        // would still produce a failure here.
+        auto const humanEffects = std::vector{
+            test_support::routineToolEffect(prepared.project),
+        };
+        auto const humanWrite = admitToolCallDirectly(
+            prepared,
             human,
-            test_support::command(*humanSnapshot, "request-4"),
+            takeover->lease,
+            "request-4",
             test_support::toolInvocation(
                 prepared.project,
                 prepared.project.toolName("command-1")
-            )
+            ),
+            ToolAdmissionRequest::Mutation{
+                .policyAuthority = prepared.policyAuthority,
+                .effects         = humanEffects,
+            }
         );
         REQUIRE_FALSE(humanWrite.has_value());
         CHECK(
             automationErrorKind(humanWrite.error())
             == AutomationErrorKind::ActionRejected
         );
+        CHECK(humanWrite.error().message().contains(
+            scriptWrite.call.identity().hex()
+        ));
 
         REQUIRE(prepared.store.provisionProjectInstance(
             prepared.project.registration,
@@ -515,42 +572,45 @@ return {
 
     TEST_CASE("contract-product-p02")
     {
-        // A finding has no column a command could be spelled in, and an
-        // Operation has no column a required action could be spelled in. An
+        // A finding has no column a Tool call could be spelled in, and no Tool
+        // call row has a column a required action could be spelled in. An
         // auditor tells the two apart by which table the row is in, and the two
         // column sets are disjoint by construction rather than by convention.
-        auto const findings = tableDeclaration("external_input_findings");
-        constexpr auto commandColumns = std::array{
+        auto const findings  = tableDeclaration("external_input_findings");
+        auto const positions = tableDeclaration("tool_call_positions");
+        auto const history   = tableDeclaration("tool_call_history");
+        constexpr auto toolCallColumns = std::array{
+            std::string_view{"call_identity"},
+            std::string_view{"root_identity"},
             std::string_view{"tool_name"},
             std::string_view{"tool_version"},
             std::string_view{"canonical_args"},
-            std::string_view{"command_fingerprint"},
-            std::string_view{"client_request_id"},
-            std::string_view{"snapshot_token"},
+            std::string_view{"observation_reference_hash"},
             std::string_view{"mutating"},
         };
-        for (auto const column : commandColumns)
+        for (auto const column : toolCallColumns)
         {
-            CHECK(findings.find(column) == std::string::npos);
+            // Present on one of the call's own tables first, so the absence
+            // beside it is a disjointness rather than a misspelled name that
+            // nothing anywhere would have matched.
+            CHECK((positions.contains(column) || history.contains(column)));
+            CHECK_FALSE(findings.contains(column));
         }
-        CHECK(findings.find("required_action") != std::string::npos);
-        CHECK(
-            tableDeclaration("operations").find("required_action")
-            == std::string::npos
-        );
+        CHECK(findings.contains("required_action"));
+        CHECK_FALSE(positions.contains("required_action"));
+        CHECK_FALSE(history.contains("required_action"));
 
         auto const temporary = test_support::TemporaryDirectory{};
         auto prepared        = test_support::prepareStore(temporary.path());
 
-        auto const inFlight = prepared.store.submitCommand(
-            prepared.controller,
-            test_support::command(prepared.snapshot, "request-1"),
-            test_support::toolInvocation(
-                prepared.project,
-                prepared.project.toolName("command-1")
-            )
+        // A mutating Tool call left dispatching, so both findings below are
+        // recorded while automation is genuinely mid-flight rather than over an
+        // idle target.
+        auto const inFlight = test_support::startToolCall(
+            prepared,
+            "request-1",
+            prepared.project.toolName("command-1")
         );
-        REQUIRE(inFlight.has_value());
 
         // A Script asserting that a human typed would be fabricating evidence
         // about a third party.
@@ -583,51 +643,33 @@ return {
             }
         );
         REQUIRE(first.has_value());
-        REQUIRE(first->operationId.has_value());
-        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
-        CHECK(*first->operationId == inFlight->operation.operationId);
+
+        // The revision every controller on this target must observe past before
+        // it acts again, read back from the stored row rather than from what
+        // the reporter said.
         CHECK(
             first->invalidatedSnapshotRevision == prepared.snapshot.snapshotRevision
         );
 
-        // Two events preceded this finding and both were appended by the
-        // Operator itself: the lease prepareStore acquired, and the Operation
-        // submitted above. The count is exact rather than a lower bound,
-        // because a cursor that skipped either producer would still be
-        // monotone and would still read as plausible.
-        CHECK(first->detectedAfterCursor == 2U);
+        // One event preceded this finding and the Operator itself appended it:
+        // the lease prepareStore acquired. The count is exact rather than a
+        // lower bound, because a cursor that skipped a producer would still be
+        // monotone and would still read as plausible. A Tool call appends
+        // nothing here -- this stream carries control movements and findings,
+        // and a call's own states live in its durable history instead.
+        CHECK(first->detectedAfterCursor == 1U);
 
-        // Every snapshot taken up to the finding is refused afterwards, and a
-        // fresh one is not. This is the whole effect a finding is allowed to
-        // have: the controller must look again before it acts.
-        CHECK_FALSE(prepared.store.submitCommand(
-            prepared.controller,
-            test_support::command(prepared.snapshot, "request-2"),
-            test_support::toolInvocation(
-                prepared.project,
-                prepared.project.toolName("observe-1")
-            )
-        ).has_value());
-        auto const fresh = test_support::freshSnapshot(prepared);
-        CHECK(prepared.store.submitCommand(
-            prepared.controller,
-            test_support::command(fresh, "request-3"),
-            test_support::toolInvocation(
-                prepared.project,
-                prepared.project.toolName("observe-1")
-            )
-        ).has_value());
-
-        // The frozen Operation is in NeedsRevalidation: Revalidated is
-        // reachable from that state and from no other, so accepting it is the
-        // proof that the finding froze rather than terminated.
-        auto const revalidated = prepared.store.transitionOperation(
-            inFlight->operation.operationId,
-            inFlight->operation.revision + 1U,
-            OperationSignal::Revalidated
+        // A finding reports that the world moved; it does not end what was
+        // running. The mutating call is still dispatching afterwards, and is
+        // therefore still answerable and still holding its target's mutation
+        // barrier -- which is the whole of the difference between a report and
+        // a termination.
+        auto const afterFinding = prepared.store.replayToolCall(
+            inFlight.root,
+            inFlight.call
         );
-        REQUIRE(revalidated.has_value());
-        CHECK(revalidated->state == OperationState::Proposed);
+        REQUIRE(afterFinding.has_value());
+        CHECK(afterFinding->state == ToolCallState::Dispatching);
 
         // Authorised human control is a lease movement rather than a finding,
         // and it is on the same ordered stream: an Agent has to be able to see
@@ -643,16 +685,9 @@ return {
         );
         REQUIRE(second.has_value());
 
-        // Exactly five events since the first detection point: the first
-        // finding's state change and finding event, the read-only Operation,
-        // its revalidation state change, and the takeover.
-        CHECK(second->detectedAfterCursor == first->detectedAfterCursor + 5U);
-
-        // The revalidated Operation was in flight again, so the second finding
-        // froze the same one.
-        REQUIRE(second->operationId.has_value());
-        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
-        CHECK(*second->operationId == inFlight->operation.operationId);
+        // Exactly two events since the first detection point: that finding's
+        // own event, and the takeover.
+        CHECK(second->detectedAfterCursor == first->detectedAfterCursor + 2U);
     }
 
     TEST_CASE("contract-product-p03")
@@ -678,9 +713,10 @@ return {
         auto const temporary = test_support::TemporaryDirectory{};
         auto prepared        = test_support::prepareStore(temporary.path());
 
-        // The four catalog names this case reads and submits. A fixture tool's
-        // namespace is its registration's plugin_id, so they are composed from
-        // the project prepareStore registered rather than respelled per site.
+        // The four catalog names this case reads off a snapshot and presents at
+        // admission. A fixture tool's namespace is its registration's
+        // plugin_id, so they are composed from the project prepareStore
+        // registered rather than respelled per site.
         auto const rawCoordinateTool = prepared.project.toolName("raw-coordinate-click");
         auto const gatedTool         = prepared.project.toolName("capability-gated");
         auto const observeTool       = prepared.project.toolName("observe-1");
@@ -725,13 +761,13 @@ return {
         );
         REQUIRE(humanSnapshot.has_value());
 
-        // The offer side. It is asserted before any submission below, and it is
+        // The offer side. It is asserted before any admission below, and it is
         // a different failure from the refusals that follow: an Agent handed a
         // list naming raw-coordinate-click has already learned the machine
         // surface exists, whatever happens when it tries to use it. A test that
-        // only submitted would pass with no offer side at all. The composition
-        // of each snapshot is the only mint of the offered set, so the set is
-        // read off the snapshots above.
+        // only presented calls would pass with no offer side at all. The
+        // composition of each snapshot is the only mint of the offered set, so
+        // the set is read off the snapshots above.
         auto const names = [](std::vector<OfferedTool> const& offered)
         {
             auto listed = std::vector<std::string>{};
@@ -772,18 +808,20 @@ return {
             capabilityGated.descriptor().requiredCapabilities
             == std::vector<std::string>{"authoring"}
         );
-        auto const capabilityRefused = prepared.store.submitCommand(
+        auto const capabilityRefused = admitToolCallDirectly(
+            prepared,
             agent,
-            test_support::command(*agentSnapshot, "request-capability-gated"),
+            *agentLease,
+            "request-capability-gated",
             capabilityGated
         );
         REQUIRE_MESSAGE(
             !capabilityRefused.has_value(),
-            "submitCommand must refuse fixture.control.capability-gated without authoring"
+            "admitToolCall must refuse fixture.control.capability-gated without authoring"
         );
         CHECK_MESSAGE(
             capabilityRefused.error().message().contains("authoring"),
-            "the submit-side refusal must name the missing capability"
+            "the admission refusal must name the missing capability"
         );
 
         auto const privileged = test_support::toolInvocation(
@@ -792,18 +830,22 @@ return {
         );
         REQUIRE(privileged.descriptor().surface == ToolSurface::Privileged);
 
-        // The identical invocation: accepted for the Human, refused for the
+        // The identical invocation: admitted for the Human, refused for the
         // online Agent. Minting is the project's authority and says nothing
         // about who may present it, which is why the same value reaches both.
-        CHECK(prepared.store.submitCommand(
+        CHECK(admitToolCallDirectly(
+            prepared,
             human,
-            test_support::command(*humanSnapshot, "request-1"),
+            *humanLease,
+            "request-1",
             privileged
         ).has_value());
 
-        auto const refused = prepared.store.submitCommand(
+        auto const refused = admitToolCallDirectly(
+            prepared,
             agent,
-            test_support::command(*agentSnapshot, "request-2"),
+            *agentLease,
+            "request-2",
             privileged
         );
         REQUIRE_FALSE(refused.has_value());
@@ -813,11 +855,13 @@ return {
         );
 
         // The Agent is not refused everything: a semantic tool goes through the
-        // same call. Without this the refusal above would also pass over an
-        // Agent that could submit nothing at all.
-        CHECK(prepared.store.submitCommand(
+        // same door. Without this the refusal above would also pass over an
+        // Agent that could be admitted to nothing at all.
+        CHECK(admitToolCallDirectly(
+            prepared,
             agent,
-            test_support::command(*agentSnapshot, "request-3"),
+            *agentLease,
+            "request-3",
             test_support::toolInvocation(prepared.project, observeTool)
         ).has_value());
 
@@ -848,9 +892,11 @@ return {
         );
         REQUIRE(silent.has_value());
         CHECK(silent->descriptor().surface == ToolSurface::Privileged);
-        CHECK_FALSE(prepared.store.submitCommand(
+        CHECK_FALSE(admitToolCallDirectly(
+            prepared,
             agent,
-            test_support::command(*agentSnapshot, "request-4"),
+            *agentLease,
+            "request-4",
             *silent
         ).has_value());
     }

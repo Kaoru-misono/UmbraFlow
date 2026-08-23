@@ -1,21 +1,32 @@
 // The half of the Operator control contracts this repository owns outright: the
-// shape its own schema documents must have, and the transitions OperationMachine
-// decides on its own. The project-parameterised half of C-01, C-06 and C-09
-// through C-13 belongs to the exported conformance suite, which a consuming
-// repository runs against its own registration; see
-// conformance/source/suite-control-ledger.cpp. No property is asserted in
-// both places.
+// shape its own schema documents must have, and the authority its own entry
+// points re-read. The project-parameterised half of C-01 belongs to the exported
+// conformance suite, which a consuming repository runs against its own
+// registration; see conformance/source/suite-control-ledger.cpp. No property is
+// asserted in both places.
 //
 // A case named schema-* below asserts only that a schema definition exists with
 // certain members. It cannot go red when the behaviour it describes is removed,
-// so it does not carry the contract- name; for C-09 through C-13 that name is
-// registered against the suite's cases instead.
+// so it does not carry the contract- name.
+//
+// C-05, C-06, C-07, C-09, C-11, C-13 and C-14 are absent because their subject
+// is: every one of them was a shape or a transition of the Operation record,
+// and the Operation record is deleted. Their gates were not moved anywhere --
+// there is nothing left for them to be about.
+//
+// C-03 and C-10 survive because Host delivery did not go with the Operation.
+// OP:`DeliveryAuthority` is what OperatorCoordinator::reserveToolCallDispatch
+// mints for every Tool-call input delivery, OP:`ReceiptRef` is the receipt the
+// Host answers with, and OP:`DeliveryOutcome` is the three-valued
+// classification toolCallCompletionFor reads. All three are live, so their
+// shapes are still shapes of something.
 
 #include <operator/ledger.hpp>
 #include <operator/manifest.hpp>
-#include <operator/operation.hpp>
+#include <operator/tool-admission-request.hpp>
 
 #include "project-fixture.hpp"
+#include "tool-call-fixture.hpp"
 
 #include <domain/content-hash.hpp>
 
@@ -148,7 +159,6 @@ namespace uf::operator_runtime
         }
 
         using test_support::canonical;
-        using test_support::command;
         using test_support::hashOf;
         using test_support::makeProject;
         using test_support::prepareStore;
@@ -174,8 +184,6 @@ namespace uf::operator_runtime
         auto project     = std::optional<test_support::ProjectFixture>{};
         auto heldReading = std::optional<task::UiObservationSnapshot>{};
         auto heldBinding = std::optional<ControllerBinding>{};
-        auto heldRequest = std::optional<CommandRequest>{};
-        auto heldTool    = std::optional<ValidatedToolInvocation>{};
         {
             auto prepared = prepareStore(temporary.path());
             // No renewal call exists, and none is needed: the same lease keeps
@@ -189,11 +197,6 @@ namespace uf::operator_runtime
             ).has_value());
             heldLease   = prepared.lease;
             heldBinding = prepared.controller;
-            heldRequest = command(prepared.snapshot, "request-1");
-            heldTool    = toolInvocation(
-                prepared.project,
-                prepared.project.toolName("observe-1")
-            );
             manifest    = prepared.manifest;
             project     = prepared.project;
             heldReading = test_support::observeAgain(prepared);
@@ -242,18 +245,11 @@ namespace uf::operator_runtime
         ).has_value());
 
         // A ControllerBinding is a value, so one survives the coordinator that
-        // minted it. It is evidence and not a bearer capability: the entry
-        // point re-reads the pinned row, and the epoch it carries is from a
-        // process that has ended.
-        CHECK_FALSE(
-            restarted->submitCommand(*heldBinding, *heldRequest, *heldTool)
-                .has_value()
-        );
-
-        // A takeover is the sharpest of the three, because takeoverLease
-        // succeeds against any state of the target: nothing downstream of the
-        // epoch check would refuse it, so this is the one call that fails only
-        // because the binding is from a dead epoch.
+        // minted it. It is evidence and not a bearer capability, and a takeover
+        // is the sharpest way to show it: takeoverLease succeeds against any
+        // state of the target, so nothing downstream of the epoch check would
+        // refuse this call. It fails only because the entry point re-reads the
+        // pinned row and finds an epoch from a process that has ended.
         CHECK_FALSE(
             restarted->takeoverLease(*heldBinding, "a dead epoch's binding")
                 .has_value()
@@ -274,6 +270,12 @@ namespace uf::operator_runtime
         CHECK(fresh->fencingToken > heldLease->fencingToken);
     }
 
+    // The authority a Host acts under, minted by the ledger and never by a
+    // caller. Every published field of it is validated behaviourally in
+    // tests/operator/test-host-controller.cpp under a HOST_VALIDATION_TEST
+    // marker, and check-repository-surface fails when a published field has no
+    // such marker -- which is what stops this from being a shape check with
+    // nothing behind it.
     TEST_CASE("schema-control-c03")
     {
         auto const schema    = readSchema("umbraflow-operator-v1.schema.json");
@@ -289,18 +291,38 @@ namespace uf::operator_runtime
         CHECK(receipt.find("coordinate") == std::string::npos);
     }
 
+    // The Host's own delivery classification, and the half of C-10 that
+    // outlived the Operation: OP:`DispatchRecord` described a dispatch of a
+    // frozen plan step and is deleted with it, while task::DeliveryOutcome is
+    // still what a Tool-call delivery answers with and still the only value
+    // that can prove an external effect absent.
+    TEST_CASE("schema-control-c10")
+    {
+        auto const schema  = readSchema("umbraflow-operator-v1.schema.json");
+        auto const outcome = definition(schema, "DeliveryOutcome");
+        CHECK(outcome.find("\"not_delivered\"") != std::string::npos);
+        CHECK(outcome.find("\"delivered\"") != std::string::npos);
+        CHECK(outcome.find("\"transport_unknown\"") != std::string::npos);
+
+        // not_delivered and transport_unknown each carry a reason and delivered
+        // does not, which is the whole of why the three are one oneOf rather
+        // than an enum: only the two uncertain arms have anything to say.
+        CHECK(outcome.find("\"reason\"") != std::string::npos);
+    }
+
     TEST_CASE("contract-control-c04")
     {
-        auto const schema        = readSchema("umbraflow-operator-v1.schema.json");
-        auto const invocation    = definition(schema, "ToolInvocation");
-        auto const commandRecord = definition(schema, "CommandRecord");
+        auto const schema     = readSchema("umbraflow-operator-v1.schema.json");
+        auto const invocation = definition(schema, "ToolInvocation");
         checkStrictObject(invocation);
-        checkStrictObject(commandRecord);
+
+        // The published invocation carries no authority of its own. Who is
+        // asking arrives as a ControllerBinding the Operator minted, so an
+        // invocation cannot name a controller, a session or a fingerprint that
+        // would let a caller present itself.
         CHECK(invocation.find("authenticated_controller_id") == std::string::npos);
+        CHECK(invocation.find("authenticated_session_id") == std::string::npos);
         CHECK(invocation.find("command_fingerprint") == std::string::npos);
-        CHECK(commandRecord.find("\"authenticated_session_id\"") != std::string::npos);
-        CHECK(commandRecord.find("\"authenticated_controller_id\"") != std::string::npos);
-        CHECK(commandRecord.find("\"command_fingerprint\"") != std::string::npos);
 
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
@@ -331,8 +353,11 @@ namespace uf::operator_runtime
         ).has_value());
 
         // Binding is derived too: the Operator takes the registration from the
-        // authenticated session, so an invocation another project's catalog
-        // owner minted is refused rather than reconciled.
+        // authenticated session, so a call another project's catalog owner
+        // minted is refused at the one admission door rather than reconciled.
+        // The foreign tool is the read-only one, so the refusal is the
+        // registration comparison and not an effect the policy would have
+        // denied anyway.
         auto const foreignId = std::string{"fixture.foreign"};
         auto const foreign   = makeProject(
             foreignId,
@@ -342,58 +367,52 @@ namespace uf::operator_runtime
             foreign.registration.hash()
             != prepared.project.registration.hash()
         );
-        CHECK_FALSE(prepared.store.submitCommand(
-            prepared.controller,
-            command(prepared.snapshot, "request-foreign"),
-            toolInvocation(foreign, foreign.toolName("command-1"))
-        ).has_value());
+        auto preimage = CanonicalJson::parseExact(
+            R"({"objective":"foreign-catalog"})"
+        );
+        REQUIRE(preimage.has_value());
+        auto root = ToolRootRequestIdentity::create(
+            "controller-1",
+            "request-foreign",
+            *std::move(preimage)
+        );
+        REQUIRE(root.has_value());
+        auto call = test_support::toolCallAt(
+            *root,
+            nullptr,
+            1U,
+            ToolExecutionIdentity{
+                .runIdentity                 = prepared.manifest.hash(),
+                .frameworkReleaseIdentity    = prepared.runtimeArtifactRootHash,
+                .toolRuntimeProtocolIdentity = hashOf("c04-protocol"),
+                .environmentIdentity         = hashOf("c04-environment"),
+            },
+            toolInvocation(foreign, foreign.toolName("observe-1"))
+        );
+        REQUIRE(call.has_value());
+        auto const refused = prepared.store.admitToolCall(ToolAdmissionRequest{
+            .controller = prepared.controller,
+            .lease      = prepared.lease,
+            .root       = *root,
+            .call       = *call,
+        });
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(
+            refused.error().message().contains("different ProjectRegistration")
+        );
     }
 
-    TEST_CASE("schema-control-c05")
-    {
-        auto const schema   = readSchema("umbraflow-operator-v1.schema.json");
-        auto const proposal = definition(schema, "PlanProposal");
-        checkStrictObject(proposal);
-        CHECK(proposal.find("\"effects\"") != std::string::npos);
-        CHECK(proposal.find("\"allowed_ui_actions\"") != std::string::npos);
-        CHECK(proposal.find("\"workflow_limits\"") != std::string::npos);
-        CHECK(proposal.find("\"canonical_args\"") != std::string::npos);
-    }
-
-    TEST_CASE("contract-control-c07")
-    {
-        auto machine    = OperationMachine{};
-        auto transition = machine.transition(OperationEvent::DecisionInputsChanged);
-        REQUIRE(transition.has_value());
-        CHECK(*transition == OperationState::NeedsRevalidation);
-        transition = machine.transition(OperationEvent::Revalidated);
-        REQUIRE(transition.has_value());
-        CHECK(*transition == OperationState::Proposed);
-        transition = machine.transition(OperationEvent::ReadyWithoutApproval);
-        REQUIRE(transition.has_value());
-        transition = machine.transition(OperationEvent::DispatchStarted);
-        REQUIRE(transition.has_value());
-        CHECK(machine.planFrozen());
-        CHECK_FALSE(machine.transition(OperationEvent::DecisionInputsChanged).has_value());
-
-        auto const schema      = readSchema("umbraflow-operator-v1.schema.json");
-        auto const planVersion = definition(schema, "PlanVersion");
-        checkStrictObject(planVersion);
-        CHECK(planVersion.find("\"provisional\"") != std::string::npos);
-        CHECK(planVersion.find("\"frozen\"") != std::string::npos);
-        CHECK(planVersion.find("\"superseded\"") != std::string::npos);
-    }
-
+    // What a Tool descriptor may bound, which is the half of C-08 that outlived
+    // the plan document: PlanProposal carried these two definitions and is
+    // deleted, but both are still read out of the Tool Catalog by
+    // tool-descriptor.hpp, so both still describe something the framework has.
     TEST_CASE("schema-control-c08")
     {
         auto const schema = readSchema("umbraflow-operator-v1.schema.json");
-        auto const plan   = definition(schema, "PlanProposal");
         auto const intent = definition(schema, "UIActionIntent");
         auto const limits = definition(schema, "WorkflowLimits");
-        checkStrictObject(plan);
         checkStrictObject(intent);
         checkStrictObject(limits);
-        CHECK(plan.find("\"allowed_ui_actions\"") != std::string::npos);
         CHECK(intent.find("\"binding_variant_constraints\"") != std::string::npos);
         CHECK(intent.find("\"expected_ui_postconditions\"") != std::string::npos);
         CHECK(intent.find("\"delivery_class\"") != std::string::npos);
@@ -401,84 +420,18 @@ namespace uf::operator_runtime
         CHECK(limits.find("\"maximum_observations\"") != std::string::npos);
     }
 
-    TEST_CASE("schema-control-c09")
-    {
-        auto const schema = readSchema("umbraflow-operator-v1.schema.json");
-        checkStrictObject(definition(schema, "DispatchOutcome"));
-        auto const result = definition(schema, "ToolResult");
-        checkStrictObject(result);
-        CHECK(result.find("\"dispatch_outcomes\"") != std::string::npos);
-        CHECK(result.find("\"reconciliation_progress\"") != std::string::npos);
-        CHECK(result.find("\"success\"") == std::string::npos);
-    }
-
-    TEST_CASE("schema-control-c10")
-    {
-        auto const schema  = readSchema("umbraflow-operator-v1.schema.json");
-        auto const record  = definition(schema, "DispatchRecord");
-        auto const outcome = definition(schema, "DeliveryOutcome");
-        checkStrictObject(record);
-        CHECK(record.find("\"dispatch_started_at\"") != std::string::npos);
-        CHECK(record.find("\"delivery_authority\"") != std::string::npos);
-        CHECK(outcome.find("\"not_delivered\"") != std::string::npos);
-        CHECK(outcome.find("\"transport_unknown\"") != std::string::npos);
-    }
-
-    TEST_CASE("schema-control-c11")
-    {
-        auto const schema    = readSchema("umbraflow-operator-v1.schema.json");
-        auto const reconcile = definition(schema, "ReconcileProposal");
-        checkStrictObject(reconcile);
-        CHECK(reconcile.find("\"journal_events\"") != std::string::npos);
-        CHECK(reconcile.find("\"observed_outcomes\"") != std::string::npos);
-        CHECK(reconcile.find("\"continue\"") != std::string::npos);
-        CHECK(reconcile.find("\"diverged\"") != std::string::npos);
-    }
-
+    // The policy artifact is the half of C-12 that outlived the Operation:
+    // OP:`ApprovalToken` and OP:`AuthorityDecision` described an approval bound
+    // to a plan step and are deleted with it, while the Operator still owns the
+    // policy document and still denies an effect it does not recognise.
     TEST_CASE("schema-control-c12")
     {
-        auto const policySchema   = readSchema("umbraflow-policy-v1.schema.json");
-        auto const operatorSchema = readSchema("umbraflow-operator-v1.schema.json");
-        auto const policy         = definition(policySchema, "PolicyArtifact");
-        auto const approvalToken  = definition(operatorSchema, "ApprovalToken");
-        auto const authority      = definition(operatorSchema, "AuthorityDecision");
+        auto const policySchema = readSchema("umbraflow-policy-v1.schema.json");
+        auto const policy       = definition(policySchema, "PolicyArtifact");
         checkStrictObject(policy);
-        checkStrictObject(approvalToken);
-        checkStrictObject(authority);
         CHECK(policy.find("\"owned_by\"") != std::string::npos);
         CHECK(policy.find("\"const\": \"operator\"") != std::string::npos);
         CHECK(policy.find("\"unknown_effect_decision\"") != std::string::npos);
         CHECK(policy.find("\"const\": \"deny\"") != std::string::npos);
-        CHECK(approvalToken.find("\"approval_authority_decision_id\"") != std::string::npos);
-        CHECK(approvalToken.find("\"step_intent_hash\"") != std::string::npos);
-        CHECK(approvalToken.find("\"effect_envelope_hash\"") != std::string::npos);
-        CHECK(approvalToken.find("\"lease_id\"") != std::string::npos);
-        CHECK(authority.find("\"approval_token_ids\"") != std::string::npos);
-    }
-
-    TEST_CASE("schema-control-c13")
-    {
-        auto const schema = readSchema("umbraflow-operator-v1.schema.json");
-        auto const chain  = definition(schema, "MutationChain");
-        checkStrictObject(chain);
-        CHECK(chain.find("\"controlled_target_id\"") != std::string::npos);
-        CHECK(chain.find("\"project_instance_key\"") != std::string::npos);
-        CHECK(chain.find("\"operation_id\"") != std::string::npos);
-    }
-
-    TEST_CASE("contract-control-c14")
-    {
-        auto machine = OperationMachine{};
-        REQUIRE(machine.transition(OperationEvent::ApprovalRequired).has_value());
-        REQUIRE(machine.transition(OperationEvent::ApprovalObtained).has_value());
-        REQUIRE(machine.transition(OperationEvent::DispatchStarted).has_value());
-        auto const postDispatchAbort = machine.transition(OperationEvent::PostDispatchAbort);
-        REQUIRE(postDispatchAbort.has_value());
-        CHECK(*postDispatchAbort == OperationState::Reconciling);
-        CHECK(machine.planFrozen());
-        CHECK(machine.hasDispatched());
-        CHECK(machine.mutationLocked());
-        CHECK_FALSE(machine.transition(OperationEvent::Cancelled).has_value());
-        CHECK_FALSE(machine.transition(OperationEvent::DeadlineExpired).has_value());
     }
 }

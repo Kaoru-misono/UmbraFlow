@@ -530,6 +530,191 @@ namespace uf::operator_runtime
             return prior;
         }
 
+        // The same, with one removed column put back ahead of the declaration
+        // that took its place. Insertion position is part of the DDL text and
+        // therefore part of the historical identity, so the anchor names the
+        // column the restored one used to sit above rather than an offset.
+        [[nodiscard]]
+        auto storedCreateWith(
+            test_support::OperatorDatabaseProbe& database,
+            std::string_view table,
+            std::string_view removedColumn,
+            std::string_view above
+        ) -> std::string
+        {
+            auto prior    = storedCreate(database, table);
+            auto const at = prior.find(above);
+            REQUIRE(at != std::string::npos);
+            prior.insert(at, removedColumn);
+            return prior;
+        }
+
+        // The one nullable reference into `operations` that journal_events and
+        // external_input_findings each carried, and the declaration each of
+        // them sat directly above.
+        constexpr auto k_operationReferenceColumn = std::string_view{
+            "                        operation_id TEXT REFERENCES operations(operation_id),\n"
+        };
+
+        constexpr auto k_journalEventTypeColumn = std::string_view{
+            "                        namespaced_event_type TEXT NOT NULL,"
+        };
+
+        constexpr auto k_findingRequiredActionColumn = std::string_view{
+            "                        required_action TEXT NOT NULL"
+        };
+
+        // ledger_events as it stood while an Operation could still be its
+        // subject: a detail column, and a CHECK naming the two Operation kinds
+        // and the state vocabulary one of them wrote there.
+        constexpr auto k_priorLedgerEventsDdl = std::string_view{
+            "CREATE TABLE ledger_events("
+            "sequence INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),"
+            "controlled_target_id TEXT NOT NULL,"
+            "kind TEXT NOT NULL,"
+            "subject_id TEXT NOT NULL,"
+            "detail TEXT,"
+            "CHECK((kind IN ('operation_created', 'control_transitioned', "
+            "'external_input_detected') AND detail IS NULL) OR "
+            "(kind='operation_state_changed' AND detail IN ("
+            "'proposed', 'awaiting_approval', 'ready', 'needs_revalidation', "
+            "'running', 'reconciling', 'confirmed', 'rejected', 'ambiguous', "
+            "'invalid', 'denied', 'cancelled', 'expired', 'diverged')))"
+            ") STRICT"
+        };
+
+        // The whole Operation surface as the generation before this one stored
+        // it: the two tables it owned, the nullable reference into `operations`
+        // that journal_events and external_input_findings each carried, and the
+        // ledger_events shape an Operation could be the subject of.
+        //
+        // Every registered migration below now ends in the step that drops all
+        // of that, so every migration fixture's wind-back needs this, and it
+        // must run FIRST in each of them: restoreOperationDispatchSchema
+        // rewrites the ledger_events CHECK this helper puts back, and its five
+        // tables reference operations(operation_id).
+        //
+        // operations and reconciliations are pasted because that generation no
+        // longer exists in the tree to derive them from -- the historical
+        // identity IS the stored text, so one changed byte of indentation
+        // reproduces a schema that generation never had. The other three are
+        // derived from their own surviving text for the reason storedCreate
+        // states: undoing what this generation changed cannot drift, and a
+        // hand-copy can.
+        //
+        // Rows are carried through rather than dropped, exactly as
+        // restorePriorToolRunSchema carries its own: the fixtures read the
+        // Journal and the ledger back across their upgrade, and a wind-back
+        // that emptied these would prove the migration preserved nothing.
+        auto restoreOperationSurfaceSchema(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void
+        {
+            auto const priorJournalEvents = storedCreateWith(
+                database,
+                "journal_events",
+                k_operationReferenceColumn,
+                k_journalEventTypeColumn
+            );
+            auto const priorExternalInputFindings = storedCreateWith(
+                database,
+                "external_input_findings",
+                k_operationReferenceColumn,
+                k_findingRequiredActionColumn
+            );
+            database.execute(R"sql(
+                    CREATE TABLE IF NOT EXISTS operations(
+                        operation_id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL REFERENCES sessions(session_id),
+                        snapshot_token TEXT NOT NULL REFERENCES snapshots(token),
+                        idempotency_namespace TEXT NOT NULL,
+                        client_request_id TEXT NOT NULL,
+                        command_fingerprint TEXT NOT NULL,
+                        tool_name TEXT NOT NULL,
+                        tool_version TEXT NOT NULL,
+                        canonical_args TEXT NOT NULL,
+                        controlled_target_id TEXT NOT NULL,
+                        mutating INTEGER NOT NULL CHECK(mutating IN (0, 1)),
+                        state TEXT NOT NULL,
+                        revision INTEGER NOT NULL CHECK(revision > 0),
+                        plugin_id TEXT NOT NULL,
+                        project_instance_key TEXT NOT NULL,
+                        FOREIGN KEY(plugin_id, project_instance_key)
+                            REFERENCES project_instances(plugin_id, project_instance_key),
+                        UNIQUE(
+                            idempotency_namespace,
+                            plugin_id,
+                            project_instance_key,
+                            client_request_id
+                        )
+                    ) STRICT;
+
+                    CREATE UNIQUE INDEX IF NOT EXISTS one_active_mutation_per_target
+                    ON operations(controlled_target_id)
+                    WHERE mutating=1 AND state IN (
+                        'proposed', 'awaiting_approval', 'ready', 'needs_revalidation',
+                        'running', 'reconciling', 'ambiguous'
+                    );
+
+                    CREATE UNIQUE INDEX IF NOT EXISTS one_active_mutation_per_project_instance
+                    ON operations(plugin_id, project_instance_key)
+                    WHERE mutating=1 AND state IN (
+                        'proposed', 'awaiting_approval', 'ready', 'needs_revalidation',
+                        'running', 'reconciling', 'ambiguous'
+                    );
+
+                    CREATE TABLE IF NOT EXISTS reconciliations(
+                        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                        operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+                        disposition TEXT NOT NULL,
+                        canonical_proposal TEXT NOT NULL
+                    ) STRICT;
+            )sql");
+
+            // The three rebuilt tables are foreign-key participants, so they
+            // are carried and re-created rather than altered, and enforcement
+            // is lifted for the rebuild exactly as the migration itself defers
+            // it. Every restored operation_id lands NULL, which is the only
+            // value any writer of that generation ever bound to it.
+            database.execute(
+                "PRAGMA foreign_keys=OFF;"
+                "CREATE TABLE carried_journal_events AS SELECT * FROM journal_events;"
+                "DROP TABLE journal_events;"
+                + priorJournalEvents
+                + ";INSERT INTO journal_events(event_id, plugin_id, "
+                  "project_instance_key, sequence, prior_project_state_revision, "
+                  "session_manifest_hash, namespaced_event_type, "
+                  "payload_schema_hash, opaque_project_payload, provenance) "
+                  "SELECT event_id, plugin_id, project_instance_key, sequence, "
+                  "prior_project_state_revision, session_manifest_hash, "
+                  "namespaced_event_type, payload_schema_hash, "
+                  "opaque_project_payload, provenance FROM carried_journal_events;"
+                  "DROP TABLE carried_journal_events;"
+                  "CREATE TABLE carried_external_input_findings AS SELECT * "
+                  "FROM external_input_findings;"
+                  "DROP TABLE external_input_findings;"
+                + priorExternalInputFindings
+                + ";INSERT INTO external_input_findings(finding_id, "
+                  "controlled_target_id, session_epoch, reporter_session_id, "
+                  "detected_after_cursor, invalidated_snapshot_revision, "
+                  "required_action, reason) SELECT finding_id, "
+                  "controlled_target_id, session_epoch, reporter_session_id, "
+                  "detected_after_cursor, invalidated_snapshot_revision, "
+                  "required_action, reason FROM carried_external_input_findings;"
+                  "DROP TABLE carried_external_input_findings;"
+                  "CREATE TABLE carried_ledger_events AS SELECT * FROM ledger_events;"
+                  "DROP TABLE ledger_events;"
+                + std::string{k_priorLedgerEventsDdl}
+                + ";INSERT INTO ledger_events(sequence, session_epoch, "
+                  "controlled_target_id, kind, subject_id) SELECT sequence, "
+                  "session_epoch, controlled_target_id, kind, subject_id "
+                  "FROM carried_ledger_events;"
+                  "DROP TABLE carried_ledger_events;"
+                  "PRAGMA foreign_keys=ON;"
+            );
+        }
+
         constexpr auto k_observationReferenceColumn = std::string_view{
             "observation_reference_hash TEXT CHECK(observation_reference_hash IS NULL "
             "OR (length(observation_reference_hash)=64 AND "
@@ -1180,6 +1365,7 @@ namespace uf::operator_runtime
         }
 
         using test_support::canonical;
+        using test_support::confirmToolCall;
         using test_support::hashOf;
         using test_support::journalEntry;
         using test_support::k_fixtureProvenance;
@@ -1187,14 +1373,18 @@ namespace uf::operator_runtime
         using test_support::loadGeneration;
         using test_support::makeProject;
         using test_support::sessionManifest;
+        using test_support::startToolCall;
         using test_support::toolInvocation;
 
         // Re-adding any of these members would reopen the two P0 holes: a
         // reducer input beside the events lets the Journal say A while the
         // materialized state was reduced from B, and a request-owned tool or
-        // mutability makes the mutation chain opt-out. The checks go through
-        // concepts because a member lookup on a concrete type is an error
-        // rather than a substitution failure.
+        // mutability makes the mutation chain opt-out. ToolAdmissionRequest is
+        // where the second one would land: it is the one caller-supplied
+        // admission value, and it names its Tool and mutability only through
+        // the coordinate the catalog minted. The checks go through concepts
+        // because a member lookup on a concrete type is an error rather than a
+        // substitution failure.
         template <typename T>
         concept NamesReducerInput = requires(T value) { value.reducerInput; };
 
@@ -1221,9 +1411,9 @@ namespace uf::operator_runtime
         };
 
         static_assert(!NamesReducerInput<ProjectInstanceBaseline>);
-        static_assert(!NamesMutability<CommandRequest>);
-        static_assert(!NamesTool<CommandRequest>);
-        static_assert(!NamesCanonicalArgs<CommandRequest>);
+        static_assert(!NamesMutability<ToolAdmissionRequest>);
+        static_assert(!NamesTool<ToolAdmissionRequest>);
+        static_assert(!NamesCanonicalArgs<ToolAdmissionRequest>);
         static_assert(
             !NamesSessionId<SessionResume>,
             "SessionResume must not accept an internal session_id"
@@ -1266,33 +1456,18 @@ namespace uf::operator_runtime
             >
         );
 
-        struct PreparedStore final
-        {
-            OperatorCoordinator          store;
-            ProjectGenerationHandle      generation;
-            test_support::ProjectFixture project;
-            SessionManifest              manifest;
-            OperatorPolicyAuthority      policyAuthority;
-
-            // The authenticated controller every entry point is reached
-            // through. bindController is its only mint.
-            ControllerBinding            controller;
-            ControlLease                 lease;
-            SnapshotRecord               snapshot;
-            conformance::ObservationHost observation;
-
-            // What a delivering Host is activated from. The observing Host above
-            // cannot serve a second TaskContext, so a dispatch opens the same
-            // installed artifact again rather than sharing it.
-            ContentHash runtimeArtifactRootHash;
-            uint64      installedGeneration{};
-        };
+        // The shared fixture's prepared store, not a second one shaped like it.
+        // The Tool-call fixture's startToolCall takes exactly this type, and a
+        // local twin would have made every case here choose between the two.
+        // prepareStore below still builds its own, because the cases in this
+        // file pin a reducer and a precondition schema the shared builder does
+        // not take.
+        using test_support::PreparedStore;
 
         [[nodiscard]]
         auto prepareStore(
             std::filesystem::path const& path,
-            std::string_view reducerBytes = k_reducerSource,
-            std::string_view preconditionSchema = test_support::k_toolPreconditionSchema
+            std::string_view reducerBytes = k_reducerSource
         ) -> PreparedStore
         {
             auto const release = test_support::runtimeRelease(path / "session-handoff");
@@ -1319,7 +1494,7 @@ namespace uf::operator_runtime
             auto const project = makeProject(
                 "fixture.alpha",
                 reducerBytes,
-                preconditionSchema
+                test_support::k_toolPreconditionSchema
             );
             auto const manifest = sessionManifest(
                 project.registration,
@@ -1433,73 +1608,6 @@ namespace uf::operator_runtime
                 .kind               = ControllerKind::Script,
                 .worldScope         = *worldScope,
             };
-        }
-
-        [[nodiscard]]
-        auto command(
-            SnapshotRecord const& snapshot,
-            std::string clientRequestId,
-            std::string idempotencyNamespace
-        ) -> CommandRequest
-        {
-            return CommandRequest{
-                .snapshotToken        = snapshot.token,
-                .idempotencyNamespace = std::move(idempotencyNamespace),
-                .clientRequestId      = std::move(clientRequestId),
-            };
-        }
-
-        // A catalog owner over one tool entry whose argument validator accepts
-        // any canonical arguments. The fixture's tool argument schema admits
-        // exactly {"value": 1..8}, so no Operation whose canonical arguments
-        // name an observed instance id can be created through the prepared
-        // catalog -- and such arguments are the whole subject of the
-        // submitCommand gate cases. Entry name and descriptor source are both
-        // the case's choice, so a case can present an entry the fixture
-        // catalog never declared (the plan canary) under a descriptor the
-        // fixture catalog did declare.
-        [[nodiscard]]
-        auto catalogAcceptingAnyArguments(
-            PreparedStore const& prepared,
-            std::string entryName,
-            std::string descriptorSource
-        ) -> Result<ProjectToolCatalogSchemaOwner>
-        {
-            UF_TRY_VALUE(
-                descriptor,
-                prepared.project.toolCatalogSchemaOwner.describe(descriptorSource)
-            );
-            return ProjectToolCatalogSchemaOwner::create(
-                prepared.project.registration,
-                prepared.project.toolCatalogBytes,
-                [descriptor, entryName = std::move(entryName)]()
-                    -> Result<std::vector<ToolCatalogEntry>>
-                {
-                    return std::vector<ToolCatalogEntry>{
-                        ToolCatalogEntry{
-                            .name       = entryName,
-                            .descriptor = descriptor,
-                        },
-                    };
-                },
-                [](std::string_view, std::string_view) -> Status { return ok(); }
-            );
-        }
-
-        [[nodiscard]]
-        auto proposedOperation(
-            PreparedStore& prepared,
-            std::string clientRequestId,
-            std::string_view toolName
-        ) -> StoredOperation
-        {
-            auto operation = prepared.store.submitCommand(
-                prepared.controller,
-                command(prepared.snapshot, std::move(clientRequestId), "controller-1"),
-                toolInvocation(prepared.project, std::string{toolName})
-            );
-            REQUIRE(operation.has_value());
-            return operation->operation;
         }
 
         // A plan authority over a manifest naming the artifact root given,
@@ -1816,68 +1924,6 @@ namespace uf::operator_runtime
             REQUIRE(scope.has_value());
             return *std::move(scope);
         }
-
-        // An observed instance id minted under a second session on another
-        // target of the SAME registration: a real persistent binding, but one
-        // whose world scope no command of the prepared session may name. The
-        // mint reads the scope out of the pinned tuple, so the publication
-        // below derives a different canonical authority and mints a different
-        // id than anything the prepared session could name.
-        [[nodiscard]]
-        auto foreignObservedInstanceId(
-            PreparedStore& prepared
-        ) -> std::string
-        {
-            REQUIRE(prepared.store.provisionProjectInstance(
-                prepared.project.registration,
-                prepared.generation,
-                ProjectInstanceBaseline{
-                    .projectInstanceKey  = "instance-2",
-                    .eventId             = "baseline-instance-2",
-                    .sessionManifestHash = prepared.manifest.hash(),
-                    .entry               = journalEntry(
-                        prepared.project,
-                        prepared.project.registration.baselineEventType(),
-                        "{\"kind\":\"baseline\"}"
-                    ),
-                }
-            ).has_value());
-            auto const secondScope = ObservedInstanceWorldScope::run("target-2", 1);
-            REQUIRE(secondScope.has_value());
-            REQUIRE(prepared.store.pinSession(
-                SessionPin{
-                    .sessionId                 = "session-2",
-                    .authenticatedControllerId = "controller-1",
-                    .idempotencyNamespace      = "controller-1",
-                    .projectRegistrationHash   = prepared.project.registration.hash(),
-                    .controllerCapabilities    = {std::string{conformance::k_operateCapability}},
-                    .controlledTargetId        = "target-2",
-                    .projectInstanceKey        = "instance-2",
-                    .mode                      = SessionMode::Write,
-                    .kind                      = ControllerKind::Script,
-                    .worldScope                = *secondScope,
-                },
-                prepared.manifest,
-                std::nullopt
-            ).has_value());
-            auto second = prepared.store.bindController("session-2");
-            REQUIRE(second.has_value());
-            auto lease = prepared.store.acquireLease(*second);
-            REQUIRE(lease.has_value());
-            auto observation = prepared.store.publishProjectObservation(
-                *lease,
-                prepared.project.registration,
-                *secondScope,
-                prepared.project.observedInstanceIdentitySchemas,
-                observationProposal({
-                    observedInstanceProposal("foreign", "foreign-native"),
-                })
-            );
-            REQUIRE(observation.has_value());
-            REQUIRE(observation->observedInstances().size() == 1U);
-            return observation->observedInstances()[0].observedInstanceId.value();
-        }
-
 
         [[nodiscard]]
         auto normativeProjectObservationErrorWireName(
@@ -2955,88 +3001,6 @@ namespace uf::operator_runtime
         );
     }
 
-    // A read-only Operation never reaches mintNextStep, so the submitCommand
-    // gate is the ONLY place its canonical arguments' observed instance ids
-    // can be resolved. An id minted in another scope of the same registration
-    // must therefore be refused at submitCommand itself, before the read-only
-    // command is accepted at all.
-    TEST_CASE("a read-only command naming an instance minted in another scope is refused at submitCommand")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(
-            temporary.path(),
-            k_reducerSource,
-            test_support::k_toolPreconditionSchemaWithInstanceIds
-        );
-        auto const otherId = foreignObservedInstanceId(prepared);
-
-        auto catalog = catalogAcceptingAnyArguments(
-            prepared,
-            prepared.project.toolName("observe-1"),
-            prepared.project.toolName("observe-1")
-        );
-        REQUIRE(catalog.has_value());
-        auto invocation = catalog->validate(
-            prepared.project.toolName("observe-1"),
-            canonical(
-                prepared.project.schemaOwner,
-                "{\"observed_instance_id\":\"" + otherId + "\",\"value\":1}"
-            )
-        );
-        REQUIRE(invocation.has_value());
-        auto const refused = prepared.store.submitCommand(
-            prepared.controller,
-            command(prepared.snapshot, "request-observe-foreign", "controller-1"),
-            *invocation
-        );
-        expectProjectObservationError(
-            refused,
-            ProjectObservationErrorCode::ObservedInstanceScopeMismatch
-        );
-    }
-
-    // The fixture plugin has a proposal for command-1 but none for command-9,
-    // so "command-9" is the canary entry: if the resolution ever moved out of
-    // submitCommand into the plan path, plugin.plan would be called for a tool
-    // it has no proposal for and fail with its own error. This case is green
-    // only because the gate refused the command before plan was ever invoked,
-    // and the mutating descriptor makes it the path the plan would actually
-    // run on.
-    TEST_CASE("a mutating command naming an instance minted in another scope is refused before plugin.plan")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(
-            temporary.path(),
-            k_reducerSource,
-            test_support::k_toolPreconditionSchemaWithInstanceIds
-        );
-        auto const otherId = foreignObservedInstanceId(prepared);
-
-        auto catalog = catalogAcceptingAnyArguments(
-            prepared,
-            prepared.project.toolName("command-9"),
-            prepared.project.toolName("command-1")
-        );
-        REQUIRE(catalog.has_value());
-        auto invocation = catalog->validate(
-            prepared.project.toolName("command-9"),
-            canonical(
-                prepared.project.schemaOwner,
-                "{\"observed_instance_id\":\"" + otherId + "\",\"value\":1}"
-            )
-        );
-        REQUIRE(invocation.has_value());
-        auto const refused = prepared.store.submitCommand(
-            prepared.controller,
-            command(prepared.snapshot, "request-foreign-command", "controller-1"),
-            *invocation
-        );
-        expectProjectObservationError(
-            refused,
-            ProjectObservationErrorCode::ObservedInstanceScopeMismatch
-        );
-    }
-
     TEST_CASE("the pinned world scope is immutable and survives a restart")
     {
         auto temporary = TemporaryDirectory{};
@@ -3739,30 +3703,33 @@ namespace uf::operator_runtime
         auto temporary          = TemporaryDirectory{};
         auto const production   = temporary.path() / "production";
         auto const databasePath = production / "operator-runtime.sqlite";
-        auto operationId        = std::string{};
         {
             auto prepared = prepareStore(temporary.path());
-            operationId = proposedOperation(
-                prepared,
-                "tool-identity-migration-request",
-                prepared.project.toolName("command-1")
-            ).operationId;
+            static_cast<void>(prepared);
         }
 
         auto sourceIdentity = std::string{};
         auto auditRows      = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
+
+            // The Journal row provisioning wrote is what this pair has to
+            // carry. The tool identity tables it adds have no predecessor at
+            // this source, so nothing durable can be seeded in them here and
+            // the empty counts below are what proves they arrive created
+            // rather than populated.
             auditRows = prior.readRows(
-                "SELECT operation_id, client_request_id, tool_name, state "
-                "FROM operations WHERE operation_id='" + operationId + "'"
+                "SELECT event_id, namespaced_event_type, opaque_project_payload, "
+                "provenance FROM journal_events ORDER BY sequence"
             );
             removeToolIdentityPersistence(prior);
             dropJournalProposalTables(prior);
             sourceIdentity = exactSchemaIdentity(prior);
         }
+        REQUIRE_FALSE(auditRows.empty());
         CHECK(
             sourceIdentity
             == "sha256:d26b0e12be915009587a72312d4b46f4afc88509df5432f967eb15b016c24257"
@@ -3776,12 +3743,12 @@ namespace uf::operator_runtime
         auto const targetIdentity = exactSchemaIdentity(target);
         CHECK(
             targetIdentity
-            == "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d"
+            == "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76"
         );
         CHECK(
             target.readRows(
-                "SELECT operation_id, client_request_id, tool_name, state "
-                "FROM operations WHERE operation_id='" + operationId + "'"
+                "SELECT event_id, namespaced_event_type, opaque_project_payload, "
+                "provenance FROM journal_events ORDER BY sequence"
             ) == auditRows
         );
         CHECK(
@@ -5152,6 +5119,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             oldRows = prior.readRows(
@@ -5174,7 +5142,7 @@ namespace uf::operator_runtime
         auto target = test_support::OperatorDatabaseProbe{databasePath};
         CHECK(
             exactSchemaIdentity(target)
-            == "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d"
+            == "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76"
         );
         CHECK(
             target.readRows(
@@ -5197,7 +5165,7 @@ namespace uf::operator_runtime
             ) == std::vector<std::vector<std::string>>{
                 {
                     sourceIdentity,
-                    "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d",
+                    "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76",
                 },
             }
         );
@@ -5352,6 +5320,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior   = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             positionRows = prior.readRows(
@@ -5479,6 +5448,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             authorityRows = prior.readRows(
@@ -5574,6 +5544,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             identityRows = prior.readRows(
@@ -5606,7 +5577,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d"
+                == "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76"
             );
             CHECK(
                 target.readRows(
@@ -5635,8 +5606,8 @@ namespace uf::operator_runtime
                 ) == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e"
-                        "73960daefa1be60c3c62d",
+                        "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f"
+                        "3243b8266119f7dbc4d76",
                     },
                 }
             );
@@ -5716,6 +5687,7 @@ namespace uf::operator_runtime
         auto historyRows    = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             rootRows = prior.readRows(
                 "SELECT root_identity, caller_namespace, request_key, "
@@ -5743,7 +5715,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d"
+                == "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76"
             );
 
             // The run came across, and it came across running: nothing in a
@@ -5788,8 +5760,8 @@ namespace uf::operator_runtime
                 == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e"
-                        "73960daefa1be60c3c62d",
+                        "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f"
+                        "3243b8266119f7dbc4d76",
                     },
                 }
             );
@@ -5806,27 +5778,42 @@ namespace uf::operator_runtime
         auto temporary          = TemporaryDirectory{};
         auto const production   = temporary.path() / "production";
         auto const databasePath = production / "operator-runtime.sqlite";
-        auto operationId        = std::string{};
+        auto rootIdentity = std::string{};
+        auto callIdentity = std::string{};
         {
-            auto prepared = prepareStore(temporary.path());
-            operationId   = proposedOperation(
-                                prepared,
-                                "dispatch-removal-request",
-                                prepared.project.toolName("command-1")
-            )
-                                .operationId;
+            auto prepared      = prepareStore(temporary.path());
+            auto const started = startToolCall(
+                prepared,
+                "dispatch-removal-request",
+                prepared.project.toolName("command-1")
+            );
+
+            // Settled before the store is dropped. A dispatching mutating call
+            // is exactly what the restart sweep exists to reclassify, and its
+            // revision is the sweep's to move -- comparing that number across
+            // the reopen would be reading what the restart owns and calling it
+            // migration damage.
+            confirmToolCall(prepared, started);
+            rootIdentity = started.root.identity().hex();
+            callIdentity = started.call.identity().hex();
         }
 
         auto sourceIdentity = std::string{};
-        auto auditRows      = std::vector<std::vector<std::string>>{};
+        auto rootRows       = std::vector<std::vector<std::string>>{};
+        auto historyRows    = std::vector<std::vector<std::string>>{};
         auto eventRows      = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
-            auditRows = prior.readRows(
-                "SELECT operation_id, client_request_id, tool_name, state "
-                "FROM operations WHERE operation_id='" + operationId + "'"
+            rootRows = prior.readRows(
+                "SELECT root_identity, caller_namespace, request_key, "
+                "request_preimage_hash FROM tool_root_requests"
+            );
+            historyRows = prior.readRows(
+                "SELECT call_identity, mutating, state, revision "
+                "FROM tool_call_history"
             );
             eventRows = prior.readRows(
                 "SELECT kind, subject_id FROM ledger_events ORDER BY sequence"
@@ -5834,8 +5821,11 @@ namespace uf::operator_runtime
             dropJournalProposalTables(prior);
             sourceIdentity = exactSchemaIdentity(prior);
         }
-        REQUIRE_FALSE(auditRows.empty());
+        REQUIRE(rootRows.size() == 1U);
+        REQUIRE(historyRows.size() == 1U);
         REQUIRE_FALSE(eventRows.empty());
+        CHECK(rootIdentity == rootRows.front().front());
+        CHECK(callIdentity == historyRows.front().front());
         CHECK_MESSAGE(
             sourceIdentity
                 == "sha256:5c0e9a22691b36600cf861157a8b08385e4ec546a86ad0c29849adc5584014ee",
@@ -5850,7 +5840,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d"
+                == "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76"
             );
 
             // The five tables are gone rather than emptied.
@@ -5866,9 +5856,15 @@ namespace uf::operator_runtime
             // Everything the dropped tables did not own survives.
             CHECK(
                 target.readRows(
-                    "SELECT operation_id, client_request_id, tool_name, state "
-                    "FROM operations WHERE operation_id='" + operationId + "'"
-                ) == auditRows
+                    "SELECT root_identity, caller_namespace, request_key, "
+                    "request_preimage_hash FROM tool_root_requests"
+                ) == rootRows
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT call_identity, mutating, state, revision "
+                    "FROM tool_call_history"
+                ) == historyRows
             );
             CHECK(
                 target.readRows(
@@ -5884,13 +5880,166 @@ namespace uf::operator_runtime
                 == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e"
-                        "73960daefa1be60c3c62d",
+                        "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f"
+                        "3243b8266119f7dbc4d76",
                     },
                 }
             );
         }
     }
+
+    // The pair that took the Operation surface out of the ledger entirely.
+    // operations had one writer and four readers, all deleted together;
+    // reconciliations went with it because its only non-audit column was a NOT
+    // NULL reference into it; and the two nullable references into it that
+    // journal_events and external_input_findings carried were columns no value
+    // could ever occupy. ledger_events loses the detail column and the two
+    // kinds that named an Operation as their subject.
+    //
+    // Its source is the immediately prior generation, so the fixture winds a
+    // fresh database back with restoreOperationSurfaceSchema alone: nothing
+    // else moved in this pair.
+    TEST_CASE("the Operation surface is dropped under its exact pair")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        auto rootIdentity = std::string{};
+        auto callIdentity = std::string{};
+        {
+            auto prepared      = prepareStore(temporary.path());
+            auto const started = startToolCall(
+                prepared,
+                "operation-surface-removal-request",
+                prepared.project.toolName("command-1")
+            );
+            rootIdentity = started.root.identity().hex();
+            callIdentity = started.call.identity().hex();
+        }
+
+        auto sourceIdentity = std::string{};
+        auto rootRows       = std::vector<std::vector<std::string>>{};
+        auto positionRows   = std::vector<std::vector<std::string>>{};
+        auto journalRows    = std::vector<std::vector<std::string>>{};
+        auto eventRows      = std::vector<std::vector<std::string>>{};
+        {
+            auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationSurfaceSchema(prior);
+            rootRows = prior.readRows(
+                "SELECT root_identity, caller_namespace, request_key, "
+                "request_preimage_hash FROM tool_root_requests"
+            );
+            positionRows = prior.readRows(
+                "SELECT call_identity, root_identity, call_sequence, "
+                "canonical_args FROM tool_call_positions"
+            );
+            journalRows = prior.readRows(
+                "SELECT event_id, namespaced_event_type, opaque_project_payload, "
+                "provenance FROM journal_events ORDER BY sequence"
+            );
+            eventRows = prior.readRows(
+                "SELECT kind, controlled_target_id, subject_id FROM ledger_events "
+                "ORDER BY sequence"
+            );
+            sourceIdentity = exactSchemaIdentity(prior);
+        }
+        REQUIRE(rootRows.size() == 1U);
+        REQUIRE(positionRows.size() == 1U);
+        REQUIRE_FALSE(journalRows.empty());
+        REQUIRE_FALSE(eventRows.empty());
+        CHECK(rootIdentity == rootRows.front().front());
+        CHECK(callIdentity == positionRows.front().front());
+        CHECK_MESSAGE(
+            sourceIdentity
+                == "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d",
+            "the fixture must reproduce the exact identity this pair migrates from"
+        );
+
+        {
+            auto migrated = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(migrated.has_value(), migrated.error().message());
+        }
+        {
+            auto target = test_support::OperatorDatabaseProbe{databasePath};
+            CHECK(
+                exactSchemaIdentity(target)
+                == "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76"
+            );
+
+            // The two tables are gone rather than emptied, and the columns that
+            // referenced them are gone from the tables that survive.
+            CHECK(
+                target.readRows(
+                    "SELECT count(*) FROM sqlite_schema WHERE type='table' "
+                    "AND name IN ('operations', 'reconciliations')"
+                ) == std::vector<std::vector<std::string>>{{"0"}}
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT count(*) FROM pragma_table_info('journal_events') "
+                    "WHERE name='operation_id'"
+                ) == std::vector<std::vector<std::string>>{{"0"}}
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT count(*) FROM "
+                    "pragma_table_info('external_input_findings') "
+                    "WHERE name='operation_id'"
+                ) == std::vector<std::vector<std::string>>{{"0"}}
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT count(*) FROM pragma_table_info('ledger_events') "
+                    "WHERE name='detail'"
+                ) == std::vector<std::vector<std::string>>{{"0"}}
+            );
+
+            // Everything the dropped surface did not own comes across byte for
+            // byte, the ledger events included: no row of this database names
+            // an Operation as its subject, so the rebuilt CHECK discards none
+            // of them.
+            CHECK(
+                target.readRows(
+                    "SELECT root_identity, caller_namespace, request_key, "
+                    "request_preimage_hash FROM tool_root_requests"
+                ) == rootRows
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT call_identity, root_identity, call_sequence, "
+                    "canonical_args FROM tool_call_positions"
+                ) == positionRows
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT event_id, namespaced_event_type, "
+                    "opaque_project_payload, provenance FROM journal_events "
+                    "ORDER BY sequence"
+                ) == journalRows
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT kind, controlled_target_id, subject_id FROM "
+                    "ledger_events ORDER BY sequence"
+                ) == eventRows
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT source_identity, target_identity FROM "
+                    "schema_identity_transitions WHERE source_identity='"
+                    + sourceIdentity + "'"
+                )
+                == std::vector<std::vector<std::string>>{
+                    {
+                        sourceIdentity,
+                        "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f"
+                        "3243b8266119f7dbc4d76",
+                    },
+                }
+            );
+        }
+    }
+
     // The pair that gave call-bound Journal batch proposals a durable home.
     // Its three tables have no predecessor, so the migration creates them and
     // moves nothing else. The fixture proves both halves: it winds a fresh
@@ -5911,6 +6060,7 @@ namespace uf::operator_runtime
         auto journalRows    = std::vector<std::vector<std::string>>{};
         {
             auto prior  = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             journalRows = prior.readRows(
                 "SELECT event_id, namespaced_event_type, opaque_project_payload "
@@ -5934,7 +6084,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d"
+                == "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76"
             );
             CHECK(
                 target.readRows(
@@ -5964,8 +6114,8 @@ namespace uf::operator_runtime
                 == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e"
-                        "73960daefa1be60c3c62d",
+                        "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f"
+                        "3243b8266119f7dbc4d76",
                     },
                 }
             );
@@ -6017,6 +6167,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             identityRows = prior.readRows(
@@ -6040,7 +6191,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d"
+                == "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76"
             );
             CHECK(
                 target.readRows(
@@ -6060,7 +6211,7 @@ namespace uf::operator_runtime
                 == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d",
+                        "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76",
                     },
                 }
             );
@@ -6086,6 +6237,7 @@ namespace uf::operator_runtime
         auto historicalRows = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             restoreFormat2RegistrationIdentity(prior);
@@ -6191,6 +6343,7 @@ namespace uf::operator_runtime
         auto replayBefore   = std::vector<std::vector<std::string>>{};
         {
             auto source = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationSurfaceSchema(source);
             restoreOperationDispatchSchema(source);
             restoreFormat2RegistrationIdentity(source);
             removeReleaseUpgradeEvidenceTables(source);
@@ -6268,6 +6421,7 @@ namespace uf::operator_runtime
         auto sessionRows    = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             restoreFormat2RegistrationIdentity(prior);
@@ -6374,6 +6528,7 @@ namespace uf::operator_runtime
         auto bindingRows    = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             restoreFormat2RegistrationIdentity(prior);
@@ -6463,6 +6618,7 @@ namespace uf::operator_runtime
         auto registrationRows = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             restoreFormat2RegistrationIdentity(prior);
@@ -6527,6 +6683,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             restoreFormat2RegistrationIdentity(prior);
@@ -6611,17 +6768,18 @@ namespace uf::operator_runtime
         auto temporary          = TemporaryDirectory{};
         auto const production   = temporary.path() / "production";
         auto const databasePath = production / "operator-runtime.sqlite";
-        auto operationId         = std::string{};
+        auto leaseId             = std::string{};
         auto artifactRootHash    = std::optional<ContentHash>{};
         auto installedGeneration = uint64{};
         {
             auto prepared = prepareStore(temporary.path());
-            auto const operation = proposedOperation(
-                prepared,
-                "migration-request",
-                prepared.project.toolName("command-1")
-            );
-            operationId         = operation.operationId;
+
+            // The lease this store acquired is the subject of the one ledger
+            // event provisioning leaves behind, and that event is what the
+            // audit-trace read-back below follows across the upgrade. No Tool
+            // row can be seeded here: restoreFormat2RegistrationIdentity winds
+            // the tool identity tables away entirely.
+            leaseId             = prepared.lease.leaseId;
             artifactRootHash    = prepared.runtimeArtifactRootHash;
             installedGeneration = prepared.installedGeneration;
         }
@@ -6629,6 +6787,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto priorSchema = test_support::OperatorDatabaseProbe{databasePath};
+            restoreOperationSurfaceSchema(priorSchema);
             restoreOperationDispatchSchema(priorSchema);
             restoreFormat2RegistrationIdentity(priorSchema);
             priorSchema.execute("DROP TABLE availability_heads");
@@ -6736,33 +6895,30 @@ namespace uf::operator_runtime
             "the populated Journal entry must remain readable with its exact content"
         );
 
-        auto const expectedOperation = std::vector<std::vector<std::string>>{
-            {
-                operationId,
-                "migration-request",
-                "fixture.alpha.command-1",
-                "proposed",
-            },
-        };
+        // The Operation surface is one of the things this chain of pairs now
+        // ends by removing, so the two tables it owned are asserted gone rather
+        // than read back: a row of either could not have survived the last step
+        // of the chain, and a fixture that still looked for one would be
+        // asserting the migration failed.
         CHECK_MESSAGE(
             migrated.readRows(
-                "SELECT operation_id, client_request_id, tool_name, state "
-                "FROM operations WHERE client_request_id='migration-request'"
-            ) == expectedOperation,
-            "the populated Operation ledger row must remain readable with its exact content"
+                "SELECT count(*) FROM sqlite_schema WHERE type='table' "
+                "AND name IN ('operations', 'reconciliations')"
+            ) == std::vector<std::vector<std::string>>{{"0"}},
+            "the upgraded chain must leave no Operation table behind"
         );
 
         auto const expectedAuditTrace = std::vector<std::vector<std::string>>{
             {
-                "operation_created",
+                "control_transitioned",
                 "target-1",
-                operationId,
+                leaseId,
             },
         };
         CHECK_MESSAGE(
             migrated.readRows(
                 "SELECT kind, controlled_target_id, subject_id FROM ledger_events "
-                "WHERE kind='operation_created' AND controlled_target_id='target-1'"
+                "WHERE kind='control_transitioned' AND controlled_target_id='target-1'"
             ) == expectedAuditTrace,
             "the populated audit trace must remain readable with its exact content"
         );
@@ -6807,11 +6963,21 @@ namespace uf::operator_runtime
         CHECK(disagreeing.error().message().contains(pinRegistration.hex()));
     }
 
-    TEST_CASE("session pin refuses an unterminated mutation and names its Operation")
+    // A release upgrade replaces the RuntimeArtifact the whole production root
+    // runs, so a mutating Tool call still holding the barrier would resume
+    // under bytes other than the ones it was admitted against. What the gate
+    // reads is the unterminated row itself rather than a target: it is scoped
+    // to no target and excludes no chain, because a session pin is inside none.
+    TEST_CASE("session pin refuses an unterminated Tool call and names it")
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
-        auto const operation = proposedOperation(
+
+        // Admitted holds the barrier too, but only a dispatching call can be
+        // settled -- the terminal outcome is recorded against the dispatch
+        // token -- so reaching the boundary is what lets the second half of
+        // this case terminate the call at all.
+        auto const started = startToolCall(
             prepared,
             "upgrade-mutation",
             prepared.project.toolName("command-1")
@@ -6841,23 +7007,18 @@ namespace uf::operator_runtime
 
         REQUIRE_FALSE_MESSAGE(
             refused.has_value(),
-            "an unterminated mutating Operation must refuse a new session pin"
+            "an unterminated mutating Tool call must refuse a new session pin"
         );
         CHECK_MESSAGE(
-            refused.error().message().contains("unterminated mutating Operation"),
+            refused.error().message().contains("unterminated mutating Tool call"),
             "the refusal must come from the mutation quiescence guard"
         );
         CHECK_MESSAGE(
-            refused.error().message().contains(operation.operationId),
-            "the mutation refusal must name the Operation blocking the pin"
+            refused.error().message().contains(started.call.identity().hex()),
+            "the mutation refusal must name the Tool call blocking the pin"
         );
 
-        auto const terminated = prepared.store.transitionOperation(
-            operation.operationId,
-            operation.revision,
-            OperationSignal::Invalidated
-        );
-        REQUIRE(terminated.has_value());
+        confirmToolCall(prepared, started);
         auto const accepted = prepared.store.pinSession(
             pin,
             manifest,
@@ -7688,65 +7849,76 @@ namespace uf::operator_runtime
         ).has_value());
     }
 
-    TEST_CASE("commands are durable-idempotent and mutation chains are exclusive")
+    // Durable idempotency belongs to the root request. The caller namespace and
+    // request key name the row; the preimage bytes decide whether a repeat
+    // rejoins that row or is a second intent filed under one key. The relation
+    // and the ledger are asserted together deliberately: relationTo answers
+    // from the two values alone and persistToolRootRequest answers from what is
+    // stored, and the whole point of the rule is that those two agree.
+    TEST_CASE("Tool root requests are durable-idempotent and conflict on changed bytes")
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
-        auto const request = command(prepared.snapshot, "request-1", "controller-1");
-        auto first = prepared.store.submitCommand(
-            prepared.controller,
-            request,
-            toolInvocation(prepared.project, prepared.project.toolName("command-1"))
+        auto preimage  = CanonicalJson::parseExact(
+            R"({"objective":"durable-idempotency"})"
+        );
+        REQUIRE(preimage.has_value());
+        auto const first = ToolRootRequestIdentity::create(
+            "controller-1",
+            "request-1",
+            *preimage
         );
         REQUIRE(first.has_value());
-        CHECK(first->operation.lookup == CommandLookup::Created);
+        auto const created = prepared.store.persistToolRootRequest(*first);
+        REQUIRE(created.has_value());
+        CHECK(created->lookup == ToolIdentityLookup::Created);
 
-        auto const repeated = prepared.store.submitCommand(
-            prepared.controller,
-            request,
-            toolInvocation(prepared.project, prepared.project.toolName("command-1"))
+        // The same namespace, key and exact preimage bytes rejoin the stored
+        // row at the same identity rather than minting a second.
+        auto const repeated = ToolRootRequestIdentity::create(
+            "controller-1",
+            "request-1",
+            *preimage
         );
         REQUIRE(repeated.has_value());
-        CHECK(repeated->operation.lookup == CommandLookup::Existing);
-        CHECK(repeated->operation.operationId == first->operation.operationId);
+        CHECK(first->relationTo(*repeated) == RootRequestRelation::SameRequest);
+        auto const existing = prepared.store.persistToolRootRequest(*repeated);
+        REQUIRE(existing.has_value());
+        CHECK(existing->lookup == ToolIdentityLookup::Existing);
+        CHECK(existing->rootIdentity == created->rootIdentity);
 
-        // Idempotency is by request identity and the fingerprint is over the
-        // catalog's bytes, so one command submitted twice is one fingerprint.
-        CHECK(repeated->commandFingerprint == first->commandFingerprint);
-
-        // Same client_request_id, different tool: the stored fingerprint is
-        // what decides, and it covers the tool the catalog named.
-        CHECK_FALSE(prepared.store.submitCommand(
-            prepared.controller,
-            request,
-            toolInvocation(prepared.project, prepared.project.toolName("different-command"))
-        ).has_value());
-        CHECK_FALSE(prepared.store.submitCommand(
-            prepared.controller,
-            command(prepared.snapshot, "request-2", "controller-1"),
-            toolInvocation(prepared.project, prepared.project.toolName("command-2"))
-        ).has_value());
-
-        // A read-only tool takes no mutation chain, so it is admitted while the
-        // mutating Operation above is still live.
-        CHECK(prepared.store.submitCommand(
-            prepared.controller,
-            command(prepared.snapshot, "request-3", "controller-1"),
-            toolInvocation(prepared.project, prepared.project.toolName("observe-1"))
-        ).has_value());
-
-        auto const cancelled = prepared.store.transitionOperation(
-            first->operation.operationId,
-            first->operation.revision,
-            OperationSignal::Cancelled
+        // The same key with different bytes is two intents under one key, so
+        // it is a conflict rather than a second row.
+        auto conflictingPreimage = CanonicalJson::parseExact(
+            R"({"objective":"a second intent under one key"})"
         );
-        REQUIRE(cancelled.has_value());
-        CHECK(cancelled->state == OperationState::Cancelled);
-        CHECK(prepared.store.submitCommand(
-            prepared.controller,
-            command(prepared.snapshot, "request-2", "controller-1"),
-            toolInvocation(prepared.project, prepared.project.toolName("command-2"))
-        ).has_value());
+        REQUIRE(conflictingPreimage.has_value());
+        auto const conflicting = ToolRootRequestIdentity::create(
+            "controller-1",
+            "request-1",
+            *std::move(conflictingPreimage)
+        );
+        REQUIRE(conflicting.has_value());
+        CHECK(first->relationTo(*conflicting) == RootRequestRelation::Conflict);
+        auto const refused = prepared.store.persistToolRootRequest(*conflicting);
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(refused.error().message().contains(
+            "replayed with different canonical material"
+        ));
+
+        // A different key in the same namespace is simply another request, and
+        // the same bytes under it are not a replay of anything.
+        auto const distinct = ToolRootRequestIdentity::create(
+            "controller-1",
+            "request-2",
+            *std::move(preimage)
+        );
+        REQUIRE(distinct.has_value());
+        CHECK(first->relationTo(*distinct) == RootRequestRelation::Distinct);
+        auto const second = prepared.store.persistToolRootRequest(*distinct);
+        REQUIRE(second.has_value());
+        CHECK(second->lookup == ToolIdentityLookup::Created);
+        CHECK(second->rootIdentity != created->rootIdentity);
     }
 
     TEST_CASE("fault matrix tamper names the altered signed evidence file")

@@ -1,8 +1,9 @@
 #include <operator/ledger.hpp>
-#include <operator/operation.hpp>
+#include <operator/tool-admission-request.hpp>
 
 #include "project-fixture.hpp"
 #include "schema-binding.hpp"
+#include "tool-call-fixture.hpp"
 
 #include <json/schema.hpp>
 #include <json/value.hpp>
@@ -166,19 +167,25 @@ namespace uf::operator_runtime
 
     TEST_CASE("schema-agent-a02")
     {
-        auto const schema   = readSchema("umbraflow-operator-v1.schema.json");
-        auto const budget   = definition(schema, "AgentBudget");
-        auto const progress = definition(schema, "ProgressMarker");
+        auto const schema = readSchema("umbraflow-operator-v1.schema.json");
+        auto const budget = definition(schema, "AgentBudget");
         checkStrictObject(budget);
-        checkStrictObject(progress);
         CHECK(budget.find("\"maximum_tool_calls\"") != std::string::npos);
         CHECK(budget.find("\"maximum_mutations\"") != std::string::npos);
         CHECK(budget.find("\"maximum_observations\"") != std::string::npos);
+        CHECK(budget.find("\"maximum_elapsed_ms\"") != std::string::npos);
         CHECK(budget.find("\"maximum_risk_units\"") != std::string::npos);
-        CHECK(progress.find("\"same_state_repetitions\"") != std::string::npos);
+
+        // OP:`ProgressMarker` was the other half of A-02 and is deleted with
+        // the Operation surface. Its only writer was submitCommand, so the
+        // definition described a document nothing mints, and a definition with
+        // neither a producer nor a reader is published as the contract without
+        // being one. Asserted as an absence rather than left to a grep,
+        // because re-adding it is exactly the mistake this case would
+        // otherwise stop noticing.
         CHECK_MESSAGE(
-            progress.find("\"elapsed_without_progress_ms\"") == std::string::npos,
-            "ProgressMarker must not claim an unread millisecond no-progress clock"
+            schema.find("\"ProgressMarker\"") == std::string::npos,
+            "the operator protocol must not republish a definition nothing mints"
         );
     }
 
@@ -206,16 +213,12 @@ namespace uf::operator_runtime
         // and the stream position it names.
         auto const base = prepared.snapshot.eventCursor;
 
-        auto const first = test_support::proposedOperation(
-            prepared,
-            "request-1",
-            prepared.project.toolName("observe-1")
-        );
-        auto const second = test_support::proposedOperation(
-            prepared,
-            "request-2",
-            prepared.project.toolName("raw-coordinate-click")
-        );
+        // Three facts about target-1 that the Agent caused none of, and that
+        // between them use both surviving event kinds. The Script gives up the
+        // lease the snapshot above was composed under, a Human seizes the
+        // target, and that Human reports out-of-band input -- the one thing an
+        // Agent most needs to hear about and can never cause.
+        REQUIRE(prepared.store.releaseLease(prepared.lease).has_value());
 
         auto const human = test_support::addController(
             prepared,
@@ -227,6 +230,14 @@ namespace uf::operator_runtime
         );
         auto const takeover = prepared.store.takeoverLease(human, "a human took over");
         REQUIRE(takeover.has_value());
+        auto const finding = prepared.store.recordExternalInput(
+            human,
+            ExternalInputReport{
+                .requiredAction = ExternalInputAction::FreezeAndReobserve,
+                .reason         = "a human typed into the target",
+            }
+        );
+        REQUIRE(finding.has_value());
 
         // A whole controller's worth of activity on ANOTHER target, after all
         // of the above, so that the batch below can be shown to end where this
@@ -241,22 +252,7 @@ namespace uf::operator_runtime
         );
         auto const elsewhereLease = prepared.store.acquireLease(elsewhere);
         REQUIRE(elsewhereLease.has_value());
-        auto const elsewhereSnapshot = prepared.store.createSnapshot(
-            *elsewhereLease,
-            prepared.project.registration,
-            prepared.project.toolCatalogSchemaOwner,
-            prepared.project.observedInstanceIdentitySchemas,
-            test_support::observeAgain(prepared)
-        );
-        REQUIRE(elsewhereSnapshot.has_value());
-        REQUIRE(prepared.store.submitCommand(
-            elsewhere,
-            test_support::command(*elsewhereSnapshot, "request-elsewhere"),
-            test_support::toolInvocation(
-                prepared.project,
-                prepared.project.toolName("observe-1")
-            )
-        ).has_value());
+        REQUIRE(prepared.store.releaseLease(*elsewhereLease).has_value());
 
         auto const read = prepared.store.subscribe(agent, base, 16U);
         REQUIRE(read.has_value());
@@ -264,18 +260,21 @@ namespace uf::operator_runtime
         REQUIRE(batch != nullptr);
 
         // Exactly the three facts about this target, in order, starting at the
-        // very next sequence after the snapshot's cursor. Two of them were
-        // caused by a Script and one by a Human; none by the Agent reading them.
+        // very next sequence after the snapshot's cursor. Two were caused by a
+        // Script releasing control and a Human seizing it, the third by that
+        // Human reporting; none by the Agent reading them. Three distinct
+        // subjects, so a stream that named the wrong one is red rather than
+        // merely differently ordered.
         REQUIRE(batch->events.size() == 3U);
         CHECK(batch->events[0].sequence.value == base.value + 1U);
         CHECK(batch->events[1].sequence.value == base.value + 2U);
         CHECK(batch->events[2].sequence.value == base.value + 3U);
-        CHECK(batch->events[0].kind == LedgerEventKind::OperationCreated);
-        CHECK(batch->events[1].kind == LedgerEventKind::OperationCreated);
-        CHECK(batch->events[2].kind == LedgerEventKind::ControlTransitioned);
-        CHECK(batch->events[0].subjectId == first.operationId);
-        CHECK(batch->events[1].subjectId == second.operationId);
-        CHECK(batch->events[2].subjectId == takeover->lease.leaseId);
+        CHECK(batch->events[0].kind == LedgerEventKind::ControlTransitioned);
+        CHECK(batch->events[1].kind == LedgerEventKind::ControlTransitioned);
+        CHECK(batch->events[2].kind == LedgerEventKind::ExternalInputDetected);
+        CHECK(batch->events[0].subjectId == prepared.lease.leaseId);
+        CHECK(batch->events[1].subjectId == takeover->lease.leaseId);
+        CHECK(batch->events[2].subjectId == finding->findingId);
         for (auto const& event : batch->events)
         {
             CHECK(event.controlledTargetId == "target-1");
@@ -353,49 +352,11 @@ namespace uf::operator_runtime
         // cannot make progress and would loop for ever if it were served.
         CHECK_FALSE(prepared.store.subscribe(agent, base, 0U).has_value());
 
-        auto const eventTemporary = TemporaryDirectory{};
-        auto       eventStore      = prepareStore(eventTemporary.path());
-        auto const eventBase       = eventStore.snapshot.eventCursor;
-        auto const readOperation = test_support::proposedOperation(
-            eventStore,
-            "request-state-event",
-            eventStore.project.toolName("observe-1")
-        );
-        auto const confirmed = eventStore.store.transitionOperation(
-            readOperation.operationId,
-            readOperation.revision,
-            OperationSignal::ReadCompleted
-        );
-        REQUIRE(confirmed.has_value());
-
-        auto const eventRead = eventStore.store.subscribe(
-            eventStore.controller,
-            eventBase,
-            16U
-        );
-        REQUIRE(eventRead.has_value());
-        auto const* eventBatch = std::get_if<SubscriptionBatch>(&*eventRead);
-        REQUIRE(eventBatch != nullptr);
-        auto const confirmedState = std::ranges::find_if(
-            eventBatch->events,
-            [&readOperation](LedgerEvent const& event)
-            {
-                return event.kind == LedgerEventKind::OperationStateChanged
-                    && event.subjectId == readOperation.operationId;
-            }
-        );
-        REQUIRE_MESSAGE(
-            confirmedState != eventBatch->events.end(),
-            "transitionOperation must publish the resulting Operation state"
-        );
-        auto const* confirmedDetail = std::get_if<OperationState>(
-            &confirmedState->detail
-        );
-        REQUIRE(confirmedDetail != nullptr);
-        CHECK_MESSAGE(
-            *confirmedDetail == OperationState::Confirmed,
-            "state event detail must be the Operation state committed by the transition"
-        );
+        // The stream's third kind was OperationStateChanged, carrying the
+        // committed state as a LedgerEvent detail, and both went with the
+        // Operation record. A Tool call's state changes publish nothing here
+        // and the event has no detail member to carry one, so the two kinds
+        // above are the whole vocabulary and both are exercised.
     }
 
     TEST_CASE("contract-agent-a02")
@@ -516,28 +477,84 @@ namespace uf::operator_runtime
                 test_support::observeAgain(prepared)
             );
         };
-        auto const submit = [&prepared](
+
+        // One Tool call admitted under a named controller's own binding and
+        // lease. It builds what tool-call-fixture.hpp builds but hands back the
+        // Result rather than requiring it, because every ceiling below is
+        // proved by a refusal and a refusal has to be a value this case can
+        // read the error kind off.
+        //
+        // Everything the coordinate is derived from is a function of the
+        // request key and the tool, so presenting the same pair again is the
+        // same call rather than a second one -- which is what the replay below
+        // stands on. The key must therefore be unique per controller here: all
+        // of these bindings authenticate as controller-1, and a root request is
+        // keyed by that namespace and the key alone.
+        auto const admit = [&prepared](
             ControllerBinding const& binding,
-            SnapshotRecord const& snapshot,
-            std::string requestId,
+            ControlLease const& lease,
+            std::string_view requestKey,
             std::string_view toolName
         )
         {
-            return prepared.store.submitCommand(
-                binding,
-                test_support::command(snapshot, std::move(requestId)),
-                test_support::toolInvocation(prepared.project, std::string{toolName})
+            auto preimage = CanonicalJson::parseExact(
+                R"({"objective":"agent-budget"})"
             );
+            REQUIRE(preimage.has_value());
+            auto const root = ToolRootRequestIdentity::create(
+                std::string{binding.controllerId()},
+                std::string{requestKey},
+                *std::move(preimage)
+            );
+            REQUIRE(root.has_value());
+            auto const invocation = test_support::toolInvocation(
+                prepared.project,
+                std::string{toolName}
+            );
+            auto const call = test_support::toolCallAt(
+                *root,
+                nullptr,
+                1U,
+                ToolExecutionIdentity{
+                    .runIdentity                 = prepared.manifest.hash(),
+                    .frameworkReleaseIdentity    = prepared.runtimeArtifactRootHash,
+                    .toolRuntimeProtocolIdentity = hashOf("a02-protocol"),
+                    .environmentIdentity         = hashOf("a02-environment"),
+                },
+                invocation
+            );
+            REQUIRE(call.has_value());
+
+            // Read off the descriptor exactly as admission reads it, so this
+            // case cannot present a mutating tool as read-only either.
+            auto mutation = std::optional<ToolAdmissionRequest::Mutation>{};
+            if (invocation.descriptor().mutability == ToolMutability::Mutating)
+            {
+                mutation = ToolAdmissionRequest::Mutation{
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = {test_support::routineToolEffect(
+                        prepared.project,
+                        std::string{toolName}
+                    )},
+                };
+            }
+            return prepared.store.admitToolCall(ToolAdmissionRequest{
+                .controller = binding,
+                .lease      = lease,
+                .root       = *root,
+                .call       = *call,
+                .mutation   = std::move(mutation),
+            });
         };
 
-        // The two catalog names this case submits. A fixture tool's namespace
+        // The two catalog names this case calls. A fixture tool's namespace
         // is its registration's plugin_id, so they are composed from the
         // project prepareStore registered rather than respelled per call.
         auto const observeTool = prepared.project.toolName("observe-1");
         auto const commandTool = prepared.project.toolName("command-1");
 
-        // ACTION. One accepted command, and the second is refused by the
-        // column's own CHECK rather than by a comparison beside it.
+        // ACTION. One admitted call, and the second is refused by the column's
+        // own CHECK rather than by a comparison beside it.
         auto const callsBudget = AgentBudget{
             .maximumToolCalls    = 1U,
             .maximumMutations    = 8U,
@@ -554,25 +571,36 @@ namespace uf::operator_runtime
             "target-calls",
             callsBudget
         );
-        auto const callsLease    = leaseFor(calls);
-        auto const callsSnapshot = snapshotFor(callsLease);
-        REQUIRE(callsSnapshot.has_value());
-        REQUIRE(submit(calls, *callsSnapshot, "request-1", observeTool).has_value());
-        auto const spent = submit(calls, *callsSnapshot, "request-2", observeTool);
+        auto const callsLease = leaseFor(calls);
+        auto const admitted   = admit(calls, callsLease, "calls-1", observeTool);
+        REQUIRE(admitted.has_value());
+        auto const spent = admit(calls, callsLease, "calls-2", observeTool);
         REQUIRE_FALSE(spent.has_value());
         CHECK(automationErrorKind(spent.error()) == AutomationErrorKind::ActionRejected);
         auto const callsRemaining = prepared.store.remainingBudget(calls);
         REQUIRE(callsRemaining.has_value());
         CHECK(callsRemaining->toolCalls == 0U);
-        CHECK(callsRemaining->observations == callsBudget.maximumObservations - 1U);
 
-        // Exhaustion refuses new work; it does not un-record accepted work. The
-        // replay of an accepted request still answers, and costs nothing,
-        // because the counter records what the ledger accepted and this was
-        // charged when it was accepted.
-        auto const replay = submit(calls, *callsSnapshot, "request-1", observeTool);
+        // The columns are separate spends and not one counter under five
+        // names: admitting a read-only Project Tool charges the tool-call
+        // column and nothing else, so the observation ceiling is demonstrably
+        // not what refused the second call.
+        CHECK(callsRemaining->observations == callsBudget.maximumObservations);
+
+        // Exhaustion refuses new work; it does not un-record accepted work.
+        // Presenting the admitted call's own coordinate again rejoins its
+        // existing admission -- the same attempt at the same history revision
+        // -- and costs nothing, because the counter records what the ledger
+        // admitted and this was charged when it was admitted. A second attempt
+        // would carry the next attempt number and would have to find a
+        // tool-call budget that is already zero.
+        auto const replay = admit(calls, callsLease, "calls-1", observeTool);
         REQUIRE(replay.has_value());
-        CHECK(replay->operation.lookup == CommandLookup::Existing);
+        CHECK(replay->attemptNumber() == admitted->attemptNumber());
+        CHECK(replay->historyRevision() == admitted->historyRevision());
+        auto const afterReplay = prepared.store.remainingBudget(calls);
+        REQUIRE(afterReplay.has_value());
+        CHECK(afterReplay->toolCalls == 0U);
 
         // Pinning the same session again is idempotent and does NOT refresh
         // what it has spent. If it did, an exhausted Agent would only have to
@@ -587,8 +615,15 @@ namespace uf::operator_runtime
         CHECK(afterRepin->toolCalls == 0U);
 
         // MUTATION. Sourced from the Tool Catalog descriptor and not from the
-        // plan's declared risk, so a zero mutation ceiling refuses a mutating
-        // tool while leaving every read-only one available.
+        // effects the caller proposed, so a zero mutation ceiling refuses a
+        // mutating tool while leaving every read-only one available.
+        auto const mutationsBudget = AgentBudget{
+            .maximumToolCalls    = 8U,
+            .maximumMutations    = 0U,
+            .maximumObservations = 8U,
+            .maximumElapsedMillis = 600'000U,
+            .maximumRiskUnits     = 64U,
+        };
         auto const mutations = test_support::addController(
             prepared,
             ControllerKind::Agent,
@@ -596,21 +631,13 @@ namespace uf::operator_runtime
             "session-mutations",
             "instance-mutations",
             "target-mutations",
-            AgentBudget{
-                .maximumToolCalls    = 8U,
-                .maximumMutations    = 0U,
-                .maximumObservations = 8U,
-                .maximumElapsedMillis = 600'000U,
-                .maximumRiskUnits     = 64U,
-            }
+            mutationsBudget
         );
-        auto const mutationsLease    = leaseFor(mutations);
-        auto const mutationsSnapshot = snapshotFor(mutationsLease);
-        REQUIRE(mutationsSnapshot.has_value());
-        auto const refusedMutation = submit(
+        auto const mutationsLease  = leaseFor(mutations);
+        auto const refusedMutation = admit(
             mutations,
-            *mutationsSnapshot,
-            "request-1",
+            mutationsLease,
+            "mutations-1",
             commandTool
         );
         REQUIRE_FALSE(refusedMutation.has_value());
@@ -619,7 +646,7 @@ namespace uf::operator_runtime
             == AutomationErrorKind::ActionRejected
         );
         REQUIRE(
-            submit(mutations, *mutationsSnapshot, "request-2", observeTool).has_value()
+            admit(mutations, mutationsLease, "mutations-2", observeTool).has_value()
         );
 
         // OBSERVATION. Charged by createSnapshot, in the same transaction and
@@ -648,16 +675,23 @@ namespace uf::operator_runtime
             == AutomationErrorKind::ActionRejected
         );
 
-        // RISK. The dimension survives on the ledger and its charge is the Tool
-        // Runtime's: the Operation path that priced a frozen plan's derived
-        // risk went with freezePlan, and what charges risk units now is Tool
-        // admission, which tests/operator/test-ledger.cpp exercises.
+        // RISK. The column survives on the budget row with no writer left: the
+        // one charge priced a frozen plan's derived risk and went with
+        // freezePlan and the Operation surface, and Tool admission prices
+        // effects against the PolicyArtifact rather than against a counter.
+        // What is provable here is therefore the absence itself -- the
+        // mutating and read-only calls above left the column exactly where the
+        // profile put it -- and the day admission starts charging it, this is
+        // the line that says so and demands a ceiling case beside it.
+        auto const mutationsRemaining = prepared.store.remainingBudget(mutations);
+        REQUIRE(mutationsRemaining.has_value());
+        CHECK(mutationsRemaining->riskUnits == mutationsBudget.maximumRiskUnits);
 
         // TIME. Compared and never decremented, against the Operator's own
         // steady clock: a caller-supplied instant would be a caller-supplied
-        // deadline. Every budgeted entry point is refused past it, including
-        // one whose own arguments would have been rejected anyway -- the
-        // deadline is a precondition of the call, not a late check.
+        // deadline. Both budgeted doors are refused past it -- the snapshot
+        // coordinator and Tool admission -- because the deadline is a
+        // precondition of the call and not a late check.
         auto const timed = test_support::addController(
             prepared,
             ControllerKind::Agent,
@@ -673,96 +707,27 @@ namespace uf::operator_runtime
                 .maximumRiskUnits     = 64U,
             }
         );
-        auto const timedLease    = leaseFor(timed);
-        auto const timedSnapshot = snapshotFor(timedLease);
-        REQUIRE(timedSnapshot.has_value());
-        auto const timedOperation = submit(timed, *timedSnapshot, "request-1", commandTool);
-        REQUIRE(timedOperation.has_value());
+        auto const timedLease = leaseFor(timed);
+        REQUIRE(snapshotFor(timedLease).has_value());
+        REQUIRE(admit(timed, timedLease, "timed-1", observeTool).has_value());
         std::this_thread::sleep_for(std::chrono::milliseconds{1'200});
         auto const lateSnapshot = snapshotFor(timedLease);
         REQUIRE_FALSE(lateSnapshot.has_value());
         CHECK(automationErrorKind(lateSnapshot.error()) == AutomationErrorKind::Timeout);
-        auto const lateSubmit = submit(timed, *timedSnapshot, "request-2", observeTool);
-        REQUIRE_FALSE(lateSubmit.has_value());
-        CHECK(automationErrorKind(lateSubmit.error()) == AutomationErrorKind::Timeout);
+        auto const lateCall = admit(timed, timedLease, "timed-2", observeTool);
+        REQUIRE_FALSE(lateCall.has_value());
+        CHECK(automationErrorKind(lateCall.error()) == AutomationErrorKind::Timeout);
         auto const timedRemaining = prepared.store.remainingBudget(timed);
         REQUIRE(timedRemaining.has_value());
         CHECK(timedRemaining->elapsedMillisRemaining == 0U);
 
-        // NO PROGRESS. A step makes progress when the world differs or the
-        // command differs; a step that repeats both is a repetition, and the
-        // Operator-owned ceiling is what stops the loop.
-        auto const stuck = test_support::addController(
-            prepared,
-            ControllerKind::Agent,
-            SessionMode::Write,
-            "session-stuck",
-            "instance-stuck",
-            "target-stuck",
-            AgentBudget{
-                .maximumToolCalls    = 32U,
-                .maximumMutations    = 8U,
-                .maximumObservations = 8U,
-                .maximumElapsedMillis = 600'000U,
-                .maximumRiskUnits     = 64U,
-            }
-        );
-        auto const stuckLease    = leaseFor(stuck);
-        auto const stuckSnapshot = snapshotFor(stuckLease);
-        REQUIRE(stuckSnapshot.has_value());
-        auto const repetitionsOf = [&prepared](ControllerBinding const& binding)
-        {
-            auto const remaining = prepared.store.remainingBudget(binding);
-            REQUIRE(remaining.has_value());
-            return remaining->consecutiveNoProgressSteps;
-        };
-
-        // Each of these carries a FRESH client_request_id, which is what makes
-        // the run a run at all: the fingerprint excludes the request id, so a
-        // new one produces the identical command and buys no progress.
-        REQUIRE(submit(stuck, *stuckSnapshot, "request-1", observeTool).has_value());
-        CHECK(repetitionsOf(stuck) == 0U);
-        REQUIRE(submit(stuck, *stuckSnapshot, "request-2", observeTool).has_value());
-        CHECK(repetitionsOf(stuck) == 1U);
-        REQUIRE(submit(stuck, *stuckSnapshot, "request-3", observeTool).has_value());
-        CHECK(repetitionsOf(stuck) == 2U);
-        REQUIRE(submit(stuck, *stuckSnapshot, "request-4", observeTool).has_value());
-        CHECK(repetitionsOf(stuck) == 3U);
-        auto const looped = submit(stuck, *stuckSnapshot, "request-5", observeTool);
-        REQUIRE_FALSE(looped.has_value());
-        CHECK(automationErrorKind(looped.error()) == AutomationErrorKind::ActionRejected);
-        CHECK(repetitionsOf(stuck) == 3U);
-
-        // A different command against the same world is progress.
-        REQUIRE(submit(stuck, *stuckSnapshot, "request-6", commandTool).has_value());
-        CHECK(repetitionsOf(stuck) == 0U);
-        REQUIRE(submit(stuck, *stuckSnapshot, "request-7", observeTool).has_value());
-        CHECK(repetitionsOf(stuck) == 0U);
-        REQUIRE(submit(stuck, *stuckSnapshot, "request-8", observeTool).has_value());
-        CHECK(repetitionsOf(stuck) == 1U);
-
-        // The same command against a different world is progress too. A second
-        // Host looking at an unresolved frame reaches a different state
-        // resolution, which is a different decision basis, which is what the
-        // state fingerprint IS.
-        auto unresolvedHost = test_support::secondObservationHost(
-            prepared,
-            test_support::umbraflowUnresolvedProbeFrame(),
-            FrameId{909}
-        );
-        auto const moved = prepared.store.createSnapshot(
-            stuckLease,
-            prepared.project.registration,
-            prepared.project.toolCatalogSchemaOwner,
-            prepared.project.observedInstanceIdentitySchemas,
-            conformance::observeOnce(unresolvedHost)
-        );
-        REQUIRE(moved.has_value());
-        REQUIRE(moved->decisionBasisHash != stuckSnapshot->decisionBasisHash);
-        REQUIRE(submit(stuck, *moved, "request-9", observeTool).has_value());
-        CHECK(repetitionsOf(stuck) == 0U);
-        REQUIRE(submit(stuck, *moved, "request-10", observeTool).has_value());
-        CHECK(repetitionsOf(stuck) == 1U);
+        // NO PROGRESS. The ceiling went with its only writer. submitCommand was
+        // what compared a step's state and command fingerprints and moved
+        // consecutive_no_progress_steps; the column and the remaining-budget
+        // member survive on the agent_budgets row and no door writes either, so
+        // an Agent's stopping condition is the four ceilings above and nothing
+        // else. A case that still counted repetitions would be reading a
+        // counter nothing increments -- a green line dressed as a ceiling.
     }
 
     // Budgets do not survive a restart, and cannot: a restart begins a new
@@ -803,14 +768,18 @@ namespace uf::operator_runtime
                 test_support::observeAgain(prepared)
             );
             REQUIRE(snapshot.has_value());
-            REQUIRE(prepared.store.submitCommand(
+
+            // One admitted Tool call is the whole of this budget's action
+            // ceiling; the row read back below is what proves it was charged,
+            // so the admission itself is wanted only for its effect.
+            static_cast<void>(test_support::startToolCall(
+                prepared,
                 agent,
-                test_support::command(*snapshot, "request-1"),
-                test_support::toolInvocation(
-                    prepared.project,
-                    prepared.project.toolName("observe-1")
-                )
-            ).has_value());
+                *lease,
+                "restart-request-1",
+                prepared.project.toolName("observe-1"),
+                test_support::ToolCallReach::Admitted
+            ));
             auto const remaining = prepared.store.remainingBudget(agent);
             REQUIRE(remaining.has_value());
             REQUIRE(remaining->toolCalls == 0U);
@@ -875,11 +844,9 @@ namespace uf::operator_runtime
 
     TEST_CASE("schema-agent-a03")
     {
-        auto const operatorSchema  = readSchema("umbraflow-operator-v1.schema.json");
         auto const journalSchema   = readSchema("umbraflow-journal-v1.schema.json");
         auto const workspaceSchema = readSchema("umbraflow-annotation-workspace-v2.schema.json");
         auto const traceSchema     = readSchema("umbraflow-trace-v2.schema.json");
-        checkStrictObject(definition(operatorSchema, "Operation"));
         checkStrictObject(definition(journalSchema, "JournalEvent"));
         auto const replay = definition(workspaceSchema, "ReplayBundle");
         checkStrictObject(replay);
@@ -906,7 +873,7 @@ namespace uf::operator_runtime
         checkStrictObject(event);
         CHECK(event.find("\"sequence\"") != std::string::npos);
         CHECK(event.find("\"prior_project_state_revision\"") != std::string::npos);
-        CHECK(event.find("\"operation_id\"") != std::string::npos);
+        CHECK(event.find("\"provenance\"") != std::string::npos);
         CHECK(event.find("\"session_manifest_hash\"") != std::string::npos);
         CHECK(event.find("\"payload_schema_hash\"") != std::string::npos);
         CHECK(event.find("\"opaque_project_payload\"") != std::string::npos);
@@ -1130,11 +1097,19 @@ namespace uf::operator_runtime
     {
         auto const schema     = readSchema("umbraflow-operator-v1.schema.json");
         auto const transition = definition(schema, "ControlTransition");
-        auto const authority  = definition(schema, "DeliveryAuthority");
         checkStrictObject(transition);
-        checkStrictObject(authority);
         CHECK(transition.find("\"takeover\"") != std::string::npos);
         CHECK(transition.find("\"fencing_token\"") != std::string::npos);
+        CHECK(transition.find("\"session_epoch\"") != std::string::npos);
+        CHECK(transition.find("\"prior_lease_id\"") != std::string::npos);
+        CHECK(transition.find("\"new_lease_id\"") != std::string::npos);
+
+        // The other half of A-07, and the reason the takeover race matters: a
+        // displaced controller's fence is still named by an authority a Host
+        // may still be holding, so the two documents state the same three
+        // values and the ledger is the only mint of the second.
+        auto const authority = definition(schema, "DeliveryAuthority");
+        checkStrictObject(authority);
         CHECK(authority.find("\"session_epoch\"") != std::string::npos);
         CHECK(authority.find("\"fencing_token\"") != std::string::npos);
         CHECK(authority.find("\"lease_id\"") != std::string::npos);
@@ -1142,19 +1117,51 @@ namespace uf::operator_runtime
 
     TEST_CASE("contract-agent-a08")
     {
-        auto machine = OperationMachine{};
-        REQUIRE(machine.transition(OperationEvent::ReadyWithoutApproval).has_value());
-        REQUIRE(machine.transition(OperationEvent::DispatchStarted).has_value());
-        auto const recovery = machine.transition(OperationEvent::PostDispatchAbort);
-        REQUIRE(recovery.has_value());
-        CHECK(*recovery == OperationState::Reconciling);
-        CHECK(machine.mutationLocked());
-
         auto const schema  = readSchema("umbraflow-operator-v1.schema.json");
         auto const finding = definition(schema, "ExternalInputFinding");
         checkStrictObject(finding);
         CHECK(finding.find("\"freeze_and_reconcile\"") != std::string::npos);
+        CHECK(finding.find("\"detected_after_cursor\"") != std::string::npos);
         CHECK(finding.find("\"invalidated_snapshot_revision\"") != std::string::npos);
-        CHECK(finding.find("\"operation_id\"") != std::string::npos);
+
+        // OP:`OperationMachine` was the other half of A-08 and is deleted: the
+        // freeze it drove was a transition of the Operation record. What
+        // survives is the finding itself -- a durable statement of which
+        // snapshot revision stopped being safe to act on -- and the half of it
+        // this case can pin is that the statement is the ledger's and not the
+        // reporter's.
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto const human = test_support::addController(
+            prepared,
+            ControllerKind::Human,
+            SessionMode::Write,
+            "session-human",
+            "instance-human",
+            "target-1"
+        );
+
+        // Everything above reads schema text and passes whether or not the
+        // store agrees. What a finding invalidates is read back inside the
+        // recording transaction from the row it just wrote, never returned
+        // from the locals that were bound, so the value below is the ledger's
+        // answer about this target's own revision line.
+        auto const report = ExternalInputReport{
+            .requiredAction = ExternalInputAction::FreezeAndReconcile,
+            .reason         = "a human typed into the target",
+        };
+        auto const first = prepared.store.recordExternalInput(human, report);
+        REQUIRE(first.has_value());
+        CHECK(first->invalidatedSnapshotRevision == prepared.snapshot.snapshotRevision);
+
+        // The positive control: a later snapshot moves what the next finding
+        // invalidates, so the revision is read from the target rather than
+        // fixed at whatever the first finding happened to see.
+        auto const again = test_support::freshSnapshot(prepared);
+        REQUIRE(again.snapshotRevision > prepared.snapshot.snapshotRevision);
+        auto const second = prepared.store.recordExternalInput(human, report);
+        REQUIRE(second.has_value());
+        CHECK(second->invalidatedSnapshotRevision == again.snapshotRevision);
+        CHECK(second->detectedAfterCursor > first->detectedAfterCursor);
     }
 }

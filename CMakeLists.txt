@@ -149,18 +149,16 @@ if(PROJECT_IS_TOP_LEVEL)
         # Operator this repository ships; every other run is a consumer's single
         # aggregate gate.
         #
-        # C-09 through C-13 drove an Operation through freezePlan, mintNextStep
-        # and commitReconciliation -- the three doors the two-closure generation
-        # leaves without a project entry to call. They are not registered here
-        # while their subject has no vehicle; the Tool Runtime coverage that
-        # replaces them belongs to the same change that deletes those doors.
+        # C-06 is absent because its subject is: the Operation ledger it proved
+        # durable idempotency against is deleted, and the property now belongs to
+        # the Tool root request, which suite-tool-runtime.cpp proves under a
+        # prose name inside the aggregate rather than under a requirement ID.
         uf_add_conformance_run(
             PROJECT   umbraflow
             DIRECTORY "${UF_STAGED_UMBRAFLOW_PROJECT}"
             DECLARED  ${UF_CONFORMANCE_DECLARED_CASES}
             CASES
                 contract-control-c01
-                contract-control-c06
         )
 
         # Everything a consuming repository writes to run the suite, in full: one

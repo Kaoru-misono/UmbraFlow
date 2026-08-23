@@ -3,6 +3,7 @@
 
 #include "project-fixture.hpp"
 #include "schema-binding.hpp"
+#include "tool-call-fixture.hpp"
 
 #include <domain/content-hash.hpp>
 
@@ -144,12 +145,11 @@ namespace uf::operator_runtime
             return *hash;
         }
 
-        using test_support::command;
         using test_support::journalEntry;
         using test_support::makeProject;
         using test_support::prepareStore;
         using test_support::TemporaryDirectory;
-        using test_support::toolInvocation;
+        using test_support::ToolCallReach;
 
         // The member names a canonical SessionManifest actually carries, read
         // out of the bytes rather than restated. The canonical form is a flat
@@ -427,24 +427,6 @@ namespace uf::operator_runtime
         );
         CHECK(different->identityHash != prepared.snapshot.identityHash);
         CHECK(different->decisionBasisHash != prepared.snapshot.decisionBasisHash);
-
-        // A token is a reference to a composition, so a token names a
-        // composition this store published and opens an Operation on it. What
-        // made an EARLIER token stale was a committed reconciliation advancing
-        // ProjectState, and that door went with the five-function contract; the
-        // token's own binding to a published composition is what survives.
-        CHECK(prepared.store.submitCommand(
-            prepared.controller,
-            command(*again, "request-fresh"),
-            toolInvocation(prepared.project, prepared.project.toolName("observe-1"))
-        ).has_value());
-        auto unpublished = prepared.snapshot;
-        unpublished.token += "-never-published";
-        CHECK_FALSE(prepared.store.submitCommand(
-            prepared.controller,
-            command(unpublished, "request-unpublished"),
-            toolInvocation(prepared.project, prepared.project.toolName("observe-1"))
-        ).has_value());
     }
 
     // What a state resolution is resolved FROM. The suite carries no frame and
@@ -505,40 +487,40 @@ namespace uf::operator_runtime
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
 
-        // Opaque: the Operator mints the token, so a string shaped like one is
-        // worth nothing. Business code has no field to construct.
-        auto forged          = command(prepared.snapshot, "request-forged");
-        forged.snapshotToken = std::string(prepared.snapshot.token.size(), 'a');
-        CHECK(forged.snapshotToken != prepared.snapshot.token);
-        CHECK_FALSE(prepared.store.submitCommand(
-            prepared.controller,
-            forged,
-            toolInvocation(prepared.project, prepared.project.toolName("command-1"))
-        ).has_value());
+        // Not a live Receipt, and no longer forgeable in the only way that
+        // ever mattered: no entry point takes a token at all, so there is no
+        // door a fabricated one could be presented at. What a later call is
+        // judged against is the live lease the record was composed under, and
+        // that lease is not spent by being used -- one lease admits as many
+        // Tool calls as the session asks for, so a door that consumed it on
+        // the first would be red on the second.
+        auto const first = test_support::startToolCall(
+            prepared,
+            "state-s03-1",
+            prepared.project.toolName("observe-1"),
+            ToolCallReach::Admitted
+        );
+        auto const second = test_support::startToolCall(
+            prepared,
+            "state-s03-2",
+            prepared.project.toolName("observe-1"),
+            ToolCallReach::Admitted
+        );
+        CHECK(first.call.identity() != second.call.identity());
 
-        // Not a live Receipt: presenting it does not consume it. One token
-        // opens as many Operations as the session asks for.
-        REQUIRE(prepared.store.submitCommand(
-            prepared.controller,
-            command(prepared.snapshot, "request-1"),
-            toolInvocation(prepared.project, prepared.project.toolName("command-1"))
-        ).has_value());
-        REQUIRE(prepared.store.submitCommand(
-            prepared.controller,
-            command(prepared.snapshot, "request-2"),
-            toolInvocation(prepared.project, prepared.project.toolName("observe-1"))
-        ).has_value());
-
-        // Not a permission either: it is a compare-and-swap reference into the
-        // session that made it, so a human takeover ends it without anything
-        // about the token itself changing.
+        // Not a permission either: authority is a compare-and-swap into the
+        // session holding the lease, so a human takeover ends every door that
+        // lease reaches, while the records it already published stand
+        // unchanged.
         REQUIRE(
             prepared.store.takeoverLease(prepared.controller, "human takeover").has_value()
         );
-        CHECK_FALSE(prepared.store.submitCommand(
-            prepared.controller,
-            command(prepared.snapshot, "request-3"),
-            toolInvocation(prepared.project, prepared.project.toolName("observe-1"))
+        CHECK_FALSE(prepared.store.createSnapshot(
+            prepared.lease,
+            prepared.project.registration,
+            prepared.project.toolCatalogSchemaOwner,
+            prepared.project.observedInstanceIdentitySchemas,
+            test_support::observeAgain(prepared)
         ).has_value());
     }
 
@@ -628,7 +610,7 @@ namespace uf::operator_runtime
         CHECK(instance.find("\"project_instance_key\"") != std::string::npos);
         CHECK(instance.find("\"creation_event_id\"") != std::string::npos);
         CHECK(instance.find("\"current_project_state_revision\"") != std::string::npos);
-        CHECK(instance.find("\"mutation_chain_operation_id\"") != std::string::npos);
+        CHECK(instance.find("\"current_project_state_hash\"") != std::string::npos);
         CHECK(state.find("\"project_registration_hash\"") != std::string::npos);
         CHECK(state.find("\"state_hash\"") != std::string::npos);
 
@@ -647,7 +629,7 @@ namespace uf::operator_runtime
         );
 
         // The same check on a record that is assembled rather than stored is
-        // the positive control: JR:`ProjectInstance` names nine members and the
+        // the positive control: JR:`ProjectInstance` names eight members and the
         // project_instances row carries four, the rest coming from
         // project_registrations and project_state. Without it, a comparison that
         // could never fail would read the same as one that pins something.
@@ -675,7 +657,7 @@ namespace uf::operator_runtime
         };
 
         // The key is immutable, so no second baseline can restart the revision
-        // line of a key that snapshots and Operations already name.
+        // line of a key that snapshots and Tool calls already name.
         CHECK_FALSE(prepared.store.provisionProjectInstance(
             registration,
             prepared.generation,

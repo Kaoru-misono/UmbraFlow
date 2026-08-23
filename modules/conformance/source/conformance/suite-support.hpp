@@ -315,13 +315,6 @@ namespace uf::operator_runtime::conformance
     ) -> ActorSession;
 
     [[nodiscard]]
-    auto command(
-        SnapshotRecord const& snapshot,
-        std::string clientRequestId
-    ) -> CommandRequest;
-
-
-    [[nodiscard]]
     auto occurrences(
         std::string_view text,
         std::string_view needle

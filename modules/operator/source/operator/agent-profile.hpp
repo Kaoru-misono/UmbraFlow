@@ -20,10 +20,9 @@ namespace uf::operator_runtime
     // ceiling is how two of them come to disagree.
     //
     // There is deliberately no no-progress millisecond member. The whole
-    // binding already has maximumElapsedMillis, while repeated unchanged
-    // state/command pairs are stopped by k_agentNoProgressCeiling below. A
-    // second elapsed axis would need another clock marker and another ceiling
-    // without distinguishing a state the two existing mechanisms leave open.
+    // binding already has maximumElapsedMillis, and a second elapsed axis would
+    // need another clock marker and another ceiling without distinguishing a
+    // state that one leaves open.
     struct AgentBudget final
     {
         uint64 maximumToolCalls{};
@@ -47,20 +46,20 @@ namespace uf::operator_runtime
         uint64 consecutiveNoProgressSteps{};
     };
 
-    // What one frozen plan costs the risk budget. It is a table over the risk
-    // the Operator derived from the plugin's declared effects, so a plugin that
-    // under-declares its own effects buys itself risk headroom -- the same
-    // limit ToolMutability already lives with, and the reason the mutating
-    // sub-count is sourced from the Tool Catalog instead.
+    // TODO(cpp-debt): riskUnits has no caller and k_agentNoProgressCeiling has
+    // no enforcement site. remaining_risk_units was never charged -- that
+    // predates the Operation cut -- but the no-progress ceiling was enforced
+    // inside submitCommand, which the cut deleted, so today an Agent asking the
+    // same thing of the same world is stopped by nothing. Both ceilings, their
+    // agent_budgets columns and the budget_snapshot members that report them
+    // stay declared rather than being deleted quietly, because deleting them
+    // means rewriting recorded budget_snapshot audit JSON under a registered
+    // migration and re-enforcing them means choosing what a Tool call's state
+    // fingerprint is. Neither is this change's to decide; what is this
+    // change's is to say plainly that the ceilings below are declared and
+    // unenforced.
     [[nodiscard]] auto riskUnits(Risk risk) noexcept -> uint64;
 
-    // How many consecutive steps that changed neither the state fingerprint nor
-    // the command fingerprint the Operator tolerates before it refuses.
-    //
-    // It is Operator-owned rather than an OP:`AgentBudget` member because a
-    // budget the agent's own profile declares is not a budget for the one
-    // failure this axis exists to stop: an Agent looping on an unchanging world
-    // would simply be deployed with a larger ceiling.
     inline constexpr auto k_agentNoProgressCeiling = uint64{3};
 
     // Trusted deployment callback. It parses the exact AgentProfile bytes the

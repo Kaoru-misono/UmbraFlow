@@ -84,6 +84,24 @@ EMBEDDED_SCHEMA_SOURCES = (
 LEDGER_SOURCE = "modules/operator/source/operator/ledger.cpp"
 AUTHORITY_BYTES_FUNCTION = "observedInstanceAuthorityBytes"
 
+# Where the Tool Runtime states itself. Each of these holds one half of what a
+# consumer driving a Tool call has to know, and the generator reads every
+# published fact out of them rather than restating it here: the call-state
+# vocabulary and its terminal split, the identity preimages and the
+# root-idempotency relation, the durable record's stored DDL, the assembly the
+# protocol identity is taken over, and the answer envelope a scoped script sees.
+TOOL_RUNTIME_SOURCE = "modules/operator/source/operator/tool-runtime.cpp"
+TOOL_INVOCATION_SOURCE = "modules/operator/source/operator/tool-invocation.cpp"
+TOOL_RUNTIME_LUAU = "modules/task/runtime/tools.luau"
+DEPLOYMENT_PROTOCOL_SOURCE = (
+    "modules/deployment/source/deployment/project-deployment.cpp"
+)
+
+# One column of a ``CREATE TABLE x(...)`` DDL constant: the first identifier of
+# a top-level element. Table constraints are excluded by name, because a
+# constraint is not a column and a consumer told otherwise would look for one.
+DDL_TABLE_CONSTRAINT = ("primary", "unique", "check", "foreign", "constraint")
+
 OBSERVATION_PROPOSAL_SCHEMA = "schema/umbraflow-project-observation-proposal-v1.schema.json"
 OBSERVATION_SCHEMA = "schema/umbraflow-project-observation-v1.schema.json"
 
@@ -112,6 +130,23 @@ CLI_SURFACE_SOURCES = (
         "umbra-flow open",
         "modules/cli/source/cli/args.cpp",
         ("parseOpenArguments", "requirePath"),
+    ),
+    # invoke is the verb that starts a Tool call, so a consumer driving the Tool
+    # Runtime from outside reads these and not open's. Its scope names the
+    # argument helpers it reaches as well as its own parser, because the actor
+    # rules -- which material each transport carries, and that an actor is never
+    # inferred -- are stated in messages those helpers and the parser produce
+    # together.
+    (
+        "umbra-flow invoke",
+        "modules/cli/source/cli/args.cpp",
+        (
+            "parseInvokeArguments",
+            "requirePath",
+            "parseWindowHandle",
+            "parseUnsigned",
+            "parseDurationCount",
+        ),
     ),
     (
         "umbra-flow-conformance",
@@ -152,6 +187,7 @@ CLI_SURFACE_SOURCES = (
 # each named by the definition that holds it.
 CLI_USAGE_DEFINITIONS = (
     ("modules/cli/source/cli/args.cpp", "openUsageText"),
+    ("modules/cli/source/cli/args.cpp", "invokeUsageText"),
     ("modules/conformance/source/conformance/suite-run.cpp", "k_usageText"),
     ("modules/project/source/project/command.cpp", "projectUsageText"),
 )
@@ -453,8 +489,14 @@ def definition_literal(text: str, name: str) -> str:
 
 
 def usage_lines(usage: str) -> list[str]:
-    """The invocation shapes a usage text states under its Usage: heading."""
-    lines: list[str] = []
+    """The invocation shapes a usage text states under its Usage: heading.
+
+    Relative indentation is preserved and only the block's own common indent is
+    removed, because a shape wrapped over four lines is ONE invocation: flushing
+    its continuations left would publish four.
+    """
+    collected: list[str] = []
+    inline: list[str] = []
     collecting = False
     for line in usage.splitlines():
         stripped = line.strip()
@@ -462,13 +504,206 @@ def usage_lines(usage: str) -> list[str]:
             collecting = True
             remainder = stripped[len("usage:") :].strip()
             if remainder:
-                lines.append(remainder)
+                inline.append(remainder)
             continue
         if collecting:
             if not stripped:
                 break
-            lines.append(stripped)
-    return lines
+            collected.append(line.rstrip())
+    if not collected:
+        return inline
+    common = min(len(line) - len(line.lstrip(" ")) for line in collected)
+    return inline + [line[common:] for line in collected]
+
+
+def embedded_schema_id(text: str, label: str) -> str:
+    """The ``$id`` of the embedded framework schema one compile label names.
+
+    The label is the identity's own path suffix, which is what ties a compile
+    site to an ``$id`` without either restating the other -- the same relation
+    section 1.3 is built on.
+    """
+    for match in RAW_STRING.finditer(text):
+        found = re.search(r'"\$id"\s*:\s*"([^"]+)"', match.group("body"))
+        if found is not None and found.group(1).endswith(f"/{label}"):
+            return found.group(1)
+    raise SystemExit(f"no embedded schema in this source carries the label {label}")
+
+
+def one_message_in(text: str, definition: str, needle: str) -> str:
+    """The one message a definition produces that names ``needle``.
+
+    Exactly one, deliberately: a second message naming the same thing means the
+    refusal published here is no longer the only one a consumer can see, and a
+    generator that picked the first would publish half a contract.
+    """
+    found = [
+        message for message in messages_in(text, (definition,)) if needle in message
+    ]
+    if len(found) != 1:
+        raise SystemExit(
+            f"{definition}: produces {len(found)} messages naming {needle}, not one"
+        )
+    return found[0]
+
+
+def ddl_columns(text: str, constant: str) -> list[str]:
+    """The column names one ``CREATE TABLE`` DDL constant declares, in order.
+
+    The DDL is the stored text this schema's identity is taken from, so reading
+    the column set out of it is the same read the database performs. A table
+    constraint is skipped by its leading keyword rather than by position: the
+    constraints sit at the end today and a column added after one would be lost
+    by a positional rule.
+    """
+    span = "".join(concatenated_literals(function_span(text, constant)))
+    opening = span.find("(")
+    if opening < 0:
+        raise SystemExit(f"{constant}: holds no CREATE TABLE body any more")
+    depth = 0
+    element = ""
+    elements: list[str] = []
+    for character in span[opening:]:
+        if character == "(":
+            depth += 1
+            if depth == 1:
+                continue
+        elif character == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        if depth == 1 and character == ",":
+            elements.append(element)
+            element = ""
+            continue
+        element += character
+    elements.append(element)
+
+    columns: list[str] = []
+    for one in elements:
+        # A column is a leading identifier followed by a type; a table
+        # constraint is a keyword followed immediately by its own parenthesis.
+        # Both tests are applied, because CHECK and UNIQUE are also legal column
+        # names in SQLite only when quoted, which this DDL never does.
+        leading = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)(\s|\()", one)
+        if leading is None:
+            continue
+        name = leading.group(1)
+        if name.lower() in DDL_TABLE_CONSTRAINT or leading.group(2) == "(":
+            continue
+        columns.append(name)
+    if not columns:
+        raise SystemExit(f"{constant}: declares no column any more")
+    return columns
+
+
+def tool_call_states(root: Path) -> list[tuple[str, bool]]:
+    """Every durable call-state wire name, and which half of the split it is in.
+
+    Both halves are read: the names from the one table that maps a state to its
+    wire spelling, and the split from the one predicate that decides whether a
+    state carries an outcome. They are then required to cover the same set, so a
+    state added to one and not the other fails here rather than being published
+    on the strength of whichever list was read first.
+    """
+    text = read(root, TOOL_RUNTIME_SOURCE)
+    span = function_span(text, "k_toolCallStateNames")
+    rows = re.findall(r"ToolCallState::(\w+)\s*,\s*\n?\s*\"([a-z_]+)\"", span)
+    if not rows:
+        raise SystemExit(f"{TOOL_RUNTIME_SOURCE}: the call-state table is unreadable")
+
+    outcome = function_span(text, "toolCallStateHasOutcome")
+    before, marker, after = outcome.partition("return false;")
+    if not marker:
+        raise SystemExit(
+            f"{TOOL_RUNTIME_SOURCE}: toolCallStateHasOutcome no longer splits on"
+            " a false arm"
+        )
+    without = set(re.findall(r"ToolCallState::(\w+)", before))
+    carrying = set(re.findall(r"ToolCallState::(\w+)", after.split("return true;")[0]))
+    if not without or not carrying or (without & carrying):
+        raise SystemExit(
+            f"{TOOL_RUNTIME_SOURCE}: the terminal split is empty or overlapping"
+        )
+    named = {name for name, _wire in rows}
+    if named != (without | carrying):
+        raise SystemExit(
+            f"{TOOL_RUNTIME_SOURCE}: the call-state table and the terminal split"
+            f" disagree: table={sorted(named)},"
+            f" split={sorted(without | carrying)}"
+        )
+    return [(wire, name in carrying) for name, wire in rows]
+
+
+def tool_answer_envelope(root: Path) -> dict[str, object]:
+    """The answer a scoped script receives, read out of the module that checks it."""
+    text = read(root, TOOL_RUNTIME_LUAU)
+    frozen = re.search(r"local k_states = table\.freeze\(\{(.*?)\}\)", text, re.DOTALL)
+    if frozen is None:
+        raise SystemExit(f"{TOOL_RUNTIME_LUAU}: publishes no delivery vocabulary")
+    states = re.findall(r'"([a-z_]+)"', frozen.group(1))
+
+    required = re.findall(r'rawget\(answer,\s*"(\w+)"\)', text)
+    optional = re.findall(r'rawget\(checkedAnswer\(answer\),\s*"(\w+)"\)', text)
+    members: list[str] = []
+    for member in required + optional:
+        if member not in members:
+            members.append(member)
+    if not members:
+        raise SystemExit(f"{TOOL_RUNTIME_LUAU}: reads no answer member")
+
+    # The two members an accessor answers as a @umbraflow/result envelope
+    # rather than a value: absence is a failure of the request, not a value.
+    enveloped = re.findall(r'resultModule\.err\(\s*"([\w.]+)"', text)
+    return {
+        "states": states,
+        "members": members,
+        "absent_result_codes": enveloped,
+    }
+
+
+def tool_root_identity(root: Path) -> dict[str, object]:
+    """The root request preimage and the relation two of them stand in."""
+    text = read(root, TOOL_INVOCATION_SOURCE)
+    tag = re.search(
+        r"k_rootPreimageTag\s*=\s*std::string_view\{\s*\n?\s*\"([^\"]+)\"",
+        text,
+    )
+    call_tag = re.search(
+        r"k_callPreimageTag\s*=\s*std::string_view\{\s*\n?\s*\"([^\"]+)\"",
+        text,
+    )
+    if tag is None or call_tag is None:
+        raise SystemExit(f"{TOOL_INVOCATION_SOURCE}: an identity domain tag is gone")
+
+    material = function_span(text, "rootIdentityMaterial")
+    parts = re.findall(r"appendIdentity\w*\(\s*material,\s*(\w+(?:\.\w+\(\))?)", material)
+    relations = re.findall(
+        r"RootRequestRelation::(\w+)",
+        function_span(text, "ToolRootRequestIdentity::relationTo"),
+    )
+    if not parts or not relations:
+        raise SystemExit(
+            f"{TOOL_INVOCATION_SOURCE}: the root identity is no longer derived here"
+        )
+    return {
+        "root_tag": tag.group(1),
+        "call_tag": call_tag.group(1),
+        "root_parts": parts,
+        "relations": relations,
+    }
+
+
+def tool_protocol_material(root: Path) -> list[str]:
+    """The members the protocol identity's preimage carries, in canonical order."""
+    text = read(root, DEPLOYMENT_PROTOCOL_SOURCE)
+    span = function_span(text, "currentToolRuntimeProtocolMaterial")
+    members = re.findall(r'\{"(\w+)",', span)
+    if not members:
+        raise SystemExit(
+            f"{DEPLOYMENT_PROTOCOL_SOURCE}: the protocol material carries no member"
+        )
+    return sorted(set(members))
 
 
 def version_of(schema_id: str, filename: str) -> str:
@@ -1599,6 +1834,259 @@ def render(root: Path) -> str:
     )
     lines.append("")
 
+    call_states = tool_call_states(root)
+    envelope = tool_answer_envelope(root)
+    root_identity = tool_root_identity(root)
+    protocol_members = tool_protocol_material(root)
+    ledger_text = read(root, LEDGER_SOURCE)
+    invocation_text = read(root, TOOL_INVOCATION_SOURCE)
+    deployment_text = read(root, DEPLOYMENT_PROTOCOL_SOURCE)
+    protocol_fragments = sorted(set(re.findall(
+        r"operator_runtime::(\w+Material)\(\)",
+        function_span(deployment_text, "currentToolRuntimeProtocolMaterial"),
+    )))
+    if not protocol_fragments:
+        raise SystemExit(
+            f"{DEPLOYMENT_PROTOCOL_SOURCE}: the protocol material assembles no"
+            " module-owned fragment"
+        )
+    catalog_schema_id = embedded_schema_id(deployment_text, "operator/tool-catalog")
+    catalog_mismatch_refusal = one_message_in(
+        invocation_text,
+        "ProjectToolCatalogSchemaOwner::create",
+        "tool_catalog_hash",
+    )
+
+    if envelope["states"] != [name for name, _carries in call_states]:
+        raise SystemExit(
+            f"{TOOL_RUNTIME_LUAU}: the delivery vocabulary a script reads is not "
+            f"the Operator's: script={envelope['states']}, "
+            f"operator={[name for name, _carries in call_states]}"
+        )
+
+    lines.extend(
+        [
+            "## 5. The Tool Runtime",
+            "",
+            "A Tool call is the only way project code reaches the world, and the",
+            "only way a caller outside this repository drives one. Everything in",
+            "this section is read out of the sources that decide it.",
+            "",
+            "### 5.1 Call states",
+            "",
+            "The durable vocabulary a call's row may carry. *Carries an outcome* is",
+            "the terminal split: a state carries one exactly when a provider",
+            "conclusion or a reconciliation wrote it, and the three that do not are",
+            "the three a call is still passing through. `possible` and",
+            "`terminally_unresolved` carry an outcome and still hold the",
+            "target-wide mutation barrier, because neither says what the world did.",
+            "",
+            f"Read from `k_toolCallStateNames` and `toolCallStateHasOutcome` in",
+            f"`{TOOL_RUNTIME_SOURCE}`. A scoped script reads the same set as",
+            f"`tools.states` from `{TOOL_RUNTIME_LUAU}`, and this generator",
+            "requires the two to be the same list in the same order.",
+            "",
+        ]
+    )
+    lines.extend(
+        table(
+            ["State", "Carries an outcome"],
+            [
+                [f"`{name}`", "yes" if carries else "no"]
+                for name, carries in call_states
+            ],
+        )
+    )
+    lines.extend(
+        [
+            "",
+            "### 5.2 The answer a script sees",
+            "",
+            f"One Tool call answers one frozen object. `checkedAnswer` in",
+            f"`{TOOL_RUNTIME_LUAU}` rejects anything else, so these member names",
+            "are the whole of what an answer is:",
+            "",
+        ]
+    )
+    lines.extend(
+        table(
+            ["Answer member"],
+            [[f"`{member}`"] for member in envelope["members"]],
+        )
+    )
+    lines.extend(
+        [
+            "",
+            "`result` and `evidence` are absent when the recorded outcome carries",
+            "none, and their accessors answer a `@umbraflow/result` failure rather",
+            "than a value -- "
+            + ", ".join(f"`{code}`" for code in envelope["absent_result_codes"])
+            + ".",
+            "",
+            "A Tool Runtime *refusal* never reaches this envelope at all: it is",
+            "terminal for the run, the VM is destroyed without resuming the script,",
+            "and no `pcall` can observe one. A Tool that ran and failed is not a",
+            "refusal -- its classification travels in `state`.",
+            "",
+            "### 5.3 Root request idempotency",
+            "",
+            "A run is opened by a root request, and a root request is identified by",
+            f"SHA-256 over a preimage tagged `{root_identity['root_tag']}` carrying",
+            "exactly "
+            + ", ".join(f"`{part}`" for part in root_identity["root_parts"])
+            + ". A positioned call inside that run is identified by SHA-256 over a",
+            f"preimage tagged `{root_identity['call_tag']}`.",
+            "",
+            "Two root requests therefore stand in exactly one of three relations,",
+            f"decided by `ToolRootRequestIdentity::relationTo` in",
+            f"`{TOOL_INVOCATION_SOURCE}`:",
+            "",
+        ]
+    )
+    lines.extend(
+        table(
+            ["Relation", "When"],
+            [
+                [
+                    "`SameRequest`",
+                    "same caller namespace and request key, and byte-identical "
+                    "request preimage -- the second call rejoins the first",
+                ],
+                [
+                    "`Conflict`",
+                    "same caller namespace and request key, different request "
+                    "preimage bytes -- refused rather than opening a second run",
+                ],
+                [
+                    "`Distinct`",
+                    "a different caller namespace or a different request key",
+                ],
+            ],
+        )
+    )
+    if sorted(root_identity["relations"]) != ["Conflict", "Distinct", "SameRequest"]:
+        raise SystemExit(
+            f"{TOOL_INVOCATION_SOURCE}: relationTo no longer decides exactly the "
+            f"three relations published here: {sorted(root_identity['relations'])}"
+        )
+    lines.extend(
+        [
+            "",
+            "### 5.4 `tool_catalog_hash`",
+            "",
+            "A project's `tool_catalog_hash` is the SHA-256 of the exact bytes of",
+            "its Tool Catalog document -- the canonical (RFC 8785 JCS) bytes it",
+            f"registered, judged by `{catalog_schema_id}`. Nothing derives it from a",
+            "parse: `ProjectToolCatalogSchemaOwner::create` in",
+            f"`{TOOL_INVOCATION_SOURCE}` hashes the supplied bytes and refuses the",
+            "deployment when the digest is not the one the registration pinned:",
+            "",
+            "```text",
+            catalog_mismatch_refusal,
+            "```",
+            "",
+            "`tool_catalog_hash` is a member of the canonical registration, so it",
+            "reaches `project_registration_hash`; a call minted against other",
+            "catalog bytes cannot present this registration.",
+            "",
+            "### 5.5 The durable record",
+            "",
+            "What one Tool call leaves behind, and which of it is reproducible. A",
+            "reproducible row is a function of the request and the release, so a",
+            "replaying incarnation derives the identical row; an admission attempt",
+            "is not, and is published as such rather than omitted.",
+            "",
+            "**Reproducible.** `tool_root_requests` -- the run the caller asked for:",
+            "",
+        ]
+    )
+    lines.extend(
+        table(
+            ["Column"],
+            [
+                [f"`{column}`"]
+                for column in ddl_columns(ledger_text, "k_toolRootRequestsDdl")
+            ],
+        )
+    )
+    lines.extend(
+        [
+            "",
+            "**Reproducible.** `tool_call_positions` -- where in the run the call is,",
+            "and the exact material its identity is taken over:",
+            "",
+        ]
+    )
+    lines.extend(
+        table(
+            ["Column"],
+            [
+                [f"`{column}`"]
+                for column in ddl_columns(ledger_text, "k_toolCallPositionsDdl")
+            ],
+        )
+    )
+    lines.extend(
+        [
+            "",
+            "**Deliberately not reproducible.** `tool_admission_attempts` records the",
+            "live authority one attempt was admitted against -- the lease, the",
+            "fencing token, the session epoch, the budget as it stood, the policy",
+            "and capability digests. None of that is a function of the request: a",
+            "second attempt at the identical call is admitted against whatever",
+            "authority is live then, and it is a *new* row rather than the same one",
+            "recomputed. A consumer that re-derived these would be inventing an",
+            "authority nobody held.",
+            "",
+        ]
+    )
+    lines.extend(
+        table(
+            ["Column"],
+            [
+                [f"`{column}`"]
+                for column in ddl_columns(ledger_text, "k_toolAdmissionAttemptsDdl")
+            ],
+        )
+    )
+    lines.extend(
+        [
+            "",
+            "### 5.6 `tool_runtime_protocol_identity`",
+            "",
+            "`tool_runtime_protocol_identity` is the SHA-256 of the exact canonical",
+            f"bytes emitted by `currentToolRuntimeProtocolMaterial()` in",
+            f"`{DEPLOYMENT_PROTOCOL_SOURCE}`. The recording incarnation writes it",
+            "into the `tool_runs` row; a resuming or replaying incarnation derives",
+            "it again from its own release bytes and refuses the continuation when",
+            "the two differ. It is an assertion inside the resuming reader and is",
+            "never a dispatch key.",
+            "",
+            "The preimage carries exactly these members:",
+            "",
+        ]
+    )
+    lines.extend(
+        table(
+            ["Preimage member"],
+            [[f"`{member}`"] for member in protocol_members],
+        )
+    )
+    lines.extend(
+        [
+            "",
+            "Each is rendered by the module that owns what it describes: "
+            + ", ".join(f"`{name}()`" for name in protocol_fragments)
+            + ".",
+            "",
+            "It is deliberately not `tool_catalog_hash`, which covers Framework Tool",
+            "descriptors and nothing else: the state vocabulary, the identity",
+            "preimages, the durable record and the canonical-form contract can every",
+            "one of them change without moving that digest.",
+            "",
+        ]
+    )
+
     proposal_required = item_requirements(proposal, "observed_instance_proposals")
     observation_required = item_requirements(observation, "observed_instances")
     minted_pattern = item_pattern(
@@ -1606,14 +2094,14 @@ def render(root: Path) -> str:
     )
     lines.extend(
         [
-            "## 5. The ownership boundary",
+            "## 6. The ownership boundary",
             "",
             "An observed instance identity is the sharpest edge of this boundary. The",
             "project states what a thing *is*; the Operator decides which thing it is",
             "and names it. The project never mints an id, a hash, or canonical",
             "identity bytes.",
             "",
-            "### 5.1 What the project supplies",
+            "### 6.1 What the project supplies",
             "",
             f"One entry of `observed_instance_proposals` in `{proposal.get('$id')}`:",
             "",
@@ -1628,7 +2116,7 @@ def render(root: Path) -> str:
     lines.extend(
         [
             "",
-            "### 5.2 What the Operator does with it",
+            "### 6.2 What the Operator does with it",
             "",
             "The Operator validates the proposal, canonicalizes it (RFC 8785 JCS),",
             "binds it to a scope, and mints the id. The canonical authority input it",
@@ -1645,7 +2133,7 @@ def render(root: Path) -> str:
     lines.extend(
         [
             "",
-            "### 5.3 What comes back",
+            "### 6.3 What comes back",
             "",
             f"One entry of `observed_instances` in `{observation.get('$id')}`:",
             "",
@@ -1663,7 +2151,7 @@ def render(root: Path) -> str:
             f"`observed_instance_id` is opaque and matches `{cell(minted_pattern)}`.",
             "The project reads it and passes it back; it never derives one.",
             "",
-            "## 6. Worked examples",
+            "## 7. Worked examples",
             "",
             "Two fixture project directories in this repository, each written the way",
             "a consuming repository writes its own, and each run by this repository's",
@@ -1697,7 +2185,7 @@ def render(root: Path) -> str:
     if unclassified:
         lines.extend(
             [
-                "## 7. Identities this generator cannot classify",
+                "## 8. Identities this generator cannot classify",
                 "",
                 "Each identity below is compiled from module bytes, pins no wire tag,",
                 "and is no schema's `$ref` target, so none of the ownership",

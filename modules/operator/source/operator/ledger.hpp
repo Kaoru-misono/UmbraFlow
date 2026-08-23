@@ -5,7 +5,6 @@
 #include "effective-plan.hpp"
 #include "journal-entry.hpp"
 #include "manifest.hpp"
-#include "operation.hpp"
 #include "project-generation.hpp"
 #include "project-observation.hpp"
 #include "project-plugin.hpp"
@@ -137,16 +136,9 @@ namespace uf::operator_runtime
     // rather than ahead of it, and the DDL's CHECK lists exactly these.
     enum class LedgerEventKind : uint8
     {
-        OperationCreated,
-        OperationStateChanged,
         ControlTransitioned,
         ExternalInputDetected,
     };
-
-    // Only the one event kind that reports a changed value carries one. The
-    // other kinds are complete in their kind and subject identity, so giving
-    // them a nullable string would admit combinations the stream never writes.
-    using LedgerEventDetail = std::variant<std::monostate, OperationState>;
 
     // How far a reader has got through that sequence: the sequence number of
     // the last event it has consumed, and 0 before the first one.
@@ -166,13 +158,16 @@ namespace uf::operator_runtime
     // One controller-visible fact. It names no receipt, coordinate, fencing
     // token, plan hash, tool name or canonical argument, so handing one to an
     // online Agent cannot widen the p03 ceiling.
+    //
+    // It carries no detail member. Both surviving kinds are complete in their
+    // kind and subject identity, so a nullable one would be a column no
+    // producer can fill.
     struct LedgerEvent final
     {
         SubscriptionCursor sequence{};
-        LedgerEventKind    kind{LedgerEventKind::OperationCreated};
+        LedgerEventKind    kind{LedgerEventKind::ControlTransitioned};
         std::string        controlledTargetId{};
         std::string        subjectId{};
-        LedgerEventDetail  detail{};
 
         auto operator==(LedgerEvent const&) const -> bool = default;
     };
@@ -258,52 +253,6 @@ namespace uf::operator_runtime
         SubscriptionCursor eventCursor{};
     };
 
-    // Everything about a command that is the caller's to say. The tool, its
-    // version, its arguments, its mutability and its surface are not here: they
-    // arrive as a ValidatedToolInvocation the Tool Catalog owner minted, so
-    // that a caller cannot present a mutating tool as read-only and escape the
-    // mutation chain, nor a privileged tool as semantic and escape the Agent
-    // ceiling. session_id is not here either: it has exactly one spelling, on
-    // the ControllerBinding.
-    struct CommandRequest final
-    {
-        std::string snapshotToken{};
-        std::string idempotencyNamespace{};
-        std::string clientRequestId{};
-    };
-
-    enum class CommandLookup : uint8
-    {
-        Created,
-        Existing,
-    };
-
-    // No plan-frozen or dispatched flag: an Operation can no longer reach a
-    // Host dispatch at all, so both were constants and a stored constant is a
-    // fact with nothing keeping it true.
-    struct StoredOperation final
-    {
-        std::string    operationId{};
-        CommandLookup  lookup{CommandLookup::Created};
-        OperationState state{OperationState::Proposed};
-        uint64         revision{};
-    };
-
-    // What one accepted submission settled. The fingerprint is
-    // sha256(tool \0 version \0 args), derived inside the submitting
-    // transaction from the bytes the catalog owner recognised. It is returned
-    // so that two submissions can be proved to be one command -- by whom is
-    // deliberately not among the hashed bytes, which is what makes the shared
-    // Operation path provable -- and it is not a field any caller may state.
-    //
-    // No in-class initializer for the hash: ContentHash has no default state.
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
-    struct AcceptedCommand final
-    {
-        StoredOperation operation;
-        ContentHash     commandFingerprint;
-    };
-
     enum class ToolIdentityLookup : uint8
     {
         Created,
@@ -356,22 +305,6 @@ namespace uf::operator_runtime
     [[nodiscard]]
     auto toolCallCompletionFor(task::HostDeliveryReport const& report)
         -> Result<ToolCallCompletion>;
-
-    // The transitions a controller may ask for by name. The four plan-lifecycle
-    // events are absent because the Operator decides them: a caller that could
-    // say ReadyWithoutApproval could skip an approval the derived risk
-    // required, and one that could say NextStepReady could advance a workflow
-    // no plugin proposed a step for.
-    enum class OperationSignal : uint8
-    {
-        ReadCompleted,
-        DecisionInputsChanged,
-        Revalidated,
-        Invalidated,
-        Denied,
-        Cancelled,
-        DeadlineExpired,
-    };
 
     // What one human takeover did: the lease the new controller now holds.
     struct ControlTakeover final
@@ -432,15 +365,13 @@ namespace uf::operator_runtime
     };
 
     // What one recorded finding settled. Every member is derived inside the
-    // recording transaction: the cursor and the invalidated revision are read
-    // from the ledger, and operationId names whichever Operation the finding
-    // froze, or nothing when the target had none in flight.
+    // recording transaction: the cursor and the invalidated revision are both
+    // read from the ledger, never from the reporter.
     struct RecordedExternalInput final
     {
-        std::string                findingId{};
-        uint64                     detectedAfterCursor{};
-        uint64                     invalidatedSnapshotRevision{};
-        std::optional<std::string> operationId{};
+        std::string findingId{};
+        uint64      detectedAfterCursor{};
+        uint64      invalidatedSnapshotRevision{};
     };
 
     struct JournalAppend final
@@ -529,18 +460,6 @@ namespace uf::operator_runtime
         std::string refoldedCanonicalPayload{};
     };
 
-    // Actionable recovery work retained in the ledger until reconciliation
-    // leaves the reconciling state. deliveryReason is the ledger's stored
-    // account of why the Host outcome was uncertain; exposing it here keeps
-    // dispatches.delivery_reason from being write-only audit text.
-    struct RecoveredUncertainDispatch final
-    {
-        std::string operationId{};
-        std::string deliveryReason{};
-        uint64      expectedOperationRevision{};
-        uint64      expectedProjectStateRevision{};
-    };
-
     // The registration, project instance and plugin facts one observed-instance
     // operation re-reads from the active lease. It is the Operator's own
     // vocabulary: no caller supplies one, and no proposal carries a field that
@@ -627,14 +546,12 @@ namespace uf::operator_runtime
         // creates the layout when absent, claims SQLite's exclusive lock for the
         // connection's lifetime, creates the schema on a first open, advances
         // runtime_state.current_session_epoch by one, deletes every
-        // control_leases row, clears sessions.active, and resolves every
-        // dispatch nobody answered for to transport_unknown with its Operation
-        // moved to reconciling. A replacement Tool call whose durable dispatch
-        // boundary was crossed without an outcome becomes possible/unknown, and
-        // is never handed out for dispatch again, when and only when it is a
-        // mutating leaf; every other interrupted dispatch survives as
-        // dispatching and is re-entered, because re-executing it cannot deliver
-        // anything a durable row does not already classify.
+        // control_leases row, and clears sessions.active. A Tool call whose
+        // durable dispatch boundary was crossed without an outcome becomes
+        // possible/unknown, and is never handed out for dispatch again, when
+        // and only when it is a mutating leaf; every other interrupted dispatch
+        // survives as dispatching and is re-entered, because re-executing it
+        // cannot deliver anything a durable row does not already classify.
         //
         // A non-empty schema reaches those restart writes only when its exact
         // stored-DDL identity is current or a migration is registered under
@@ -705,13 +622,6 @@ namespace uf::operator_runtime
         auto openActiveInstalledRuntimeArtifact(
             ContentHash const& compatibleArtifactRootHash
         ) -> Result<task::InstalledRuntimeArtifact>;
-
-        // Reports the Operations a restart moved to reconciliation. The query
-        // is persistent and repeatable, so a caller crash cannot consume the
-        // only copy of the work the recovery still owes.
-        [[nodiscard]]
-        auto recoveredUncertainDispatches()
-            -> Result<std::vector<RecoveredUncertainDispatch>>;
 
         [[nodiscard]] auto databasePath() const -> std::filesystem::path;
 
@@ -819,7 +729,7 @@ namespace uf::operator_runtime
             SessionManifest const& manifest
         ) -> Result<ControllerBinding>;
 
-        // The one door onto the Operation path. Everything below takes a
+        // The one door onto the Tool Runtime path. Everything below takes a
         // ControllerBinding rather than a session id, so there is exactly one
         // spelling of "who is asking" and it is minted here from the pinned
         // sessions row. A binding is evidence and not a capability: every entry
@@ -835,22 +745,17 @@ namespace uf::operator_runtime
             ControllerBinding const& controller
         ) -> Result<ControlLease>;
 
-        // Seizing control also closes what the displaced controller left in
-        // flight: every dispatch nobody has answered for is resolved to
-        // transport_unknown in the same transaction that bumps the fence, and
-        // its Operation moves to reconciling. Never not_delivered -- a dispatch
-        // the Host may already have posted is exactly what the third value
-        // exists for.
+        // Seizing control bumps the fence in the same transaction that records
+        // the takeover, which is what strands the displaced controller: its
+        // lease keeps its value and loses its authority.
         [[nodiscard]]
         auto takeoverLease(
             ControllerBinding const& controller,
             std::string const& reason
         ) -> Result<ControlTakeover>;
 
-        // Voluntary release closes every unanswered dispatch on the target as
-        // transport_unknown and moves its Operation to reconciliation inside
-        // the same transaction that advances the fence and removes the lease.
-        // The returned fence is committed only after that resolution succeeds.
+        // Voluntary release advances the fence and removes the lease in one
+        // transaction. The returned fence is the one no later holder can reuse.
         [[nodiscard]]
         auto releaseLease(
             ControlLease const& lease
@@ -908,25 +813,6 @@ namespace uf::operator_runtime
             ProjectObservation const& freshObservation,
             std::string_view observedInstanceId
         ) -> Result<ObservedInstanceId>;
-
-        // The one function that creates an Operation, and it cannot be called
-        // without a ControllerBinding. Script, Agent and Human reach it by the
-        // identical route and share one operations row, one command
-        // fingerprint, one snapshot binding, one mutation-chain slot, one state
-        // machine and one Journal; a kind varies nothing along it except the
-        // tool surface it may present.
-        //
-        // The invocation must be minted by the Tool Catalog owner bound to the
-        // same ProjectRegistration the session is pinned to; a mismatch is
-        // refused rather than reconciled. Surface and required capabilities are
-        // re-evaluated here because a controller can present an invocation it
-        // was never offered.
-        [[nodiscard]]
-        auto submitCommand(
-            ControllerBinding const& controller,
-            CommandRequest const& request,
-            ValidatedToolInvocation const& invocation
-        ) -> Result<AcceptedCommand>;
 
         // Internal replacement-generation identity persistence. The root key
         // is unique only inside its authenticated caller namespace. Reusing it
@@ -1186,14 +1072,13 @@ namespace uf::operator_runtime
         ) -> Result<PublishedJournalBatch>;
 
         // Records that the world moved under us, which is what out-of-band
-        // human input is. It is not an Operation and cannot become one: it
+        // human input is. It is not a Tool call and cannot become one: it
         // fabricates no authority, it is not a request anything could deny, and
         // it takes no invocation. Only a binding whose profile admits it may
         // report one.
         //
-        // Its effect is to freeze whatever this target had in flight and to
-        // invalidate every snapshot taken up to that point, so the next command
-        // has to look again before it acts.
+        // Its effect is to invalidate every snapshot taken up to that point, so
+        // the next call has to look again before it acts.
         [[nodiscard]]
         auto recordExternalInput(
             ControllerBinding const& reporter,
@@ -1225,12 +1110,22 @@ namespace uf::operator_runtime
         auto remainingBudget(
             ControllerBinding const& controller
         ) -> Result<AgentBudgetRemaining>;
-
-        [[nodiscard]]
-        auto transitionOperation(
-            std::string const& operationId,
-            uint64 expectedRevision,
-            OperationSignal signal
-        ) -> Result<StoredOperation>;
     };
+
+    // The durable half of the Tool Runtime protocol: the exact stored DDL TEXT
+    // of every table a Tool call is recorded in, in a fixed order.
+    //
+    // It renders the DDL rather than a list of column names because a list is a
+    // second spelling. The stored text carries the column set, its order, its
+    // types, its nullability and every CHECK -- the durable state vocabulary
+    // among them -- so a protocol change to any of those moves this material,
+    // and no such change can move without it.
+    //
+    // It is deliberately NOT k_operatorDatabaseSchemaIdentity. That identity
+    // covers every table this database has, sessions and snapshots included, so
+    // an upgrade that touched only session storage would move it; these seven
+    // tables are the ones a Tool run's record lives in, and they are the ones a
+    // resuming incarnation must agree with its recorder about.
+    [[nodiscard]]
+    auto toolRuntimeDurableRecordMaterial() -> std::string;
 }

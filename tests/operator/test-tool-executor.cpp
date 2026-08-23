@@ -340,20 +340,30 @@ namespace uf::operator_runtime
         CHECK(blocked.error().message().contains("frozen by Tool call"));
         CHECK(blockedProviderCalls == 0U);
 
-        auto oldOperationBlocked = prepared.store.submitCommand(
-            prepared.controller,
-            CommandRequest{
-                .snapshotToken        = prepared.snapshot.token,
-                .idempotencyNamespace = "controller-1",
-                .clientRequestId      = "old-operation-during-tool-barrier",
-            },
-            test_support::toolInvocation(
-                prepared.project,
-                prepared.project.toolName("command-1")
-            )
+        // The barrier belongs to the ledger and not to the executor wrapper, so
+        // the store's own admission door refuses the same call the executor
+        // just refused. A guard that lived in the executor would let anything
+        // reaching admitToolCall directly straight past a frozen target.
+        auto directRoot = toolRoot("mutating-blocked-direct");
+        auto directCall = mutatingProjectCall(
+            directRoot,
+            prepared.project,
+            "mutating-blocked-direct-run"
         );
-        REQUIRE_FALSE(oldOperationBlocked.has_value());
-        CHECK(oldOperationBlocked.error().message().contains(
+        auto directlyBlocked = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = directRoot,
+                .call       = directCall,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
+                },
+            }
+        );
+        REQUIRE_FALSE(directlyBlocked.has_value());
+        CHECK(directlyBlocked.error().message().contains(
             "frozen by Tool call"
         ));
 
@@ -711,30 +721,25 @@ namespace uf::operator_runtime
         CHECK(blocked.error().message().contains("terminally_unresolved"));
     }
 
-    TEST_CASE("legacy active mutation and Tool mutation cannot run beside each other")
+    // Any unterminated mutating call holds the barrier, not only one that has
+    // become uncertain: a second mutation admitted beside a dispatching one
+    // would be two mutations aimed at one target with no order between them.
+    TEST_CASE("a dispatching mutation and a second Tool mutation cannot run beside each other")
     {
         auto temporary = test_support::TemporaryDirectory{};
         auto prepared  = test_support::prepareStore(temporary.path());
-        auto invocation = test_support::toolInvocation(
-            prepared.project,
+        auto const holding = test_support::startToolCall(
+            prepared,
+            "dispatching-mutation",
             prepared.project.toolName("command-1")
         );
-        auto accepted = prepared.store.submitCommand(
-            prepared.controller,
-            CommandRequest{
-                .snapshotToken        = prepared.snapshot.token,
-                .idempotencyNamespace = "controller-1",
-                .clientRequestId      = "legacy-active-mutation",
-            },
-            invocation
-        );
-        REQUIRE(accepted.has_value());
+        REQUIRE(holding.dispatch.has_value());
 
-        auto root = toolRoot("tool-beside-legacy-mutation");
+        auto root = toolRoot("tool-beside-dispatching-mutation");
         auto call = mutatingProjectCall(
             root,
             prepared.project,
-            "tool-beside-legacy-mutation-run"
+            "tool-beside-dispatching-mutation-run"
         );
         auto effects = std::vector{
             test_support::routineToolEffect(prepared.project),
@@ -761,10 +766,40 @@ namespace uf::operator_runtime
             }
         );
         REQUIRE_FALSE(blocked.has_value());
+        CHECK(blocked.error().message().contains("frozen by Tool call"));
         CHECK(blocked.error().message().contains(
-            "non-terminal mutating Operation"
+            holding.call.identity().hex()
         ));
         CHECK(providerCalls == 0U);
+
+        // The barrier is released by settling the call that holds it, so the
+        // same second call is admitted once the first reaches its terminal.
+        test_support::confirmToolCall(prepared, holding);
+        auto released = executor.invoke(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = root,
+                .call       = call,
+                .mutation   = ToolAdmissionRequest::Mutation{
+                    .policyAuthority = prepared.policyAuthority,
+                    .effects         = effects,
+                },
+            },
+            [&providerCalls](ToolCallPositionIdentity const&)
+            {
+                ++providerCalls;
+                auto result = CanonicalJson::parseExact(R"({"delivered":true})");
+                REQUIRE(result.has_value());
+                return ToolCallCompletion::confirmed(*result);
+            }
+        );
+        if (!released.has_value())
+        {
+            FAIL(released.error().message());
+        }
+        CHECK(released->state == ToolCallState::Confirmed);
+        CHECK(providerCalls == 1U);
     }
 
     TEST_CASE("a trusted query proving absence resolves and releases the target")

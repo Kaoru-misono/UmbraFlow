@@ -494,6 +494,16 @@ namespace uf::service
         std::string               sessionId;
         ContentHash               sessionManifestHash;
 
+        // What Tool Runtime protocol this incarnation implements, derived once
+        // from this release's own bytes. It is not the Framework Tool catalog
+        // hash, which is what it used to be: that hash covers Framework Tool
+        // descriptors and nothing else, so the state vocabulary, the identity
+        // preimages, the durable record and the canonical-form contract could
+        // every one of them change without moving it, and the equality a resume
+        // performs against the stored value was named for a property it could
+        // not observe.
+        ContentHash               toolRuntimeProtocolIdentity;
+
         // Operator admission of this run's starts at the top of a run: the one
         // producer that mints a root request identity from the authenticated
         // binding, assigns a root-positioned call's ordinal, and derives what a
@@ -519,7 +529,8 @@ namespace uf::service
             task::RuntimeModelBinding ownedRuntimeModel,
             uint64 ownedInstalledGeneration,
             std::string ownedSessionId,
-            ContentHash ownedSessionManifestHash
+            ContentHash ownedSessionManifestHash,
+            ContentHash ownedToolRuntimeProtocolIdentity
         )
             : loaded{std::move(ownedLoaded)}
             , deploymentIndex{ownedDeploymentIndex}
@@ -531,6 +542,7 @@ namespace uf::service
             , installedGeneration{ownedInstalledGeneration}
             , sessionId{std::move(ownedSessionId)}
             , sessionManifestHash{ownedSessionManifestHash}
+            , toolRuntimeProtocolIdentity{ownedToolRuntimeProtocolIdentity}
         {
         }
 
@@ -618,11 +630,10 @@ namespace uf::service
             -> operator_runtime::ToolExecutionIdentity
         {
             return operator_runtime::ToolExecutionIdentity{
-                .runIdentity              = sessionManifestHash,
-                .frameworkReleaseIdentity = runtimeModel.artifactRootHash(),
-                .toolRuntimeProtocolIdentity =
-                    generationHandle().frameworkToolCatalogHash(),
-                .environmentIdentity = generationHandle().environmentIdentity(),
+                .runIdentity                 = sessionManifestHash,
+                .frameworkReleaseIdentity    = runtimeModel.artifactRootHash(),
+                .toolRuntimeProtocolIdentity = toolRuntimeProtocolIdentity,
+                .environmentIdentity         = generationHandle().environmentIdentity(),
             };
         }
 
@@ -848,6 +859,14 @@ namespace uf::service
             )
         );
 
+        // Derived here rather than at each call site: it is a fact about the
+        // release, so computing it once per lifecycle is both cheaper and the
+        // only shape in which a caller cannot supply one.
+        UF_TRY_VALUE(
+            toolRuntimeProtocolIdentity,
+            deployment::currentToolRuntimeProtocolIdentity()
+        );
+
         // The lifecycle is allocated before the generation it drives, because
         // the generation's Tool Runtime seam is this lifecycle's dispatcher and
         // the dispatcher's Framework provider is this lifecycle's own. See the
@@ -862,7 +881,8 @@ namespace uf::service
             binding,
             installedGeneration,
             std::move(sessionId),
-            sessionManifest.hash()
+            sessionManifest.hash(),
+            toolRuntimeProtocolIdentity
         );
         auto& deployed = implementation->deployment();
 

@@ -13,6 +13,7 @@
 #include <operator/journal-entry.hpp>
 #include <operator/ledger.hpp>
 #include <operator/project-plugin.hpp>
+#include <operator/tool-admission-request.hpp>
 #include <operator/tool-invocation.hpp>
 
 #include <core/error/result.hpp>
@@ -47,8 +48,8 @@ namespace uf::operator_runtime::conformance
         concept NamesTool = requires(T value) { value.toolName; };
 
         static_assert(!NamesReducerInput<ProjectInstanceBaseline>);
-        static_assert(!NamesMutability<CommandRequest>);
-        static_assert(!NamesTool<CommandRequest>);
+        static_assert(!NamesMutability<ToolAdmissionRequest>);
+        static_assert(!NamesTool<ToolAdmissionRequest>);
 
         static_assert(!std::is_aggregate_v<ValidatedJournalEntryData>);
         static_assert(!std::is_aggregate_v<ValidatedToolInvocation>);

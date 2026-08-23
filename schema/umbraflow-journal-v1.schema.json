@@ -71,7 +71,6 @@
         "project_instance_key",
         "sequence",
         "prior_project_state_revision",
-        "operation_id",
         "session_manifest_hash",
         "namespaced_event_type",
         "payload_schema_hash",
@@ -89,12 +88,6 @@
             { "type": "integer", "minimum": 0 }
           ]
         },
-        "operation_id": {
-          "oneOf": [
-            { "type": "null" },
-            { "$ref": "#/$defs/Identifier" }
-          ]
-        },
         "session_manifest_hash": { "$ref": "#/$defs/Hash" },
         "namespaced_event_type": { "$ref": "#/$defs/NamespacedIdentifier" },
         "payload_schema_hash": { "$ref": "#/$defs/Hash" },
@@ -109,8 +102,7 @@
           },
           "then": {
             "properties": {
-              "prior_project_state_revision": { "type": "null" },
-              "operation_id": { "type": "null" }
+              "prior_project_state_revision": { "type": "null" }
             }
           },
           "else": {
@@ -156,8 +148,7 @@
         "baseline_event_type",
         "creation_event_id",
         "current_project_state_revision",
-        "current_project_state_hash",
-        "mutation_chain_operation_id"
+        "current_project_state_hash"
       ],
       "properties": {
         "plugin_id": { "$ref": "#/$defs/Identifier" },
@@ -167,13 +158,7 @@
         "baseline_event_type": { "$ref": "#/$defs/NamespacedIdentifier" },
         "creation_event_id": { "$ref": "#/$defs/Identifier" },
         "current_project_state_revision": { "type": "integer", "minimum": 0 },
-        "current_project_state_hash": { "$ref": "#/$defs/Hash" },
-        "mutation_chain_operation_id": {
-          "oneOf": [
-            { "type": "null" },
-            { "$ref": "#/$defs/Identifier" }
-          ]
-        }
+        "current_project_state_hash": { "$ref": "#/$defs/Hash" }
       }
     }
   }

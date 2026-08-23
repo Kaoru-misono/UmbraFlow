@@ -58,6 +58,17 @@ namespace uf::operator_runtime
         constexpr auto k_maximumAuditMillis = uint64{1'000U};
         constexpr auto k_maximumStatusMillis = uint64{1'000U};
         constexpr auto k_maximumInputMillis = uint64{15'000U};
+
+        // The two identity domain tags. They are constants rather than literals
+        // inside their builders because the protocol material renders the exact
+        // preimage bytes: one spelling reaches both, so a tag bumped for a
+        // preimage change cannot move the identity without moving the material.
+        constexpr auto k_rootPreimageTag = std::string_view{
+            "umbraflow-internal-tool-root-v0"
+        };
+        constexpr auto k_callPreimageTag = std::string_view{
+            "umbraflow-internal-tool-call-v1"
+        };
         constexpr auto k_maximumCallerIdentityBytes = std::size_t{256U};
 
         auto appendIdentityPart(
@@ -103,7 +114,7 @@ namespace uf::operator_runtime
             CanonicalJson const& requestPreimage
         ) -> std::string
         {
-            auto material = std::string{"umbraflow-internal-tool-root-v0"};
+            auto material = std::string{k_rootPreimageTag};
             appendIdentityPart(material, callerNamespace.value());
             appendIdentityPart(material, requestKey.value());
             appendIdentityHash(material, requestPreimage.contentHash());
@@ -124,7 +135,7 @@ namespace uf::operator_runtime
             std::optional<ContentHash> const& observationReference
         ) -> std::string
         {
-            auto material = std::string{"umbraflow-internal-tool-call-v1"};
+            auto material = std::string{k_callPreimageTag};
             appendIdentityHash(material, rootIdentity);
             appendIdentityHash(material, parentIdentity);
             appendIdentityPart(material, std::to_string(sequence));
@@ -1707,5 +1718,102 @@ namespace uf::operator_runtime
     ) const -> std::vector<OfferedTool>
     {
         return offerTools(m_tools, profile, heldCapabilities);
+    }
+
+    auto toolIdentityPreimageMaterial() -> Result<std::string>
+    {
+        // Distinct probe digests, so a member that took another member's value
+        // would move these bytes rather than hide inside them.
+        auto const probe = [](std::string_view label) -> Result<ContentHash>
+        {
+            return sha256(std::as_bytes(std::span{label}));
+        };
+        UF_TRY_VALUE(rootProbe, probe("umbraflow-preimage-probe-root"));
+        UF_TRY_VALUE(parentProbe, probe("umbraflow-preimage-probe-parent"));
+        UF_TRY_VALUE(runProbe, probe("umbraflow-preimage-probe-run"));
+        UF_TRY_VALUE(releaseProbe, probe("umbraflow-preimage-probe-release"));
+        UF_TRY_VALUE(protocolProbe, probe("umbraflow-preimage-probe-protocol"));
+        UF_TRY_VALUE(environmentProbe, probe("umbraflow-preimage-probe-environment"));
+        UF_TRY_VALUE(observationProbe, probe("umbraflow-preimage-probe-observation"));
+        UF_TRY_VALUE(registrationProbe, probe("umbraflow-preimage-probe-registration"));
+        UF_TRY_VALUE(catalogProbe, probe("umbraflow-preimage-probe-catalog"));
+
+        UF_TRY_VALUE(
+            callerNamespace,
+            CallerIdempotencyNamespace::create("umbraflow-preimage-probe-caller")
+        );
+        UF_TRY_VALUE(
+            requestKey,
+            RootRequestKey::create("umbraflow-preimage-probe-request")
+        );
+        UF_TRY_VALUE(
+            requestPreimage,
+            CanonicalJson::parseExact(R"({"probe":1})")
+        );
+
+        UF_TRY_VALUE(catalog, FrameworkToolCatalogOwner::create());
+        UF_TRY_VALUE(arguments, CanonicalJson::parseExact("{}"));
+        UF_TRY_VALUE(
+            invocation,
+            catalog.validate(std::string{k_observeTool}, std::move(arguments))
+        );
+
+        // Both provider arms, rendered through the same visitor the identity
+        // uses, so the arm tags and their member order are covered even though
+        // one coordinate can carry only one of them.
+        auto providers = std::string{};
+        std::visit(
+            AppendProviderIdentity{providers},
+            ToolProviderIdentity{FrameworkToolProvider{
+                .toolCatalogHash = catalogProbe,
+            }}
+        );
+        std::visit(
+            AppendProviderIdentity{providers},
+            ToolProviderIdentity{ProjectToolProvider{
+                .projectRegistrationHash = registrationProbe,
+                .toolCatalogHash         = catalogProbe,
+            }}
+        );
+
+        // The framing rule itself, which no sample above can lose: a part is
+        // its UTF-8 byte length, a colon, and the bytes.
+        auto framing = std::string{};
+        appendIdentityPart(framing, "umbraflow-preimage-probe-part");
+
+        auto const execution = ToolExecutionIdentity{
+            .runIdentity                 = runProbe,
+            .frameworkReleaseIdentity    = releaseProbe,
+            .toolRuntimeProtocolIdentity = protocolProbe,
+            .environmentIdentity         = environmentProbe,
+        };
+        return json::canonicalBytes(json::Value::ofObject({
+            {"call_preimage_observed",
+             json::Value::ofString(callIdentityMaterial(
+                 rootProbe,
+                 parentProbe,
+                 7U,
+                 execution,
+                 invocation,
+                 observationProbe
+             ))},
+            {"call_preimage_unobserved",
+             json::Value::ofString(callIdentityMaterial(
+                 rootProbe,
+                 parentProbe,
+                 7U,
+                 execution,
+                 invocation,
+                 std::nullopt
+             ))},
+            {"part_framing", json::Value::ofString(std::move(framing))},
+            {"provider_arms", json::Value::ofString(std::move(providers))},
+            {"root_preimage",
+             json::Value::ofString(rootIdentityMaterial(
+                 callerNamespace,
+                 requestKey,
+                 requestPreimage
+             ))},
+        }));
     }
 }

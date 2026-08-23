@@ -26,6 +26,7 @@
 #include <domain/content-hash.hpp>
 
 #include <operator/project-plugin.hpp>
+#include <operator/tool-invocation.hpp>
 
 #include <schema/framework-schema-catalog.hpp>
 
@@ -1419,5 +1420,66 @@ namespace uf::deployment
         // And the unmodified sources do build one, so the refusals above are
         // about the link that was broken.
         CHECK(ProjectDeployment::create(bundle.sources()).has_value());
+    }
+
+    // What tool_runtime_protocol_identity is taken over, and what it is not.
+    //
+    // The value it replaced was the Framework Tool catalog hash, which covers
+    // Framework Tool descriptors and nothing else: the state vocabulary, the
+    // identity preimages, the durable record and the canonical-form contract
+    // could every one of them move without moving it, so the equality a resume
+    // performs was named for a property it could not observe. The last check
+    // here is the one that would go red if the two were ever made the same
+    // value again.
+    TEST_CASE("the Tool Runtime protocol identity is derived from protocol material")
+    {
+        auto const material = currentToolRuntimeProtocolMaterial();
+        if (!material.has_value())
+        {
+            FAIL(material.error().message());
+        }
+
+        // Every member the identity claims to cover, named. A member dropped
+        // from the assembly is a protocol change this identity would stop
+        // seeing, and this is the only place that says so.
+        for (auto const member : std::array{
+                 std::string_view{"\"call_vocabulary\":"},
+                 std::string_view{"\"canonical_form_contract\":"},
+                 std::string_view{"\"durable_record\":"},
+                 std::string_view{"\"identity_preimages\":"},
+                 std::string_view{"\"tool_catalog_schema\":"},
+                 std::string_view{"\"tool_catalog_wire_tag\":"},
+             })
+        {
+            CAPTURE(member);
+            CHECK(material->contains(member));
+        }
+
+        // The two halves the durable record and the vocabulary each contribute,
+        // spot-checked by a value only that half can supply.
+        CHECK(material->contains("terminally_unresolved"));
+        CHECK(material->contains("CREATE TABLE tool_call_positions("));
+        CHECK(material->contains("umbraflow-internal-tool-call-v1"));
+
+        auto const identity = currentToolRuntimeProtocolIdentity();
+        REQUIRE(identity.has_value());
+        auto const recomputed = sha256(std::as_bytes(std::span{*material}));
+        REQUIRE(recomputed.has_value());
+        CHECK(*identity == *recomputed);
+
+        // Deriving it twice from one release gives one value, which is what
+        // makes the resume equality a join rather than a coin toss.
+        auto const again = currentToolRuntimeProtocolIdentity();
+        REQUIRE(again.has_value());
+        CHECK(*identity == *again);
+
+        auto const catalog = operator_runtime::FrameworkToolCatalogOwner::create();
+        REQUIRE(catalog.has_value());
+        CHECK_MESSAGE(
+            *identity != catalog->toolCatalogHash(),
+            "the protocol identity must not be the Framework Tool catalog hash: "
+            "a framework call's provider identity IS that hash, and one value "
+            "doing both jobs cannot mismatch"
+        );
     }
 }

@@ -1107,6 +1107,54 @@ namespace uf::deployment
         return adopt(schema.validate(document), named->schemaName);
     }
 
+    auto currentToolRuntimeProtocolMaterial() -> Result<std::string>
+    {
+        UF_TRY_VALUE(
+            preimageBytes,
+            operator_runtime::toolIdentityPreimageMaterial()
+        );
+        UF_TRY_VALUE(preimages, json::parse(preimageBytes));
+        UF_TRY_VALUE(
+            vocabulary,
+            json::parse(operator_runtime::toolCallVocabularyMaterial())
+        );
+        UF_TRY_VALUE(
+            durableRecord,
+            json::parse(operator_runtime::toolRuntimeDurableRecordMaterial())
+        );
+        return json::canonicalBytes(json::Value::ofObject({
+            {"call_vocabulary", std::move(vocabulary)},
+
+            // A named token rather than a derivation, for the reason the
+            // plugin environment's freeze and budget tokens are: no constant in
+            // this tree says "RFC 8785 exactness with no second form admitted",
+            // and the only way an identity can move when that rule changes is
+            // for the author changing it to bump this word. It is the one
+            // member here nothing else can falsify.
+            {"canonical_form_contract",
+             json::Value::ofString("rfc8785-exact-bytes-no-second-form-v1")},
+
+            {"durable_record", std::move(durableRecord)},
+            {"identity_preimages", std::move(preimages)},
+
+            // The exact bytes that decide what a Tool catalog document IS. A
+            // Tool call's whole provider surface is read out of a document
+            // judged by this schema, so a protocol identity that did not carry
+            // it would be named for a property it cannot observe -- the defect
+            // that made this material necessary in the first place.
+            {"tool_catalog_schema",
+             json::Value::ofString(std::string{k_toolCatalogDocument.exactBytes})},
+            {"tool_catalog_wire_tag",
+             json::Value::ofString(std::string{k_toolCatalogDocument.schemaName})},
+        }));
+    }
+
+    auto currentToolRuntimeProtocolIdentity() -> Result<ContentHash>
+    {
+        UF_TRY_VALUE(material, currentToolRuntimeProtocolMaterial());
+        return sha256(std::as_bytes(std::span{material}));
+    }
+
     auto canonicalJsonValidator() -> operator_runtime::CanonicalJsonValidator
     {
         return [](std::string_view exactJcs) -> Result<json::Value>

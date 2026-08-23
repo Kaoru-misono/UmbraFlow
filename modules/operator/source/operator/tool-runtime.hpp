@@ -100,6 +100,16 @@ namespace uf::operator_runtime
     [[nodiscard]]
     auto parseToolCallState(std::string_view value) -> Result<ToolCallState>;
 
+    // The terminal split, and the whole of it: a state carries an outcome
+    // exactly when a provider conclusion or a reconciliation wrote it, and the
+    // three that do not are the three a call is still passing through.
+    //
+    // It is published rather than restated at each reader because three of them
+    // exist -- the durable write path, the evidence rule and the effect rule --
+    // and a fourth spelling is how a state joins the wrong half unnoticed.
+    [[nodiscard]]
+    auto toolCallStateHasOutcome(ToolCallState state) noexcept -> bool;
+
     enum class ToolCallCompletionKind : uint8
     {
         Confirmed,
@@ -164,6 +174,29 @@ namespace uf::operator_runtime
         ProvenAbsent,
         TerminallyUnresolved,
     };
+
+    // The durable state each provider conclusion writes. Published for the same
+    // reason the terminal split is: the protocol material renders this mapping,
+    // and a mapping rendered from a second table could describe a protocol the
+    // ledger does not implement.
+    [[nodiscard]]
+    auto toolCallStateFor(ToolCallCompletionKind kind) noexcept -> ToolCallState;
+
+    [[nodiscard]]
+    auto toolCallStateFor(ToolCallReconciliationKind kind) noexcept -> ToolCallState;
+
+    // The Tool call vocabulary rendered as exact canonical JSON: every durable
+    // state wire name with the half of the split it belongs to, every provider
+    // conclusion with the state it writes, and the two answerer kinds with what
+    // each can reach the world through.
+    //
+    // It is a fragment of currentToolRuntimeProtocolMaterial() rather than a
+    // digest of its own, so the identity taken over the whole moves when any
+    // one of these moves. Every value in it is read from the tables above; none
+    // of it is a second spelling that could describe a vocabulary the ledger
+    // does not have.
+    [[nodiscard]]
+    auto toolCallVocabularyMaterial() -> std::string;
 
     // A Framework-owned conclusion over a previously possible mutating call,
     // and the answer a ToolReconciliationQuery returns.

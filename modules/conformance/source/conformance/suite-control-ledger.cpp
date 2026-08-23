@@ -1,12 +1,16 @@
-// What the Operator's ledger enforces around a project: one linearization per
-// controlled target, one dispatch per Operation, one reconciliation authority,
-// and a reducer input nobody outside the Operator can choose.
+// What the Operator's ledger enforces around a project: one control authority
+// per controlled target, and a lease that loses it the moment another
+// controller takes over.
+//
+// Durable idempotency used to be proved here, against the Operation ledger.
+// That ledger is gone; the property now belongs to the Tool root request and is
+// proved in suite-tool-runtime.cpp against ToolRootRequestIdentity::relationTo,
+// which is where the caller-facing key actually lives.
 
 #include "suite-support.hpp"
 
 
 #include <operator/ledger.hpp>
-#include <operator/operation.hpp>
 
 #include <doctest/doctest.h>
 
@@ -46,43 +50,4 @@ namespace uf::operator_runtime::conformance
             observeAgain(prepared)
         ).has_value());
     }
-
-    TEST_CASE("contract-control-c06")
-    {
-        auto const root   = TemporaryDirectory{"c06"};
-        auto prepared     = prepareStore(root.path());
-        auto const& words = prepared.project.underTest.vocabulary;
-
-        auto const request  = command(prepared.snapshot, "request-1");
-        auto const first    = prepared.store.submitCommand(
-            prepared.controller,
-            request,
-            toolInvocation(prepared.project, ProjectRole::UnderTest, words.mutatingTool)
-        );
-        auto const repeated = prepared.store.submitCommand(
-            prepared.controller,
-            request,
-            toolInvocation(prepared.project, ProjectRole::UnderTest, words.mutatingTool)
-        );
-        REQUIRE(first.has_value());
-        REQUIRE(repeated.has_value());
-        CHECK(first->operation.lookup == CommandLookup::Created);
-        CHECK(repeated->operation.lookup == CommandLookup::Existing);
-        CHECK(first->operation.operationId == repeated->operation.operationId);
-        CHECK(first->commandFingerprint == repeated->commandFingerprint);
-
-        // Durable idempotency is by request identity, so the same identity
-        // carrying a different command is a conflict rather than a second
-        // Operation.
-        CHECK_FALSE(prepared.store.submitCommand(
-            prepared.controller,
-            request,
-            toolInvocation(
-                prepared.project,
-                ProjectRole::UnderTest,
-                words.otherMutatingTool
-            )
-        ).has_value());
-    }
-
 }

@@ -255,26 +255,30 @@ set(UF_REQUIRED_CONTRACT_GATES
     contract-control-c01
     contract-control-c02
     contract-control-c04
-    contract-control-c06
-    contract-control-c07
-    # contract-control-c03, c05, c08 and c09 through c13 are absent while their
-    # subject is. Each drove a real Operation through freezePlan, mintNextStep,
-    # reserveDispatch and commitReconciliation, and the two-closure registration
-    # generation leaves those doors with no project entry to call. Their
-    # requirements keep the schema-control gates below, so no requirement lost
-    # every gate; what they lost is the behavioural half, and restoring it
-    # belongs to the change that gives the Tool Runtime the coverage those cases
-    # held. contract-agent-a07 is absent for the same reason and keeps
-    # schema-agent-a07.
-    contract-control-c14
+    # contract-control-c08 and contract-control-c12 are absent while their
+    # behavioural half is: each drove a real Operation through freezePlan and
+    # commitReconciliation, and the two-closure registration generation leaves
+    # those doors with no project entry to call. Their requirements keep the
+    # schema-control gates below, so neither lost every gate; what they lost is
+    # the behavioural half, and restoring it belongs to the change that gives
+    # the Tool Runtime the coverage those cases held. contract-agent-a07 is
+    # absent for the same reason and keeps schema-agent-a07.
+    #
+    # C-05, C-06, C-07, C-09, C-11, C-13 and C-14 are gone from this list
+    # entirely, together with their rows in UF_REQUIRED_CORE_REQUIREMENTS. Each
+    # was a shape or a transition of the Operation record, and that record is
+    # deleted: there is no subject left for a gate to be about, so keeping a
+    # requirement for one would be a name with nothing behind it.
+    #
+    # C-03 and C-10 stay: Host delivery did not go with the Operation.
+    # OP:`DeliveryAuthority`, OP:`ReceiptRef` and OP:`DeliveryOutcome` are what
+    # a Tool-call input delivery is authorized and classified by, and
+    # check-repository-surface holds every published DeliveryAuthority field to
+    # a HOST_VALIDATION_TEST marker in a registered source.
     schema-control-c03
-    schema-control-c05
     schema-control-c08
-    schema-control-c09
     schema-control-c10
-    schema-control-c11
     schema-control-c12
-    schema-control-c13
     contract-agent-a01
     contract-agent-a02
     contract-agent-a03
@@ -289,10 +293,15 @@ set(UF_REQUIRED_CONTRACT_GATES
     schema-agent-a07
 )
 
-# The 42 REQUIRED_CORE requirements, prefix stripped. The list above says which
+# The 35 REQUIRED_CORE requirements, prefix stripped. The list above says which
 # kind of gate each one owns; this one says that none of them lost every gate.
 # Deriving it from the list above would make it unfalsifiable, so it is written
 # out: dropping both of a requirement's gates has to fail here.
+#
+# It was 42 until the Operation record was deleted. C-05, C-06, C-07, C-09,
+# C-11, C-13 and C-14 left with it -- not because their gates were hard to
+# keep, but because each named a shape or a transition of that record and there
+# is nothing left for them to require.
 set(UF_REQUIRED_CORE_REQUIREMENTS
     product-p01
     product-p02
@@ -318,16 +327,9 @@ set(UF_REQUIRED_CORE_REQUIREMENTS
     control-c02
     control-c03
     control-c04
-    control-c05
-    control-c06
-    control-c07
     control-c08
-    control-c09
     control-c10
-    control-c11
     control-c12
-    control-c13
-    control-c14
     agent-a01
     agent-a02
     agent-a03
@@ -338,9 +340,9 @@ set(UF_REQUIRED_CORE_REQUIREMENTS
     agent-a08
 )
 list(LENGTH UF_REQUIRED_CORE_REQUIREMENTS UF_REQUIRED_CORE_REQUIREMENT_COUNT)
-if(NOT UF_REQUIRED_CORE_REQUIREMENT_COUNT EQUAL 42)
+if(NOT UF_REQUIRED_CORE_REQUIREMENT_COUNT EQUAL 35)
     message(FATAL_ERROR
-        "the requirement matrix has 42 REQUIRED_CORE entries; this list has "
+        "the requirement matrix has 35 REQUIRED_CORE entries; this list has "
         "${UF_REQUIRED_CORE_REQUIREMENT_COUNT}"
     )
 endif()
@@ -356,20 +358,17 @@ set(UF_SCHEMA_ONLY_REQUIREMENTS
     # behavioural half's vehicle away: each drove a real Operation through
     # freezePlan, mintNextStep and commitReconciliation, and a Project of the
     # new generation exports no plan, next_step or reconcile for those doors to
-    # call. Without a minted step nothing reaches reserveDispatch either, which
-    # is what took C-03's delivery authority and A-07's takeover race with it.
-    # Their schema- gates still read the shape. This entry is the explicit
-    # statement that the behaviour is unenforced today, and it comes out again
-    # with the change that gives the Tool Runtime the coverage those cases held.
+    # call. What survives of each is the half whose subject the framework still
+    # has -- the Tool descriptor bounds for C-08, the policy artifact for C-12,
+    # the control transition for A-07 -- and its schema- gate still reads that
+    # shape. This entry is the explicit statement that the behaviour is
+    # unenforced today, and it comes out again with the change that gives the
+    # Tool Runtime the coverage those cases held.
     agent-a07
     control-c03
-    control-c05
     control-c08
-    control-c09
     control-c10
-    control-c11
     control-c12
-    control-c13
 )
 
 # A suite is valid only when its requested IDs and concrete doctest declarations
@@ -613,7 +612,7 @@ target_compile_definitions(test-deployment PRIVATE
 # put the slowest of them at 22 seconds.
 uf_shard_doctest_gates(
     TARGET test-deployment
-    TOTAL_CASES 49
+    TOTAL_CASES 50
     SHARDS 4
 )
 
@@ -703,7 +702,6 @@ if(TARGET ${PROJECT_NAME}_operator)
             operator/test-ledger.cpp
             operator/test-lifecycle-facade.cpp
             operator/test-manifest.cpp
-            operator/test-operation.cpp
             operator/test-project-generation.cpp
             operator/test-tool-admission-funnel.cpp
             operator/test-tool-authority.cpp
@@ -738,7 +736,7 @@ if(TARGET ${PROJECT_NAME}_operator)
     # beside it.
     uf_shard_doctest_gates(
         TARGET test-operator
-        TOTAL_CASES 180
+        TOTAL_CASES 176
         SHARDS 6
     )
 
@@ -786,16 +784,10 @@ if(TARGET ${PROJECT_NAME}_operator)
             schema-state-s04
             contract-control-c02
             contract-control-c04
-            contract-control-c07
-            contract-control-c14
             schema-control-c03
-            schema-control-c05
             schema-control-c08
-            schema-control-c09
             schema-control-c10
-            schema-control-c11
             schema-control-c12
-            schema-control-c13
             contract-agent-a01
             contract-agent-a02
             contract-agent-a04

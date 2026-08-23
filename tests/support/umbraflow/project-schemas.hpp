@@ -76,7 +76,7 @@ namespace uf::operator_runtime::test_support
     }
 })json"};
 
-    // The same argument shape, opened for the one member the submitCommand
+    // The same argument shape, opened for the one member the observed-instance
     // gate resolves: a canonical argument spelling an observed_instance_id
     // minted elsewhere. The gate's whole subject is such arguments, and the
     // strict fixture schema refuses them, so a case that feeds the gate

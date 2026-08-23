@@ -2,10 +2,13 @@
 
 #include <core/error/contracts.hpp>
 
+#include <json/value.hpp>
+
 #include <algorithm>
 #include <array>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace uf::operator_runtime
 {
@@ -15,6 +18,24 @@ namespace uf::operator_runtime
         {
             ToolCallState    state;
             std::string_view name;
+        };
+
+        // The two closed conclusion sets, listed once so the vocabulary
+        // material walks the same set every switch above answers for. A kind
+        // added to the enum and not to its array renders a material that
+        // describes fewer conclusions than the protocol admits, so the arrays
+        // are asserted against the enum sizes below them.
+        constexpr auto k_toolCallCompletionKinds = std::array{
+            ToolCallCompletionKind::Confirmed,
+            ToolCallCompletionKind::ProvenAbsent,
+            ToolCallCompletionKind::Possible,
+            ToolCallCompletionKind::TerminalFailure,
+        };
+
+        constexpr auto k_toolCallReconciliationKinds = std::array{
+            ToolCallReconciliationKind::Confirmed,
+            ToolCallReconciliationKind::ProvenAbsent,
+            ToolCallReconciliationKind::TerminallyUnresolved,
         };
 
         constexpr auto k_toolCallStateNames = std::array{
@@ -84,6 +105,114 @@ namespace uf::operator_runtime
             AutomationErrorKind::InvalidResource,
             "Unknown stored Tool call state"
         );
+    }
+
+    auto toolCallStateHasOutcome(ToolCallState state) noexcept -> bool
+    {
+        switch (state)
+        {
+        case ToolCallState::Proposed:
+        case ToolCallState::Admitted:
+        case ToolCallState::Dispatching:
+            return false;
+        case ToolCallState::Confirmed:
+        case ToolCallState::ProvenAbsent:
+        case ToolCallState::Possible:
+        case ToolCallState::TerminalFailure:
+        case ToolCallState::TerminallyUnresolved:
+            return true;
+        }
+        UF_UNREACHABLE_MSG("Unknown Tool call state outcome relation");
+    }
+
+    auto toolCallStateFor(ToolCallCompletionKind kind) noexcept -> ToolCallState
+    {
+        switch (kind)
+        {
+        case ToolCallCompletionKind::Confirmed:
+            return ToolCallState::Confirmed;
+        case ToolCallCompletionKind::ProvenAbsent:
+            return ToolCallState::ProvenAbsent;
+        case ToolCallCompletionKind::Possible:
+            return ToolCallState::Possible;
+        case ToolCallCompletionKind::TerminalFailure:
+            return ToolCallState::TerminalFailure;
+        }
+        UF_UNREACHABLE_MSG("Unknown Tool call completion kind");
+    }
+
+    auto toolCallStateFor(ToolCallReconciliationKind kind) noexcept -> ToolCallState
+    {
+        switch (kind)
+        {
+        case ToolCallReconciliationKind::Confirmed:
+            return ToolCallState::Confirmed;
+        case ToolCallReconciliationKind::ProvenAbsent:
+            return ToolCallState::ProvenAbsent;
+        case ToolCallReconciliationKind::TerminallyUnresolved:
+            return ToolCallState::TerminallyUnresolved;
+        }
+        UF_UNREACHABLE_MSG("Unknown Tool call reconciliation kind");
+    }
+
+    auto toolCallVocabularyMaterial() -> std::string
+    {
+        auto stateRows = std::vector<json::Value>{};
+        stateRows.reserve(k_toolCallStateNames.size());
+        for (auto const& candidate : k_toolCallStateNames)
+        {
+            stateRows.emplace_back(json::Value::ofObject({
+                {"carries_outcome",
+                 json::Value::ofBoolean(toolCallStateHasOutcome(candidate.state))},
+                {"name", json::Value::ofString(std::string{candidate.name})},
+            }));
+        }
+
+        // Each conclusion is rendered by the state it writes rather than by an
+        // enumerator name, because the enumerator is a C++ spelling and the
+        // state is the protocol.
+        auto completionRows = std::vector<json::Value>{};
+        completionRows.reserve(k_toolCallCompletionKinds.size());
+        for (auto const kind : k_toolCallCompletionKinds)
+        {
+            completionRows.emplace_back(json::Value::ofString(
+                std::string{toolCallStateWireName(toolCallStateFor(kind))}
+            ));
+        }
+
+        auto reconciliationRows = std::vector<json::Value>{};
+        reconciliationRows.reserve(k_toolCallReconciliationKinds.size());
+        for (auto const kind : k_toolCallReconciliationKinds)
+        {
+            reconciliationRows.emplace_back(json::Value::ofString(
+                std::string{toolCallStateWireName(toolCallStateFor(kind))}
+            ));
+        }
+
+        auto answererRows = std::vector<json::Value>{};
+        answererRows.reserve(k_toolAnswerers.size());
+        for (auto const& answerer : k_toolAnswerers)
+        {
+            answererRows.emplace_back(json::Value::ofObject({
+                {"provider_kind",
+                 json::Value::ofString(std::string{answerer.providerKind})},
+                {"reaches_world_through",
+                 json::Value::ofString(std::string{
+                     answerer.composition == ToolEffectComposition::RecordedChildren
+                         ? "recorded_children"
+                         : "direct_leaf",
+                 })},
+            }));
+        }
+
+        return json::canonicalBytes(json::Value::ofObject({
+            {"answerers", json::Value::ofArray(std::move(answererRows))},
+            {"completion_states",
+             json::Value::ofArray(std::move(completionRows))},
+            {"reconciliation_states",
+             json::Value::ofArray(std::move(reconciliationRows))},
+            {"states", json::Value::ofArray(std::move(stateRows))},
+        }));
     }
 
     ToolCallCompletion::ToolCallCompletion(

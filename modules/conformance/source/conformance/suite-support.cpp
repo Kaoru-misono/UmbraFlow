@@ -715,18 +715,6 @@ namespace uf::operator_runtime::conformance
         };
     }
 
-    auto command(
-        SnapshotRecord const& snapshot,
-        std::string clientRequestId
-    ) -> CommandRequest
-    {
-        return CommandRequest{
-            .snapshotToken        = snapshot.token,
-            .idempotencyNamespace = "controller-1",
-            .clientRequestId      = std::move(clientRequestId),
-        };
-    }
-
     auto occurrences(
         std::string_view text,
         std::string_view needle

@@ -1027,62 +1027,30 @@ namespace uf::operator_runtime
             return expectDone(database, insert.get());
         }
 
-        [[nodiscard]]
-        auto toolCallStateFor(
-            ToolCallCompletionKind kind
-        ) noexcept -> ToolCallState
-        {
-            switch (kind)
-            {
-            case ToolCallCompletionKind::Confirmed:
-                return ToolCallState::Confirmed;
-            case ToolCallCompletionKind::ProvenAbsent:
-                return ToolCallState::ProvenAbsent;
-            case ToolCallCompletionKind::Possible:
-                return ToolCallState::Possible;
-            case ToolCallCompletionKind::TerminalFailure:
-                return ToolCallState::TerminalFailure;
-            }
-            UF_UNREACHABLE_MSG("Unknown Tool call completion kind");
-        }
+        // The durable Tool call states that hold a mutation barrier: the two a
+        // call passes through after admission, and the two uncertain terminals
+        // that leave the target's world unknown. `proposed` is deliberately
+        // absent -- a proposed call holds no admitted authority and section
+        // 5.3's recovery is to re-admit it -- and so are the three settled
+        // terminals, which have nothing left in flight.
+        //
+        // One spelling, because two readers ask this question: the per-target
+        // barrier every mutating admission crosses, and the quiescence gate a
+        // release upgrade's session pin crosses. A second list would let an
+        // upgrade land in a state the admission barrier still calls active.
+        constexpr auto k_activeToolMutationStates = std::string_view{
+            "'admitted','dispatching','possible','terminally_unresolved'"
+        };
 
-        [[nodiscard]]
-        auto toolCallStateFor(
-            ToolCallReconciliationKind kind
-        ) noexcept -> ToolCallState
-        {
-            switch (kind)
-            {
-            case ToolCallReconciliationKind::Confirmed:
-                return ToolCallState::Confirmed;
-            case ToolCallReconciliationKind::ProvenAbsent:
-                return ToolCallState::ProvenAbsent;
-            case ToolCallReconciliationKind::TerminallyUnresolved:
-                return ToolCallState::TerminallyUnresolved;
-            }
-            UF_UNREACHABLE_MSG("Unknown Tool call reconciliation kind");
-        }
+        // The rows of one mutating call still holding the barrier, joined from
+        // history through its position to the run that names the target.
+        constexpr auto k_activeToolMutationJoin = std::string_view{
+            "FROM tool_call_history history "
+            "JOIN tool_call_positions position "
+            "ON position.call_identity=history.call_identity "
+            "JOIN tool_runs run ON run.root_identity=position.root_identity "
+        };
 
-        [[nodiscard]]
-        auto toolCallStateHasOutcome(ToolCallState state) noexcept -> bool
-        {
-            switch (state)
-            {
-            case ToolCallState::Proposed:
-            case ToolCallState::Admitted:
-            case ToolCallState::Dispatching:
-                return false;
-            case ToolCallState::Confirmed:
-            case ToolCallState::ProvenAbsent:
-            case ToolCallState::Possible:
-            case ToolCallState::TerminalFailure:
-            case ToolCallState::TerminallyUnresolved:
-                return true;
-            }
-            UF_UNREACHABLE_MSG("Unknown Tool call state outcome relation");
-        }
-
-        [[nodiscard]]
         // excludedCallIdentities is the one live mutation chain the caller is
         // already inside: the call being admitted and every ancestor whose
         // handler is running it. Section 3.3 keeps a child in that one chain
@@ -1096,16 +1064,12 @@ namespace uf::operator_runtime
             std::span<std::string const> excludedCallIdentities
         ) -> Status
         {
-            auto sql = std::string{
-                "SELECT history.call_identity, history.state "
-                "FROM tool_call_history history "
-                "JOIN tool_call_positions position "
-                "ON position.call_identity=history.call_identity "
-                "JOIN tool_runs run ON run.root_identity=position.root_identity "
-                "WHERE run.controlled_target_id=?1 AND history.mutating=1 "
-                "AND history.state IN ('admitted','dispatching','possible',"
-                "'terminally_unresolved')"
-            };
+            auto sql = std::string{"SELECT history.call_identity, history.state "}
+                + std::string{k_activeToolMutationJoin}
+                + "WHERE run.controlled_target_id=?1 AND history.mutating=1 "
+                  "AND history.state IN ("
+                + std::string{k_activeToolMutationStates}
+                + ")";
             for (auto index = std::size_t{}; index < excludedCallIdentities.size(); ++index)
             {
                 sql += std::format(" AND history.call_identity<>?{}", index + 2U);
@@ -1346,7 +1310,7 @@ namespace uf::operator_runtime
         // "Delete-on-open has a deadline" section owns
         // the exact-pair migration policy.
         constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
-            "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d"
+            "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76"
         };
 
         // A transition row records the applied exact pair; neither the row nor
@@ -1359,20 +1323,17 @@ namespace uf::operator_runtime
             ") STRICT"
         };
 
+        // No detail column. Both remaining kinds are complete in their kind and
+        // subject identity, so a nullable one would be storage no producer can
+        // fill and no reader could tell an absent value from an unwritten one.
         constexpr auto k_ledgerEventsDdl = std::string_view{
             "CREATE TABLE ledger_events("
             "sequence INTEGER PRIMARY KEY AUTOINCREMENT,"
             "session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),"
             "controlled_target_id TEXT NOT NULL,"
-            "kind TEXT NOT NULL,"
-            "subject_id TEXT NOT NULL,"
-            "detail TEXT,"
-            "CHECK((kind IN ('operation_created', 'control_transitioned', "
-            "'external_input_detected') AND detail IS NULL) OR "
-            "(kind='operation_state_changed' AND detail IN ("
-            "'proposed', 'awaiting_approval', 'ready', 'needs_revalidation', "
-            "'running', 'reconciling', 'confirmed', 'rejected', 'ambiguous', "
-            "'invalid', 'denied', 'cancelled', 'expired', 'diverged')))"
+            "kind TEXT NOT NULL CHECK(kind IN ("
+            "'control_transitioned', 'external_input_detected')),"
+            "subject_id TEXT NOT NULL"
             ") STRICT"
         };
 
@@ -2588,12 +2549,11 @@ namespace uf::operator_runtime
         // rather than carried: a table nothing can write and nothing reads is
         // storage with nothing keeping it true.
         //
-        // ledger_events is rebuilt because its CHECK enumerated a
-        // delivery_outcome_recorded kind that now has no producer. The rows of
-        // that kind are DELETED rather than carried, which is the one place a
-        // registered migration here discards audit: they report the outcome of
-        // a dispatch whose whole subsystem is gone, and the new CHECK cannot
-        // admit them.
+        // ledger_events is NOT rebuilt here. Its CHECK enumerated a
+        // delivery_outcome_recorded kind that lost its producer with these
+        // tables, and two operation kinds that lost theirs one generation
+        // later; rebuildLedgerEvents below retires all three in one step, and
+        // every chain that reaches this one reaches that one too.
         [[nodiscard]]
         auto dropOperationDispatchTables(sqlite3* database) -> Status
         {
@@ -2602,7 +2562,27 @@ namespace uf::operator_runtime
             UF_TRY(execute(database, "DROP TABLE IF EXISTS operation_steps"));
             UF_TRY(execute(database, "DROP TABLE IF EXISTS dispatches"));
             UF_TRY(execute(database, "DROP TABLE IF EXISTS authority_decisions"));
-            UF_TRY(execute(database, "DROP TABLE IF EXISTS operation_plans"));
+            return execute(database, "DROP TABLE IF EXISTS operation_plans");
+        }
+
+        // Rebuilds ledger_events into the exact current DDL, carrying every row
+        // whose kind the current CHECK still admits.
+        //
+        // Three kinds are dropped rather than carried, and this is the one
+        // place a registered migration here discards audit.
+        // delivery_outcome_recorded reports the outcome of a dispatch whose
+        // whole subsystem is gone; operation_created and
+        // operation_state_changed name a row in the table the next step drops,
+        // so their subject id resolves to nothing. The rebuilt CHECK is what
+        // refuses a retired kind rather than a comment.
+        //
+        // The table is rebuilt rather than altered because the detail column
+        // goes with those kinds, and because a CHECK constraint is part of the
+        // stored DDL this schema identity is taken from.
+        [[nodiscard]]
+        auto rebuildLedgerEvents(sqlite3* database) -> Status
+        {
+            UF_TRY(execute(database, "PRAGMA defer_foreign_keys=ON"));
             UF_TRY(execute(
                 database,
                 "ALTER TABLE ledger_events RENAME TO prior_ledger_events"
@@ -2611,12 +2591,109 @@ namespace uf::operator_runtime
             UF_TRY(execute(
                 database,
                 "INSERT INTO ledger_events(sequence, session_epoch, "
-                "controlled_target_id, kind, subject_id, detail) "
-                "SELECT sequence, session_epoch, controlled_target_id, kind, "
-                "subject_id, detail FROM prior_ledger_events "
-                "WHERE kind<>'delivery_outcome_recorded'"
+                "controlled_target_id, kind, subject_id) SELECT sequence, "
+                "session_epoch, controlled_target_id, kind, subject_id "
+                "FROM prior_ledger_events WHERE kind NOT IN ("
+                "'delivery_outcome_recorded', 'operation_created', "
+                "'operation_state_changed')"
             ));
             return execute(database, "DROP TABLE prior_ledger_events");
+        }
+
+        // The generation in which the Operation surface left the ledger
+        // entirely.
+        //
+        // operations had one writer, submitCommand, and four readers besides
+        // it; all of them are deleted in the same change, so the table is
+        // dropped rather than carried. reconciliations goes with it because its
+        // only non-audit column was a NOT NULL foreign key into operations: no
+        // row of it could outlive the drop, and nothing ever wrote one.
+        //
+        // journal_events.operation_id and external_input_findings.operation_id
+        // were nullable references into the same table, and every writer bound
+        // NULL to both. They are rebuilt without a column no value could ever
+        // occupy; every other byte of every row is carried.
+        //
+        // Both are rebuilt rather than altered because SQLite cannot drop a
+        // column that participates in a foreign key, and because the exact
+        // final DDL TEXT is what this schema identity is taken from -- so the
+        // text below is the creating block's own text, byte for byte.
+        [[nodiscard]]
+        auto dropOperationSurface(sqlite3* database) -> Status
+        {
+            UF_TRY(execute(database, "PRAGMA defer_foreign_keys=ON"));
+            UF_TRY(execute(
+                database,
+                "ALTER TABLE journal_events RENAME TO prior_journal_events"
+            ));
+            UF_TRY(execute(
+                database,
+                R"sql(CREATE TABLE IF NOT EXISTS journal_events(
+                        event_id TEXT PRIMARY KEY,
+                        plugin_id TEXT NOT NULL,
+                        project_instance_key TEXT NOT NULL,
+                        sequence INTEGER NOT NULL CHECK(sequence >= 0),
+                        prior_project_state_revision INTEGER,
+                        session_manifest_hash TEXT NOT NULL,
+                        namespaced_event_type TEXT NOT NULL,
+                        payload_schema_hash TEXT NOT NULL,
+                        opaque_project_payload TEXT NOT NULL,
+                        provenance TEXT NOT NULL,
+                        FOREIGN KEY(plugin_id, project_instance_key)
+                            REFERENCES project_instances(plugin_id, project_instance_key),
+                        UNIQUE(plugin_id, project_instance_key, sequence)
+                    ) STRICT)sql"
+            ));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO journal_events(event_id, plugin_id, "
+                "project_instance_key, sequence, prior_project_state_revision, "
+                "session_manifest_hash, namespaced_event_type, "
+                "payload_schema_hash, opaque_project_payload, provenance) "
+                "SELECT event_id, plugin_id, project_instance_key, sequence, "
+                "prior_project_state_revision, session_manifest_hash, "
+                "namespaced_event_type, payload_schema_hash, "
+                "opaque_project_payload, provenance FROM prior_journal_events"
+            ));
+            UF_TRY(execute(database, "DROP TABLE prior_journal_events"));
+            UF_TRY(execute(
+                database,
+                "ALTER TABLE external_input_findings RENAME TO "
+                "prior_external_input_findings"
+            ));
+            UF_TRY(execute(
+                database,
+                R"sql(CREATE TABLE IF NOT EXISTS external_input_findings(
+                        finding_id TEXT PRIMARY KEY,
+                        controlled_target_id TEXT NOT NULL,
+                        session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),
+                        reporter_session_id TEXT NOT NULL
+                            REFERENCES sessions(session_id),
+                        detected_after_cursor INTEGER NOT NULL
+                            CHECK(detected_after_cursor >= 0),
+                        invalidated_snapshot_revision INTEGER NOT NULL
+                            CHECK(invalidated_snapshot_revision >= 0),
+                        required_action TEXT NOT NULL
+                            CHECK(required_action IN (
+                                'freeze_and_reobserve', 'freeze_and_reconcile'
+                            )),
+                        reason TEXT NOT NULL
+                    ) STRICT)sql"
+            ));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO external_input_findings(finding_id, "
+                "controlled_target_id, session_epoch, reporter_session_id, "
+                "detected_after_cursor, invalidated_snapshot_revision, "
+                "required_action, reason) SELECT finding_id, "
+                "controlled_target_id, session_epoch, reporter_session_id, "
+                "detected_after_cursor, invalidated_snapshot_revision, "
+                "required_action, reason FROM prior_external_input_findings"
+            ));
+            UF_TRY(execute(database, "DROP TABLE prior_external_input_findings"));
+            UF_TRY(execute(database, "DROP TABLE reconciliations"));
+            UF_TRY(execute(database, "DROP TABLE operations"));
+            return rebuildLedgerEvents(database);
         }
 
         [[nodiscard]]
@@ -2634,6 +2711,7 @@ namespace uf::operator_runtime
             UF_TRY(addJournalProposals(database));
             UF_TRY(addToolRunTerminationState(database));
             UF_TRY(dropRejectedToolCallState(database));
+            UF_TRY(dropOperationSurface(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2654,15 +2732,6 @@ namespace uf::operator_runtime
                 "PRIMARY KEY(source_identity, target_identity)"
                 ") STRICT"
             ));
-            UF_TRY(execute(database, "ALTER TABLE ledger_events RENAME TO prior_ledger_events"));
-            UF_TRY(execute(database, k_ledgerEventsDdl));
-            UF_TRY(execute(
-                database,
-                "INSERT INTO ledger_events(sequence, session_epoch, controlled_target_id, "
-                "kind, subject_id, detail) SELECT sequence, session_epoch, "
-                "controlled_target_id, kind, subject_id, NULL FROM prior_ledger_events"
-            ));
-            UF_TRY(execute(database, "DROP TABLE prior_ledger_events"));
             UF_TRY(execute(database, k_sessionPoliciesDdl));
             UF_TRY(execute(database, k_availabilityHeadsDdl));
             UF_TRY(rewriteSnapshotIdentityComment(database));
@@ -2677,6 +2746,7 @@ namespace uf::operator_runtime
             UF_TRY(addJournalProposals(database));
             UF_TRY(addToolRunTerminationState(database));
             UF_TRY(dropRejectedToolCallState(database));
+            UF_TRY(dropOperationSurface(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
 
             // No migration commits under an identity other than the exact
@@ -2704,6 +2774,7 @@ namespace uf::operator_runtime
             UF_TRY(addJournalProposals(database));
             UF_TRY(addToolRunTerminationState(database));
             UF_TRY(dropRejectedToolCallState(database));
+            UF_TRY(dropOperationSurface(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2726,6 +2797,7 @@ namespace uf::operator_runtime
             UF_TRY(addJournalProposals(database));
             UF_TRY(addToolRunTerminationState(database));
             UF_TRY(dropRejectedToolCallState(database));
+            UF_TRY(dropOperationSurface(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2747,6 +2819,7 @@ namespace uf::operator_runtime
             UF_TRY(addJournalProposals(database));
             UF_TRY(addToolRunTerminationState(database));
             UF_TRY(dropRejectedToolCallState(database));
+            UF_TRY(dropOperationSurface(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2766,6 +2839,7 @@ namespace uf::operator_runtime
             UF_TRY(addJournalProposals(database));
             UF_TRY(addToolRunTerminationState(database));
             UF_TRY(dropRejectedToolCallState(database));
+            UF_TRY(dropOperationSurface(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2784,6 +2858,7 @@ namespace uf::operator_runtime
             UF_TRY(addJournalProposals(database));
             UF_TRY(addToolRunTerminationState(database));
             UF_TRY(dropRejectedToolCallState(database));
+            UF_TRY(dropOperationSurface(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2801,6 +2876,7 @@ namespace uf::operator_runtime
             UF_TRY(addJournalProposals(database));
             UF_TRY(addToolRunTerminationState(database));
             UF_TRY(dropRejectedToolCallState(database));
+            UF_TRY(dropOperationSurface(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2819,6 +2895,7 @@ namespace uf::operator_runtime
             UF_TRY(addJournalProposals(database));
             UF_TRY(addToolRunTerminationState(database));
             UF_TRY(dropRejectedToolCallState(database));
+            UF_TRY(dropOperationSurface(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2861,6 +2938,7 @@ namespace uf::operator_runtime
             UF_TRY(addJournalProposals(database));
             UF_TRY(addToolRunTerminationState(database));
             UF_TRY(dropRejectedToolCallState(database));
+            UF_TRY(dropOperationSurface(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2932,6 +3010,7 @@ namespace uf::operator_runtime
             UF_TRY(addJournalProposals(database));
             UF_TRY(addToolRunTerminationState(database));
             UF_TRY(dropRejectedToolCallState(database));
+            UF_TRY(dropOperationSurface(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2950,6 +3029,7 @@ namespace uf::operator_runtime
             UF_TRY(addJournalProposals(database));
             UF_TRY(addToolRunTerminationState(database));
             UF_TRY(dropRejectedToolCallState(database));
+            UF_TRY(dropOperationSurface(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2977,6 +3057,7 @@ namespace uf::operator_runtime
             UF_TRY(addJournalProposals(database));
             UF_TRY(addToolRunTerminationState(database));
             UF_TRY(dropRejectedToolCallState(database));
+            UF_TRY(dropOperationSurface(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2997,6 +3078,7 @@ namespace uf::operator_runtime
             UF_TRY(addJournalProposals(database));
             UF_TRY(addToolRunTerminationState(database));
             UF_TRY(dropRejectedToolCallState(database));
+            UF_TRY(dropOperationSurface(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -3017,6 +3099,7 @@ namespace uf::operator_runtime
             UF_TRY(addJournalProposals(database));
             UF_TRY(addToolRunTerminationState(database));
             UF_TRY(dropRejectedToolCallState(database));
+            UF_TRY(dropOperationSurface(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -3036,6 +3119,24 @@ namespace uf::operator_runtime
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(addToolRunTerminationState(database));
             UF_TRY(dropRejectedToolCallState(database));
+            UF_TRY(dropOperationSurface(database));
+            UF_TRY(recordSchemaIdentityTransition(database, migration));
+            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
+            return transaction.commit();
+        }
+
+        // The generation that cut the Operation surface out of the ledger, and
+        // the one whose source identity is the schema the immediately prior
+        // generation created. It carries no step of its own beyond the drop,
+        // because nothing else about the schema moved with it.
+        [[nodiscard]]
+        auto migrateOperationSurfaceRemoval(
+            sqlite3* database,
+            SchemaMigration const& migration
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY(dropOperationSurface(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -3047,6 +3148,12 @@ namespace uf::operator_runtime
         // a guard nothing can reach is the mirror of a guard production does
         // not reach.
         constexpr auto k_schemaMigrations = std::array{
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = migrateOperationSurfaceRemoval,
+            },
             SchemaMigration{
                 .sourceIdentity =
                     "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07882e0481946f73f41d2df",
@@ -3251,6 +3358,20 @@ namespace uf::operator_runtime
             return static_cast<uint64>(sqlite3_column_int64(query.get(), 0));
         }
 
+        // The gate a release upgrade's session pin crosses: no Tool mutation
+        // anywhere in this ledger may still hold the barrier while the release
+        // under it changes.
+        //
+        // It is deliberately not scoped to one controlled target, which is what
+        // separates it from requireNoActiveToolMutation. An upgrade replaces the
+        // RuntimeArtifact the whole production root runs, so a mutation in
+        // flight against ANY target would resume under bytes other than the ones
+        // it was admitted against.
+        //
+        // It excludes no chain either. requireNoActiveToolMutation exempts the
+        // caller's own live chain because a child call belongs to it; a session
+        // pin is not inside any chain, so every active mutation is a barrier
+        // to it.
         [[nodiscard]]
         auto requireQuiescentSessionPin(sqlite3* database) -> Status
         {
@@ -3258,22 +3379,35 @@ namespace uf::operator_runtime
                 mutationQuery,
                 prepare(
                     database,
-                    "SELECT operation.operation_id FROM operations operation "
-                    "WHERE operation.mutating=1 AND operation.state IN ("
-                    "'proposed', 'awaiting_approval', 'ready', "
-                    "'needs_revalidation', 'running', 'reconciling', 'ambiguous') "
-                    "ORDER BY operation.operation_id LIMIT 1"
+                    std::string{
+                        "SELECT history.call_identity, history.state, "
+                        "run.controlled_target_id "
+                    }
+                        + std::string{k_activeToolMutationJoin}
+                        + "WHERE history.mutating=1 AND history.state IN ("
+                        + std::string{k_activeToolMutationStates}
+                        + ") ORDER BY history.call_identity LIMIT 1"
                 )
             );
-            if (sqlite3_step(mutationQuery.get()) == SQLITE_ROW)
+            auto const step = sqlite3_step(mutationQuery.get());
+            if (step == SQLITE_ROW)
             {
                 return fail(
                     AutomationErrorKind::ActionRejected,
                     std::format(
-                        "Session pin refused for unterminated mutating "
-                        "Operation {}",
-                        columnText(mutationQuery.get(), 0)
+                        "Session pin refused for unterminated mutating Tool call "
+                        "{} in state {} on ControlledTarget {}",
+                        columnText(mutationQuery.get(), 0),
+                        columnText(mutationQuery.get(), 1),
+                        columnText(mutationQuery.get(), 2)
                     )
+                );
+            }
+            if (step != SQLITE_DONE)
+            {
+                return databaseFailure(
+                    database,
+                    "could not inspect Tool mutation quiescence for a session pin"
                 );
             }
             return ok();
@@ -4583,12 +4717,8 @@ namespace uf::operator_runtime
                     -- recomputable from, which is what lets a test falsify the
                     -- derivation. The scalar columns below it are not a second
                     -- spelling of the same fact: they are the join keys, and
-                    -- SQL cannot join through JSON text. submitCommand
-                    -- compares project_state_revision and
-                    -- project_observation_revision against the live rows, so a
-                    -- token goes stale when the composed world moves and not
-                    -- only when the lease does. One test asserts each scalar
-                    -- equals its member in canonical_parts.
+                    -- SQL cannot join through JSON text. One test asserts each
+                    -- scalar equals its member in canonical_parts.
                     CREATE TABLE IF NOT EXISTS snapshots(
                         -- token and snapshot_revision are deliberately outside
                         -- canonical_parts: they name the stored row rather than
@@ -4624,45 +4754,6 @@ namespace uf::operator_runtime
                             )
                     ) STRICT;
 
-                    CREATE TABLE IF NOT EXISTS operations(
-                        operation_id TEXT PRIMARY KEY,
-                        session_id TEXT NOT NULL REFERENCES sessions(session_id),
-                        snapshot_token TEXT NOT NULL REFERENCES snapshots(token),
-                        idempotency_namespace TEXT NOT NULL,
-                        client_request_id TEXT NOT NULL,
-                        command_fingerprint TEXT NOT NULL,
-                        tool_name TEXT NOT NULL,
-                        tool_version TEXT NOT NULL,
-                        canonical_args TEXT NOT NULL,
-                        controlled_target_id TEXT NOT NULL,
-                        mutating INTEGER NOT NULL CHECK(mutating IN (0, 1)),
-                        state TEXT NOT NULL,
-                        revision INTEGER NOT NULL CHECK(revision > 0),
-                        plugin_id TEXT NOT NULL,
-                        project_instance_key TEXT NOT NULL,
-                        FOREIGN KEY(plugin_id, project_instance_key)
-                            REFERENCES project_instances(plugin_id, project_instance_key),
-                        UNIQUE(
-                            idempotency_namespace,
-                            plugin_id,
-                            project_instance_key,
-                            client_request_id
-                        )
-                    ) STRICT;
-
-                    CREATE UNIQUE INDEX IF NOT EXISTS one_active_mutation_per_target
-                    ON operations(controlled_target_id)
-                    WHERE mutating=1 AND state IN (
-                        'proposed', 'awaiting_approval', 'ready', 'needs_revalidation',
-                        'running', 'reconciling', 'ambiguous'
-                    );
-
-                    CREATE UNIQUE INDEX IF NOT EXISTS one_active_mutation_per_project_instance
-                    ON operations(plugin_id, project_instance_key)
-                    WHERE mutating=1 AND state IN (
-                        'proposed', 'awaiting_approval', 'ready', 'needs_revalidation',
-                        'running', 'reconciling', 'ambiguous'
-                    );
 )sql"
                 // One statement sequence, three literals: MSVC caps a single
                 // string literal and the schema outgrew it here. Adjacent
@@ -4689,7 +4780,6 @@ namespace uf::operator_runtime
                         sequence INTEGER NOT NULL CHECK(sequence >= 0),
                         prior_project_state_revision INTEGER,
                         session_manifest_hash TEXT NOT NULL,
-                        operation_id TEXT REFERENCES operations(operation_id),
                         namespaced_event_type TEXT NOT NULL,
                         payload_schema_hash TEXT NOT NULL,
                         opaque_project_payload TEXT NOT NULL,
@@ -4699,21 +4789,11 @@ namespace uf::operator_runtime
                         UNIQUE(plugin_id, project_instance_key, sequence)
                     ) STRICT;
 
-                    CREATE TABLE IF NOT EXISTS reconciliations(
-                        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-                        operation_id TEXT NOT NULL REFERENCES operations(operation_id),
-                        disposition TEXT NOT NULL,
-                        canonical_proposal TEXT NOT NULL
-                    ) STRICT;
-
                     -- What out-of-band human input leaves behind. It
                     -- deliberately has no tool_name, tool_version,
-                    -- canonical_args, command_fingerprint, client_request_id or
-                    -- snapshot_token column, and no state: an auditor tells a
-                    -- command from a finding by which table the row is in, and
-                    -- the two column sets are disjoint by construction. A
-                    -- finding cannot be spelled as an Operation and an
-                    -- Operation cannot be spelled as a finding.
+                    -- canonical_args or snapshot column, and no state: a
+                    -- finding is a report that the world moved and never a
+                    -- request, so nothing here can be read as one.
                     --
                     -- invalidated_snapshot_revision is the snapshot revision
                     -- this target had reached when the input was seen; every
@@ -4729,7 +4809,6 @@ namespace uf::operator_runtime
                             CHECK(detected_after_cursor >= 0),
                         invalidated_snapshot_revision INTEGER NOT NULL
                             CHECK(invalidated_snapshot_revision >= 0),
-                        operation_id TEXT REFERENCES operations(operation_id),
                         required_action TEXT NOT NULL
                             CHECK(required_action IN (
                                 'freeze_and_reobserve', 'freeze_and_reconcile'
@@ -4924,8 +5003,7 @@ namespace uf::operator_runtime
             uint64 sessionEpoch,
             std::string_view controlledTargetId,
             LedgerEventKind kind,
-            std::string_view subjectId,
-            std::optional<std::string_view> detail = std::nullopt
+            std::string_view subjectId
         ) -> Status;
 
         [[nodiscard]]
@@ -4945,9 +5023,6 @@ namespace uf::operator_runtime
         {
             switch (kind)
             {
-            case LedgerEventKind::OperationCreated: return "operation_created";
-            case LedgerEventKind::OperationStateChanged: return "operation_state_changed";
-
             case LedgerEventKind::ControlTransitioned: return "control_transitioned";
             case LedgerEventKind::ExternalInputDetected: return "external_input_detected";
             }
@@ -4959,8 +5034,6 @@ namespace uf::operator_runtime
         auto parseLedgerEventKind(std::string_view value) -> Result<LedgerEventKind>
         {
             constexpr auto kinds = std::array{
-                LedgerEventKind::OperationCreated,
-                LedgerEventKind::OperationStateChanged,
                 LedgerEventKind::ControlTransitioned,
                 LedgerEventKind::ExternalInputDetected,
             };
@@ -4979,45 +5052,6 @@ namespace uf::operator_runtime
                 );
             }
             return *match;
-        }
-
-
-        [[nodiscard]]
-        auto parseLedgerEventDetail(
-            sqlite3_stmt* row,
-            int column,
-            LedgerEventKind kind
-        ) -> Result<LedgerEventDetail>
-        {
-            switch (kind)
-            {
-            case LedgerEventKind::OperationStateChanged:
-            {
-                if (sqlite3_column_type(row, column) == SQLITE_NULL)
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "Operation state event is missing its state"
-                    );
-                }
-                UF_TRY_VALUE(state, parseOperationState(columnText(row, column)));
-                return LedgerEventDetail{state};
-            }
-
-            case LedgerEventKind::OperationCreated:
-            case LedgerEventKind::ControlTransitioned:
-            case LedgerEventKind::ExternalInputDetected:
-                if (sqlite3_column_type(row, column) != SQLITE_NULL)
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "Ledger event kind must not carry a detail"
-                    );
-                }
-                return LedgerEventDetail{std::monostate{}};
-            }
-
-            UF_UNREACHABLE_MSG("Unknown LedgerEventKind value");
         }
 
         [[nodiscard]]
@@ -5054,11 +5088,11 @@ namespace uf::operator_runtime
             return static_cast<uint64>(sqlite3_column_int64(query.get(), 0));
         }
 
-        // Keep a bounded working set without breaking the snapshot join. An
-        // Operation makes its snapshot an audit dependency, and a retained
-        // snapshot makes its ProjectObservation a composition dependency; both
-        // exceptions are expressed by the NOT EXISTS clauses rather than by a
-        // second lifetime flag that could disagree with the foreign keys.
+        // Keep a bounded working set without breaking the snapshot join. A
+        // retained snapshot makes its ProjectObservation a composition
+        // dependency; that exception is expressed by the NOT EXISTS clause
+        // rather than by a second lifetime flag that could disagree with the
+        // foreign keys.
         [[nodiscard]]
         auto pruneSnapshotHistory(
             sqlite3* database,
@@ -5073,9 +5107,7 @@ namespace uf::operator_runtime
                     database,
                     "DELETE FROM snapshots WHERE session_id=?1 "
                     "AND token NOT IN (SELECT token FROM snapshots "
-                    "WHERE session_id=?1 ORDER BY snapshot_revision DESC LIMIT ?2) "
-                    "AND NOT EXISTS(SELECT 1 FROM operations operation "
-                    "WHERE operation.snapshot_token=snapshots.token)"
+                    "WHERE session_id=?1 ORDER BY snapshot_revision DESC LIMIT ?2)"
                 )
             );
             UF_TRY(bindText(database, snapshotPrune.get(), 1, sessionId));
@@ -5129,8 +5161,7 @@ namespace uf::operator_runtime
             uint64 sessionEpoch,
             std::string_view controlledTargetId,
             LedgerEventKind kind,
-            std::string_view subjectId,
-            std::optional<std::string_view> detail
+            std::string_view subjectId
         ) -> Status
         {
             UF_TRY_VALUE(
@@ -5138,21 +5169,13 @@ namespace uf::operator_runtime
                 prepare(
                     database,
                     "INSERT INTO ledger_events(session_epoch, controlled_target_id, "
-                    "kind, subject_id, detail) VALUES(?1, ?2, ?3, ?4, ?5)"
+                    "kind, subject_id) VALUES(?1, ?2, ?3, ?4)"
                 )
             );
             UF_TRY(bindInteger(database, insert.get(), 1, sessionEpoch));
             UF_TRY(bindText(database, insert.get(), 2, controlledTargetId));
             UF_TRY(bindText(database, insert.get(), 3, ledgerEventWireName(kind)));
             UF_TRY(bindText(database, insert.get(), 4, subjectId));
-            if (detail)
-            {
-                UF_TRY(bindText(database, insert.get(), 5, *detail));
-            }
-            else if (sqlite3_bind_null(insert.get(), 5) != SQLITE_OK)
-            {
-                return databaseFailure(database, "could not bind ledger event detail");
-            }
             UF_TRY(expectDone(database, insert.get()));
             UF_TRY_VALUE(
                 prune,
@@ -5520,127 +5543,6 @@ namespace uf::operator_runtime
             appendJsonString(output, hash.hex());
         }
 
-        // The exact bytes ProjectPlugin.derive is called with, assembled here
-        // for reduceEnvelopeJcs's reason: a caller that supplied the derive
-        // input could have the snapshot record one world while the derivation
-        // saw another, and the recorded decision basis would then certify a
-        // world that was never true at any instant.
-        //
-        // JCS orders members by UTF-16 code unit, which is why
-        // pending_operation_transition precedes
-        // pinned_project_artifact_identities precedes
-        // prior_project_observation precedes project_state precedes ui_snapshot.
-        //
-        // The two optional members carry the literal `null` rather than being
-        // absent, for the reason reduceEnvelopeJcs already gives: a plugin must
-        // be able to tell "no prior reading" from "a prior reading I failed to
-        // read".
-        //
-        // ui_snapshot carries the canonical StateResolution document and never
-        // the observation id. That is what makes a semantically equivalent
-        // recapture produce an identical derive input, an identical
-        // project_observation_hash and an identical decision_basis_hash.
-        struct DeriveEnvelopeInputs final
-        {
-            std::string_view             pendingOperationJcs{};
-            std::span<ContentHash const> pinnedArtifactRoots{};
-            std::string_view             priorObservationJcs{};
-            std::string_view             projectStateJcs{};
-            std::string_view             uiSnapshotJcs{};
-        };
-
-        [[nodiscard]]
-        auto deriveEnvelopeJcs(DeriveEnvelopeInputs const& inputs) -> std::string
-        {
-            auto envelope = std::string{"{\"pending_operation_transition\":"};
-            envelope += inputs.pendingOperationJcs;
-            envelope += ",\"pinned_project_artifact_identities\":[";
-            auto first = true;
-            for (auto const& root : inputs.pinnedArtifactRoots)
-            {
-                if (!first)
-                {
-                    envelope.push_back(',');
-                }
-                first = false;
-                appendHashMember(envelope, root);
-            }
-            envelope += "],\"prior_project_observation\":";
-            envelope += inputs.priorObservationJcs;
-            envelope += ",\"project_state\":";
-            envelope += inputs.projectStateJcs;
-            envelope += ",\"ui_snapshot\":";
-            envelope += inputs.uiSnapshotJcs;
-            envelope.push_back('}');
-            return envelope;
-        }
-
-        // The exact bytes ProjectPlugin.plan is called with, assembled here for
-        // deriveEnvelopeJcs's reason: a caller that supplied the plan input
-        // could have the plugin propose a plan for one command while the
-        // Operation records another, and command_fingerprint would then name a
-        // command the plan was never about. Every part is a column the freezing
-        // transaction read.
-        //
-        // JCS orders members by UTF-16 code unit, which is why canonical_args
-        // precedes project_observation precedes project_state precedes
-        // tool_name precedes tool_version.
-        struct PlanEnvelopeInputs final
-        {
-            std::string_view canonicalArgs{};
-            std::string_view projectObservationJcs{};
-            std::string_view projectStateJcs{};
-            std::string_view toolName{};
-            std::string_view toolVersion{};
-        };
-
-        [[nodiscard]]
-        auto planEnvelopeJcs(PlanEnvelopeInputs const& inputs) -> std::string
-        {
-            auto envelope = std::string{"{\"canonical_args\":"};
-            envelope += inputs.canonicalArgs;
-            envelope += ",\"project_observation\":";
-            envelope += inputs.projectObservationJcs;
-            envelope += ",\"project_state\":";
-            envelope += inputs.projectStateJcs;
-            envelope += ",\"tool_name\":";
-            appendJsonString(envelope, inputs.toolName);
-            envelope += ",\"tool_version\":";
-            appendJsonString(envelope, inputs.toolVersion);
-            envelope.push_back('}');
-            return envelope;
-        }
-
-        // The exact bytes ProjectPlugin.next_step is called with. It carries
-        // the frozen plan and the index the Operator is about to mint at, so a
-        // plugin cannot be told one position and answer for another, and the
-        // world as the last snapshot composed it.
-        //
-        // JCS order again: frozen_plan_hash precedes project_observation
-        // precedes project_state precedes step_index.
-        struct StepEnvelopeInputs final
-        {
-            std::string_view frozenPlanHashHex{};
-            std::string_view projectObservationJcs{};
-            std::string_view projectStateJcs{};
-            uint64           stepIndex{};
-        };
-
-        [[nodiscard]]
-        auto stepEnvelopeJcs(StepEnvelopeInputs const& inputs) -> std::string
-        {
-            auto envelope = std::string{"{\"frozen_plan_hash\":"};
-            appendJsonString(envelope, inputs.frozenPlanHashHex);
-            envelope += ",\"project_observation\":";
-            envelope += inputs.projectObservationJcs;
-            envelope += ",\"project_state\":";
-            envelope += inputs.projectStateJcs;
-            envelope += ",\"step_index\":";
-            envelope += std::to_string(inputs.stepIndex);
-            envelope.push_back('}');
-            return envelope;
-        }
-
         // OP:`DecisionBasis`, whose fifth member is the digest over the other
         // four and therefore cannot be inside it. Which four is the whole
         // requirement: everything the snapshot identity carries and this does
@@ -5857,67 +5759,6 @@ namespace uf::operator_runtime
             }
             return ok();
         }
-
-        // The controller's vocabulary mapped onto the machine's. It is a table
-        // rather than a chain of comparisons for the reason parseOperationState
-        // already is one: the set is closed, and a chain lets a new signal be
-        // added without anyone deciding what it means.
-        //
-        // Every OperationEvent that only a Host dispatch could reach has no
-        // OperationSignal at all, because no Operation can reach a dispatch:
-        // the plan and step mints and the dispatch spine are deleted, so the
-        // dispatch, approval, host-outcome, correction and reconciliation edges
-        // are unreachable from this vocabulary rather than merely unoffered.
-        struct SignalRule final
-        {
-            OperationSignal signal;
-            OperationEvent  event;
-        };
-
-        constexpr auto k_signalRules = std::array{
-            SignalRule{OperationSignal::ReadCompleted, OperationEvent::ReadCompleted},
-            SignalRule{
-                OperationSignal::DecisionInputsChanged,
-                OperationEvent::DecisionInputsChanged,
-            },
-            SignalRule{OperationSignal::Revalidated, OperationEvent::Revalidated},
-            SignalRule{OperationSignal::Invalidated, OperationEvent::Invalidated},
-            SignalRule{OperationSignal::Denied, OperationEvent::Denied},
-            SignalRule{OperationSignal::Cancelled, OperationEvent::Cancelled},
-            SignalRule{OperationSignal::DeadlineExpired, OperationEvent::DeadlineExpired},
-
-        };
-
-        [[nodiscard]]
-        auto operationEventFor(OperationSignal signal) -> Result<OperationEvent>
-        {
-            auto const found = std::ranges::find(
-                k_signalRules,
-                signal,
-                &SignalRule::signal
-            );
-            if (found == k_signalRules.end())
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "Unknown Operation signal"
-                );
-            }
-            return found->event;
-        }
-
-        // An Operation may only be advanced by the session that owns it, while
-        // that session is still active at this process epoch AND still holds
-        // the lease on its target. The lease clause is separate from the epoch
-        // one because takeoverLease replaces the lease row without deactivating
-        // the session it replaced: a human takeover would otherwise leave the
-        // displaced controller able to append to the Journal.
-        constexpr auto k_liveControllerJoin = std::string_view{
-            "JOIN sessions session ON session.session_id=o.session_id "
-            "JOIN control_leases lease "
-            "ON lease.controlled_target_id=o.controlled_target_id "
-            "AND lease.session_id=o.session_id "
-        };
 
         // The content address of an artifact directory, recorded in its own
         // transaction BEFORE the directory is written. A publication that then
@@ -7024,9 +6865,9 @@ namespace uf::operator_runtime
                     m_impl->database.get(),
                     "INSERT INTO journal_events(event_id, plugin_id, project_instance_key, "
                     "sequence, prior_project_state_revision, session_manifest_hash, "
-                    "operation_id, namespaced_event_type, payload_schema_hash, "
+                    "namespaced_event_type, payload_schema_hash, "
                     "opaque_project_payload, provenance) "
-                    "VALUES(?1, ?2, ?3, 0, NULL, ?4, NULL, ?5, ?6, ?7, ?8)"
+                    "VALUES(?1, ?2, ?3, 0, NULL, ?4, ?5, ?6, ?7, ?8)"
                 )
             );
             UF_TRY(bindText(
@@ -9172,563 +9013,6 @@ namespace uf::operator_runtime
         return ObservedInstanceId{std::string{observedInstanceId}};
     }
 
-    auto OperatorCoordinator::submitCommand(
-        ControllerBinding const& controller,
-        CommandRequest const& request,
-        ValidatedToolInvocation const& invocation
-    ) -> Result<AcceptedCommand>
-    {
-        UF_TRY(requireName(request.snapshotToken, "snapshot_token"));
-        UF_TRY(requireName(request.idempotencyNamespace, "idempotency_namespace"));
-        UF_TRY(requireName(request.clientRequestId, "client_request_id"));
-
-        // The accept side of p03 re-evaluates every offer predicate because an
-        // invocation may be presented without first being offered.
-        if (!toolSurfaceAllowed(controller.profile(), invocation.descriptor().surface))
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Controller restricted to semantic tools submitted a privileged tool"
-            );
-        }
-
-        auto const& toolName = invocation.toolName();
-        auto const& toolVersion = invocation.descriptor().toolVersion;
-        auto const& canonicalArgs = invocation.canonicalArgs().bytes();
-        auto const mutating =
-            invocation.descriptor().mutability == ToolMutability::Mutating;
-
-        // The fingerprint covers exactly what the catalog decided the command
-        // is. Mutability and surface are absent on purpose: they are functions
-        // of the tool and its version, so including them would let two
-        // fingerprints disagree about one tool without any of the fingerprinted
-        // bytes differing. Who submitted it is absent for the same reason and
-        // one more: Script, Agent and Human naming the identical tool and
-        // arguments are naming one command, and a fingerprint that separated
-        // them would make the shared Operation path unprovable.
-        auto fingerprintMaterial = toolName;
-        fingerprintMaterial.push_back('\0');
-        fingerprintMaterial += toolVersion;
-        fingerprintMaterial.push_back('\0');
-        fingerprintMaterial += canonicalArgs;
-        UF_TRY_VALUE(
-            commandFingerprint,
-            sha256(std::as_bytes(std::span{fingerprintMaterial}))
-        );
-        UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
-        UF_TRY(requireLiveBinding(m_impl->database.get(), controller));
-
-        // Read before the idempotency lookup, so that an expired Agent is
-        // refused whichever branch its request would have taken. A replay of a
-        // request the ledger already accepted charges nothing further: the
-        // counters record what was accepted, and it was charged when it was.
-        UF_TRY_VALUE(
-            budget,
-            readAgentBudget(
-                m_impl->database.get(),
-                controller.sessionId(),
-                controller.kind()
-            )
-        );
-        if (budget)
-        {
-            UF_TRY(requireWithinAgentDeadline(*budget));
-        }
-
-        UF_TRY_VALUE(
-            sessionQuery,
-            prepare(
-                m_impl->database.get(),
-                "SELECT session.controlled_target_id, session.project_instance_key, "
-                "registration.plugin_id, session.idempotency_namespace, "
-                "session.project_registration_hash, session.controller_capabilities, "
-                "session.world_scope_kind, session.world_scope_id, "
-                "session.world_scope_generation, registration.registration_format, "
-                "registration.plugin_identity_kind "
-                "FROM sessions session JOIN project_registrations "
-                "registration ON registration.registration_hash="
-                "session.project_registration_hash "
-                "WHERE session.session_id=?1 AND session.active=1"
-            )
-        );
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            sessionQuery.get(),
-            1,
-            controller.sessionId()
-        ));
-        if (sqlite3_step(sessionQuery.get()) != SQLITE_ROW)
-        {
-            return fail(AutomationErrorKind::ActionRejected, "Unknown authenticated session");
-        }
-        UF_TRY(requireExecutableRegistrationFormat(sessionQuery.get(), 9));
-        auto const controlledTargetId = columnText(sessionQuery.get(), 0);
-        auto const projectInstanceKey = columnText(sessionQuery.get(), 1);
-        auto const pluginId = columnText(sessionQuery.get(), 2);
-        auto const idempotencyNamespace = columnText(sessionQuery.get(), 3);
-        auto const sessionEpoch = controller.sessionEpoch();
-        if (request.idempotencyNamespace != idempotencyNamespace)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Command authority does not match the authenticated current-epoch session"
-            );
-        }
-        auto const* const p_projectProvider = std::get_if<ProjectToolProvider>(
-            &invocation.provider()
-        );
-        if (p_projectProvider == nullptr)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "The current Project command path accepts only Project Tools"
-            );
-        }
-        // Comparing the registration root also pins the Tool Catalog: the root
-        // hashes the canonical registration JCS, and tool_catalog_hash is one of
-        // its members, so an invocation minted against another catalog cannot
-        // present this root.
-        if (
-            p_projectProvider->projectRegistrationHash.hex()
-            != columnText(sessionQuery.get(), 4)
-        )
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Tool invocation was minted for a different ProjectRegistration"
-            );
-        }
-        UF_TRY_VALUE(
-            heldCapabilities,
-            readNameArray(columnText(sessionQuery.get(), 5))
-        );
-        auto const missingCapability = missingRequiredToolCapability(
-            heldCapabilities,
-            invocation.descriptor().requiredCapabilities
-        );
-        if (missingCapability)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Controller does not hold required capability '" + *missingCapability
-                    + "' for tool " + toolName
-            );
-        }
-
-        UF_TRY_VALUE(
-            existingQuery,
-            prepare(
-                m_impl->database.get(),
-                "SELECT operation_id, command_fingerprint, tool_name, tool_version, "
-                "canonical_args, mutating, state, revision, session_id FROM operations "
-                "WHERE idempotency_namespace=?1 AND plugin_id=?2 "
-                "AND project_instance_key=?3 AND client_request_id=?4"
-            )
-        );
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            existingQuery.get(),
-            1,
-            request.idempotencyNamespace
-        ));
-        UF_TRY(bindText(m_impl->database.get(), existingQuery.get(), 2, pluginId));
-        UF_TRY(bindText(m_impl->database.get(), existingQuery.get(), 3, projectInstanceKey));
-        UF_TRY(bindText(m_impl->database.get(), existingQuery.get(), 4, request.clientRequestId));
-        if (sqlite3_step(existingQuery.get()) == SQLITE_ROW)
-        {
-            if (
-                columnText(existingQuery.get(), 1) != commandFingerprint.hex()
-                || columnText(existingQuery.get(), 2) != toolName
-                || columnText(existingQuery.get(), 3) != toolVersion
-                || columnText(existingQuery.get(), 4) != canonicalArgs
-                || (sqlite3_column_int(existingQuery.get(), 5) != 0) != mutating
-            )
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "client_request_id was already used for different canonical command bytes"
-                );
-            }
-
-            // The idempotency key does not carry a session, and nothing makes
-            // an idempotency_namespace unique to one. Without this, the hit
-            // path hands another session's operation id and revision back,
-            // which is all transitionOperation needs to terminate it.
-            if (columnText(existingQuery.get(), 8) != controller.sessionId())
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "client_request_id belongs to another session"
-                );
-            }
-            // Every column is read into a local before the commit. Reading a
-            // row after committing its transaction happens to work in this
-            // SQLite, which is exactly why it should not be relied on.
-            UF_TRY_VALUE(state, parseOperationState(columnText(existingQuery.get(), 6)));
-            auto operationId  = columnText(existingQuery.get(), 0);
-            auto const revision = static_cast<uint64>(
-                sqlite3_column_int64(existingQuery.get(), 7)
-            );
-            UF_TRY(transaction.commit());
-            return AcceptedCommand{
-                .operation = StoredOperation{
-                    .operationId = std::move(operationId),
-                    .lookup      = CommandLookup::Existing,
-                    .state       = state,
-                    .revision    = revision,
-                },
-                .commandFingerprint = commandFingerprint,
-            };
-        }
-
-        UF_TRY_VALUE(
-            snapshotQuery,
-            prepare(
-                m_impl->database.get(),
-                // The two project-state clauses together make the token a
-                // reference to a COMPOSITION rather than to a lease: the
-                // snapshot goes stale when ProjectState moves under it, not
-                // only when control does. Their conjunction is the guarded
-                // property; either clause is redundant by itself because both
-                // revisions come from the same in-transaction state read and
-                // that revision also participates in the derive fingerprint.
-                //
-                // The NOT EXISTS clause is what makes out-of-band human input
-                // stop the automation: a finding records the snapshot revision
-                // its target had reached, and every token at or below that
-                // revision is refused afterwards. The controller has to look
-                // again before it acts, which is the whole effect a finding is
-                // allowed to have.
-                "SELECT session.controlled_target_id, s.decision_basis_hash, "
-                "obs.canonical_observation "
-                "FROM snapshots s JOIN sessions session "
-                "ON session.session_id=s.session_id JOIN control_leases lease "
-                "ON lease.controlled_target_id=session.controlled_target_id "
-                "JOIN project_state state ON state.plugin_id=s.plugin_id "
-                "AND state.project_instance_key=s.project_instance_key "
-                "JOIN project_observations obs ON obs.plugin_id=s.plugin_id "
-                "AND obs.project_instance_key=s.project_instance_key "
-                "AND obs.revision=s.project_observation_revision "
-                "WHERE s.token=?1 AND s.session_id=?2 AND s.session_epoch=?3 AND "
-                "s.lease_revision=lease.revision AND lease.session_id=s.session_id "
-                "AND s.project_state_revision=state.revision "
-                "AND obs.project_state_revision=state.revision "
-                "AND NOT EXISTS(SELECT 1 FROM external_input_findings finding "
-                "WHERE finding.controlled_target_id=session.controlled_target_id "
-                "AND finding.session_epoch=s.session_epoch "
-                "AND finding.invalidated_snapshot_revision>=s.snapshot_revision)"
-            )
-        );
-        UF_TRY(bindText(m_impl->database.get(), snapshotQuery.get(), 1, request.snapshotToken));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            snapshotQuery.get(),
-            2,
-            controller.sessionId()
-        ));
-        UF_TRY(bindInteger(m_impl->database.get(), snapshotQuery.get(), 3, sessionEpoch));
-        if (
-            sqlite3_step(snapshotQuery.get()) != SQLITE_ROW
-        )
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "SnapshotToken is unknown, belongs to another session, or is stale"
-            );
-        }
-        if (columnText(snapshotQuery.get(), 0) != controlledTargetId)
-        {
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "Session target changed while validating SnapshotToken"
-            );
-        }
-        auto const stateFingerprint = columnText(snapshotQuery.get(), 1);
-
-        // U2c production entry gate. Every observed instance id the command's
-        // canonical arguments spell is resolved here, before the operation row
-        // is created -- which is before a read-only operation can complete and
-        // before any Tool can consume an id out of those arguments. A stale or
-        // foreign id therefore never reaches a consumer at all.
-        UF_TRY_VALUE(
-            sessionWorldScope,
-            restoreSessionWorldScope(
-                columnText(sessionQuery.get(), 6),
-                columnText(sessionQuery.get(), 7),
-                columnText(sessionQuery.get(), 8)
-            )
-        );
-        auto targetIds = std::vector<std::string>{};
-        {
-            UF_TRY_VALUE(argumentsValue, json::parse(canonicalArgs));
-            collectObservedInstanceIds(argumentsValue, targetIds);
-        }
-        if (!targetIds.empty())
-        {
-            std::ranges::sort(targetIds);
-            targetIds.erase(
-                std::unique(targetIds.begin(), targetIds.end()),
-                targetIds.end()
-            );
-            UF_TRY_VALUE(
-                freshObservation,
-                restoreProjectObservation(columnText(snapshotQuery.get(), 2))
-            );
-            for (auto const& targetId : targetIds)
-            {
-                UF_TRY_VALUE(
-                    bindingQuery,
-                    prepare(
-                        m_impl->database.get(),
-                        "SELECT plugin_id, project_registration_hash, "
-                        "project_instance_key, world_scope_kind, world_scope_id, "
-                        "world_scope_generation FROM observed_instance_bindings "
-                        "WHERE observed_instance_id=?1"
-                    )
-                );
-                UF_TRY(bindText(
-                    m_impl->database.get(),
-                    bindingQuery.get(),
-                    1,
-                    targetId
-                ));
-                if (sqlite3_step(bindingQuery.get()) != SQLITE_ROW)
-                {
-                    return fail(
-                        ProjectObservationErrorCode::ObservedInstanceStale,
-                        "Observed instance ID is not a known persistent binding"
-                    );
-                }
-                auto const scopeMatches =
-                    columnText(bindingQuery.get(), 0) == pluginId
-                    && columnText(bindingQuery.get(), 1)
-                        == columnText(sessionQuery.get(), 4)
-                    && columnText(bindingQuery.get(), 2) == projectInstanceKey
-                    && columnText(bindingQuery.get(), 3)
-                        == observedInstanceWorldScopeKindWireName(
-                            sessionWorldScope.kind()
-                        )
-                    && columnText(bindingQuery.get(), 4)
-                        == sessionWorldScope.scopeId()
-                    && columnText(bindingQuery.get(), 5)
-                        == std::to_string(sessionWorldScope.generation());
-                if (!scopeMatches)
-                {
-                    return fail(
-                        ProjectObservationErrorCode::ObservedInstanceScopeMismatch,
-                        "Observed instance ID belongs to another registration, project or scope"
-                    );
-                }
-                auto const fresh = std::ranges::any_of(
-                    freshObservation.observedInstances(),
-                    [&targetId](ObservedInstance const& instance)
-                    {
-                        return instance.observedInstanceId.value() == targetId;
-                    }
-                );
-                if (!fresh)
-                {
-                    return fail(
-                        ProjectObservationErrorCode::ObservedInstanceStale,
-                        "Observed instance ID is absent from the fresh observation"
-                    );
-                }
-            }
-        }
-
-        if (mutating)
-        {
-            UF_TRY(requireNoActiveToolMutation(
-                m_impl->database.get(),
-                controlledTargetId,
-                {}
-            ));
-            UF_TRY_VALUE(
-                mutationQuery,
-                prepare(
-                    m_impl->database.get(),
-                    "SELECT operation_id FROM operations WHERE controlled_target_id=?1 "
-                    "AND mutating=1 AND state IN ('proposed', 'awaiting_approval', 'ready', "
-                    "'needs_revalidation', 'running', 'reconciling', 'ambiguous') LIMIT 1"
-                )
-            );
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                mutationQuery.get(),
-                1,
-                controlledTargetId
-            ));
-            if (sqlite3_step(mutationQuery.get()) == SQLITE_ROW)
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "ControlledTarget already has a non-terminal mutating Operation"
-                );
-            }
-
-            UF_TRY_VALUE(
-                instanceMutationQuery,
-                prepare(
-                    m_impl->database.get(),
-                    "SELECT operation_id FROM operations WHERE plugin_id=?1 "
-                    "AND project_instance_key=?2 AND mutating=1 AND state IN "
-                    "('proposed', 'awaiting_approval', 'ready', 'needs_revalidation', "
-                    "'running', 'reconciling', 'ambiguous') LIMIT 1"
-                )
-            );
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                instanceMutationQuery.get(),
-                1,
-                pluginId
-            ));
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                instanceMutationQuery.get(),
-                2,
-                projectInstanceKey
-            ));
-            if (sqlite3_step(instanceMutationQuery.get()) == SQLITE_ROW)
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "ProjectInstance already has a non-terminal mutating Operation"
-                );
-            }
-        }
-
-        if (budget)
-        {
-            // Progress is "the world is different" or "I asked for something
-            // different". The state fingerprint IS the snapshot's
-            // decision_basis_hash, which the Operator composed; no second
-            // composition is defined here. The command fingerprint is the one
-            // above, which covers the tool, its version and its canonical
-            // arguments and NOT client_request_id -- so resubmitting the
-            // identical command under a fresh request id yields the identical
-            // fingerprint and correctly buys no progress.
-            //
-            // Either differing is enough. State alone would punish an Agent
-            // legitimately trying three tools against an unchanging screen;
-            // command alone would let it observe, observe, observe for ever.
-            // The Agent is stuck only when it asks the same thing of the same
-            // world.
-            auto const progressed = stateFingerprint != budget->lastStateFingerprint
-                || commandFingerprint.hex() != budget->lastCommandFingerprint;
-            auto const repetitions = progressed
-                ? uint64{0}
-                : budget->consecutiveNoProgressSteps + 1U;
-            if (repetitions > k_agentNoProgressCeiling)
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "Agent asked the same thing of the same world too many times"
-                );
-            }
-
-            UF_TRY(chargeAgentBudget(
-                m_impl->database.get(),
-                controller.sessionId(),
-                "UPDATE agent_budgets SET remaining_tool_calls = "
-                "remaining_tool_calls - ?2 WHERE session_id=?1",
-                1U,
-                "Agent tool-call budget is exhausted"
-            ));
-
-            // Sourced from the Tool Catalog descriptor, which is what
-            // operations.mutating and the mutation chain already run on, and
-            // deliberately not from the plan's declared risk: a plugin may
-            // under-declare its own effects, so risk cannot stand in for
-            // "changes something". Two differently sourced counts over a
-            // partly overlapping set are two facts.
-            if (mutating)
-            {
-                UF_TRY(chargeAgentBudget(
-                    m_impl->database.get(),
-                    controller.sessionId(),
-                    "UPDATE agent_budgets SET remaining_mutations = "
-                    "remaining_mutations - ?2 WHERE session_id=?1",
-                    1U,
-                    "Agent mutation budget is exhausted"
-                ));
-            }
-
-            UF_TRY_VALUE(
-                markerUpdate,
-                prepare(
-                    m_impl->database.get(),
-                    "UPDATE agent_budgets SET last_state_fingerprint=?2, "
-                    "last_command_fingerprint=?3, consecutive_no_progress_steps=?4 "
-                    "WHERE session_id=?1"
-                )
-            );
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                markerUpdate.get(),
-                1,
-                controller.sessionId()
-            ));
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                markerUpdate.get(),
-                2,
-                stateFingerprint
-            ));
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                markerUpdate.get(),
-                3,
-                commandFingerprint.hex()
-            ));
-            UF_TRY(bindInteger(m_impl->database.get(), markerUpdate.get(), 4, repetitions));
-            UF_TRY(expectDone(m_impl->database.get(), markerUpdate.get()));
-        }
-
-        UF_TRY_VALUE(operationId, randomToken(m_impl->database.get()));
-        UF_TRY_VALUE(
-            insert,
-            prepare(
-                m_impl->database.get(),
-                "INSERT INTO operations(operation_id, session_id, snapshot_token, idempotency_namespace, "
-                "client_request_id, command_fingerprint, tool_name, tool_version, canonical_args, "
-                "controlled_target_id, mutating, state, revision, plugin_id, "
-                "project_instance_key) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, "
-                "?10, ?11, 'proposed', 1, ?12, ?13)"
-            )
-        );
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 1, operationId));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 2, controller.sessionId()));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 3, request.snapshotToken));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 4, request.idempotencyNamespace));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 5, request.clientRequestId));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 6, commandFingerprint.hex()));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 7, toolName));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 8, toolVersion));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 9, canonicalArgs));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 10, controlledTargetId));
-        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 11, mutating ? 1U : 0U));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 12, pluginId));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 13, projectInstanceKey));
-        UF_TRY(expectDone(m_impl->database.get(), insert.get()));
-        UF_TRY(appendLedgerEvent(
-            m_impl->database.get(),
-            sessionEpoch,
-            controlledTargetId,
-            LedgerEventKind::OperationCreated,
-            operationId
-        ));
-        UF_TRY(transaction.commit());
-        return AcceptedCommand{
-            .operation = StoredOperation{
-                .operationId = std::move(operationId),
-                .lookup      = CommandLookup::Created,
-                .state       = OperationState::Proposed,
-                .revision    = 1U,
-            },
-            .commandFingerprint = commandFingerprint,
-        };
-    }
-
     auto OperatorCoordinator::persistToolRootRequest(
         ToolRootRequestIdentity const& root
     ) -> Result<StoredToolRootRequest>
@@ -10311,37 +9595,6 @@ namespace uf::operator_runtime
                 controller.controlledTargetId(),
                 liveMutationChain
             ));
-            UF_TRY_VALUE(
-                operationQuery,
-                prepare(
-                    database,
-                    "SELECT operation_id FROM operations "
-                    "WHERE controlled_target_id=?1 AND mutating=1 AND state IN ("
-                    "'proposed','awaiting_approval','ready','needs_revalidation',"
-                    "'running','reconciling','ambiguous') LIMIT 1"
-                )
-            );
-            UF_TRY(bindText(
-                database,
-                operationQuery.get(),
-                1,
-                controller.controlledTargetId()
-            ));
-            auto const operationStep = sqlite3_step(operationQuery.get());
-            if (operationStep == SQLITE_ROW)
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "ControlledTarget already has a non-terminal mutating Operation"
-                );
-            }
-            if (operationStep != SQLITE_DONE)
-            {
-                return databaseFailure(
-                    database,
-                    "could not inspect legacy mutation barriers"
-                );
-            }
         }
         if (auto const* projectProvider = std::get_if<ProjectToolProvider>(
                 &call.provider()
@@ -13409,9 +12662,9 @@ namespace uf::operator_runtime
                     database,
                     "INSERT INTO journal_events(event_id, plugin_id, "
                     "project_instance_key, sequence, prior_project_state_revision, "
-                    "session_manifest_hash, operation_id, namespaced_event_type, "
+                    "session_manifest_hash, namespaced_event_type, "
                     "payload_schema_hash, opaque_project_payload, provenance) "
-                    "VALUES(?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?8, ?9, ?10)"
+                    "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
                 )
             );
             lastSequence = nextSequence + index;
@@ -13546,75 +12799,6 @@ namespace uf::operator_runtime
             sqlite3_column_int64(revisionQuery.get(), 0)
         );
 
-        // At most one Operation on a target is non-terminal, so the finding
-        // freezes it by name rather than by a sweep. DecisionInputsChanged is
-        // the only signal that fits: the inputs a decision was taken on have
-        // moved, and nothing about the Operation itself was judged.
-        UF_TRY_VALUE(
-            pendingQuery,
-            prepare(
-                m_impl->database.get(),
-                "SELECT operation_id, revision, state FROM operations "
-                "WHERE controlled_target_id=?1 AND state IN "
-                "('proposed', 'awaiting_approval', 'ready') LIMIT 1"
-            )
-        );
-        UF_TRY(bindText(m_impl->database.get(), pendingQuery.get(), 1, target));
-        auto frozenOperation = std::optional<std::string>{};
-        if (sqlite3_step(pendingQuery.get()) == SQLITE_ROW)
-        {
-            auto operationId = columnText(pendingQuery.get(), 0);
-            auto const revision = static_cast<uint64>(
-                sqlite3_column_int64(pendingQuery.get(), 1)
-            );
-            UF_TRY_VALUE(state, parseOperationState(columnText(pendingQuery.get(), 2)));
-            // An Operation can no longer reach a Host dispatch at all, so a
-            // stored one is never frozen and never dispatched.
-            UF_TRY_VALUE(machine, OperationMachine::restore(state, false, false));
-            UF_TRY_VALUE(
-                nextState,
-                machine.transition(OperationEvent::DecisionInputsChanged)
-            );
-            UF_TRY_VALUE(
-                nextRevision,
-                checkedSqlIncrement(revision, "Operation revision")
-            );
-            UF_TRY_VALUE(
-                update,
-                prepare(
-                    m_impl->database.get(),
-                    "UPDATE operations SET state=?1, revision=?2 "
-                    "WHERE operation_id=?3 AND revision=?4"
-                )
-            );
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                update.get(),
-                1,
-                operationStateWireName(nextState)
-            ));
-            UF_TRY(bindInteger(m_impl->database.get(), update.get(), 2, nextRevision));
-            UF_TRY(bindText(m_impl->database.get(), update.get(), 3, operationId));
-            UF_TRY(bindInteger(m_impl->database.get(), update.get(), 4, revision));
-            UF_TRY(expectDone(m_impl->database.get(), update.get()));
-            if (sqlite3_changes(m_impl->database.get()) != 1)
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "Operation revision lost its CAS to an external input finding"
-                );
-            }
-            UF_TRY(appendLedgerEvent(
-                m_impl->database.get(),
-                epoch,
-                target,
-                LedgerEventKind::OperationStateChanged,
-                operationId,
-                operationStateWireName(nextState)
-            ));
-            frozenOperation = std::move(operationId);
-        }
-
         UF_TRY_VALUE(findingId, randomToken(m_impl->database.get()));
         UF_TRY_VALUE(
             insert,
@@ -13622,8 +12806,8 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 "INSERT INTO external_input_findings(finding_id, controlled_target_id, "
                 "session_epoch, reporter_session_id, detected_after_cursor, "
-                "invalidated_snapshot_revision, operation_id, required_action, reason) "
-                "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+                "invalidated_snapshot_revision, required_action, reason) "
+                "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
             )
         );
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 1, findingId));
@@ -13637,17 +12821,13 @@ namespace uf::operator_runtime
         ));
         UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 5, cursor));
         UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 6, invalidatedRevision));
-        if (frozenOperation.has_value())
-        {
-            UF_TRY(bindText(m_impl->database.get(), insert.get(), 7, *frozenOperation));
-        }
         UF_TRY(bindText(
             m_impl->database.get(),
             insert.get(),
-            8,
+            7,
             externalInputActionWireName(report.requiredAction)
         ));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 9, report.reason));
+        UF_TRY(bindText(m_impl->database.get(), insert.get(), 8, report.reason));
         UF_TRY(expectDone(m_impl->database.get(), insert.get()));
 
         UF_TRY(appendLedgerEvent(
@@ -13667,8 +12847,8 @@ namespace uf::operator_runtime
             stored,
             prepare(
                 m_impl->database.get(),
-                "SELECT detected_after_cursor, invalidated_snapshot_revision, "
-                "operation_id FROM external_input_findings WHERE finding_id=?1"
+                "SELECT detected_after_cursor, invalidated_snapshot_revision "
+                "FROM external_input_findings WHERE finding_id=?1"
             )
         );
         UF_TRY(bindText(m_impl->database.get(), stored.get(), 1, findingId));
@@ -13685,17 +12865,11 @@ namespace uf::operator_runtime
         auto const storedRevision = static_cast<uint64>(
             sqlite3_column_int64(stored.get(), 1)
         );
-        auto storedOperation = std::optional<std::string>{};
-        if (sqlite3_column_type(stored.get(), 2) != SQLITE_NULL)
-        {
-            storedOperation = columnText(stored.get(), 2);
-        }
         UF_TRY(transaction.commit());
         return RecordedExternalInput{
             .findingId                   = std::move(findingId),
             .detectedAfterCursor         = storedCursor,
             .invalidatedSnapshotRevision = storedRevision,
-            .operationId                 = std::move(storedOperation),
         };
     }
 
@@ -13765,7 +12939,7 @@ namespace uf::operator_runtime
             events,
             prepare(
                 m_impl->database.get(),
-                "SELECT sequence, kind, controlled_target_id, subject_id, detail "
+                "SELECT sequence, kind, controlled_target_id, subject_id "
                 "FROM ledger_events WHERE controlled_target_id=?1 AND sequence>?2 "
                 "ORDER BY sequence LIMIT ?3"
             )
@@ -13784,7 +12958,6 @@ namespace uf::operator_runtime
         while (step == SQLITE_ROW)
         {
             UF_TRY_VALUE(kind, parseLedgerEventKind(columnText(events.get(), 1)));
-            UF_TRY_VALUE(detail, parseLedgerEventDetail(events.get(), 4, kind));
             auto const sequence = static_cast<uint64>(
                 sqlite3_column_int64(events.get(), 0)
             );
@@ -13793,7 +12966,6 @@ namespace uf::operator_runtime
                 .kind               = kind,
                 .controlledTargetId = columnText(events.get(), 2),
                 .subjectId          = columnText(events.get(), 3),
-                .detail             = detail,
             });
 
             // The cursor follows what was delivered, never the head: a batch cut
@@ -13842,90 +13014,6 @@ namespace uf::operator_runtime
                 ? uint64{0}
                 : budget->deadlineSteadyMillis - now,
             .consecutiveNoProgressSteps = budget->consecutiveNoProgressSteps,
-        };
-    }
-
-    auto OperatorCoordinator::transitionOperation(
-        std::string const& operationId,
-        uint64 expectedRevision,
-        OperationSignal signal
-    ) -> Result<StoredOperation>
-    {
-        UF_TRY_VALUE(event, operationEventFor(signal));
-        UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
-        UF_TRY_VALUE(
-            query,
-            prepare(
-                m_impl->database.get(),
-                "SELECT o.state, o.revision, o.mutating, o.controlled_target_id "
-                "FROM operations o "
-                + std::string{k_liveControllerJoin}
-                + "WHERE o.operation_id=?1 AND session.active=1 "
-                "AND session.session_epoch=?2"
-            )
-        );
-        UF_TRY(bindText(m_impl->database.get(), query.get(), 1, operationId));
-        UF_TRY(bindInteger(m_impl->database.get(), query.get(), 2, m_impl->sessionEpoch));
-        if (sqlite3_step(query.get()) != SQLITE_ROW)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Unknown operation_id, or its session no longer controls the target"
-            );
-        }
-        auto const revision = static_cast<uint64>(sqlite3_column_int64(query.get(), 1));
-        if (revision != expectedRevision)
-        {
-            return fail(AutomationErrorKind::ActionRejected, "Operation revision is stale");
-        }
-        UF_TRY_VALUE(state, parseOperationState(columnText(query.get(), 0)));
-        auto const mutating   = sqlite3_column_int(query.get(), 2) != 0;
-        if (event == OperationEvent::ReadCompleted && mutating)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Operation event contradicts the command mutability"
-            );
-        }
-        UF_TRY_VALUE(machine, OperationMachine::restore(state, false, false));
-        UF_TRY_VALUE(nextState, machine.transition(event));
-        UF_TRY_VALUE(nextRevision, checkedSqlIncrement(revision, "Operation revision"));
-
-        UF_TRY_VALUE(
-            update,
-            prepare(
-                m_impl->database.get(),
-                "UPDATE operations SET state=?1, revision=?2 WHERE operation_id=?3 AND revision=?4"
-            )
-        );
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            update.get(),
-            1,
-            operationStateWireName(nextState)
-        ));
-        UF_TRY(bindInteger(m_impl->database.get(), update.get(), 2, nextRevision));
-        UF_TRY(bindText(m_impl->database.get(), update.get(), 3, operationId));
-        UF_TRY(bindInteger(m_impl->database.get(), update.get(), 4, revision));
-        UF_TRY(expectDone(m_impl->database.get(), update.get()));
-        if (sqlite3_changes(m_impl->database.get()) != 1)
-        {
-            return fail(AutomationErrorKind::ActionRejected, "Operation revision lost its CAS");
-        }
-        UF_TRY(appendLedgerEvent(
-            m_impl->database.get(),
-            m_impl->sessionEpoch,
-            columnText(query.get(), 3),
-            LedgerEventKind::OperationStateChanged,
-            operationId,
-            operationStateWireName(nextState)
-        ));
-        UF_TRY(transaction.commit());
-        return StoredOperation{
-            .operationId = operationId,
-            .lookup      = CommandLookup::Existing,
-            .state       = nextState,
-            .revision    = nextRevision,
         };
     }
 
@@ -14049,5 +13137,49 @@ namespace uf::operator_runtime
             std::string{storedJcs},
             hash,
         };
+    }
+
+    auto toolRuntimeDurableRecordMaterial() -> std::string
+    {
+        // Named by their table, so a table renamed moves this material even
+        // when its columns do not, and rendered in a fixed order so the
+        // material is a function of the DDL and not of a container's ordering.
+        constexpr auto k_toolRuntimeTables = std::array{
+            std::pair{
+                std::string_view{"tool_admission_attempts"},
+                k_toolAdmissionAttemptsDdl,
+            },
+            std::pair{std::string_view{"tool_approvals"}, k_toolApprovalsDdl},
+            std::pair{
+                std::string_view{"tool_call_history"},
+                k_toolCallHistoryDdl,
+            },
+            std::pair{
+                std::string_view{"tool_call_positions"},
+                k_toolCallPositionsDdl,
+            },
+            std::pair{
+                std::string_view{"tool_delegation_grants"},
+                k_toolDelegationGrantsDdl,
+            },
+            std::pair{
+                std::string_view{"tool_root_requests"},
+                k_toolRootRequestsDdl,
+            },
+            std::pair{std::string_view{"tool_runs"}, k_toolRunsDdl},
+        };
+
+        auto rows = std::vector<json::Value>{};
+        rows.reserve(k_toolRuntimeTables.size());
+        for (auto const& [name, ddl] : k_toolRuntimeTables)
+        {
+            rows.emplace_back(json::Value::ofObject({
+                {"ddl", json::Value::ofString(std::string{ddl})},
+                {"table", json::Value::ofString(std::string{name})},
+            }));
+        }
+        return json::canonicalBytes(json::Value::ofObject({
+            {"tool_runtime_tables", json::Value::ofArray(std::move(rows))},
+        }));
     }
 }

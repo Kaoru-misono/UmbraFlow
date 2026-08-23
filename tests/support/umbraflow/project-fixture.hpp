@@ -462,7 +462,7 @@ namespace uf::operator_runtime::test_support
 
     // `preconditionSchema` defaults to the exemplar's; a case that pins a
     // laxer one -- e.g. a project whose tool arguments admit the
-    // observed_instance_id the submitCommand gate resolves -- states it
+    // observed_instance_id the admission gate resolves -- states it
     // explicitly. Every hash and every validator must see the same bytes.
     //
     // `reducerBytes` is the caller's, because what the fold answers is what a
@@ -1341,9 +1341,9 @@ identity = ["fixture.panel.anchor"]
     }
 
     // A snapshot over the world as it now stands. A token references a
-    // composition rather than a lease, so a reconciliation that advanced
-    // ProjectState makes every earlier token stale, and a case that opens a
-    // second Operation after a commit has to re-observe first.
+    // composition rather than a lease, so a case that needs the world as it is
+    // after a Journal commit has to re-observe rather than reuse the record it
+    // already holds.
     [[nodiscard]]
     inline auto freshSnapshot(PreparedStore& prepared) -> SnapshotRecord
     {
@@ -1479,19 +1479,6 @@ identity = ["fixture.panel.anchor"]
         };
     }
 
-    [[nodiscard]]
-    inline auto command(
-        SnapshotRecord const& snapshot,
-        std::string clientRequestId
-    ) -> CommandRequest
-    {
-        return CommandRequest{
-            .snapshotToken        = snapshot.token,
-            .idempotencyNamespace = "controller-1",
-            .clientRequestId      = std::move(clientRequestId),
-        };
-    }
-
     // A second authenticated controller of another kind over the same
     // registration. It needs a ProjectInstance of its own because only one
     // write session per instance may be active; the controlled target is the
@@ -1568,21 +1555,5 @@ identity = ["fixture.panel.anchor"]
         REQUIRE(binding.has_value());
         REQUIRE(binding->kind() == kind);
         return *binding;
-    }
-
-    [[nodiscard]]
-    inline auto proposedOperation(
-        PreparedStore& prepared,
-        std::string clientRequestId,
-        std::string_view toolName
-    ) -> StoredOperation
-    {
-        auto operation = prepared.store.submitCommand(
-            prepared.controller,
-            command(prepared.snapshot, std::move(clientRequestId)),
-            toolInvocation(prepared.project, std::string{toolName})
-        );
-        REQUIRE(operation.has_value());
-        return operation->operation;
     }
 }

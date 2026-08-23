@@ -4,9 +4,13 @@
 #include <operator/journal-entry.hpp>
 #include <operator/project-observation.hpp>
 #include <operator/project-plugin.hpp>
+#include <operator/ledger.hpp>
 #include <operator/tool-invocation.hpp>
+#include <operator/tool-runtime.hpp>
 
 #include <core/error/result.hpp>
+
+#include <domain/content-hash.hpp>
 
 #include <memory>
 #include <optional>
@@ -113,6 +117,30 @@ namespace uf::deployment
     // requires this to accept it.
     [[nodiscard]]
     auto validateFrameworkFormat(std::string_view exactBytes) -> Status;
+
+    // The whole of the Tool Runtime protocol this release implements, rendered
+    // canonically: the call-state vocabulary and the conclusions that write it,
+    // the exact identity preimages, the durable record's stored DDL, the
+    // canonical-form contract every one of those bytes is judged under, and the
+    // framework schema that decides what a Tool catalog document is.
+    //
+    // It lives in this module and not in operator because of the last member.
+    // The `operator/tool-catalog` schema is a framework format, but its bytes
+    // are compiled here, and operator does not depend on this module and must
+    // not -- an Operator that reached into a deployment for its own validators
+    // would be the deployment. So the assembly happens at the lowest layer that
+    // can see both halves, and each half is rendered by the module that owns it.
+    //
+    // tool_runtime_protocol_identity is the SHA-256 of these bytes. The
+    // recording incarnation writes it into the tool_runs row and a resuming one
+    // re-derives it from its own release; the equality between the two is the
+    // join, and it is a real one because the durable row is independent of the
+    // binary now reading it.
+    [[nodiscard]]
+    auto currentToolRuntimeProtocolMaterial() -> Result<std::string>;
+
+    [[nodiscard]]
+    auto currentToolRuntimeProtocolIdentity() -> Result<ContentHash>;
 
     // The schema-bearing validators one ProjectRegistration's authorities are
     // built from. Immutable and copyable: each accessor hands out a

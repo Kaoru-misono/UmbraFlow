@@ -15,6 +15,7 @@
 #include <operator/ledger.hpp>
 #include <operator/policy.hpp>
 #include <operator/project-generation.hpp>
+#include <operator/tool-admission-request.hpp>
 #include <operator/tool-descriptor.hpp>
 #include <operator/tool-invocation.hpp>
 
@@ -989,5 +990,96 @@ namespace uf::operator_runtime
         CHECK(*identity != *renamedIdentity);
         CHECK(*identity != *changedEntryIdentity);
         CHECK(*identity != *changedBytesIdentity);
+    }
+
+    // The two-source join tool_runtime_protocol_identity exists for.
+    //
+    // The recording incarnation writes what protocol it implemented into the
+    // durable rows of the call it recorded; a resuming one derives the value
+    // again from its own release bytes and rejoins that coordinate only when
+    // the two agree. The row is independent of the binary now reading it, which
+    // is what makes the two sources genuinely two.
+    //
+    // This case is what makes the equality falsifiable, and it is deliberately
+    // one coordinate rather than two: re-presenting the SAME position under a
+    // moved protocol is exactly what a resume under a changed release does, and
+    // it is refused by the member's own name. The positive control comes first
+    // because a divergence terminates the run, so a rejoin attempted after one
+    // would be refused for the termination instead.
+    TEST_CASE("a resumed Tool call whose Runtime protocol moved is refused")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        auto preimage = CanonicalJson::parseExact(R"({"objective":"protocol"})");
+        REQUIRE(preimage.has_value());
+        auto root = ToolRootRequestIdentity::create(
+            "controller-1",
+            "protocol-join-request",
+            *std::move(preimage)
+        );
+        REQUIRE(root.has_value());
+        auto const invocation = test_support::toolInvocation(
+            prepared.project,
+            prepared.project.toolName("observe-1")
+        );
+
+        auto const recorded = ToolExecutionIdentity{
+            .runIdentity                 = prepared.manifest.hash(),
+            .frameworkReleaseIdentity    = prepared.runtimeArtifactRootHash,
+            .toolRuntimeProtocolIdentity = test_support::hashOf("protocol-a"),
+            .environmentIdentity         = test_support::hashOf("environment-1"),
+        };
+        auto first = toolCallAt(*root, nullptr, 1U, recorded, invocation);
+        REQUIRE(first.has_value());
+        auto const admitted = prepared.store.admitToolCall(ToolAdmissionRequest{
+            .controller = prepared.controller,
+            .lease      = prepared.lease,
+            .root       = *root,
+            .call       = *first,
+        });
+        if (!admitted.has_value())
+        {
+            FAIL(admitted.error().message());
+        }
+
+        // The positive control. An incarnation that derives the SAME protocol
+        // rejoins the recorded coordinate, so the refusal below is the protocol
+        // comparison and not the position, the lease or the binding.
+        auto rejoined = toolCallAt(*root, nullptr, 1U, recorded, invocation);
+        REQUIRE(rejoined.has_value());
+        CHECK(rejoined->identity() == first->identity());
+        auto const continued = prepared.store.admitToolCall(ToolAdmissionRequest{
+            .controller = prepared.controller,
+            .lease      = prepared.lease,
+            .root       = *root,
+            .call       = *rejoined,
+        });
+        if (!continued.has_value())
+        {
+            FAIL(continued.error().message());
+        }
+
+        // Every other member of the execution identity is the recorded one, so
+        // nothing but the protocol can be what the refusal is about.
+        auto const moved = ToolExecutionIdentity{
+            .runIdentity                 = recorded.runIdentity,
+            .frameworkReleaseIdentity    = recorded.frameworkReleaseIdentity,
+            .toolRuntimeProtocolIdentity = test_support::hashOf("protocol-b"),
+            .environmentIdentity         = recorded.environmentIdentity,
+        };
+        auto second = toolCallAt(*root, nullptr, 1U, moved, invocation);
+        REQUIRE(second.has_value());
+        CHECK(second->identity() != first->identity());
+        auto const refused = prepared.store.admitToolCall(ToolAdmissionRequest{
+            .controller = prepared.controller,
+            .lease      = prepared.lease,
+            .root       = *root,
+            .call       = *second,
+        });
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(refused.error().message().contains(
+            "tool_runtime_protocol_identity changed"
+        ));
     }
 }

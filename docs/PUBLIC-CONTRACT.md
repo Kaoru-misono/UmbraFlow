@@ -26,7 +26,7 @@ Parity for one of these is byte identity: read the file, do not copy it.
 | `https://umbraflow.dev/schema/fact-provenance/v1` | v1 | -- | `schema/umbraflow-fact-provenance-v1.schema.json` | `kind`, `reference` |
 | `https://umbraflow.dev/schema/fact/v1` | v1 | `umbraflow-fact/v1` | `schema/umbraflow-fact-v1.schema.json` | `schema`, `status` |
 | `https://umbraflow.local/schema/journal-v1` | v1 | -- | `schema/umbraflow-journal-v1.schema.json` | one of `JournalEvent`, `ProjectState`, `ProjectInstance` |
-| `https://umbraflow.local/schema/operator-v1` | v1 | -- | `schema/umbraflow-operator-v1.schema.json` | one of `OperatorSession`, `ToolInvocation`, `CommandRecord`, `Operation`, `ToolResult`, `ReconcileProposal` |
+| `https://umbraflow.local/schema/operator-v1` | v1 | -- | `schema/umbraflow-operator-v1.schema.json` | one of `OperatorSession`, `ToolInvocation` |
 | `https://umbraflow.local/schema/policy-v1` | v1 | -- | `schema/umbraflow-policy-v1.schema.json` | `PolicyArtifact` |
 | `https://umbraflow.dev/schema/project-attestation/v2` | v2 | -- | `schema/umbraflow-project-attestation-v2.schema.json` | `set_version`, `predecessor_set_id`, `bundle_root_hash`, `plugin_id`, `attestations` |
 | `https://umbraflow.dev/schema/project-observation-proposal/v1` | v1 | `umbraflow-project-observation-proposal/v1` | `schema/umbraflow-project-observation-proposal-v1.schema.json` | `schema`, `canonical_opaque_payload`, `project_tool_preconditions`, `observed_instance_proposals` |
@@ -213,6 +213,13 @@ umbra-flow open --project DIR
 ```
 
 ```
+umbra-flow invoke --project DIR --hwnd 0xHANDLE --runtime DIR
+                  --ocr-models DIR --request-key KEY
+                  --actor agent|human|project ACTOR-MATERIAL
+                  [options]
+```
+
+```
 umbra-flow-conformance --project <directory> [doctest arguments]
 ```
 
@@ -256,6 +263,27 @@ sources that print it. A `{}` is a value the message interpolates.
 unknown argument "{}"
 missing value for {}
 missing required argument {}
+```
+
+#### umbra-flow invoke
+
+`modules/cli/source/cli/args.cpp`
+
+```text
+unknown argument "{}"
+missing value for {}
+missing required argument --hwnd
+missing required argument --request-key
+missing required argument --actor; state agent, human or project
+--actor expects agent, human or project, got "{}"
+{} is not material the {} actor's transport carries; it belongs to {}
+missing required argument {} for --actor {}
+missing required argument {}
+{} expects a window handle as 0x-prefixed hexadecimal, got "{}"; `umbra-flow targets` prints them
+{} expects a window handle, got "{}"
+{} expects an integer, got "{}"
+{} millisecond count is too large
+{} second count is too large
 ```
 
 #### umbra-flow-conformance
@@ -673,14 +701,207 @@ interrupt contract: `non_gc_loop_backedge_call_return_safepoints_v1`.
 | `vm_memory_bytes` | `16777216` |
 | `wall_time_milliseconds` | `2000` |
 
-## 5. The ownership boundary
+## 5. The Tool Runtime
+
+A Tool call is the only way project code reaches the world, and the
+only way a caller outside this repository drives one. Everything in
+this section is read out of the sources that decide it.
+
+### 5.1 Call states
+
+The durable vocabulary a call's row may carry. *Carries an outcome* is
+the terminal split: a state carries one exactly when a provider
+conclusion or a reconciliation wrote it, and the three that do not are
+the three a call is still passing through. `possible` and
+`terminally_unresolved` carry an outcome and still hold the
+target-wide mutation barrier, because neither says what the world did.
+
+Read from `k_toolCallStateNames` and `toolCallStateHasOutcome` in
+`modules/operator/source/operator/tool-runtime.cpp`. A scoped script reads the same set as
+`tools.states` from `modules/task/runtime/tools.luau`, and this generator
+requires the two to be the same list in the same order.
+
+| State | Carries an outcome |
+| --- | --- |
+| `proposed` | no |
+| `admitted` | no |
+| `dispatching` | no |
+| `confirmed` | yes |
+| `proven_absent` | yes |
+| `possible` | yes |
+| `terminal_failure` | yes |
+| `terminally_unresolved` | yes |
+
+### 5.2 The answer a script sees
+
+One Tool call answers one frozen object. `checkedAnswer` in
+`modules/task/runtime/tools.luau` rejects anything else, so these member names
+are the whole of what an answer is:
+
+| Answer member |
+| --- |
+| `tool` |
+| `state` |
+| `call_identity` |
+| `result` |
+| `evidence` |
+
+`result` and `evidence` are absent when the recorded outcome carries
+none, and their accessors answer a `@umbraflow/result` failure rather
+than a value -- `umbraflow.tools.no_result`, `umbraflow.tools.no_evidence`.
+
+A Tool Runtime *refusal* never reaches this envelope at all: it is
+terminal for the run, the VM is destroyed without resuming the script,
+and no `pcall` can observe one. A Tool that ran and failed is not a
+refusal -- its classification travels in `state`.
+
+### 5.3 Root request idempotency
+
+A run is opened by a root request, and a root request is identified by
+SHA-256 over a preimage tagged `umbraflow-internal-tool-root-v0` carrying
+exactly `callerNamespace.value()`, `requestKey.value()`, `requestPreimage.contentHash()`. A positioned call inside that run is identified by SHA-256 over a
+preimage tagged `umbraflow-internal-tool-call-v1`.
+
+Two root requests therefore stand in exactly one of three relations,
+decided by `ToolRootRequestIdentity::relationTo` in
+`modules/operator/source/operator/tool-invocation.cpp`:
+
+| Relation | When |
+| --- | --- |
+| `SameRequest` | same caller namespace and request key, and byte-identical request preimage -- the second call rejoins the first |
+| `Conflict` | same caller namespace and request key, different request preimage bytes -- refused rather than opening a second run |
+| `Distinct` | a different caller namespace or a different request key |
+
+### 5.4 `tool_catalog_hash`
+
+A project's `tool_catalog_hash` is the SHA-256 of the exact bytes of
+its Tool Catalog document -- the canonical (RFC 8785 JCS) bytes it
+registered, judged by `https://umbraflow.dev/schema/operator/tool-catalog`. Nothing derives it from a
+parse: `ProjectToolCatalogSchemaOwner::create` in
+`modules/operator/source/operator/tool-invocation.cpp` hashes the supplied bytes and refuses the
+deployment when the digest is not the one the registration pinned:
+
+```text
+Tool Catalog bytes do not match the registration's tool_catalog_hash
+```
+
+`tool_catalog_hash` is a member of the canonical registration, so it
+reaches `project_registration_hash`; a call minted against other
+catalog bytes cannot present this registration.
+
+### 5.5 The durable record
+
+What one Tool call leaves behind, and which of it is reproducible. A
+reproducible row is a function of the request and the release, so a
+replaying incarnation derives the identical row; an admission attempt
+is not, and is published as such rather than omitted.
+
+**Reproducible.** `tool_root_requests` -- the run the caller asked for:
+
+| Column |
+| --- |
+| `root_identity` |
+| `caller_namespace` |
+| `request_key` |
+| `request_preimage` |
+| `request_preimage_hash` |
+| `state` |
+| `termination_reason` |
+
+**Reproducible.** `tool_call_positions` -- where in the run the call is,
+and the exact material its identity is taken over:
+
+| Column |
+| --- |
+| `call_identity` |
+| `root_identity` |
+| `parent_call_identity` |
+| `call_sequence` |
+| `run_identity` |
+| `framework_release_identity` |
+| `tool_runtime_protocol_identity` |
+| `environment_identity` |
+| `provider_kind` |
+| `project_registration_hash` |
+| `tool_catalog_hash` |
+| `tool_name` |
+| `tool_version` |
+| `canonical_args` |
+| `canonical_args_hash` |
+| `observation_reference_hash` |
+
+**Deliberately not reproducible.** `tool_admission_attempts` records the
+live authority one attempt was admitted against -- the lease, the
+fencing token, the session epoch, the budget as it stood, the policy
+and capability digests. None of that is a function of the request: a
+second attempt at the identical call is admitted against whatever
+authority is live then, and it is a *new* row rather than the same one
+recomputed. A consumer that re-derived these would be inventing an
+authority nobody held.
+
+| Column |
+| --- |
+| `call_identity` |
+| `attempt_number` |
+| `root_identity` |
+| `origin_principal_id` |
+| `origin_principal_kind` |
+| `execution_principal_id` |
+| `execution_principal_kind` |
+| `session_id` |
+| `session_epoch` |
+| `controlled_target_id` |
+| `project_registration_hash` |
+| `policy_hash` |
+| `capability_profile_hash` |
+| `lease_id` |
+| `lease_revision` |
+| `fencing_token` |
+| `budget_snapshot` |
+| `budget_snapshot_hash` |
+| `effect_envelope` |
+| `effect_envelope_hash` |
+| `required_approvals` |
+| `approval_tokens` |
+| `approval_expires_at_unix_millis` |
+| `delegation_grant_id` |
+
+### 5.6 `tool_runtime_protocol_identity`
+
+`tool_runtime_protocol_identity` is the SHA-256 of the exact canonical
+bytes emitted by `currentToolRuntimeProtocolMaterial()` in
+`modules/deployment/source/deployment/project-deployment.cpp`. The recording incarnation writes it
+into the `tool_runs` row; a resuming or replaying incarnation derives
+it again from its own release bytes and refuses the continuation when
+the two differ. It is an assertion inside the resuming reader and is
+never a dispatch key.
+
+The preimage carries exactly these members:
+
+| Preimage member |
+| --- |
+| `call_vocabulary` |
+| `canonical_form_contract` |
+| `durable_record` |
+| `identity_preimages` |
+| `tool_catalog_schema` |
+| `tool_catalog_wire_tag` |
+
+Each is rendered by the module that owns what it describes: `toolCallVocabularyMaterial()`, `toolIdentityPreimageMaterial()`, `toolRuntimeDurableRecordMaterial()`.
+
+It is deliberately not `tool_catalog_hash`, which covers Framework Tool
+descriptors and nothing else: the state vocabulary, the identity
+preimages, the durable record and the canonical-form contract can every
+one of them change without moving that digest.
+
+## 6. The ownership boundary
 
 An observed instance identity is the sharpest edge of this boundary. The
 project states what a thing *is*; the Operator decides which thing it is
 and names it. The project never mints an id, a hash, or canonical
 identity bytes.
 
-### 5.1 What the project supplies
+### 6.1 What the project supplies
 
 One entry of `observed_instance_proposals` in `https://umbraflow.dev/schema/project-observation-proposal/v1`:
 
@@ -692,7 +913,7 @@ One entry of `observed_instance_proposals` in `https://umbraflow.dev/schema/proj
 | `semantic_identity_basis` |
 | `opaque_project_payload` |
 
-### 5.2 What the Operator does with it
+### 6.2 What the Operator does with it
 
 The Operator validates the proposal, canonicalizes it (RFC 8785 JCS),
 binds it to a scope, and mints the id. The canonical authority input it
@@ -709,7 +930,7 @@ binds is tagged `umbraflow-observed-instance-authority-input/v1` and carries exa
 | `semantic_identity_basis` |
 | `world_scope` |
 
-### 5.3 What comes back
+### 6.3 What comes back
 
 One entry of `observed_instances` in `https://umbraflow.dev/schema/project-observation/v1`:
 
@@ -722,7 +943,7 @@ One entry of `observed_instances` in `https://umbraflow.dev/schema/project-obser
 `observed_instance_id` is opaque and matches `^oi1_[0-9a-f]{64}$`.
 The project reads it and passes it back; it never derives one.
 
-## 6. Worked examples
+## 7. Worked examples
 
 Two fixture project directories in this repository, each written the way
 a consuming repository writes its own, and each run by this repository's
