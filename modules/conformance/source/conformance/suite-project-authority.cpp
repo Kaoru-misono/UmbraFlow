@@ -180,7 +180,11 @@ namespace uf::operator_runtime::conformance
         // The loaded generation is bound the same way: a handle registered
         // under one registration answers only for that one, and its reducer
         // closure digest is the one that registration pinned.
-        auto const generation = loadGeneration(project, ProjectRole::UnderTest);
+        auto const generation = loadGeneration(
+            project,
+            ProjectRole::UnderTest,
+            provisioningToolRuntime()
+        );
         CHECK(
             generation.projectRegistrationHash()
             == ProjectIdentity{underTest.generation}.hash()
@@ -254,7 +258,11 @@ namespace uf::operator_runtime::conformance
         auto const foreign = prepared.store.refoldProjectState(
             ProjectIdentity{underTest.generation},
             underTest.journalSchemaOwner,
-            loadGeneration(prepared.project, ProjectRole::Foreign),
+            loadGeneration(
+                prepared.project,
+                ProjectRole::Foreign,
+                provisioningToolRuntime()
+            ),
             "instance-1"
         );
         REQUIRE_FALSE_MESSAGE(

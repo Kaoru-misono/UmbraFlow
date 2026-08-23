@@ -70,7 +70,7 @@ namespace uf::operator_runtime::conformance
             },
             std::move(blobs),
             underTest.catalog.toolResultValidator(),
-            conformanceToolRuntime()
+            provisioningToolRuntime()
         );
         REQUIRE_FALSE(registration.has_value());
         CHECK_MESSAGE(

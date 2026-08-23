@@ -5,9 +5,15 @@
 
 #include <deployment/project-directory.hpp>
 
+#include <operator/agent-profile.hpp>
+#include <operator/controller.hpp>
 #include <operator/ledger.hpp>
 #include <operator/manifest.hpp>
 #include <operator/project-generation.hpp>
+#include <operator/project-tool-dispatch.hpp>
+#include <operator/snapshot-reference.hpp>
+#include <operator/tool-invocation.hpp>
+#include <operator/tool-root-producer.hpp>
 
 #include <script/scoped-tool-program.hpp>
 
@@ -119,17 +125,28 @@ namespace uf::operator_runtime::conformance
         std::string toolName
     ) -> ValidatedToolInvocation;
 
-    // The Tool Runtime seam a conformance run compiles its generation against.
-    // These cases drive the ledger rather than a Tool call, so nothing here
-    // admits one; the seam refuses, because a scoped program with no Tool
-    // Runtime is a pure program wearing the wrong type.
+    // The Tool Runtime seam a registration is compiled with when it is
+    // registered only to be provisioned from.
+    //
+    // Provisioning needs the generation's fold and nothing else: at the point
+    // prepareStore registers it, no session, controller, lease or observation
+    // authority exists yet, so no scoped call could be admitted through any
+    // seam it was handed. That is why it refuses, and it is a fact about the
+    // setup rather than about the suite -- the runs a case builds with
+    // toolRuntimeOver below dispatch real Tool calls through the dispatcher's
+    // own seam.
     [[nodiscard]]
-    auto conformanceToolRuntime() -> script::ToolRuntimeInvoke;
+    auto provisioningToolRuntime() -> script::ToolRuntimeInvoke;
 
+    // `invokeTool` is the seam the compiled tool closure reaches the Tool
+    // Runtime through, and it is a parameter rather than a default because the
+    // two callers want opposite things: provisioning wants the refusal above,
+    // and a run wants its own dispatcher's seam.
     [[nodiscard]]
     auto loadGeneration(
         deployment::ConformanceProject const& project,
-        ProjectRole role
+        ProjectRole role,
+        script::ToolRuntimeInvoke invokeTool
     ) -> ProjectGenerationHandle;
 
     // The PolicyArtifact bytes a run pins, built from the effect types this
@@ -141,6 +158,20 @@ namespace uf::operator_runtime::conformance
         deployment::LoadedDeployment const& deployed,
         deployment::ProjectVocabulary const& vocabulary
     ) -> std::string;
+
+    // The exact AgentProfile bytes a run pins, and the validator that reads the
+    // ceilings back out of them rather than being handed a budget.
+    //
+    // An Agent is the one controller kind whose ControllerProfile requires
+    // budgets, so a run that pinned no profile could open no Agent session and
+    // the actor axis would be missing the kind that differs. The ceilings are
+    // wide enough that no case here reaches one: a case that met a ceiling it
+    // did not choose would be testing this file.
+    [[nodiscard]]
+    auto agentProfileBytes() -> std::string;
+
+    [[nodiscard]]
+    auto agentProfileValidator() -> AgentProfileValidator;
 
     [[nodiscard]]
     auto sessionManifest(
@@ -208,6 +239,80 @@ namespace uf::operator_runtime::conformance
 
     [[nodiscard]]
     auto prepareStore(std::filesystem::path const& root) -> PreparedStore;
+
+    // The same runtime directory, opened again with nothing else beside it.
+    //
+    // This is the restart: opening clears every lease and deactivates every
+    // session, and the value it returns reaches the ledger and no VM at all --
+    // no dispatcher, no compiled closure, no Luau state anywhere in the
+    // process. That is what makes a replay through it a statement that no
+    // provider ran, rather than a statement that none was observed to.
+    [[nodiscard]]
+    auto reopenStore(std::filesystem::path const& root) -> OperatorCoordinator;
+
+    // The Tool Runtime one case drives, standing on a prepared store.
+    //
+    // Every borrow inside it points into that PreparedStore, so the store must
+    // outlive this value and must not be moved after it was built: the
+    // dispatcher reaches the coordinator on every call, and the compiled
+    // program holds the dispatcher's seam for as long as the program lives.
+    //
+    // No in-class initializer for any member below the authority: a dispatcher,
+    // a compiled generation, a start catalog and an execution identity all have
+    // to come from construction, and there is no default any of them could
+    // carry.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+    struct PreparedToolRuntime final
+    {
+        // Held behind a unique_ptr so the authority keeps one address while
+        // this aggregate is moved out of its factory. The dispatcher borrows
+        // it for its whole life, and a borrow of a member that moved with the
+        // aggregate would be a borrow of storage nothing owns.
+        std::unique_ptr<SnapshotObservationAuthority> observations{};
+
+        ProjectToolDispatcher   dispatcher;
+        ProjectGenerationHandle program;
+        ToolStartCatalog        catalog;
+
+        // The pinned execution identity every call of this run repeats. Only
+        // the environment member is derived -- it is the compiled tool
+        // closure's own -- because nothing yet derives the other three from
+        // release bytes, and a suite that invented a derivation would be
+        // publishing one.
+        ToolExecutionIdentity execution;
+    };
+
+    [[nodiscard]]
+    auto toolRuntimeOver(PreparedStore& prepared UF_LIFETIME_BOUND)
+        -> PreparedToolRuntime;
+
+    // One further authenticated actor on the prepared store's controlled
+    // target: its own ProjectInstance, its own pinned session, and the
+    // target's one lease.
+    //
+    // The lease is exclusive per controlled target, so whoever held it must
+    // have released it first. Taking it in turn is what a handover between a
+    // Project run, an Agent and a person on one target actually is, and it is
+    // what keeps the target, the registration and the policy identical across
+    // the three.
+    //
+    // No in-class initializer for either member: a binding and a lease must
+    // both come from construction.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+    struct ActorSession final
+    {
+        ControllerBinding controller;
+        ControlLease      lease;
+    };
+
+    [[nodiscard]]
+    auto openActorSession(
+        PreparedStore& prepared,
+        std::string_view sessionId,
+        std::string_view instanceKey,
+        ControllerKind kind,
+        std::string_view controllerId
+    ) -> ActorSession;
 
     [[nodiscard]]
     auto command(

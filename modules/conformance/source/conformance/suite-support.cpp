@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <format>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -45,6 +46,23 @@ namespace uf::operator_runtime::conformance
         }
 
 
+        // Where prepareStore puts the Operator's runtime directory under the
+        // root a case owns. It is named once because reopenStore has to open
+        // the same directory, and a second spelling would be the one that goes
+        // stale.
+        constexpr auto k_runtimeSubdirectory = std::string_view{"production"};
+
+        // Wide enough that no case here reaches a ceiling. A case that IS about
+        // a budget would state its own numbers; none of these are, so meeting
+        // one would mean a case was measuring this table.
+        constexpr auto k_conformanceAgentBudget = AgentBudget{
+            .maximumToolCalls     = 1'000U,
+            .maximumMutations     = 1'000U,
+            .maximumObservations  = 1'000U,
+            .maximumElapsedMillis = 3'600'000U,
+            .maximumRiskUnits     = 1'000'000U,
+        };
+
         [[nodiscard]]
         auto roleOf(
             deployment::ConformanceProject const& project UF_LIFETIME_BOUND,
@@ -55,9 +73,52 @@ namespace uf::operator_runtime::conformance
                 ? project.underTest
                 : project.foreign;
         }
+
+        [[nodiscard]]
+        auto profileCeiling(
+            json::Value const& profile,
+            std::string_view member
+        ) -> std::optional<uint64>
+        {
+            auto const* const p_ceiling = profile.find(member);
+            if (p_ceiling == nullptr || p_ceiling->kind() != json::ValueKind::Number)
+            {
+                return std::nullopt;
+            }
+            return static_cast<uint64>(p_ceiling->number());
+        }
+
+        // What answers a Framework Tool that a scoped run of the project under
+        // test reaches.
+        //
+        // A conformance run has no Framework provider and cannot invent one:
+        // the Tools that observe, wait, record and deliver are answered by
+        // service::ProductLifecycle, privately, inside a composition root
+        // holding a live Host session, and a second answer written here would
+        // be a second account of what framework.* does with only one of them
+        // being the Framework's. So it refuses by name.
+        //
+        // Which runs reach it is the project's decision rather than this
+        // suite's. A catalog whose descriptors declare no child call cannot
+        // reach it at all; a catalog whose handler calls a Framework Tool gets
+        // this sentence, which is the honest answer to a capability the suite
+        // does not have.
+        [[nodiscard]]
+        auto conformanceFrameworkTools() -> ToolProvider
+        {
+            return [](ToolCallPositionIdentity const& call)
+                -> Result<ToolCallCompletion>
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "a conformance run has no Framework Tool provider, so it "
+                    "cannot answer " + call.toolName()
+                );
+            };
+        }
     }
 
-    auto conformanceToolRuntime() -> script::ToolRuntimeInvoke
+    auto provisioningToolRuntime() -> script::ToolRuntimeInvoke
     {
         return [](
                    std::string_view,
@@ -68,7 +129,7 @@ namespace uf::operator_runtime::conformance
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "a conformance run dispatches no Tool call"
+                "a registration compiled for provisioning admits no Tool call"
             );
         };
     }
@@ -207,7 +268,8 @@ namespace uf::operator_runtime::conformance
 
     auto loadGeneration(
         deployment::ConformanceProject const& project,
-        ProjectRole role
+        ProjectRole role,
+        script::ToolRuntimeInvoke invokeTool
     ) -> ProjectGenerationHandle
     {
         auto const& one = deploymentFor(project, role);
@@ -226,7 +288,7 @@ namespace uf::operator_runtime::conformance
             },
             one.projectResources,
             one.catalog.toolResultValidator(),
-            conformanceToolRuntime()
+            std::move(invokeTool)
         );
         REQUIRE(result.has_value());
         return *result;
@@ -261,6 +323,63 @@ namespace uf::operator_runtime::conformance
         return policyArtifactBytes(hashOf("operator"), types);
     }
 
+    auto agentProfileBytes() -> std::string
+    {
+        // The AgentBudget's own member order, which is also JCS order, so these
+        // bytes are exact canonical form rather than a spelling that happens to
+        // parse.
+        return std::format(
+            R"({{"maximum_elapsed_ms":{},"maximum_mutations":{},)"
+            R"("maximum_observations":{},"maximum_risk_units":{},)"
+            R"("maximum_tool_calls":{}}})",
+            k_conformanceAgentBudget.maximumElapsedMillis,
+            k_conformanceAgentBudget.maximumMutations,
+            k_conformanceAgentBudget.maximumObservations,
+            k_conformanceAgentBudget.maximumRiskUnits,
+            k_conformanceAgentBudget.maximumToolCalls
+        );
+    }
+
+    auto agentProfileValidator() -> AgentProfileValidator
+    {
+        // Reads the five ceilings out of the exact bytes rather than answering
+        // with the table above. The bytes are what agent_profile_hash attests
+        // to, and a validator that ignored them would let any budget answer for
+        // any manifest.
+        return [](std::string_view exactJcs) -> Result<AgentBudget>
+        {
+            UF_TRY_VALUE(profile, json::parse(exactJcs));
+            auto const toolCalls    = profileCeiling(profile, "maximum_tool_calls");
+            auto const mutations    = profileCeiling(profile, "maximum_mutations");
+            auto const observations = profileCeiling(
+                profile,
+                "maximum_observations"
+            );
+            auto const elapsed   = profileCeiling(profile, "maximum_elapsed_ms");
+            auto const riskUnits = profileCeiling(profile, "maximum_risk_units");
+            if (
+                !toolCalls
+                || !mutations
+                || !observations
+                || !elapsed
+                || !riskUnits
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "AgentProfile bytes are not a complete budget document"
+                );
+            }
+            return AgentBudget{
+                .maximumToolCalls     = *toolCalls,
+                .maximumMutations     = *mutations,
+                .maximumObservations  = *observations,
+                .maximumElapsedMillis = *elapsed,
+                .maximumRiskUnits     = *riskUnits,
+            };
+        };
+    }
+
     auto sessionManifest(
         ProjectIdentity const& registration,
         ContentHash const& runtimeArtifactRootHash,
@@ -273,7 +392,12 @@ namespace uf::operator_runtime::conformance
                 .operatorProtocolSchemaHash   = hashOf("operator"),
                 .projectRegistrationHash      = registration.hash(),
                 .policyArtifactHash           = hashOf(exactPolicyArtifactBytes),
-                .agentProfileHash             = hashOf("agent"),
+
+                // The exact bytes rather than a label: an Agent session is
+                // pinned by presenting the profile this hash names, so a
+                // manifest naming bytes nothing produces admits no Agent at
+                // all.
+                .agentProfileHash = hashOf(agentProfileBytes()),
             }
         );
         REQUIRE(result.has_value());
@@ -299,7 +423,7 @@ namespace uf::operator_runtime::conformance
             root / "session-handoff",
             project.loaded.runtimeArtifactRoot
         );
-        auto storeResult   = OperatorCoordinator::open(root / "production");
+        auto storeResult   = OperatorCoordinator::open(root / k_runtimeSubdirectory);
         REQUIRE(storeResult.has_value());
         auto store     = *std::move(storeResult);
         auto installed = store.installRuntimeArtifact(
@@ -319,7 +443,11 @@ namespace uf::operator_runtime::conformance
             installed->rootHash(),
             policy
         );
-        auto const generation = loadGeneration(project, ProjectRole::UnderTest);
+        auto const generation = loadGeneration(
+            project,
+            ProjectRole::UnderTest,
+            provisioningToolRuntime()
+        );
         REQUIRE(store.registerProject(underTest.generation).has_value());
         REQUIRE(store.provisionProjectInstance(
             ProjectIdentity{underTest.generation},
@@ -460,6 +588,131 @@ namespace uf::operator_runtime::conformance
         );
         REQUIRE(snapshot.has_value());
         return *std::move(snapshot);
+    }
+
+    auto reopenStore(std::filesystem::path const& root) -> OperatorCoordinator
+    {
+        auto reopened = OperatorCoordinator::open(root / k_runtimeSubdirectory);
+        REQUIRE(reopened.has_value());
+        return *std::move(reopened);
+    }
+
+    auto toolRuntimeOver(PreparedStore& prepared) -> PreparedToolRuntime
+    {
+        auto observations = std::make_unique<SnapshotObservationAuthority>();
+        auto dispatcher   = ProjectToolDispatcher::create(
+            prepared.store,
+            *observations,
+            prepared.policyAuthority,
+            conformanceFrameworkTools()
+        );
+        REQUIRE(dispatcher.has_value());
+
+        // The one registration a run dispatches through, compiled with the
+        // dispatcher's own seam. It is a second handle of the same registration
+        // rather than the one prepareStore provisioned from, because the
+        // dispatcher a seam reaches cannot exist until the session it serves
+        // does, and provisioning runs before there is a session at all.
+        auto program = loadGeneration(
+            prepared.project,
+            ProjectRole::UnderTest,
+            dispatcher->toolRuntimeSeam()
+        );
+        auto catalog = ToolStartCatalog::create(
+            deploymentFor(prepared.project, ProjectRole::UnderTest)
+                .toolCatalogSchemaOwner
+        );
+        REQUIRE(catalog.has_value());
+        auto const environmentIdentity = program.environmentIdentity();
+        return PreparedToolRuntime{
+            .observations = std::move(observations),
+            .dispatcher   = *std::move(dispatcher),
+            .program      = std::move(program),
+            .catalog      = *std::move(catalog),
+            .execution    = ToolExecutionIdentity{
+                .runIdentity                 = hashOf("conformance-run"),
+                .frameworkReleaseIdentity    = hashOf("conformance-release"),
+                .toolRuntimeProtocolIdentity = hashOf("conformance-protocol"),
+                .environmentIdentity         = environmentIdentity,
+            },
+        };
+    }
+
+    auto openActorSession(
+        PreparedStore& prepared,
+        std::string_view sessionId,
+        std::string_view instanceKey,
+        ControllerKind kind,
+        std::string_view controllerId
+    ) -> ActorSession
+    {
+        auto const& underTest = deploymentFor(
+            prepared.project,
+            ProjectRole::UnderTest
+        );
+
+        // Its own ProjectInstance, because one project instance admits one
+        // active write session: two actors sharing a key could not both be
+        // pinned, and the exclusion this case is about is the lease rather than
+        // the instance. No baseline entry, because what these actors drive is
+        // the Tool Runtime rather than a fold.
+        REQUIRE(prepared.store.provisionProjectInstance(
+            ProjectIdentity{underTest.generation},
+            prepared.generation,
+            ProjectInstanceBaseline{
+                .projectInstanceKey  = std::string{instanceKey},
+                .eventId             = "",
+                .sessionManifestHash = prepared.manifest.hash(),
+                .entry               = std::nullopt,
+            }
+        ).has_value());
+
+        // Required for exactly the kinds whose ControllerProfile says budgets
+        // are required and refused for the others, so the kind decides this
+        // rather than this function's caller.
+        auto profile = std::optional<AgentProfile>{};
+        if (controllerProfile(kind).budgetsRequired)
+        {
+            auto verified = AgentProfile::verifyExact(
+                prepared.manifest,
+                "agent-profile.json",
+                agentProfileBytes(),
+                agentProfileValidator()
+            );
+            REQUIRE(verified.has_value());
+            profile = *std::move(verified);
+        }
+
+        auto const worldScope = ObservedInstanceWorldScope::run(
+            prepared.controller.controlledTargetId(),
+            1
+        );
+        REQUIRE(worldScope.has_value());
+        REQUIRE(prepared.store.pinSession(
+            SessionPin{
+                .sessionId                 = std::string{sessionId},
+                .authenticatedControllerId = std::string{controllerId},
+                .idempotencyNamespace      = std::string{controllerId},
+                .projectRegistrationHash   = underTest.generation.hash(),
+                .controllerCapabilities    = {std::string{k_operateCapability}},
+                .controlledTargetId        = prepared.controller.controlledTargetId(),
+                .projectInstanceKey        = std::string{instanceKey},
+                .mode                      = SessionMode::Write,
+                .kind                      = kind,
+                .worldScope                = *worldScope,
+            },
+            prepared.manifest,
+            profile
+        ).has_value());
+
+        auto controller = prepared.store.bindController(std::string{sessionId});
+        REQUIRE(controller.has_value());
+        auto lease = prepared.store.acquireLease(*controller);
+        REQUIRE(lease.has_value());
+        return ActorSession{
+            .controller = *std::move(controller),
+            .lease      = *std::move(lease),
+        };
     }
 
     auto command(
