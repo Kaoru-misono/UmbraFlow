@@ -287,8 +287,6 @@ namespace uf::operator_runtime
         ContentHash        m_pluginModuleManifestHash;
         std::string        m_projectInstanceKey;
         ContentHash        m_stateResolutionHash;
-        uint64             m_projectStateRevision;
-        ContentHash        m_projectStateHash;
         uint64             m_revision;
         ProjectObservation m_payload;
 
@@ -297,8 +295,6 @@ namespace uf::operator_runtime
             ContentHash pluginModuleManifestHash,
             std::string projectInstanceKey,
             ContentHash stateResolutionHash,
-            uint64 projectStateRevision,
-            ContentHash projectStateHash,
             uint64 revision,
             ProjectObservation payload
         );
@@ -320,8 +316,6 @@ namespace uf::operator_runtime
             -> std::string const&;
 
         [[nodiscard]] auto stateResolutionHash() const -> ContentHash;
-        [[nodiscard]] auto projectStateRevision() const noexcept -> uint64;
-        [[nodiscard]] auto projectStateHash() const -> ContentHash;
         [[nodiscard]] auto revision() const noexcept -> uint64;
         [[nodiscard]] auto hash() const -> ContentHash;
 

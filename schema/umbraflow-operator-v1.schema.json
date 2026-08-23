@@ -271,8 +271,6 @@
         "project_observation_revision",
         "project_observation_hash",
         "project_instance_key",
-        "project_state_revision",
-        "project_state_hash",
         "decision_basis_hash",
         "session_manifest_hash",
         "policy_hash",
@@ -290,8 +288,6 @@
         "project_observation_revision": { "type": "integer", "minimum": 0 },
         "project_observation_hash": { "$ref": "#/$defs/Hash" },
         "project_instance_key": { "$ref": "#/$defs/Identifier" },
-        "project_state_revision": { "type": "integer", "minimum": 0 },
-        "project_state_hash": { "$ref": "#/$defs/Hash" },
         "decision_basis_hash": { "$ref": "#/$defs/Hash" },
         "session_manifest_hash": { "$ref": "#/$defs/Hash" },
         "policy_hash": { "$ref": "#/$defs/Hash" },
@@ -320,8 +316,6 @@
         "project_observation_revision",
         "project_observation_hash",
         "project_instance_key",
-        "project_state_revision",
-        "project_state_hash",
         "decision_basis_hash",
         "session_manifest_hash",
         "policy_hash",
@@ -342,8 +336,6 @@
         "project_observation_revision": { "type": "integer", "minimum": 0 },
         "project_observation_hash": { "$ref": "#/$defs/Hash" },
         "project_instance_key": { "$ref": "#/$defs/Identifier" },
-        "project_state_revision": { "type": "integer", "minimum": 0 },
-        "project_state_hash": { "$ref": "#/$defs/Hash" },
         "decision_basis_hash": { "$ref": "#/$defs/Hash" },
         "session_manifest_hash": { "$ref": "#/$defs/Hash" },
         "policy_hash": { "$ref": "#/$defs/Hash" },
@@ -363,14 +355,12 @@
       "required": [
         "state_resolution_hash",
         "project_observation_hash",
-        "project_state_hash",
         "session_manifest_hash",
         "decision_basis_hash"
       ],
       "properties": {
         "state_resolution_hash": { "$ref": "#/$defs/Hash" },
         "project_observation_hash": { "$ref": "#/$defs/Hash" },
-        "project_state_hash": { "$ref": "#/$defs/Hash" },
         "session_manifest_hash": { "$ref": "#/$defs/Hash" },
         "decision_basis_hash": { "$ref": "#/$defs/Hash" }
       }
@@ -383,7 +373,6 @@
         "token",
         "ui_snapshot",
         "project_observation",
-        "project_state",
         "prior_project_observation",
         "pinned_project_artifact_identities",
         "available_tools",
@@ -394,7 +383,6 @@
         "token": { "$ref": "#/$defs/SnapshotToken" },
         "ui_snapshot": { "$ref": "#/$defs/CanonicalDocument" },
         "project_observation": { "$ref": "#/$defs/OpaqueProjectDocument" },
-        "project_state": { "$ref": "#/$defs/OpaqueProjectDocument" },
         "prior_project_observation": {
           "oneOf": [
             { "type": "null" },
@@ -430,26 +418,6 @@
         "maximum_observations": { "type": "integer", "minimum": 1 },
         "maximum_waits": { "type": "integer", "minimum": 0 },
         "maximum_elapsed_ms": { "type": "integer", "minimum": 1 }
-      }
-    },
-    "EffectEnvelope": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "namespaced_type",
-        "risk",
-        "scope_kind",
-        "scope_key",
-        "payload_schema_hash",
-        "opaque_project_payload"
-      ],
-      "properties": {
-        "namespaced_type": { "$ref": "#/$defs/NamespacedIdentifier" },
-        "risk": { "$ref": "#/$defs/Risk" },
-        "scope_kind": { "$ref": "#/$defs/Identifier" },
-        "scope_key": { "$ref": "#/$defs/Identifier" },
-        "payload_schema_hash": { "$ref": "#/$defs/Hash" },
-        "opaque_project_payload": { "$ref": "#/$defs/CanonicalJsonValue" }
       }
     },
     "TimeoutPolicy": {

@@ -1378,7 +1378,7 @@ namespace uf::operator_runtime
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "Tool Catalog bytes do not match the registration's tool_catalog_hash"
+                "Tool declaration bytes do not match the registration's tool_catalog_hash"
             );
         }
         UF_TRY_VALUE_CONTEXT(

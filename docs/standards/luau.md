@@ -44,7 +44,7 @@ for `script::PureDataProgram`, and `scopedFrameworkScriptModules()` for
 `script::ScopedToolProgram`. The four scoped facades — `audit.luau`,
 `screen.luau`, `tools.luau`, `workflow.luau` — are in the recursive tree the
 reader collects but are admitted by the third list alone, so neither the trusted
-Engine nor a reducer can name one, and the refusal names the module. Do not read
+Engine nor a pure program can name one, and the refusal names the module. Do not read
 "every `.luau` file under `modules/task/runtime/`" as "every module every VM
 loads".
 

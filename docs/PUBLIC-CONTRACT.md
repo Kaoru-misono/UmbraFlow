@@ -25,32 +25,19 @@ Parity for one of these is byte identity: read the file, do not copy it.
 | `https://umbraflow.dev/schema/declarative-workflow-tool/v1` | v1 | `umbraflow-declarative-workflow-tool/v1` | `schema/umbraflow-declarative-workflow-tool-v1.schema.json` | `schema`, `tool_name`, `target_argument`, `allowed_instance_kinds`, `fresh_observation`, `ui_finding`, `states`, `steps`, `bounds` |
 | `https://umbraflow.dev/schema/fact-provenance/v1` | v1 | -- | `schema/umbraflow-fact-provenance-v1.schema.json` | `kind`, `reference` |
 | `https://umbraflow.dev/schema/fact/v1` | v1 | `umbraflow-fact/v1` | `schema/umbraflow-fact-v1.schema.json` | `schema`, `status` |
-| `https://umbraflow.local/schema/journal-v1` | v1 | -- | `schema/umbraflow-journal-v1.schema.json` | one of `JournalEvent`, `ProjectState`, `ProjectInstance` |
 | `https://umbraflow.local/schema/operator-v1` | v1 | -- | `schema/umbraflow-operator-v1.schema.json` | one of `OperatorSession`, `ToolInvocation` |
 | `https://umbraflow.local/schema/policy-v1` | v1 | -- | `schema/umbraflow-policy-v1.schema.json` | `PolicyArtifact` |
 | `https://umbraflow.dev/schema/project-attestation/v2` | v2 | -- | `schema/umbraflow-project-attestation-v2.schema.json` | `set_version`, `predecessor_set_id`, `bundle_root_hash`, `plugin_id`, `attestations` |
 | `https://umbraflow.dev/schema/project-observation-proposal/v1` | v1 | `umbraflow-project-observation-proposal/v1` | `schema/umbraflow-project-observation-proposal-v1.schema.json` | `schema`, `canonical_opaque_payload`, `project_tool_preconditions`, `observed_instance_proposals` |
 | `https://umbraflow.dev/schema/project-observation/v1` | v1 | `umbraflow-project-observation/v1` | `schema/umbraflow-project-observation-v1.schema.json` | `schema`, `canonical_opaque_payload`, `project_tool_preconditions`, `observed_instances` |
-| `https://umbraflow.local/schema/project-registration-v3` | v3 | -- | `schema/umbraflow-project-registration-v3.schema.json` | `project_registration_format`, `plugin_id`, `reducer_closure`, `tool_closure`, `plugin_environment_hash`, `tool_catalog_hash`, `project_state_schema_hash`, `project_tool_precondition_schema_hash`, `journal_event_schema_manifest_hash`, `observed_instance_identity_schema_hashes`, `baseline_event_type`, `project_resources`, `project_tool_bindings` |
+| `https://umbraflow.local/schema/project-registration-v4` | v4 | -- | `schema/umbraflow-project-registration-v4.schema.json` | `project_registration_format`, `plugin_id`, `tool_closure`, `plugin_environment_hash`, `tool_catalog_hash`, `observed_instance_identity_schema_hashes`, `project_resources`, `project_tool_bindings` |
 | `https://umbraflow.dev/schema/project-tool-precondition/v1` | v1 | -- | `schema/umbraflow-project-tool-precondition-v1.schema.json` | `name`, `status` |
-| `https://umbraflow.dev/schema/project/directory` | v2 | `umbraflow-project/v2` | `schema/umbraflow-project-v2.schema.json` | `deployments`, `primary_deployment`, `runtime_artifact`, `schema`, `template_cuts` |
+| `https://umbraflow.dev/schema/project/directory` | v3 | `umbraflow-project/v3` | `schema/umbraflow-project-v3.schema.json` | `deployments`, `primary_deployment`, `runtime_artifact`, `schema`, `template_cuts` |
 | `https://umbraflow.dev/schema/umbraflow-runtime-artifact-v1.schema.json` | v1 | -- | `schema/umbraflow-runtime-artifact-v1.schema.json` | `runtime_artifact_format`, `runtime_model_format`, `page_model`, `assets` |
 | `https://umbraflow.dev/schema/umbraflow-runtime-v3.schema.json` | v3 | -- | `schema/umbraflow-runtime-v3.schema.json` | `runtime_model` |
 | `https://umbraflow.local/schema/trace-v2` | v2 | `umbraflow-trace/v2` | `schema/umbraflow-trace-v2.schema.json` | `schema`, `event_type`, `session_id`, `session_manifest_hash`, `monotonic_sequence`, `recorded_at_unix_millis`, `audit`, `payload` |
 
-### 1.2 Project-supplied identities
-
-This repository fixes the `$id` and refuses a deployment whose document
-declares another one; the **project** supplies the bytes. Parity for one
-of these is identity equality only -- there are no upstream bytes to
-compare against. Read from `modules/deployment/source/deployment/project-deployment.hpp`.
-
-| Role | `$id` the project's document must declare |
-| --- | --- |
-| `projectState` | `https://umbraflow.dev/schema/project/state` |
-| `toolPrecondition` | `https://umbraflow.dev/schema/project/tool-precondition` |
-
-### 1.3 Identities compiled from module bytes
+### 1.2 Identities compiled from module bytes
 
 Schemas this repository compiles out of its own source rather than
 publishing as a file. A project's plugin answers the operator-protocol
@@ -66,13 +53,9 @@ call boundary. `unclassified` means none is true of it in these bytes.
 
 | `$id` | Ownership | Wire tag | Source | Required members |
 | --- | --- | --- | --- | --- |
-| `https://umbraflow.dev/schema/operator/common` | embedded_fragment | -- | `modules/deployment/source/deployment/project-deployment.cpp` | no top-level requirement |
-| `https://umbraflow.dev/schema/operator/journal-event-schema-manifest` | wire_tag_owned | `umbraflow-journal-event-schema-manifest/v1` | `modules/deployment/source/deployment/project-deployment.cpp` | `payload_schemas`, `plugin_id`, `schema` |
-| `https://umbraflow.dev/schema/operator/reduce-input` | operator_protocol | -- | `modules/deployment/source/deployment/project-deployment.cpp` | `commit_context`, `prior_project_state`, `prospective_journal_batch` |
-| `https://umbraflow.dev/schema/operator/tool-catalog` | wire_tag_owned | `umbraflow-tool-catalog/v1` | `modules/deployment/source/deployment/project-deployment.cpp` | `effect_payload_sha256s`, `plugin_id`, `schema`, `tool_precondition_sha256`, `tools` |
-| `https://umbraflow.dev/schema/project/conformance` | wire_tag_owned | `umbraflow-conformance/v2` | `modules/deployment/source/deployment/project-directory.cpp` | `foreign`, `probe_frame`, `schema`, `under_test` |
+| `https://umbraflow.dev/schema/project/conformance` | wire_tag_owned | `umbraflow-conformance/v3` | `modules/deployment/source/deployment/project-directory.cpp` | `foreign`, `probe_frame`, `schema`, `under_test` |
 
-### 1.4 Wire tags no published schema pins
+### 1.3 Wire tags no published schema pins
 
 Tags this repository's sources write and read, for which no file under
 `schema/` pins the value. The tag is the whole ownership
@@ -80,18 +63,14 @@ statement.
 
 | Wire tag |
 | --- |
-| `umbraflow-conformance/v2` |
+| `umbraflow-conformance/v3` |
 | `umbraflow-framework-schema-catalog/v1` |
-| `umbraflow-journal-event-schema-manifest/v1` |
 | `umbraflow-observed-instance-authority-input/v1` |
-| `umbraflow-project-declared-files/v1` |
 | `umbraflow-project-kit-artifact-manifest/v1` |
-| `umbraflow-project-kit-execution-closure/v1` |
-| `umbraflow-project-kit-execution-closure/v2` |
+| `umbraflow-project-kit-execution-closure/v3` |
 | `umbraflow-release/v1` |
-| `umbraflow-tool-catalog/v1` |
 
-### 1.5 The Project Kit release manifest
+### 1.4 The Project Kit release manifest
 
 A release bundle ships an immutable manifest tagged `umbraflow-release/v1`,
 written by `scripts/publish_release.py` and never authored by hand.
@@ -116,7 +95,7 @@ rather than stored.
 | `asset` | the flat asset name a GitHub release carries it under |
 | `sha256` | lowercase hex content digest, no prefix |
 
-`contract_versions` carries `umbraflow-project/v2`, `umbraflow-project-kit-artifact-manifest/v1`; the shipped binaries are `project`, `umbra-flow`, `umbra-flow-conformance`. The release also carries the runtime payload `onnxruntime*.dll`, `models/**/*`, each matched file one artifact row whose path `project init` restores beside the binaries.
+`contract_versions` carries `umbraflow-project/v3`, `umbraflow-project-kit-artifact-manifest/v1`; the shipped binaries are `project`, `umbra-flow`, `umbra-flow-conformance`. The release also carries the runtime payload `onnxruntime*.dll`, `models/**/*`, each matched file one artifact row whose path `project init` restores beside the binaries.
 
 
 ## 2. What a consumer must declare
@@ -139,38 +118,29 @@ judged against the published schema
 ### 2.2 Each deployment block
 
 A deployment block **is** its registration, stated as intent: it names
-files, and the loader derives every digest from the bytes it read. No
-member below is a hash.
+its closure and its resources by path, states everything else inline,
+and the loader derives every registration digest from the bytes it
+read. No member below is a hash.
 
 | Required member |
 | --- |
-| `baseline_event_type` |
-| `effect_payload_schemas` |
-| `journal_event_schema_manifest` |
-| `journal_payload_schemas` |
 | `name` |
 | `observed_instance_identity_schemas` |
 | `plugin_authoring` |
 | `plugin_id` |
-| `project_state_schema` |
-| `reducer_closure` |
 | `resources` |
 | `tool_bindings` |
-| `tool_catalog` |
 | `tool_closure` |
-| `tool_precondition_schema` |
+| `tools` |
 
 ### 2.3 Module and resource closures
 
-A deployment states TWO closures and both are mandatory:
-`reducer_closure`, compiled on the pure program type, and
-`tool_closure`, compiled on the scoped Tool program type. There is
-no absent-means-pure reading and no registration that carries one
-closure and infers the other; a project that binds no Tool ships a
-tool closure with an explicitly empty `exported_entry_points` and an
-empty `tool_bindings`.
+A deployment states ONE closure, `tool_closure`, compiled on the
+scoped Tool program type. A project that binds no Tool ships that
+closure with an explicitly empty `exported_entry_points` and an
+empty `tool_bindings`; there is no absent form of either.
 
-Each closure is an explicit closed module graph. `entry` selects one
+The closure is an explicit closed module graph. `entry` selects one
 logical module name, `exported_entry_points` STATES what that graph
 exports and is never derived from the binding table, and every module
 and resource path is confined to the project directory, while runtime
@@ -191,18 +161,24 @@ only when every one of them compiles. Read from
 
 | Authority | Member |
 | --- | --- |
-| `ProjectSchemaOwner` | `schemaOwner` |
-| `ProjectJournalSchemaOwner` | `journalSchemaOwner` |
 | `ProjectToolCatalogSchemaOwner` | `toolCatalogSchemaOwner` |
 | `ObservedInstanceIdentitySchemas` | `observedInstanceIdentitySchemas` |
 
-### 2.5 The Tool Catalog floor
+### 2.5 The Tool declarations
 
-`https://umbraflow.dev/schema/operator/tool-catalog` states
-`"tools": {"type": "array", "minItems": 1}`. A tool
+A deployment declares its Tools inline, in `tools`. There is no Tool
+Catalog document and no catalog file: these entries are the whole
+declaration, at most 256 of them, and their exact canonical
+bytes are what `tool_catalog_hash` digests. The array may be empty --
+that is a project declaring no Tool, stated rather than omitted. A tool
 declares its own `mutability`, so a project that publishes no *mutating*
-tool is expressible -- every tool declares `read_only`. A catalog that
-publishes no tool **at all** is refused.
+tool is expressible: every tool declares `read_only`.
+
+Each entry carries `argument_schema` as a mandatory member whose value
+is either the string `unchecked` or an inline JSON Schema object. The
+two mean different things: `unchecked` is the project declining
+argument validation, and the framework still records the exact bytes it
+passed, their digest and their coordinates.
 
 ## 3. CLI surface
 
@@ -313,8 +289,6 @@ cannot resolve the current project source directory: {}
 no template source corpus was given: pass --frames-root PATH naming a directory that holds "{}"
 template source corpus "{}" holds no "{}"
 cannot read template source "{}"
-the deployment declaration names tool catalog source "{}", which "{}" does not hold
-cannot read declared tool catalog source "{}"
 project init does not accept --release or --frames-root
 a starter Project requires --plugin and --plugin-id together
 project --plugin must be generated or hand-written
@@ -394,19 +368,11 @@ cannot wait for curl while acquiring the UmbraFlow release
 curl refused release URL "{}" with exit code {}
 ```
 
-#### project (declared files)
+#### project (release bootstrap)
 
 `entry/project/main.cpp`
 
 ```text
-the build at "{}" holds no declared-file record "{}": build the project before checking it
-cannot read the build's declared-file record "{}"
-the build's declared-file record "{}" has the wrong shape
-cannot open the declared-file record "{}" for writing
-cannot write the declared-file record "{}"
-the build recorded declared file "{}", which umbraflow-project.json no longer names: rebuild the project
-declared file "{}" was recorded as sha256 {} and this source tree now derives sha256 {}: a pinned file has moved
-the deployment declaration names "{}", which the build at "{}" did not record: rebuild the project
 project error: invalid process argument vector
 ```
 
@@ -435,12 +401,10 @@ a deployment's resource count exceeds its ceiling
 a deployment's resource closure exceeds its byte ceiling
 a deployment declares the resource {} twice
 a deployment's resource paths must be unique
-the deployment {} is registered with baseline_event_type {}, and its vocabulary provisions {}
-{}'s {} names {}, which the deployment {}'s Tool Catalog does not carry
-{}'s {} names {}, which the deployment {}'s Tool Catalog carries as {} rather than as {}
+{}'s {} names {}, which the deployment {} does not declare
+{}'s {} names {}, which the deployment {} declares as {} rather than as {}
 {}'s mutating_tool and other_mutating_tool both name {}; the one-live-chain rule is proven by a second command naming a different tool
-{}'s absent_tool names {}, which the deployment {}'s Tool Catalog carries; the member exists so that the catalog's refusal of an unknown tool is falsifiable, and a carried name leaves that case passing with nothing red anywhere
-{}'s {} and {} carry one payload; an entry a commit did not name is provably absent from the reducer's input only while the four payloads differ
+{}'s absent_tool names {}, which the deployment {} declares; the member exists so that the refusal of an unknown tool is falsifiable, and a declared name leaves that case passing with nothing red anywhere
 project_registration_hash was presented more than once for the deployment {}
 the RuntimeArtifact at {} carries an empty {}
 {} declares the deployment {} twice
@@ -460,22 +424,11 @@ under_test and foreign are both played by {}; authority is per registration, so 
 
 ```text
 {} is not a schema this deployment can apply: {}
+generated framework schema catalog is missing
 document is not JSON: {}
-{} must declare "$id": "{}"
-{} must declare its own absolute "$id"
-{} belongs to plugin {}, not to {}
-this project's Tool Catalog declares no tool named {}
-this project's journal event schema manifest names no payload schema for {}
-a framework-format document names its own format in a schema member, and this one carries no such member
-no framework document format is named {}
-the Tool Catalog names tool precondition schema {}, and the schema this deployment carries hashes to {}
-the Tool Catalog names effect payload schema {}, which this deployment does not carry: its effect_payload_schemas hash to {}
-this deployment supplies an effect payload schema hashing to {}, which the Tool Catalog's effect_payload_sha256s does not name
-the Tool Catalog names argument schema {}, which the tool precondition schema does not declare
-the Tool Catalog names result schema {}, which the tool precondition schema does not declare
-the Tool Catalog bounds an effect to payload schema {}, which this deployment does not carry: its effect_payload_schemas hash to {}
-the journal event schema manifest names payload schema {} for {}, which this deployment does not carry: its journal_payload_schemas hash to {}
-this deployment supplies a journal payload schema hashing to {}, which the journal event schema manifest names under no event type
+this project declares no Tool named {}
+a deployment's Tool declarations must be an array
+this deployment declares the observed instance identity schema {} twice
 ```
 
 #### project kit
@@ -506,7 +459,6 @@ cannot write project {} "{}"
 cannot inspect starter Project file "{}": {}
 cannot create starter Project file directory "{}": {}
 declared workflow tool input must be declarative-tools/<plugin-id>/<name>.json: "{}"
-generated Tool Catalog declared plugin {} more than once
 generated template path must be relative: "{}"
 generated template path leaves its artifact family: "{}"
 project template cuts require a content-hash resolver
@@ -612,7 +564,7 @@ Unicode-derived data is distributed under `modules/task/runtime/UNICODE-LICENSE.
 Reserved SCOPED Framework modules: `@umbraflow/audit`, `@umbraflow/screen`, `@umbraflow/tools`, `@umbraflow/workflow`.
 These are a DIFFERENT contract from the pure modules above and are
 not interchangeable with them. A pure module loads in every Project
-program, the Journal reducer included. A scoped module loads only
+program of the pure type. A scoped module loads only
 inside a scoped Tool execution
 program, and `require` of one of these names from any other program
 fails in the resolver naming the module, because the scoped set is a
@@ -774,20 +726,22 @@ decided by `ToolRootRequestIdentity::relationTo` in
 
 ### 5.4 `tool_catalog_hash`
 
-A project's `tool_catalog_hash` is the SHA-256 of the exact bytes of
-its Tool Catalog document -- the canonical (RFC 8785 JCS) bytes it
-registered, judged by `https://umbraflow.dev/schema/operator/tool-catalog`. Nothing derives it from a
-parse: `ProjectToolCatalogSchemaOwner::create` in
+A project's `tool_catalog_hash` is the SHA-256 of the exact canonical
+(RFC 8785 JCS) bytes of the `tools` array its deployment declared.
+There is no Tool Catalog document: `schema/umbraflow-project-v3.schema.json` states
+the shape of those entries and the loader renders them canonically.
+Nothing derives the digest from a parse:
+`ProjectToolCatalogSchemaOwner::create` in
 `modules/operator/source/operator/tool-invocation.cpp` hashes the supplied bytes and refuses the
 deployment when the digest is not the one the registration pinned:
 
 ```text
-Tool Catalog bytes do not match the registration's tool_catalog_hash
+Tool declaration bytes do not match the registration's tool_catalog_hash
 ```
 
 `tool_catalog_hash` is a member of the canonical registration, so it
 reaches `project_registration_hash`; a call minted against other
-catalog bytes cannot present this registration.
+declaration bytes cannot present this registration.
 
 ### 5.5 The durable record
 
@@ -884,8 +838,8 @@ The preimage carries exactly these members:
 | `canonical_form_contract` |
 | `durable_record` |
 | `identity_preimages` |
-| `tool_catalog_schema` |
-| `tool_catalog_wire_tag` |
+| `tool_declaration_schema` |
+| `tool_declaration_wire_tag` |
 
 Each is rendered by the module that owns what it describes: `toolCallVocabularyMaterial()`, `toolIdentityPreimageMaterial()`, `toolRuntimeDurableRecordMaterial()`.
 

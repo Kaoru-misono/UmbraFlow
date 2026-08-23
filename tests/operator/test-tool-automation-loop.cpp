@@ -76,13 +76,12 @@ namespace uf::operator_runtime
 
         constexpr auto k_pluginId = std::string_view{"e2.automation"};
 
-        // The five Tools this Project declares, one per exported entry. Their
+        // The four Tools this Project declares, one per exported entry. Their
         // order is UTF-8 order of the names, which is the only order a catalog
         // and a binding table may state.
         constexpr auto k_chooseTool = std::string_view{"e2.automation.choose"};
         constexpr auto k_recogniseTool =
             std::string_view{"e2.automation.recognise"};
-        constexpr auto k_reducerTool = std::string_view{"e2.automation.reduce"};
         constexpr auto k_runTool     = std::string_view{"e2.automation.run"};
         constexpr auto k_settleTool  = std::string_view{"e2.automation.settle"};
 
@@ -120,8 +119,6 @@ namespace uf::operator_runtime
         constexpr auto k_toolCatalogBytes = std::string_view{
             R"({"schema":"umbraflow-tool-catalog/v1","plugin":"e2.automation"})"
         };
-        constexpr auto k_stateSchemaBytes        = std::string_view{"e2-state"};
-        constexpr auto k_preconditionSchemaBytes = std::string_view{"e2-precondition"};
 
         // The automation script.
         //
@@ -132,27 +129,10 @@ namespace uf::operator_runtime
         // drives a step, nothing outside it decides when to capture, and its
         // exit condition is what the game told it rather than a counter.
         //
-        // The reducer closure: `plugin_id` and one entry, compiled on the
-        // pure program type. The ledger folds a new ProjectInstance's baseline
-        // through it at provisioning time, and a scoped require here would be
-        // a module the pure resolver rightly cannot find -- which is why the
-        // fold lives in a closure of its own rather than beside the entries
-        // the loop dispatches.
-        constexpr auto k_reducerSource = std::string_view{R"LUAU(
-return {
-    plugin_id = "e2.automation",
-
-    reduce = function(_input)
-        return { revision = 0 }
-    end,
-}
-)LUAU"};
-
         // The tool closure: the four entries the loop's Tools are bound to.
         //
         // The scoped modules are required inside the entry bodies rather than
-        // at module scope. Nothing forces that now that this closure is
-        // compiled on the scoped type alone, but it keeps each entry's
+        // at module scope. Nothing forces that, but it keeps each entry's
         // capability visible at the line that spends it.
         constexpr auto k_toolSource = std::string_view{R"LUAU(
 return {
@@ -267,12 +247,6 @@ return {
         }
 
         [[nodiscard]]
-        auto reducerModules() -> std::vector<ProjectModuleBlob>
-        {
-            return modulesOf(k_reducerSource);
-        }
-
-        [[nodiscard]]
         auto toolModules() -> std::vector<ProjectModuleBlob>
         {
             return modulesOf(k_toolSource);
@@ -289,10 +263,6 @@ return {
                 ProjectToolBinding{
                     .toolName   = std::string{k_recogniseTool},
                     .entryPoint = "recognise",
-                },
-                ProjectToolBinding{
-                    .toolName   = std::string{k_reducerTool},
-                    .entryPoint = "settle",
                 },
                 ProjectToolBinding{
                     .toolName   = std::string{k_runTool},
@@ -315,20 +285,12 @@ return {
             return {"choose", "recognise", "run", "settle"};
         }
 
-        // The reducer closure's whole declared export set.
-        [[nodiscard]]
-        auto exportedReducerEntries() -> std::vector<std::string>
-        {
-            return {"reduce"};
-        }
-
         [[nodiscard]]
         auto declaredToolNames() -> std::vector<std::string>
         {
             return {
                 std::string{k_chooseTool},
                 std::string{k_recogniseTool},
-                std::string{k_reducerTool},
                 std::string{k_runTool},
                 std::string{k_settleTool},
             };
@@ -493,10 +455,6 @@ return {
                 }));
             }
             return json::canonicalBytes(json::Value::ofObject({
-                {"baseline_event_type",
-                 json::Value::ofString(claims.baselineEventType)},
-                {"journal_event_schema_manifest_hash",
-                 json::Value::ofString(claims.journalEventSchemaManifestHash.hex())},
                 {"observed_instance_identity_schema_hashes",
                  json::Value::ofArray({})},
                 {"plugin_environment_hash",
@@ -507,14 +465,7 @@ return {
                      static_cast<double>(claims.projectRegistrationFormat)
                  )},
                 {"project_resources", json::Value::ofArray({})},
-                {"project_state_schema_hash",
-                 json::Value::ofString(claims.projectStateSchemaHash.hex())},
                 {"project_tool_bindings", json::Value::ofArray(std::move(bindings))},
-                {"project_tool_precondition_schema_hash",
-                 json::Value::ofString(
-                     claims.projectToolPreconditionSchemaHash.hex()
-                 )},
-                {"reducer_closure", closureValue(claims.reducerClosure)},
                 {"tool_catalog_hash",
                  json::Value::ofString(claims.toolCatalogHash.hex())},
                 {"tool_closure", closureValue(claims.toolClosure)},
@@ -538,21 +489,12 @@ return {
             auto claims = ProjectGenerationClaims{
                 .projectRegistrationFormat = k_projectGenerationFormat,
                 .pluginId                  = std::string{k_pluginId},
-                .reducerClosure            = ProjectClosureClaims{
-                    .moduleManifestHash  = manifestHashOf(reducerModules()),
-                    .exportedEntryPoints = exportedReducerEntries(),
-                },
-                .toolClosure = ProjectClosureClaims{
+                .toolClosure               = ProjectClosureClaims{
                     .moduleManifestHash  = manifestHashOf(toolModules()),
                     .exportedEntryPoints = exportedToolEntries(),
                 },
-                .pluginEnvironmentHash  = *environmentHash,
-                .toolCatalogHash        = hashOf(k_toolCatalogBytes),
-                .projectStateSchemaHash = hashOf(k_stateSchemaBytes),
-                .projectToolPreconditionSchemaHash =
-                    hashOf(k_preconditionSchemaBytes),
-                .journalEventSchemaManifestHash       = hashOf("e2-journal"),
-                .baselineEventType                    = "e2.baseline",
+                .pluginEnvironmentHash                = *environmentHash,
+                .toolCatalogHash                      = hashOf(k_toolCatalogBytes),
                 .projectResources                     = {},
                 .observedInstanceIdentitySchemaHashes = {},
                 .projectToolBindings                  = boundEntries(),
@@ -758,27 +700,6 @@ return {
         }
 
         [[nodiscard]]
-        auto projectSchemaOwner(
-            VerifiedProjectGeneration const& registration
-        ) -> ProjectSchemaOwner
-        {
-            auto owner = ProjectSchemaOwner::create(
-                registration,
-                ProjectDocumentSchemaBytes{
-                    .projectState     = k_stateSchemaBytes,
-                    .toolPrecondition = k_preconditionSchemaBytes,
-                },
-                deployment::canonicalJsonValidator(),
-                [](ProjectDocumentDirection, std::string_view) -> Status
-                {
-                    return ok();
-                }
-            );
-            REQUIRE(owner.has_value());
-            return *std::move(owner);
-        }
-
-        [[nodiscard]]
         auto toolCatalogOwner(
             VerifiedProjectGeneration const& registration
         ) -> ProjectToolCatalogSchemaOwner
@@ -875,23 +796,17 @@ return {
             REQUIRE_MESSAGE(installed.has_value(), failureText(installed));
             auto const artifactRootHash = installed->rootHash();
 
-            // Provisioning needs the generation's fold and nothing else, so
-            // this registration's Tool Runtime seam refuses every call.
+            // A registration loaded at setup answers no call, so its Tool
+            // Runtime seam refuses every one.
             auto registrar  = ProjectGenerationRegistrar{};
             auto generation = registrar.registerGeneration(
                 registration,
                 toolCatalogOwner(registration),
-                projectSchemaOwner(registration),
-                ProjectGenerationRegistrar::ClosureModules{
-                    .entryModule = "main",
-                    .modules     = reducerModules(),
-                },
                 ProjectGenerationRegistrar::ClosureModules{
                     .entryModule = "main",
                     .modules     = toolModules(),
                 },
                 {},
-                [](std::string_view, std::string_view) -> Status { return ok(); },
                 refusingToolRuntime()
             );
             REQUIRE_MESSAGE(generation.has_value(), failureText(generation));
@@ -906,13 +821,7 @@ return {
             REQUIRE(store.registerProject(registration).has_value());
             auto const provisioned = store.provisionProjectInstance(
                 registration,
-                *generation,
-                ProjectInstanceBaseline{
-                    .projectInstanceKey  = std::string{k_instanceKey},
-                    .eventId             = "",
-                    .sessionManifestHash = manifest.hash(),
-                    .entry               = std::nullopt,
-                }
+                std::string{k_instanceKey}
             );
             REQUIRE_MESSAGE(provisioned.has_value(), failureText(provisioned));
 
@@ -967,18 +876,11 @@ return {
             auto loaded = registrar.registerGeneration(
                 registration,
                 toolCatalogOwner(registration),
-                projectSchemaOwner(registration),
-                ProjectGenerationRegistrar::ClosureModules{
-                    .entryModule = "main",
-                    .modules     = reducerModules(),
-                },
                 ProjectGenerationRegistrar::ClosureModules{
                     .entryModule = "main",
                     .modules     = toolModules(),
                 },
                 {},
-                [](std::string_view, std::string_view) -> Status
-                { return ok(); },
                 dispatcher.toolRuntimeSeam()
             );
             REQUIRE_MESSAGE(loaded.has_value(), failureText(loaded));

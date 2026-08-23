@@ -60,52 +60,6 @@ namespace uf::operator_runtime
             return views;
         }
 
-        [[nodiscard]]
-        auto renderEntryPoints(std::vector<std::string> const& declared)
-            -> std::string
-        {
-            if (declared.empty())
-            {
-                return "nothing";
-            }
-            auto rendered = std::string{};
-            for (auto const& entryPoint : declared)
-            {
-                if (!rendered.empty())
-                {
-                    rendered += ", ";
-                }
-                rendered += entryPoint;
-            }
-            return rendered;
-        }
-
-        // The reducer's leg of the join. Its expected set is a constant,
-        // because the pure program type keeps exactly one entry, and that is
-        // what makes this a check on the DOCUMENT rather than on the code: a
-        // generation may state anything here and this is what refuses it.
-        [[nodiscard]]
-        auto joinReducerDeclaration(
-            ProjectClosureClaims const& reducerClosure
-        ) -> Status
-        {
-            auto const expected = std::vector<std::string>{
-                std::string{k_reducerEntryPoint},
-            };
-            if (reducerClosure.exportedEntryPoints != expected)
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "the reducer closure states it exports "
-                        + renderEntryPoints(reducerClosure.exportedEntryPoints)
-                        + ", and a generation's reducer closure exports "
-                          "exactly "
-                        + std::string{k_reducerEntryPoint}
-                );
-            }
-            return ok();
-        }
-
         // The tool closure's leg of the join, refused from both sides. An
         // understatement leaves a bound Tool with no entry to run; an
         // overstatement leaves an entry nothing declared, which the bridge
@@ -164,10 +118,7 @@ namespace uf::operator_runtime
         VerifiedProjectGeneration     generation;
         ProjectToolCatalogSchemaOwner catalog;
         ProjectToolBindingTable       bindings;
-        ProjectSchemaOwner            schemaOwner;
-        script::PureDataProgram       reducer;
         script::ScopedToolProgram     toolProgram;
-        ToolResultValidator           validateResults;
         ContentHash                   frameworkToolCatalogHash;
         ContentHash                   environmentIdentity;
     };
@@ -187,11 +138,6 @@ namespace uf::operator_runtime
     auto ProjectGenerationHandle::projectRegistrationHash() const -> ContentHash
     {
         return m_state->generation.hash();
-    }
-
-    auto ProjectGenerationHandle::reducerModuleManifestHash() const -> ContentHash
-    {
-        return m_state->generation.reducerClosure().moduleManifestHash;
     }
 
     auto ProjectGenerationHandle::toolModuleManifestHash() const -> ContentHash
@@ -221,38 +167,6 @@ namespace uf::operator_runtime
         return m_state->catalog;
     }
 
-    auto ProjectGenerationHandle::canonicalize(std::string exactJcs) const
-        -> Result<CanonicalJson>
-    {
-        return m_state->schemaOwner.canonicalize(std::move(exactJcs));
-    }
-
-    auto ProjectGenerationHandle::reduce(
-        CanonicalJson const& input
-    ) const -> Result<ValidatedDocument>
-    {
-        // Validation is repeated at the call boundary because a CanonicalJson
-        // carries no schema authority: the value the fold runs on must be the
-        // one this owner produced rather than one a caller cached.
-        UF_TRY_VALUE(
-            validatedInput,
-            m_state->schemaOwner.validate(
-                ProjectDocumentDirection::Input,
-                input
-            )
-        );
-        UF_TRY_VALUE_CONTEXT(
-            folded,
-            m_state->reducer.invoke(k_reducerEntryPoint, validatedInput),
-            "running the reducer of this Project registration generation"
-        );
-        UF_TRY_VALUE(
-            canonicalFold,
-            m_state->schemaOwner.canonicalizeValue(std::move(folded))
-        );
-        return m_state->schemaOwner.validateOutput(std::move(canonicalFold));
-    }
-
     auto ProjectGenerationHandle::invokeBoundTool(
         std::string_view toolName,
         json::Value const& canonicalArguments,
@@ -270,78 +184,14 @@ namespace uf::operator_runtime
         );
     }
 
-    auto ProjectGenerationHandle::validateToolResult(
-        std::string_view toolName,
-        std::string_view exactResultJcs
-    ) const -> Status
-    {
-        UF_TRY(m_state->bindings.entryPointFor(toolName));
-        return withContext(
-            m_state->validateResults(toolName, exactResultJcs),
-            "validating the answer of the Project Tool " + std::string{toolName}
-        );
-    }
-
-    ProjectBaselineReducer::ProjectBaselineReducer(
-        ProjectGenerationHandle const& generation
-    )
-        : m_projectRegistrationHash{generation.projectRegistrationHash()}
-        , m_canonicalize{
-              [generation](std::string exactJcs) -> Result<CanonicalJson>
-              {
-                  return generation.canonicalize(std::move(exactJcs));
-              }
-          }
-        , m_fold{
-              [generation](CanonicalJson const& input) -> Result<ValidatedDocument>
-              {
-                  return generation.reduce(input);
-              }
-          }
-    {
-    }
-
-    auto ProjectBaselineReducer::projectRegistrationHash() const -> ContentHash
-    {
-        return m_projectRegistrationHash;
-    }
-
-    auto ProjectBaselineReducer::canonicalize(std::string exactJcs) const
-        -> Result<CanonicalJson>
-    {
-        return m_canonicalize(std::move(exactJcs));
-    }
-
-    auto ProjectBaselineReducer::reduce(
-        CanonicalJson const& input
-    ) const -> Result<ValidatedDocument>
-    {
-        return m_fold(input);
-    }
-
     auto ProjectGenerationRegistrar::registerGeneration(
         VerifiedProjectGeneration const& generation,
         ProjectToolCatalogSchemaOwner catalog,
-        ProjectSchemaOwner schemaOwner,
-        ClosureModules reducerClosure,
         ClosureModules toolClosure,
         std::vector<ProjectResourceBlob> exactResources,
-        ToolResultValidator validateResults,
         script::ToolRuntimeInvoke invokeTool
     ) -> Result<ProjectGenerationHandle>
     {
-        if (!validateResults)
-        {
-            return refuse(
-                "a Project generation requires a result schema validator"
-            );
-        }
-        if (schemaOwner.projectRegistrationHash() != generation.hash())
-        {
-            return refuse(
-                "the schema owner answers for another Project registration"
-            );
-        }
         UF_TRY_VALUE(pureEnvironmentHash, currentProjectPluginEnvironmentHash());
         if (pureEnvironmentHash != generation.pluginEnvironmentHash())
         {
@@ -350,19 +200,6 @@ namespace uf::operator_runtime
             );
         }
 
-        UF_TRY_VALUE(
-            reducerManifestHash,
-            derivePluginModuleManifestHash(
-                reducerClosure.entryModule,
-                reducerClosure.modules
-            )
-        );
-        if (reducerManifestHash != generation.reducerClosure().moduleManifestHash)
-        {
-            return refuse(
-                "the reducer closure does not match the verified generation"
-            );
-        }
         UF_TRY_VALUE(
             toolManifestHash,
             derivePluginModuleManifestHash(
@@ -383,12 +220,11 @@ namespace uf::operator_runtime
             return refuse("exact Project generation registration is immutable");
         }
 
-        // The join, before anything is compiled, and once per closure. Both
-        // refusals below are about the DOCUMENT: what it claims each closure
-        // offers against what a generation's closure of that kind may offer.
-        // What the closures actually export is the bridge's question, asked
-        // when each is compiled against the very set checked here.
-        UF_TRY(joinReducerDeclaration(generation.reducerClosure()));
+        // The join, before anything is compiled. It is about the DOCUMENT:
+        // what it claims the closure offers against what a generation's
+        // closure may offer. What the closure actually exports is the bridge's
+        // question, asked when it is compiled against the very set checked
+        // here.
         UF_TRY(joinToolDeclaration(
             generation.toolClosure(),
             generation.projectToolBindings()
@@ -396,10 +232,9 @@ namespace uf::operator_runtime
 
         // The other join, against the authority that DECLARES the Tools. The
         // one above holds the binding table to the code; this holds it to the
-        // contract, and neither can stand in for the other: a declaration and
-        // a catalog are two documents, and a Tool declared with no binding is
-        // invisible to the first check while a binding for a Tool no catalog
-        // declares is invisible to it too.
+        // contract, and neither can stand in for the other: a Tool declared
+        // with no binding is invisible to the first check while a binding for
+        // a Tool nothing declares is invisible to it too.
         UF_TRY_VALUE(
             bindings,
             ProjectToolBindingTable::bind(
@@ -410,15 +245,13 @@ namespace uf::operator_runtime
         );
 
         UF_TRY_VALUE(
-            reducerResources,
+            toolResources,
             verifyProjectResourceClosure(
                 generation.projectResources(),
                 std::move(exactResources)
             )
         );
-        auto toolResources = reducerResources;
 
-        UF_TRY_VALUE(pureFrameworkModules, task::pureFrameworkScriptModules());
         UF_TRY_VALUE(scopedFrameworkModules, task::scopedFrameworkScriptModules());
         UF_TRY_VALUE(frameworkCatalog, FrameworkToolCatalogOwner::create());
         UF_TRY_VALUE(
@@ -429,22 +262,6 @@ namespace uf::operator_runtime
 
         auto frameworkResources = std::vector<script::PureDataProgram::Resource>{};
         frameworkResources.emplace_back(std::move(catalogResource));
-
-        auto const reducerEntries = entryPointViews(
-            generation.reducerClosure().exportedEntryPoints
-        );
-        UF_TRY_VALUE_CONTEXT(
-            reducer,
-            script::PureDataProgram::compile(
-                generation.pluginId(),
-                reducerClosure.entryModule,
-                scriptModules(std::move(reducerClosure.modules)),
-                reducerEntries,
-                std::move(reducerResources),
-                pureFrameworkModules
-            ),
-            "compiling the reducer closure of this registration generation"
-        );
 
         auto const toolEntries = entryPointViews(
             generation.toolClosure().exportedEntryPoints
@@ -469,10 +286,7 @@ namespace uf::operator_runtime
                 .generation               = generation,
                 .catalog                  = std::move(catalog),
                 .bindings                 = std::move(bindings),
-                .schemaOwner              = std::move(schemaOwner),
-                .reducer                  = std::move(reducer),
                 .toolProgram              = std::move(toolProgram),
-                .validateResults          = std::move(validateResults),
                 .frameworkToolCatalogHash = frameworkCatalog.toolCatalogHash(),
                 .environmentIdentity      = environmentIdentity,
             }

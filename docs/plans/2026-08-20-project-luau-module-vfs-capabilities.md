@@ -7,6 +7,12 @@ and the later project-template/consumer migration
 Status: **independent review passed; R1-A through R1-D implemented and locally
 validated as one atomic contract cut**
 
+> **Superseded in part, 2026-08-23**, by
+> [the framework stops interpreting a Project's state](../decisions/2026-08-23-the-framework-stops-interpreting-project-state.md).
+> A registration carries ONE closure. Every `reducer_closure` this plan
+> names, and `reduce` as an entry point, are gone; the module, resource and
+> resolver semantics it settles are unchanged and still current.
+
 ## Outcome
 
 Project authors write multi-file Luau. UmbraFlow executes a pinned module

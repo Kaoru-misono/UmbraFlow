@@ -224,30 +224,9 @@ namespace uf::operator_runtime::conformance
         return *result;
     }
 
-    auto canonical(
-        deployment::ConformanceProject const& project,
-        ProjectRole role,
-        std::string value
-    ) -> CanonicalJson
+    auto canonical(std::string value) -> CanonicalJson
     {
-        auto result = deploymentFor(project, role).schemaOwner.canonicalize(
-            std::move(value)
-        );
-        REQUIRE(result.has_value());
-        return *result;
-    }
-
-    auto journalEntry(
-        deployment::ConformanceProject const& project,
-        ProjectRole role,
-        deployment::ProjectJournalDocument const& document
-    ) -> ValidatedJournalEntryData
-    {
-        auto result = deploymentFor(project, role).journalSchemaOwner.validate(
-            document.eventType,
-            canonical(project, role, document.payload),
-            canonical(project, role, vocabularyFor(project, role).provenance)
-        );
+        auto result = CanonicalJson::parseExact(std::move(value));
         REQUIRE(result.has_value());
         return *result;
     }
@@ -260,7 +239,7 @@ namespace uf::operator_runtime::conformance
     {
         auto result = deploymentFor(project, role).toolCatalogSchemaOwner.validate(
             std::move(toolName),
-            canonical(project, role, vocabularyFor(project, role).toolArguments)
+            canonical(vocabularyFor(project, role).toolArguments)
         );
         REQUIRE(result.has_value());
         return *result;
@@ -277,17 +256,11 @@ namespace uf::operator_runtime::conformance
         auto result     = registrar.registerGeneration(
             one.generation,
             one.toolCatalogSchemaOwner,
-            one.schemaOwner,
-            ProjectGenerationRegistrar::ClosureModules{
-                .entryModule = one.reducerClosure.entryModule,
-                .modules     = one.reducerClosure.modules,
-            },
             ProjectGenerationRegistrar::ClosureModules{
                 .entryModule = one.toolClosure.entryModule,
                 .modules     = one.toolClosure.modules,
             },
             one.projectResources,
-            one.catalog.toolResultValidator(),
             std::move(invokeTool)
         );
         REQUIRE(result.has_value());
@@ -410,15 +383,6 @@ namespace uf::operator_runtime::conformance
         auto const& underTest    = deploymentFor(project, ProjectRole::UnderTest);
         auto const& vocabulary   = vocabularyFor(project, ProjectRole::UnderTest);
 
-        // umbraflow-conformance.json decides the baseline entry and
-        // umbraflow-project.json decides the baseline event type. When they
-        // disagree nothing below can run, and saying so here names the project
-        // directory rather than the Operator.
-        REQUIRE(
-            vocabulary.baselineEntry.eventType
-            == ProjectIdentity{underTest.generation}.baselineEventType()
-        );
-
         auto const release = observationRelease(
             root / "session-handoff",
             project.loaded.runtimeArtifactRoot
@@ -451,17 +415,7 @@ namespace uf::operator_runtime::conformance
         REQUIRE(store.registerProject(underTest.generation).has_value());
         REQUIRE(store.provisionProjectInstance(
             ProjectIdentity{underTest.generation},
-            generation,
-            ProjectInstanceBaseline{
-                .projectInstanceKey  = "instance-1",
-                .eventId             = "baseline-1",
-                .sessionManifestHash = manifest.hash(),
-                .entry               = journalEntry(
-                    project,
-                    ProjectRole::UnderTest,
-                    vocabulary.baselineEntry
-                ),
-            }
+            "instance-1"
         ).has_value());
         auto const sessionWorldScope = ObservedInstanceWorldScope::run(
             "target-1",
@@ -654,17 +608,10 @@ namespace uf::operator_runtime::conformance
         // Its own ProjectInstance, because one project instance admits one
         // active write session: two actors sharing a key could not both be
         // pinned, and the exclusion this case is about is the lease rather than
-        // the instance. No baseline entry, because what these actors drive is
-        // the Tool Runtime rather than a fold.
+        // the instance.
         REQUIRE(prepared.store.provisionProjectInstance(
             ProjectIdentity{underTest.generation},
-            prepared.generation,
-            ProjectInstanceBaseline{
-                .projectInstanceKey  = std::string{instanceKey},
-                .eventId             = "",
-                .sessionManifestHash = prepared.manifest.hash(),
-                .entry               = std::nullopt,
-            }
+            std::string{instanceKey}
         ).has_value());
 
         // Required for exactly the kinds whose ControllerProfile says budgets

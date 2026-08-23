@@ -1,20 +1,16 @@
-// What the deployment's validators and its two operator protocol readers refuse
-// that the exemplars' substituted constants accepted, and what each of them
-// still accepts.
+// What a ProjectDeployment refuses in the declaration it is built from, and
+// what it still accepts.
 //
 // Every refusal below is paired with the acceptance it is the negation of. A
-// validator that refused everything would satisfy the first half of each case
-// and fail the second, which is the failure mode this file exists to exclude:
-// the substituted constants it replaces were green precisely because nothing
-// ever asked them to refuse.
+// reader that refused everything would satisfy the first half of each case and
+// fail the second, which is the failure mode this file exists to exclude: the
+// substituted constants it replaces were green precisely because nothing ever
+// asked them to refuse.
 //
-// The two operator protocol readers are no longer exercised here. Each takes a
-// ValidatedDocument, and only a ProjectSchemaOwner can mint one, so a crafted
-// document cannot reach a reader from a file that holds no plugin. What was a
-// reader refusal is asserted below against the validator that makes it now --
-// the same two a running Operator applies before a reader is ever called. The
-// readers themselves are read in tests/operator/test-ledger.cpp, on documents
-// the fixture plugin produced and the schema owner stamped.
+// After the cut a deployment compiles exactly two kinds of project-supplied
+// schema -- each Tool's inline argument_schema and each inline observed-instance
+// identity schema -- and each of them compiles alone. There is no framework
+// document set around either, so a project's schema reaches nothing but itself.
 
 #include "arcana-expedition/project-schemas.hpp"
 #include "umbraflow/project-schemas.hpp"
@@ -51,8 +47,6 @@ namespace uf::deployment
     {
         namespace umbraflow = operator_runtime::test_support;
         namespace arcana    = operator_runtime::conformance::expedition;
-
-        using operator_runtime::ProjectDocumentDirection;
 
         [[nodiscard]]
         auto repositoryRoot() -> std::filesystem::path
@@ -104,98 +98,10 @@ namespace uf::deployment
             return digest->hex();
         }
 
-        // The recognizer both exemplars carried as their canonical validator
-        // until this change: an ordered substring search and a closing brace.
-        // It is restated here rather than cited, because the proof this file
-        // owes is that a document it accepted is now refused, and a claim about
-        // deleted code proves nothing.
-        [[nodiscard]]
-        auto oldOrderedMemberRecognizer(
-            std::string_view exactJcs,
-            std::span<std::string_view const> members
-        ) -> bool
-        {
-            if (!exactJcs.starts_with(members.front()) || !exactJcs.ends_with('}'))
-            {
-                return false;
-            }
-            auto at = std::size_t{0};
-            for (auto const member : members)
-            {
-                auto const found = exactJcs.find(member, at);
-                if (found == std::string_view::npos)
-                {
-                    return false;
-                }
-                at = found + member.size();
-            }
-            return true;
-        }
-
-        [[nodiscard]]
-        auto oldPlanEnvelopeRecognizer(std::string_view exactJcs) -> bool
-        {
-            constexpr auto members = std::array{
-                std::string_view{"{\"canonical_args\":"},
-                std::string_view{",\"project_observation\":"},
-                std::string_view{",\"project_state\":"},
-                std::string_view{",\"tool_name\":"},
-                std::string_view{",\"tool_version\":"},
-            };
-            return oldOrderedMemberRecognizer(exactJcs, members);
-        }
-
-        // Every member name is present and in the order the recognizer walks,
-        // and "a" sorts before all of them -- so this is a plan envelope to the
-        // old validator and is not its own RFC 8785 form.
-        constexpr auto k_unsortedPlanEnvelope = std::string_view{
-            "{\"canonical_args\":0,\"project_observation\":0,\"project_state\":0,"
-            "\"tool_name\":0,\"tool_version\":0,\"a\":0}"
-        };
-
-        // The same shape with a number no canonical document can spell: JCS
-        // adopts ES6 Number::toString, which writes this one as 1.5.
-        constexpr auto k_nonCanonicalNumberPlanEnvelope = std::string_view{
-            "{\"canonical_args\":1.50,\"project_observation\":0,"
-            "\"project_state\":0,\"tool_name\":0,\"tool_version\":0}"
-        };
-
-        constexpr auto k_provenance = std::string_view{
-            "{\"kind\":\"observation\","
-            "\"observation_ids\":[\"fixture-observation-1\"],"
-            "\"principal_id\":null,\"source_hashes\":[]}"
-        };
-
-        [[nodiscard]]
-        auto umbraflowDeployment(umbraflow::DeploymentBundle const& bundle)
-            -> ProjectDeployment
-        {
-            auto deployed = ProjectDeployment::create(bundle.sources());
-            auto const why = deployed.has_value()
-                ? std::string{}
-                : std::string{deployed.error().message()};
-            INFO(why);
-            REQUIRE(deployed.has_value());
-            return *std::move(deployed);
-        }
-
-        [[nodiscard]]
-        auto arcanaDeployment(arcana::DeploymentBundle const& bundle)
-            -> ProjectDeployment
-        {
-            auto deployed = ProjectDeployment::create(bundle.sources());
-            auto const why = deployed.has_value()
-                ? std::string{}
-                : std::string{deployed.error().message()};
-            INFO(why);
-            REQUIRE(deployed.has_value());
-            return *std::move(deployed);
-        }
-
         // Why one set of sources was refused, for a case whose subject is the
-        // message rather than the outcome. A refusal naming a different link
+        // message rather than the outcome. A refusal naming a different defect
         // satisfies CHECK_FALSE exactly as the intended one does, so a case
-        // about which link broke has to read what the refusal said.
+        // about which rule fired has to read what the refusal said.
         [[nodiscard]]
         auto why(Result<ProjectDeployment> const& outcome) -> std::string
         {
@@ -218,807 +124,75 @@ namespace uf::deployment
             return *value;
         }
 
-        // One reduce envelope carrying one fixture.progress event, folded onto
-        // the state at revision 0 and therefore published at revision 1.
         [[nodiscard]]
-        auto reduceEnvelope(std::string_view payload) -> std::string
+        auto deploymentOf(deployment::ProjectDeploymentSources const& sources)
+            -> ProjectDeployment
         {
-            auto envelope = std::string{
-                "{\"commit_context\":{\"next_revision\":1,\"prior_revision\":0},"
-                "\"prior_project_state\":{\"revision\":0},"
-                "\"prospective_journal_batch\":["
-                "{\"namespaced_event_type\":\"fixture.progress\","
-                "\"opaque_project_payload\":"
-            };
-            envelope += payload;
-            envelope += ",\"provenance\":";
-            envelope += k_provenance;
-            envelope += "}]}";
-            return envelope;
-        }
-
-        [[nodiscard]]
-        auto planEnvelope(std::string_view canonicalArgs) -> std::string
-        {
-            // The plan input's project_observation is pinned to the framework's
-            // final envelope, so an empty object would be refused before the
-            // argument a case is about ever reached its definition. The member
-            // order is RFC 8785 canonical, as the raw-validator case below
-            // feeds this same string back into requireExactCanonical.
-            auto envelope = std::string{"{\"canonical_args\":"};
-            envelope += canonicalArgs;
-            envelope += ",\"project_observation\":{\"canonical_opaque_payload\":{},"
-                        "\"observed_instances\":[],\"project_tool_preconditions\":[],"
-                        "\"schema\":\"umbraflow-project-observation/v1\"},"
-                        "\"project_state\":{\"revision\":0},\"tool_name\":\"fixture.alpha.command-1\","
-                        "\"tool_version\":\"1\"}";
-            return envelope;
-        }
-
-        // One substring of an otherwise accepted document, restated. Each
-        // refusal below is about the single substitution it makes, so the
-        // document it starts from has to be the accepted one and the
-        // substitution has to be found.
-        [[nodiscard]]
-        auto substituted(
-            std::string_view exact,
-            std::string_view from,
-            std::string_view to
-        ) -> std::string
-        {
-            auto const at = exact.find(from);
-            REQUIRE(at != std::string_view::npos);
-            auto restated = std::string{exact};
-            restated.replace(at, from.size(), to);
-            return restated;
-        }
-
-        // A project state whose one member is a Fact, named by $ref into the
-        // published fragment instead of by a copy of the Fact shape. Replacing
-        // that copy is what the closed reference set is for, so every check the
-        // copy performed has to be shown still firing through this document.
-        constexpr auto k_factStateSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/project/state",
-    "title": "a project state holding one Fact",
-    "type": "object",
-    "additionalProperties": false,
-    "required": ["knowledge", "revision"],
-    "properties": {
-        "knowledge": {"$ref": "https://umbraflow.dev/schema/fact/v1"},
-        "revision": {"type": "integer", "minimum": 0}
-    }
-})json"};
-
-        constexpr auto k_collectionStateSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/project/state",
-    "title": "a project state holding one Collection Fact",
-    "type": "object",
-    "additionalProperties": false,
-    "required": ["knowledge", "revision"],
-    "properties": {
-        "knowledge": {
-            "$ref": "https://umbraflow.dev/schema/collection-fact/v1"
-        },
-        "revision": {"type": "integer", "minimum": 0}
-    }
-})json"};
-
-        // RFC 8785 form, because documentValidator judges exact bytes: every
-        // member below is in sorted order and every number is canonical.
-        [[nodiscard]]
-        auto knowledgeState(std::string_view knowledge) -> std::string
-        {
-            auto document = std::string{"{\"knowledge\":"};
-            document += knowledge;
-            document += ",\"revision\":0}";
-            return document;
-        }
-
-        constexpr auto k_provenanceEntry = std::string_view{
-            "{\"kind\":\"observation\",\"reference\":\"observation-42\"}"
-        };
-
-        constexpr auto k_knownFact = std::string_view{
-            "{\"confirmed_at_project_revision\":8,"
-            "\"provenance\":[{\"kind\":\"observation\","
-            "\"reference\":\"observation-42\"}],"
-            "\"schema\":\"umbraflow-fact/v1\",\"status\":\"Known\","
-            "\"value\":\"chaos\"}"
-        };
-
-        constexpr auto k_unknownFact = std::string_view{
-            "{\"reason\":\"the panel was not on screen\","
-            "\"schema\":\"umbraflow-fact/v1\",\"status\":\"Unknown\"}"
-        };
-
-        constexpr auto k_staleFact = std::string_view{
-            "{\"confirmed_at_project_revision\":3,"
-            "\"provenance\":[{\"kind\":\"observation\","
-            "\"reference\":\"observation-7\"}],"
-            "\"reason\":\"the screen moved on\","
-            "\"schema\":\"umbraflow-fact/v1\",\"status\":\"Stale\","
-            "\"value\":\"chaos\"}"
-        };
-
-        constexpr auto k_conflictFact = std::string_view{
-            "{\"candidates\":[\"chaos\",\"order\"],"
-            "\"reason\":\"two readers disagreed\","
-            "\"schema\":\"umbraflow-fact/v1\",\"status\":\"Conflict\"}"
-        };
-
-        constexpr auto k_knownCollection = std::string_view{
-            "{\"completeness\":\"Complete\",\"items\":[\"chaos\"],"
-            "\"metadata\":{\"confirmed_at_project_revision\":2,"
-            "\"provenance\":[{\"kind\":\"observation\","
-            "\"reference\":\"observation-9\"}],"
-            "\"schema\":\"umbraflow-fact/v1\",\"status\":\"Known\","
-            "\"value\":{\"item_count\":1}},"
-            "\"schema\":\"umbraflow-collection-fact/v1\"}"
-        };
-
-        constexpr auto k_unknownCollection = std::string_view{
-            "{\"completeness\":\"Unknown\",\"items\":[],"
-            "\"metadata\":{\"reason\":\"nothing was read\","
-            "\"schema\":\"umbraflow-fact/v1\",\"status\":\"Unknown\"},"
-            "\"schema\":\"umbraflow-collection-fact/v1\"}"
-        };
-
-        constexpr auto k_conflictCollection = std::string_view{
-            "{\"completeness\":\"Partial\",\"items\":[],"
-            "\"metadata\":{\"candidates\":[\"chaos\",\"order\"],"
-            "\"reason\":\"two readers disagreed\","
-            "\"schema\":\"umbraflow-fact/v1\",\"status\":\"Conflict\"},"
-            "\"schema\":\"umbraflow-collection-fact/v1\"}"
-        };
-
-        // One clause of a published fragment, and one document that differs
-        // from an accepted one only in what that clause judges. A row that
-        // stops refusing names the check that was lost with the copy.
-        struct FragmentCase final
-        {
-            std::string_view clause{};
-            std::string      knowledge{};
-            bool             accepted{};
-        };
-
-        [[nodiscard]]
-        auto jsonString(std::string_view text) -> std::string
-        {
-            auto literal = std::string{"\""};
-            literal += text;
-            literal += '"';
-            return literal;
-        }
-
-        // A deployment whose project state names one published fragment, and
-        // nothing else changed: no manifest carries the project state schema's
-        // digest, so substituting it leaves every other link intact.
-        [[nodiscard]]
-        auto knowledgeDeployment(
-            umbraflow::DeploymentBundle const& bundle,
-            std::string_view stateSchema
-        ) -> ProjectDeployment
-        {
-            auto sources         = bundle.sources();
-            sources.projectState = stateSchema;
-            auto deployed        = ProjectDeployment::create(sources);
-            auto const why       = deployed.has_value()
-                      ? std::string{}
-                      : std::string{deployed.error().message()};
-            INFO(why);
+            auto deployed = ProjectDeployment::create(sources);
+            INFO(why(deployed));
             REQUIRE(deployed.has_value());
             return *std::move(deployed);
         }
     }
 
-    // The canonical validator is one function for every project, so one case
-    // answers for both exemplars. What differs is the allowlist each of them
-    // used to carry, and both carried the plan-envelope recognizer below.
-    TEST_CASE("the canonical validator refuses bytes the exemplars' allowlists accepted")
-    {
-        auto const validate = canonicalJsonValidator();
-
-        // The premise: the deleted recognizer accepts these. Without this the
-        // refusals below would prove nothing about what changed.
-        REQUIRE(oldPlanEnvelopeRecognizer(k_unsortedPlanEnvelope));
-        REQUIRE(oldPlanEnvelopeRecognizer(k_nonCanonicalNumberPlanEnvelope));
-
-        CHECK_FALSE(validate(k_unsortedPlanEnvelope).has_value());
-        CHECK_FALSE(validate(k_nonCanonicalNumberPlanEnvelope).has_value());
-
-        // Whitespace, a duplicate member, an escape RFC 8785 does not emit, and
-        // a trailing byte: none of them is a canonical document either.
-        CHECK_FALSE(validate("{\"a\": 1}").has_value());
-        CHECK_FALSE(validate("{\"a\":1,\"a\":2}").has_value());
-        CHECK_FALSE(validate("{\"a\":\"\\u0041\"}").has_value());
-        CHECK_FALSE(validate("{\"a\":1} ").has_value());
-
-        // And it accepts what a project actually mints, so the refusals above
-        // are about canonical form rather than about refusing everything.
-        CHECK(validate("{\"revision\":0}").has_value());
-        CHECK(validate(k_provenance).has_value());
-        CHECK(validate(planEnvelope("{\"value\":1}")).has_value());
-        CHECK(validate("{\"turn\":0}").has_value());
-    }
-
-    // The reduced ProjectState is judged by the schema the registration
-    // pinned, so a state one exemplar accepts is a state the other refuses.
-    TEST_CASE("the document validator answers for one project's ProjectState")
+    // The tool arguments a project accepts are the project's, judged by the
+    // schema its own Tool declaration states inline. A call one exemplar admits
+    // is a call the other refuses, which is what makes the guard the Project's
+    // limit rather than one the framework invented.
+    TEST_CASE("the argument validator answers for one project's own Tools")
     {
         auto const umbraflowBundle = umbraflow::DeploymentBundle{"fixture.alpha"};
-        auto const validate =
-            umbraflowDeployment(umbraflowBundle).documentValidator();
+        auto const judgeFixture =
+            deploymentOf(umbraflowBundle.sources()).toolArgumentValidator();
 
         auto const arcanaBundle = arcana::DeploymentBundle{"arcana.expedition"};
         auto const judgeExpedition =
-            arcanaDeployment(arcanaBundle).documentValidator();
+            deploymentOf(arcanaBundle.sources()).toolArgumentValidator();
 
-        CHECK(validate(
-            ProjectDocumentDirection::Output,
-            "{\"revision\":0}"
+        CHECK(judgeFixture(
+            "fixture.alpha.command-1",
+            R"({"value":1})"
         ).has_value());
         CHECK(judgeExpedition(
-            ProjectDocumentDirection::Output,
-            "{\"turn\":0}"
+            "arcana.expedition.move",
+            R"({"steps":1})"
         ).has_value());
 
-        // The two projects do not accept each other's documents, which is what
-        // makes the schema the project's rather than the framework's.
+        // Neither project's arguments are the other's, and neither validator
+        // answers for a Tool its own declaration never carried.
+        CHECK_FALSE(judgeFixture(
+            "fixture.alpha.command-1",
+            R"({"steps":1})"
+        ).has_value());
         CHECK_FALSE(judgeExpedition(
-            ProjectDocumentDirection::Output,
-            "{\"revision\":0}"
+            "arcana.expedition.move",
+            R"({"value":1})"
         ).has_value());
-        CHECK_FALSE(validate(
-            ProjectDocumentDirection::Output,
-            "{\"turn\":0}"
+        CHECK_FALSE(judgeFixture(
+            "arcana.expedition.move",
+            R"({"steps":1})"
         ).has_value());
-    }
 
-    // The clause list a project schema owes before it may replace its own copy
-    // of the Fact shape with a $ref: every check the copy performed, named, and
-    // observed refusing a document that differs from an accepted one only in
-    // what that clause judges. A row that stops refusing is a check the copy
-    // performed and the fragment does not.
-    TEST_CASE("every check of the published Fact fragment fires through a $ref")
-    {
-        auto const bundle   = umbraflow::DeploymentBundle{"fixture.alpha"};
-        auto const validate =
-            knowledgeDeployment(bundle, k_factStateSchema).documentValidator();
-
-        constexpr auto k_provenanceArray = std::string_view{
-            "[{\"kind\":\"observation\",\"reference\":\"observation-42\"}]"
-        };
-        constexpr auto k_staleProvenanceArray = std::string_view{
-            "[{\"kind\":\"observation\",\"reference\":\"observation-7\"}]"
-        };
-
-        auto cases = std::vector<FragmentCase>{};
-        auto const admits =
-            [&cases](std::string_view clause, std::string knowledge)
-        {
-            cases.emplace_back(FragmentCase{
-                .clause    = clause,
-                .knowledge = std::move(knowledge),
-                .accepted  = true,
-            });
-        };
-        auto const denies =
-            [&cases](std::string_view clause, std::string knowledge)
-        {
-            cases.emplace_back(FragmentCase{
-                .clause    = clause,
-                .knowledge = std::move(knowledge),
-                .accepted  = false,
-            });
-        };
-        auto const knownWith = [](std::string_view entry) -> std::string
-        {
-            return substituted(k_knownFact, k_provenanceEntry, entry);
-        };
-        auto const filler = [](std::size_t size) -> std::string
-        {
-            return std::string(size, 'o');
-        };
-
-        // The four documents every refusal below is one substitution away from.
-        admits("an accepted Known fact", std::string{k_knownFact});
-        admits("an accepted Unknown fact", std::string{k_unknownFact});
-        admits("an accepted Stale fact", std::string{k_staleFact});
-        admits("an accepted Conflict fact", std::string{k_conflictFact});
-
-        // The root's own shape.
-        denies("type: object", jsonString("not an object"));
-        denies(
-            "additionalProperties: false",
-            substituted(k_knownFact, "\"provenance\"", "\"omen\":true,\"provenance\"")
-        );
-        denies(
-            "required: schema",
-            substituted(k_knownFact, "\"schema\":\"umbraflow-fact/v1\",", "")
-        );
-        denies(
-            "required: status",
-            substituted(k_knownFact, "\"status\":\"Known\",", "")
-        );
-        denies(
-            "schema: const umbraflow-fact/v1",
-            substituted(k_knownFact, "umbraflow-fact/v1", "umbraflow-fact/v2")
-        );
-        denies("status: enum", substituted(k_knownFact, "\"Known\"", "\"Guessed\""));
-
-        // value carries the boolean schema true, so nothing judges what a fact
-        // asserts. Both rows are acceptances: the absence is deliberate, and a
-        // constraint appearing there later has to be a decision.
-        admits(
-            "value: true admits an object",
-            substituted(k_knownFact, "\"chaos\"", "{\"depth\":1}")
-        );
-        admits(
-            "value: true admits null",
-            substituted(k_knownFact, "\"chaos\"", "null")
-        );
-
-        // Every other member's own shape.
-        denies(
-            "candidates: type array",
-            substituted(k_conflictFact, "[\"chaos\",\"order\"]", "\"chaos\"")
-        );
-        denies(
-            "candidates: minItems 2",
-            substituted(k_conflictFact, "[\"chaos\",\"order\"]", "[\"chaos\"]")
-        );
-        denies(
-            "confirmed_at_project_revision: type integer",
-            substituted(
-                k_knownFact,
-                "\"confirmed_at_project_revision\":8",
-                "\"confirmed_at_project_revision\":1.5"
-            )
-        );
-        denies(
-            "confirmed_at_project_revision: minimum 0",
-            substituted(
-                k_knownFact,
-                "\"confirmed_at_project_revision\":8",
-                "\"confirmed_at_project_revision\":-1"
-            )
-        );
-        admits(
-            "confirmed_at_run_generation: 1 is the least generation",
-            substituted(
-                k_knownFact,
-                "\"provenance\"",
-                "\"confirmed_at_run_generation\":1,\"provenance\""
-            )
-        );
-        denies(
-            "confirmed_at_run_generation: minimum 1",
-            substituted(
-                k_knownFact,
-                "\"provenance\"",
-                "\"confirmed_at_run_generation\":0,\"provenance\""
-            )
-        );
-        denies(
-            "confirmed_at_run_generation: type integer",
-            substituted(
-                k_knownFact,
-                "\"provenance\"",
-                "\"confirmed_at_run_generation\":1.5,\"provenance\""
-            )
-        );
-        admits(
-            "source_observation_id: a bounded string",
-            substituted(
-                k_knownFact,
-                "\"status\"",
-                "\"source_observation_id\":\"observation-42\",\"status\""
-            )
-        );
-        denies(
-            "source_observation_id: type string",
-            substituted(
-                k_knownFact,
-                "\"status\"",
-                "\"source_observation_id\":12,\"status\""
-            )
-        );
-        denies(
-            "source_observation_id: minLength 1",
-            substituted(
-                k_knownFact,
-                "\"status\"",
-                "\"source_observation_id\":\"\",\"status\""
-            )
-        );
-        denies(
-            "source_observation_id: maxLength 128",
-            substituted(
-                k_knownFact,
-                "\"status\"",
-                "\"source_observation_id\":" + jsonString(filler(129U)) + ",\"status\""
-            )
-        );
-        denies(
-            "reason: type string",
-            substituted(k_unknownFact, "\"the panel was not on screen\"", "5")
-        );
-        denies(
-            "reason: minLength 1",
-            substituted(k_unknownFact, "\"the panel was not on screen\"", "\"\"")
-        );
-        denies(
-            "reason: maxLength 512",
-            substituted(
-                k_unknownFact,
-                "\"the panel was not on screen\"",
-                jsonString(filler(513U))
-            )
-        );
-        denies(
-            "provenance: type array",
-            substituted(k_knownFact, k_provenanceArray, k_provenanceEntry)
-        );
-
-        // The second hop of the closure: provenance items are judged by the
-        // separately published fact-provenance document, so these rows fire
-        // only when a $ref inside a $ref-ed document resolved.
-        denies(
-            "fact-provenance: type object",
-            knownWith(jsonString("observation-42"))
-        );
-        denies(
-            "fact-provenance: additionalProperties false",
-            knownWith(
-                "{\"kind\":\"observation\",\"operator_trust\":\"high\","
-                "\"reference\":\"observation-42\"}"
-            )
-        );
-        denies(
-            "fact-provenance: required kind",
-            knownWith("{\"reference\":\"observation-42\"}")
-        );
-        denies(
-            "fact-provenance: required reference",
-            knownWith("{\"kind\":\"observation\"}")
-        );
-        denies(
-            "fact-provenance: kind enum",
-            knownWith("{\"kind\":\"rumour\",\"reference\":\"observation-42\"}")
-        );
-        denies(
-            "fact-provenance: reference type string",
-            knownWith("{\"kind\":\"observation\",\"reference\":7}")
-        );
-        denies(
-            "fact-provenance: reference minLength 1",
-            knownWith("{\"kind\":\"observation\",\"reference\":\"\"}")
-        );
-        denies(
-            "fact-provenance: reference maxLength 512",
-            knownWith(
-                "{\"kind\":\"observation\",\"reference\":" + jsonString(filler(513U))
-                + "}"
-            )
-        );
-        admits(
-            "fact-provenance: project_revision 0",
-            knownWith(
-                "{\"kind\":\"observation\",\"project_revision\":0,"
-                "\"reference\":\"observation-42\"}"
-            )
-        );
-        denies(
-            "fact-provenance: project_revision minimum 0",
-            knownWith(
-                "{\"kind\":\"observation\",\"project_revision\":-1,"
-                "\"reference\":\"observation-42\"}"
-            )
-        );
-        denies(
-            "fact-provenance: project_revision type integer",
-            knownWith(
-                "{\"kind\":\"observation\",\"project_revision\":1.5,"
-                "\"reference\":\"observation-42\"}"
-            )
-        );
-        admits(
-            "fact-provenance: detail object",
-            knownWith(
-                "{\"detail\":{},\"kind\":\"observation\","
-                "\"reference\":\"observation-42\"}"
-            )
-        );
-        denies(
-            "fact-provenance: detail type object",
-            knownWith(
-                "{\"detail\":\"why\",\"kind\":\"observation\","
-                "\"reference\":\"observation-42\"}"
-            )
-        );
-
-        // The four cross-member conditionals, which are the rules the plugin's
-        // own code states nowhere.
-        denies(
-            "status Known requires value",
-            substituted(k_knownFact, ",\"value\":\"chaos\"", "")
-        );
-        denies(
-            "status Known requires confirmed_at_project_revision",
-            substituted(k_knownFact, "\"confirmed_at_project_revision\":8,", "")
-        );
-        denies(
-            "status Known requires provenance",
-            substituted(
-                k_knownFact,
-                "\"provenance\":[{\"kind\":\"observation\","
-                "\"reference\":\"observation-42\"}],",
-                ""
-            )
-        );
-        denies(
-            "status Known requires provenance minItems 1",
-            substituted(k_knownFact, k_provenanceArray, "[]")
-        );
-        denies(
-            "status Known forbids candidates",
-            substituted(
-                k_knownFact,
-                "{\"confirmed",
-                "{\"candidates\":[\"chaos\",\"order\"],\"confirmed"
-            )
-        );
-        denies(
-            "status Known forbids reason",
-            substituted(k_knownFact, "\"schema\"", "\"reason\":\"stale\",\"schema\"")
-        );
-        denies(
-            "status Unknown requires reason",
-            substituted(k_unknownFact, "\"reason\":\"the panel was not on screen\",", "")
-        );
-        denies(
-            "status Unknown forbids value",
-            substituted(
-                k_unknownFact,
-                "\"status\":\"Unknown\"",
-                "\"status\":\"Unknown\",\"value\":\"chaos\""
-            )
-        );
-        denies(
-            "status Unknown forbids candidates",
-            substituted(
-                k_unknownFact,
-                "{\"reason\"",
-                "{\"candidates\":[\"chaos\",\"order\"],\"reason\""
-            )
-        );
-        denies(
-            "status Unknown forbids confirmed_at_project_revision",
-            substituted(
-                k_unknownFact,
-                "{\"reason\"",
-                "{\"confirmed_at_project_revision\":1,\"reason\""
-            )
-        );
-        denies(
-            "status Unknown forbids confirmed_at_run_generation",
-            substituted(
-                k_unknownFact,
-                "{\"reason\"",
-                "{\"confirmed_at_run_generation\":1,\"reason\""
-            )
-        );
-        denies(
-            "status Stale requires value",
-            substituted(k_staleFact, ",\"value\":\"chaos\"", "")
-        );
-        denies(
-            "status Stale requires confirmed_at_project_revision",
-            substituted(k_staleFact, "\"confirmed_at_project_revision\":3,", "")
-        );
-        denies(
-            "status Stale requires provenance",
-            substituted(
-                k_staleFact,
-                "\"provenance\":[{\"kind\":\"observation\","
-                "\"reference\":\"observation-7\"}],",
-                ""
-            )
-        );
-        denies(
-            "status Stale requires provenance minItems 1",
-            substituted(k_staleFact, k_staleProvenanceArray, "[]")
-        );
-        denies(
-            "status Stale requires reason",
-            substituted(k_staleFact, "\"reason\":\"the screen moved on\",", "")
-        );
-        denies(
-            "status Stale forbids candidates",
-            substituted(
-                k_staleFact,
-                "{\"confirmed",
-                "{\"candidates\":[\"chaos\",\"order\"],\"confirmed"
-            )
-        );
-        denies(
-            "status Conflict requires candidates",
-            substituted(k_conflictFact, "\"candidates\":[\"chaos\",\"order\"],", "")
-        );
-        denies(
-            "status Conflict requires reason",
-            substituted(k_conflictFact, "\"reason\":\"two readers disagreed\",", "")
-        );
-        denies(
-            "status Conflict forbids value",
-            substituted(
-                k_conflictFact,
-                "\"status\":\"Conflict\"",
-                "\"status\":\"Conflict\",\"value\":\"chaos\""
-            )
-        );
-
-        for (auto const& entry : cases)
-        {
-            CAPTURE(entry.clause);
-            CAPTURE(entry.knowledge);
-            auto const outcome = validate(
-                ProjectDocumentDirection::Output,
-                knowledgeState(entry.knowledge)
-            );
-            CHECK(outcome.has_value() == entry.accepted);
-        }
-    }
-
-    // The same enumeration for the second published fragment. Its metadata is
-    // a Fact, so these rows also fire only when a three-document closure held.
-    TEST_CASE("every check of the published Collection Fact fragment fires through a $ref")
-    {
-        auto const bundle = umbraflow::DeploymentBundle{"fixture.alpha"};
-        auto const validate =
-            knowledgeDeployment(bundle, k_collectionStateSchema)
-                .documentValidator();
-
-        constexpr auto k_knownMetadata = std::string_view{
-            "\"metadata\":{\"confirmed_at_project_revision\":2,"
-            "\"provenance\":[{\"kind\":\"observation\","
-            "\"reference\":\"observation-9\"}],"
-            "\"schema\":\"umbraflow-fact/v1\",\"status\":\"Known\","
-            "\"value\":{\"item_count\":1}},"
-        };
-
-        auto cases = std::vector<FragmentCase>{};
-        auto const admits =
-            [&cases](std::string_view clause, std::string knowledge)
-        {
-            cases.emplace_back(FragmentCase{
-                .clause    = clause,
-                .knowledge = std::move(knowledge),
-                .accepted  = true,
-            });
-        };
-        auto const denies =
-            [&cases](std::string_view clause, std::string knowledge)
-        {
-            cases.emplace_back(FragmentCase{
-                .clause    = clause,
-                .knowledge = std::move(knowledge),
-                .accepted  = false,
-            });
-        };
-
-        admits("an accepted Known collection", std::string{k_knownCollection});
-        admits("an accepted Unknown collection", std::string{k_unknownCollection});
-        admits("an accepted Conflict collection", std::string{k_conflictCollection});
-
-        denies("type: object", jsonString("not an object"));
-        denies(
-            "additionalProperties: false",
-            substituted(k_knownCollection, "\"items\"", "\"extra\":1,\"items\"")
-        );
-        denies(
-            "required: completeness",
-            substituted(k_knownCollection, "\"completeness\":\"Complete\",", "")
-        );
-        denies(
-            "required: items",
-            substituted(k_knownCollection, "\"items\":[\"chaos\"],", "")
-        );
-        denies(
-            "required: metadata",
-            substituted(k_knownCollection, k_knownMetadata, "")
-        );
-        denies(
-            "required: schema",
-            substituted(
-                k_knownCollection,
-                ",\"schema\":\"umbraflow-collection-fact/v1\"",
-                ""
-            )
-        );
-        denies(
-            "schema: const umbraflow-collection-fact/v1",
-            substituted(
-                k_knownCollection,
-                "umbraflow-collection-fact/v1",
-                "umbraflow-collection-fact/v2"
-            )
-        );
-        denies(
-            "items: type array",
-            substituted(k_knownCollection, "\"items\":[\"chaos\"]", "\"items\":\"chaos\"")
-        );
-        denies(
-            "completeness: enum",
-            substituted(k_knownCollection, "\"Complete\"", "\"Total\"")
-        );
-        denies(
-            "metadata: $ref umbraflow-fact/v1 status enum",
-            substituted(k_knownCollection, "\"status\":\"Known\"", "\"status\":\"Guessed\"")
-        );
-        denies(
-            "metadata: $ref umbraflow-fact/v1 additionalProperties false",
-            substituted(k_knownCollection, "\"provenance\"", "\"omen\":true,\"provenance\"")
-        );
-
-        // The $ref's sibling properties apply beside it, which is what lets a
-        // collection say what its own metadata value holds.
-        denies(
-            "metadata.value: required item_count",
-            substituted(k_knownCollection, "{\"item_count\":1}", "{}")
-        );
-        denies(
-            "metadata.value: additionalProperties false",
-            substituted(
-                k_knownCollection,
-                "{\"item_count\":1}",
-                "{\"item_count\":1,\"tally\":1}"
-            )
-        );
-        denies(
-            "metadata.value: item_count minimum 0",
-            substituted(k_knownCollection, "{\"item_count\":1}", "{\"item_count\":-1}")
-        );
-        denies(
-            "metadata.value: item_count type integer",
-            substituted(k_knownCollection, "{\"item_count\":1}", "{\"item_count\":1.5}")
-        );
-
-        denies(
-            "metadata Unknown holds no items",
-            substituted(k_unknownCollection, "\"items\":[]", "\"items\":[\"chaos\"]")
-        );
-        denies(
-            "metadata Unknown forces completeness Unknown",
-            substituted(
-                k_unknownCollection,
-                "\"completeness\":\"Unknown\"",
-                "\"completeness\":\"Complete\""
-            )
-        );
-        denies(
-            "metadata Conflict holds no items",
-            substituted(k_conflictCollection, "\"items\":[]", "\"items\":[\"chaos\"]")
-        );
-
-        for (auto const& entry : cases)
-        {
-            CAPTURE(entry.clause);
-            CAPTURE(entry.knowledge);
-            auto const outcome = validate(
-                ProjectDocumentDirection::Output,
-                knowledgeState(entry.knowledge)
-            );
-            CHECK(outcome.has_value() == entry.accepted);
-        }
+        // And the bound each of them states is enforced, so the refusals above
+        // are about the schema rather than about refusing everything.
+        CHECK_FALSE(judgeFixture(
+            "fixture.alpha.command-1",
+            R"({"value":9})"
+        ).has_value());
+        CHECK_FALSE(judgeExpedition(
+            "arcana.expedition.move",
+            R"({"steps":9})"
+        ).has_value());
     }
 
     // The three ways a reference fails to resolve, reported apart because each
     // has a different repair: remove the reference, widen the set, or fix the
     // pointer. A single message for all three would leave a schema author
     // guessing which of the three happened.
+    //
+    // An identity schema compiles on its own, so the only document in its set
+    // is itself: reuse inside one schema is JSON Schema's own $defs, and there
+    // is nothing else for a $ref to reach.
     TEST_CASE("a project schema's unresolvable references are refused apart")
     {
         struct RefusalCase final
@@ -1033,11 +207,11 @@ namespace uf::deployment
                 .diagnostic = "a remote document, and this evaluator fetches nothing",
             },
             RefusalCase{
-                .reference  = "https://umbraflow.dev/schema/project/observation",
+                .reference  = "https://umbraflow.dev/schema/fact/v1",
                 .diagnostic = "outside the set this schema was compiled from",
             },
             RefusalCase{
-                .reference  = "https://umbraflow.dev/schema/fact/v1#/$defs/Missing",
+                .reference  = "#/$defs/Missing",
                 .diagnostic = "no target in the document it names",
             },
         };
@@ -1048,91 +222,32 @@ namespace uf::deployment
             CAPTURE(entry.reference);
             auto schema = std::string{
                 R"json({"$schema":"https://json-schema.org/draft/2020-12/schema",)json"
-                R"json("$id":"https://umbraflow.dev/schema/project/state","$ref":")json"
+                R"json("$id":"https://umbraflow.dev/schema/project/identity",)json"
+                R"json("$ref":")json"
             };
             schema += entry.reference;
             schema += R"json("})json";
 
-            auto sources         = bundle.sources();
-            sources.projectState = schema;
-            auto const refused   = ProjectDeployment::create(sources);
+            auto const declared = std::array{
+                ProjectIdentitySchemaSource{
+                    .name   = umbraflow::k_observedIdentitySchemaName,
+                    .schema = schema,
+                },
+            };
+            auto sources                            = bundle.sources();
+            sources.observedInstanceIdentitySchemas = declared;
+            auto const refused = ProjectDeployment::create(sources);
             REQUIRE_FALSE(refused.has_value());
             CHECK(why(refused).contains(entry.diagnostic));
         }
-    }
-
-    // The three schema families a registration owns that no other document
-    // embeds, probed with a pointer that misses inside the published Fact
-    // document. The refusal naming the pointer rather than the document is what
-    // says the document was in that compiler's closed set: the case above shows
-    // that a document the set does not carry is refused with the other message
-    // instead.
-    //
-    // The project state document cannot be probed this way and is not probed
-    // here: it is embedded in the reduce-input schema, which compiles first, so
-    // a bad reference in it is always reported by that compilation and the
-    // probe would pass whatever the project's own compilation received. It is
-    // proved instead by the two fragment cases above, each of which applies the
-    // schema that compilation produced.
-    TEST_CASE("every registration-owned schema compiler receives the Fact closure")
-    {
-        constexpr auto k_missingTarget = std::string_view{
-            "https://umbraflow.dev/schema/fact/v1#/$defs/Missing"
-        };
-        constexpr auto k_inClosure =
-            std::string_view{"no target in the document it names"};
-
-        // Appending the view binds it to a reference, so it is odr-used and
-        // must be captured however constant it is.
-        auto const referencing =
-            [k_missingTarget](std::string_view identity) -> std::string
-        {
-            auto text = std::string{
-                R"json({"$schema":"https://json-schema.org/draft/2020-12/schema",)json"
-                R"json("$id":")json"
-            };
-            text += identity;
-            text += R"json(","$ref":")json";
-            text += k_missingTarget;
-            text += R"json("})json";
-            return text;
-        };
-        auto const bundle = umbraflow::DeploymentBundle{"fixture.alpha"};
-
-        auto preconditionSources             = bundle.sources();
-        auto const preconditionSchema        = referencing(k_toolPreconditionSchemaId);
-        preconditionSources.toolPrecondition = preconditionSchema;
-        auto const precondition = ProjectDeployment::create(preconditionSources);
-        REQUIRE_FALSE(precondition.has_value());
-        CHECK(why(precondition).contains(k_inClosure));
-
-        auto journalSources      = bundle.sources();
-        auto const journalSchema = referencing(
-            "https://umbraflow.dev/schema/project/journal/missing-target"
-        );
-        auto const journalSchemas = std::array{std::string_view{journalSchema}};
-        journalSources.journalPayloadSchemas = journalSchemas;
-        auto const journal = ProjectDeployment::create(journalSources);
-        REQUIRE_FALSE(journal.has_value());
-        CHECK(why(journal).contains(k_inClosure));
-
-        auto effectSources      = bundle.sources();
-        auto const effectSchema = referencing(
-            "https://umbraflow.dev/schema/project/effect/missing-target"
-        );
-        auto const effectSchemas = std::array{std::string_view{effectSchema}};
-        effectSources.effectPayloadSchemas = effectSchemas;
-        auto const effect = ProjectDeployment::create(effectSources);
-        REQUIRE_FALSE(effect.has_value());
-        CHECK(why(effect).contains(k_inClosure));
     }
 
     TEST_CASE("the framework schema catalog publishes every runtime schema source")
     {
         auto const catalog = framework_schema::frameworkSchemaCatalog();
         CHECK_MESSAGE(
-            catalog.size() == 13U,
-            "framework schema catalog must contain exactly thirteen declared sources"
+            catalog.size() == 12U,
+            "framework schema catalog must contain exactly twelve declared sources"
         );
 
         auto const collectionFact = framework_schema::findFrameworkSchema(
@@ -1201,14 +316,14 @@ namespace uf::deployment
         CHECK(valueOf(policy).identity == "https://umbraflow.local/schema/policy-v1");
 
         auto const registration = framework_schema::findFrameworkSchema(
-            "schema/umbraflow-project-registration-v3.schema.json"
+            "schema/umbraflow-project-registration-v4.schema.json"
         );
         REQUIRE_MESSAGE(
             registration.has_value(),
             "framework schema catalog must include project registration"
         );
         CHECK(valueOf(registration).identity
-              == "https://umbraflow.local/schema/project-registration-v3");
+              == "https://umbraflow.local/schema/project-registration-v4");
 
         // umbraflow-project.json's shape, published because two readers that
         // cannot link one another both compile it: the runtime loader and the
@@ -1216,7 +331,7 @@ namespace uf::deployment
         // repository's own document and is not a member of the consumer's
         // interface lock, so a digest here would be pinned against nothing.
         auto const directory = framework_schema::findFrameworkSchema(
-            "schema/umbraflow-project-v2.schema.json"
+            "schema/umbraflow-project-v3.schema.json"
         );
         REQUIRE_MESSAGE(
             directory.has_value(),
@@ -1226,199 +341,42 @@ namespace uf::deployment
               == "https://umbraflow.dev/schema/project/directory");
     }
 
-    // The ruling on run.ended-v1, made executable. A journal event type reaches
-    // the Operator's payload_schema_hash through the manifest entry that names
-    // its schema, so "this event type has no payload schema" is not a thing the
-    // manifest can say: an entry without a digest is refused, and an event type
-    // with no entry cannot be emitted. An event whose payload is genuinely empty
-    // still publishes the schema that says so.
-    TEST_CASE("a journal event type cannot be carried without a payload schema")
+    // A deployment that cannot answer for its own declaration refuses to exist,
+    // rather than answering for it anyway once a call arrives.
+    TEST_CASE("a deployment refuses a declaration it cannot own")
     {
         auto const bundle = umbraflow::DeploymentBundle{"fixture.alpha"};
 
-        auto const withoutDigest = substituted(
-            bundle.journalEventManifest(),
-            "\"sha256\":\"" + umbraflow::schemaHashHex(umbraflow::k_progressPayloadSchema)
-                + "\"",
-            "\"sha256\":\"\""
-        );
-        auto digestSources                 = bundle.sources();
-        digestSources.journalEventManifest = withoutDigest;
-        auto const refusedDigest = ProjectDeployment::create(digestSources);
-        REQUIRE_FALSE(refusedDigest.has_value());
-        INFO(why(refusedDigest));
-        CHECK(why(refusedDigest).contains("sha256"));
-
-        // And the other half: an event type the manifest never named has no
-        // schema to be judged by, so the Operator refuses it rather than
-        // carrying an unjudged payload.
-        auto const validate =
-            umbraflowDeployment(bundle).documentValidator();
-        auto const unnamed = substituted(
-            reduceEnvelope("{\"value\":1}"),
-            "fixture.progress",
-            "fixture.unnamed"
-        );
-        auto const refusedEvent = validate(
-            ProjectDocumentDirection::Input,
-            unnamed
-        );
-        REQUIRE_FALSE(refusedEvent.has_value());
-        CHECK(std::string{refusedEvent.error().message()}.contains(
-            "names no payload schema for fixture.unnamed"
-        ));
-    }
-
-    // The ruling on which schema keywords this evaluator can never reach. A
-    // tool precondition document is judged only through the definition its
-    // catalog row names -- validateDefinition, never validate -- so nothing at
-    // its root is ever evaluated. The root below carries an assertion that
-    // would refuse every instance, and the document is still accepted, which is
-    // what licenses deleting a root keyword from that family and nothing else.
-    TEST_CASE("the tool precondition root is never evaluated")
-    {
-        auto const bundle = umbraflow::DeploymentBundle{"fixture.alpha"};
-
-        auto const precondition = substituted(
-            umbraflow::k_toolPreconditionSchema,
-            "    \"$defs\": {",
-            "    \"type\": \"null\",\n    \"$defs\": {"
-        );
-
-        // Everything else repaired: the digest is named by the catalog, so a
-        // refusal here would be about the digest rather than about the root.
-        auto const catalog = substituted(
-            bundle.toolCatalog(),
-            umbraflow::schemaHashHex(umbraflow::k_toolPreconditionSchema),
-            umbraflow::schemaHashHex(precondition)
-        );
-
-        auto sources             = bundle.sources();
-        sources.toolPrecondition = precondition;
-        sources.toolCatalog      = catalog;
-
-        auto const deployed = ProjectDeployment::create(sources);
-        INFO(why(deployed));
-        REQUIRE(deployed.has_value());
-
-        auto const judgeArguments = deployed->toolArgumentValidator();
-        CHECK(
-            judgeArguments("fixture.alpha.command-1", "{\"value\":1}").has_value()
-        );
-
-        // The named definition still refuses what it refused, so the inert root
-        // is the root's own property rather than the whole document's.
-        CHECK_FALSE(
-            judgeArguments("fixture.alpha.command-1", "{\"value\":9}").has_value()
-        );
-    }
-
-    // The requirement the header states: every project-owned payload nested
-    // inside an envelope is judged, not carried through.
-    TEST_CASE("every project-owned nested payload is judged")
-    {
-        auto const bundle   = umbraflow::DeploymentBundle{"fixture.alpha"};
-        auto const validate = umbraflowDeployment(bundle).documentValidator();
-
-        // A reduce envelope whose shape is exact and whose one event carries a
-        // payload fixture.progress does not accept.
-        CHECK(validate(
-            ProjectDocumentDirection::Input,
-            reduceEnvelope("{\"value\":1}")
-        ).has_value());
-        CHECK_FALSE(validate(
-            ProjectDocumentDirection::Input,
-            reduceEnvelope("{\"value\":2}")
-        ).has_value());
-    }
-
-    // A deployment that cannot answer for its own sources refuses to exist,
-    // rather than answering for them anyway once a document arrives.
-    TEST_CASE("a deployment refuses sources whose links do not close")
-    {
-        auto const bundle = umbraflow::DeploymentBundle{"fixture.alpha"};
-
-        auto foreignIdentity = bundle.sources();
-        foreignIdentity.projectState =
-            R"json({"$id":"https://umbraflow.dev/schema/project/elsewhere",)json"
-            R"json("type":"object"})json";
-        CHECK_FALSE(ProjectDeployment::create(foreignIdentity).has_value());
-
+        // Ownership is the one rule no JSON Schema can state, because it
+        // compares a Tool's name with the namespace the deployment registered.
+        // The same declaration under another registrant's namespace is a
+        // declaration no registration owns.
         auto otherPlugin     = bundle.sources();
         otherPlugin.pluginId = "fixture.other";
-        CHECK_FALSE(ProjectDeployment::create(otherPlugin).has_value());
+        auto const foreign   = ProjectDeployment::create(otherPlugin);
+        REQUIRE_FALSE(foreign.has_value());
+        CHECK(why(foreign).contains("fixture.other"));
 
-        // The journal manifest names four payload schemas by sha256; handing
-        // over three of them leaves one entry naming bytes nobody supplied.
-        auto missingPayload = bundle.sources();
-        missingPayload.journalPayloadSchemas =
-            std::span{umbraflow::k_journalPayloadSchemas}.first(3U);
-        CHECK_FALSE(ProjectDeployment::create(missingPayload).has_value());
-
-        // The same pair for the effect payload schemas, whose only route into
-        // tool_catalog_hash -- and so into project_registration_hash -- is the
-        // catalog's effect_payload_sha256s. Supplying none leaves that member
-        // naming bytes nobody handed over.
-        auto missingEffect                 = bundle.sources();
-        missingEffect.effectPayloadSchemas = {};
-        auto const missingEffectOutcome    = ProjectDeployment::create(missingEffect);
-        REQUIRE_FALSE(missingEffectOutcome.has_value());
-        CHECK(why(missingEffectOutcome).contains(
-            umbraflow::schemaHashHex(umbraflow::k_effectPayloadSchema)
-        ));
-        CHECK(why(missingEffectOutcome).contains(
-            "its effect_payload_schemas hash to nothing"
-        ));
-
-        // And the other direction, which is the one that decides whether the
-        // bytes are inside any digest at all: a complete schema this evaluator
-        // compiles, supplied as an effect payload and named by no digest the
-        // catalog carries.
-        constexpr auto surplusEffectSchemas = std::array{
-            umbraflow::k_effectPayloadSchema,
-            umbraflow::k_journalPayloadSchemas.front(),
+        // Two identity schemas under one name would leave the authority keyed
+        // on a name that means two documents.
+        constexpr auto repeated = std::array{
+            ProjectIdentitySchemaSource{
+                .name   = umbraflow::k_observedIdentitySchemaName,
+                .schema = umbraflow::k_observedIdentitySchema,
+            },
+            ProjectIdentitySchemaSource{
+                .name   = umbraflow::k_observedIdentitySchemaName,
+                .schema = umbraflow::k_observedIdentitySchema,
+            },
         };
-        auto surplusEffect                 = bundle.sources();
-        surplusEffect.effectPayloadSchemas = surplusEffectSchemas;
-        auto const surplusEffectOutcome    = ProjectDeployment::create(surplusEffect);
-        REQUIRE_FALSE(surplusEffectOutcome.has_value());
-        CHECK(why(surplusEffectOutcome).contains(
-            umbraflow::schemaHashHex(umbraflow::k_journalPayloadSchemas.front())
-        ));
-        CHECK(why(surplusEffectOutcome).contains(
-            "effect_payload_sha256s does not name"
-        ));
-
-        // Another project's precondition schema declares none of the argument
-        // definitions this catalog names, so the catalog does not attach to it.
-        auto foreignPrecondition             = bundle.sources();
-        foreignPrecondition.toolPrecondition = arcana::k_toolPreconditionSchema;
-        CHECK_FALSE(ProjectDeployment::create(foreignPrecondition).has_value());
-
-        // The same definition under different bytes: every name the catalog
-        // states still resolves, so only the sha256 the catalog carries can
-        // tell this schema from the one the registration pinned.
-        constexpr auto restatedPrecondition = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/project/tool-precondition",
-    "title": "umbraflow fixture tool arguments, restated",
-    "$defs": {
-        "FixtureArguments": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["value"],
-            "properties": {
-                "value": {"type": "integer", "minimum": 1, "maximum": 8}
-            }
-        }
-    }
-})json"};
-        auto restated             = bundle.sources();
-        restated.toolPrecondition = restatedPrecondition;
-        CHECK_FALSE(ProjectDeployment::create(restated).has_value());
+        auto twice                            = bundle.sources();
+        twice.observedInstanceIdentitySchemas = repeated;
+        auto const declaredTwice = ProjectDeployment::create(twice);
+        REQUIRE_FALSE(declaredTwice.has_value());
+        CHECK(why(declaredTwice).contains("twice"));
 
         // And the unmodified sources do build one, so the refusals above are
-        // about the link that was broken.
+        // about the rule that was broken.
         CHECK(ProjectDeployment::create(bundle.sources()).has_value());
     }
 
@@ -1447,8 +405,8 @@ namespace uf::deployment
                  std::string_view{"\"canonical_form_contract\":"},
                  std::string_view{"\"durable_record\":"},
                  std::string_view{"\"identity_preimages\":"},
-                 std::string_view{"\"tool_catalog_schema\":"},
-                 std::string_view{"\"tool_catalog_wire_tag\":"},
+                 std::string_view{"\"tool_declaration_schema\":"},
+                 std::string_view{"\"tool_declaration_wire_tag\":"},
              })
         {
             CAPTURE(member);

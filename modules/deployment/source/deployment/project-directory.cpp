@@ -40,7 +40,7 @@ namespace uf::deployment
     namespace
     {
         constexpr auto k_registrationSchemaPath = std::string_view{
-            "schema/umbraflow-project-registration-v3.schema.json"
+            "schema/umbraflow-project-registration-v4.schema.json"
         };
 
         // umbraflow-project.json: the document production reads. Its shape is
@@ -52,7 +52,7 @@ namespace uf::deployment
         // uf::deployment, and a second reading of this document inside the kit
         // was a weaker copy that accepted documents this one refused.
         constexpr auto k_projectSchemaPath = std::string_view{
-            "schema/umbraflow-project-v2.schema.json"
+            "schema/umbraflow-project-v3.schema.json"
         };
 
         // umbraflow-conformance.json: the document only a conformance run
@@ -64,13 +64,13 @@ namespace uf::deployment
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://umbraflow.dev/schema/project/conformance",
     "title": "umbraflow-conformance.json",
-    "$comment": "There is no fingerprint member. The extent a probe frame is checked against is the one RuntimeModelBinding publishes out of the model, never a number this document restates. Tag v2 is v1 without a vocabulary's continue_input, confirmed_input, rejected_input and ambiguous_input: those were the four reconcile inputs, and reconcile died with the five-function ProjectPlugin contract, so the loader parsed four strings no reader ever asked for. The tag moved with them because a required member set that lost members is a different shape, and one tag naming two shapes leaves whoever meets an old copy unable to say which of them it is.",
+    "$comment": "There is no fingerprint member. The extent a probe frame is checked against is the one RuntimeModelBinding publishes out of the model, never a number this document restates. Tag v3 is v2 without a vocabulary's four journal entries and its provenance: the framework stopped interpreting a Project's state, so there is no Journal for a suite to drive and no fold for it to observe. The tag moved with them because a required member set that lost members is a different shape, and one tag naming two shapes leaves whoever meets an old copy unable to say which of them it is.",
     "type": "object",
     "additionalProperties": false,
     "required": ["foreign", "probe_frame", "schema", "under_test"],
     "properties": {
         "$comment": {"type": "string"},
-        "schema": {"const": "umbraflow-conformance/v2"},
+        "schema": {"const": "umbraflow-conformance/v3"},
         "probe_frame": {"type": "string", "minLength": 1},
         "under_test": {"$ref": "#/$defs/Role"},
         "foreign": {"$ref": "#/$defs/Role"}
@@ -92,24 +92,9 @@ namespace uf::deployment
             }
         },
         "Document": {
-            "$comment": "The project's exact bytes, carried as a JSON string rather than as a nested object. They are handed to ProjectSchemaOwner::canonicalize, which refuses anything that is not exact RFC 8785 JCS; a nested object would make the loader choose a serialization and the bytes would stop being the project's.",
+            "$comment": "The project's exact bytes, carried as a JSON string rather than as a nested object. They are handed to CanonicalJson::parseExact, which refuses anything that is not exact RFC 8785 JCS; a nested object would make the loader choose a serialization and the bytes would stop being the project's.",
             "type": "string",
             "minLength": 1
-        },
-        "JournalDocument": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["event_type", "payload"],
-            "properties": {
-                "$comment": {"type": "string"},
-                "event_type": {
-                    "type": "string",
-                    "minLength": 3,
-                    "maxLength": 128,
-                    "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)+$"
-                },
-                "payload": {"$ref": "#/$defs/Document"}
-            }
         },
         "ToolName": {
             "$comment": "A Tool name, in the one spelling every document carrying one uses: namespaced under the namespace its registration owns. A vocabulary names Tools this project's own catalog declares, and a catalog can declare no other shape, so admitting a looser spelling here would only defer the refusal to the carried-tool cross-check the loader runs next.",
@@ -124,15 +109,10 @@ namespace uf::deployment
             "required": [
                 "absent_tool",
                 "approval_required_plan_tool",
-                "baseline_entry",
-                "confirmed_entry",
                 "mutating_tool",
                 "other_mutating_tool",
-                "progress_entry",
-                "provenance",
                 "read_only_tool",
                 "refused_tool_arguments",
-                "superseded_entry",
                 "tool_arguments",
                 "ui_action"
             ],
@@ -144,11 +124,6 @@ namespace uf::deployment
                 "tool_arguments": {"$ref": "#/$defs/Document"},
                 "refused_tool_arguments": {"$ref": "#/$defs/Document"},
                 "absent_tool": {"$ref": "#/$defs/ToolName"},
-                "baseline_entry": {"$ref": "#/$defs/JournalDocument"},
-                "progress_entry": {"$ref": "#/$defs/JournalDocument"},
-                "confirmed_entry": {"$ref": "#/$defs/JournalDocument"},
-                "superseded_entry": {"$ref": "#/$defs/JournalDocument"},
-                "provenance": {"$ref": "#/$defs/Document"},
                 "approval_required_plan_tool": {"$ref": "#/$defs/ToolName"},
                 "ui_action": {
                     "type": "object",
@@ -417,18 +392,13 @@ namespace uf::deployment
         struct DerivedRegistration final
         {
             std::string                            pluginId{};
-            std::string                            baselineEventType{};
-            operator_runtime::ProjectClosureClaims reducerClosure;
             operator_runtime::ProjectClosureClaims toolClosure;
             ContentHash                            pluginEnvironmentHash;
             ContentHash                            toolCatalogHash;
-            ContentHash                            projectStateSchemaHash;
-            ContentHash                            projectToolPreconditionSchemaHash;
-            ContentHash                            journalEventSchemaManifestHash;
             std::vector<ContentHash>               observedInstanceIdentitySchemaHashes{};
         };
 
-        // One closure, as the generation document states it: the digest of the
+        // The closure, as the generation document states it: the digest of the
         // module graph and the entry points the deployment declared it exports.
         [[nodiscard]]
         auto closureValue(operator_runtime::ProjectClosureClaims const& closure)
@@ -508,10 +478,6 @@ namespace uf::deployment
             }
 
             return json::canonicalBytes(json::Value::ofObject({
-                {"baseline_event_type",
-                 json::Value::ofString(derived.baselineEventType)},
-                {"journal_event_schema_manifest_hash",
-                 hash(derived.journalEventSchemaManifestHash)},
                 {"observed_instance_identity_schema_hashes",
                  json::Value::ofArray(std::move(identityHashes))},
                 {"plugin_environment_hash", hash(derived.pluginEnvironmentHash)},
@@ -522,12 +488,8 @@ namespace uf::deployment
                          operator_runtime::k_projectGenerationFormat
                      )
                  )},
-                {"project_state_schema_hash", hash(derived.projectStateSchemaHash)},
                 {"project_tool_bindings", json::Value::ofArray(std::move(bindings))},
-                {"project_tool_precondition_schema_hash",
-                 hash(derived.projectToolPreconditionSchemaHash)},
                 {"project_resources", json::Value::ofArray(std::move(resources))},
-                {"reducer_closure", closureValue(derived.reducerClosure)},
                 {"tool_catalog_hash", hash(derived.toolCatalogHash)},
                 {"tool_closure", closureValue(derived.toolClosure)},
             }));
@@ -598,7 +560,7 @@ namespace uf::deployment
         }
 
         // The framework's own reading of the document it just derived. It is a
-        // whole ProjectGenerationExactValidator: the two-closure registration
+        // whole ProjectGenerationExactValidator: the published registration
         // schema judges the members, and this reads back only what that schema
         // accepted.
         [[nodiscard]]
@@ -621,10 +583,6 @@ namespace uf::deployment
                     readValidated(judge, "the derived ProjectRegistration", exactJcs)
                 );
                 UF_TRY_VALUE(
-                    reducerClosure,
-                    readClosureClaims(document, "reducer_closure")
-                );
-                UF_TRY_VALUE(
                     toolClosure,
                     readClosureClaims(document, "tool_closure")
                 );
@@ -633,18 +591,6 @@ namespace uf::deployment
                     parseHash(document, "plugin_environment_hash")
                 );
                 UF_TRY_VALUE(catalogHash, parseHash(document, "tool_catalog_hash"));
-                UF_TRY_VALUE(
-                    stateHash,
-                    parseHash(document, "project_state_schema_hash")
-                );
-                UF_TRY_VALUE(
-                    preconditionHash,
-                    parseHash(document, "project_tool_precondition_schema_hash")
-                );
-                UF_TRY_VALUE(
-                    journalHash,
-                    parseHash(document, "journal_event_schema_manifest_hash")
-                );
 
                 auto resources = std::vector<operator_runtime::ProjectResource>{};
                 for (auto const& resource : member(document, "project_resources").items())
@@ -690,14 +636,9 @@ namespace uf::deployment
                         "project_registration_format"
                     ),
                     .pluginId                             = text(document, "plugin_id"),
-                    .reducerClosure                       = std::move(reducerClosure),
                     .toolClosure                          = std::move(toolClosure),
                     .pluginEnvironmentHash                = environmentHash,
                     .toolCatalogHash                      = catalogHash,
-                    .projectStateSchemaHash               = stateHash,
-                    .projectToolPreconditionSchemaHash    = preconditionHash,
-                    .journalEventSchemaManifestHash       = journalHash,
-                    .baselineEventType                    = text(document, "baseline_event_type"),
                     .projectResources                     = std::move(resources),
                     .observedInstanceIdentitySchemaHashes = std::move(identityHashes),
                     .projectToolBindings                  = std::move(toolBindings),
@@ -705,65 +646,41 @@ namespace uf::deployment
             };
         }
 
-        // The document validator the authorities are built on, wrapped so that
-        // the exact bytes a reduce input arrived as are kept. The wrapper is
-        // the loader's because the thing that observes them is the host's
-        // validator: a directory of data has nowhere to put a value that
-        // exists only while a suite runs.
-        [[nodiscard]]
-        auto recordingValidator(
-            operator_runtime::ProjectDocumentValidator judge,
-            std::shared_ptr<ProjectDocumentInputLog> p_inputLog
-        ) -> operator_runtime::ProjectDocumentValidator
+        // One observed-instance identity schema a deployment declared inline,
+        // as owned canonical bytes. The name is the identity the compiled
+        // authority answers under and the value an observation proposal's
+        // identity_schema_id carries; the bytes are what the registration pins
+        // by sha256.
+        struct DeploymentIdentitySchema final
         {
-            return [
-                judge    = std::move(judge),
-                inputLog = std::move(p_inputLog)
-            ](
-                operator_runtime::ProjectDocumentDirection direction,
-                std::string_view exactJcs
-            ) -> Status
-            {
-                using operator_runtime::ProjectDocumentDirection;
-
-                if (direction == ProjectDocumentDirection::Input)
-                {
-                    inputLog->record(exactJcs);
-                }
-                return judge(direction, exactJcs);
-            };
-        }
-
-        // Every file one deployment block names, as owned bytes. The views
-        // ProjectDeploymentSources takes are taken from these, so they must
-        // outlive the create call.
-        struct DeploymentFiles final
-        {
-            DeploymentClosure reducerClosure{};
-            DeploymentClosure toolClosure{};
-            std::string       projectState{};
-            std::string       toolPrecondition{};
-            std::string       toolCatalog{};
-            std::string       journalEventManifest{};
-
-            std::vector<std::string> journalPayloadSchemas{};
-            std::vector<std::string> effectPayloadSchemas{};
-            std::vector<std::string> observedInstanceIdentitySchemas{};
+            std::string name{};
+            std::string schema{};
         };
 
-        // One closure of a deployment's generation, as bytes plus the export
-        // set the block stated for it. `name` picks which of the two closures
-        // is being read, and nothing about the read depends on which: both are
-        // module graphs with an entry and a declaration, and the difference
-        // between them is which program type compiles them.
+        // Everything one deployment block supplies, as owned bytes. The views
+        // ProjectDeploymentSources takes are taken from these, so they must
+        // outlive the create call.
+        //
+        // Only the closure is read off disk. Every declarative member of a
+        // deployment is inline, so what this holds beside the modules is the
+        // canonical rendering of what the one document already said.
+        struct DeploymentFiles final
+        {
+            DeploymentClosure toolClosure{};
+            std::string       tools{};
+
+            std::vector<DeploymentIdentitySchema> observedInstanceIdentitySchemas{};
+        };
+
+        // The deployment's closure, as bytes plus the export set the block
+        // stated for it.
         [[nodiscard]]
         auto readPluginClosure(
             task_platform::ConfinedRoot const& root,
-            json::Value const& block,
-            std::string_view name
+            json::Value const& block
         ) -> Result<DeploymentClosure>
         {
-            auto const& plugin = member(block, name);
+            auto const& plugin = member(block, "tool_closure");
             auto modules = std::vector<operator_runtime::ProjectModuleBlob>{};
             auto paths   = std::vector<std::string>{};
             auto const& declaredModules = member(plugin, "modules").items();
@@ -825,98 +742,33 @@ namespace uf::deployment
             };
         }
 
-        [[nodiscard]]
-        auto readList(
-            task_platform::ConfinedRoot const& root,
-            json::Value const& block,
-            std::string_view name,
-            std::string_view what
-        ) -> Result<std::vector<std::string>>
-        {
-            auto bytes = std::vector<std::string>{};
-            for (auto const& path : member(block, name).items())
-            {
-                UF_TRY_VALUE(
-                    read,
-                    readFile(root, what, path.string(), k_maximumDocumentBytes)
-                );
-                bytes.emplace_back(std::move(read));
-            }
-            return bytes;
-        }
-
+        // What the deployment block supplies, gathered once. The Tool
+        // declarations and every identity schema are rendered canonically here
+        // and nowhere else: the bytes a registration pins are this loader's own
+        // arithmetic over the document it read, exactly as every other digest
+        // is, so a project author never writes one and no second serialization
+        // of the same declaration exists.
         [[nodiscard]]
         auto readDeploymentFiles(
             task_platform::ConfinedRoot const& root,
             json::Value const& block
         ) -> Result<DeploymentFiles>
         {
-            auto const read =
-                [&root, &block](std::string_view name, std::size_t bound)
-            {
-                return readFile(
-                    root,
-                    std::format("a deployment's {}", name),
-                    member(block, name).string(),
-                    bound
-                );
-            };
+            UF_TRY_VALUE(toolClosure, readPluginClosure(root, block));
 
-            UF_TRY_VALUE(
-                reducerClosure,
-                readPluginClosure(root, block, "reducer_closure")
-            );
-            UF_TRY_VALUE(
-                toolClosure,
-                readPluginClosure(root, block, "tool_closure")
-            );
-            UF_TRY_VALUE(state, read("project_state_schema", k_maximumDocumentBytes));
-            UF_TRY_VALUE(
-                precondition,
-                read("tool_precondition_schema", k_maximumDocumentBytes)
-            );
-            UF_TRY_VALUE(catalog, read("tool_catalog", k_maximumDocumentBytes));
-            UF_TRY_VALUE(
-                journal,
-                read("journal_event_schema_manifest", k_maximumDocumentBytes)
-            );
-            UF_TRY_VALUE(
-                journalPayloads,
-                readList(
-                    root,
-                    block,
-                    "journal_payload_schemas",
-                    "a deployment's journal_payload_schemas entry"
-                )
-            );
-            UF_TRY_VALUE(
-                effectPayloads,
-                readList(
-                    root,
-                    block,
-                    "effect_payload_schemas",
-                    "a deployment's effect_payload_schemas entry"
-                )
-            );
-            UF_TRY_VALUE(
-                identitySchemas,
-                readList(
-                    root,
-                    block,
-                    "observed_instance_identity_schemas",
-                    "a deployment's observed_instance_identity_schemas entry"
-                )
-            );
+            auto identitySchemas = std::vector<DeploymentIdentitySchema>{};
+            for (auto const& declared :
+                 member(block, "observed_instance_identity_schemas").items())
+            {
+                identitySchemas.emplace_back(DeploymentIdentitySchema{
+                    .name   = text(declared, "name"),
+                    .schema = json::canonicalBytes(member(declared, "schema")),
+                });
+            }
 
             return DeploymentFiles{
-                .reducerClosure                  = std::move(reducerClosure),
                 .toolClosure                     = std::move(toolClosure),
-                .projectState                    = std::move(state),
-                .toolPrecondition                = std::move(precondition),
-                .toolCatalog                     = std::move(catalog),
-                .journalEventManifest            = std::move(journal),
-                .journalPayloadSchemas           = std::move(journalPayloads),
-                .effectPayloadSchemas            = std::move(effectPayloads),
+                .tools                           = json::canonicalBytes(member(block, "tools")),
                 .observedInstanceIdentitySchemas = std::move(identitySchemas),
             };
         }
@@ -1062,22 +914,8 @@ namespace uf::deployment
         }
 
         [[nodiscard]]
-        auto views(std::vector<std::string> const& owned UF_LIFETIME_BOUND)
-            -> std::vector<std::string_view>
-        {
-            return std::vector<std::string_view>{owned.begin(), owned.end()};
-        }
-
-        [[nodiscard]]
         auto readVocabulary(json::Value const& declared) -> ProjectVocabulary
         {
-            auto const entry = [](json::Value const& document)
-            {
-                return ProjectJournalDocument{
-                    .eventType = text(document, "event_type"),
-                    .payload   = text(document, "payload"),
-                };
-            };
             auto const& action = member(declared, "ui_action");
             return ProjectVocabulary{
                 .mutatingTool         = text(declared, "mutating_tool"),
@@ -1086,11 +924,6 @@ namespace uf::deployment
                 .toolArguments        = text(declared, "tool_arguments"),
                 .refusedToolArguments = text(declared, "refused_tool_arguments"),
                 .absentTool           = text(declared, "absent_tool"),
-                .baselineEntry        = entry(member(declared, "baseline_entry")),
-                .progressEntry        = entry(member(declared, "progress_entry")),
-                .confirmedEntry       = entry(member(declared, "confirmed_entry")),
-                .supersededEntry      = entry(member(declared, "superseded_entry")),
-                .provenance           = text(declared, "provenance"),
                 .approvalRequiredPlanTool =
                     text(declared, "approval_required_plan_tool"),
                 .uiAction = ProjectUiAction{
@@ -1103,10 +936,9 @@ namespace uf::deployment
 
         // R8. Every agreement whose two halves are both authored in this
         // directory, refused where they were written rather than where a suite
-        // trips over them. A role's vocabulary is the second half of three of
-        // them: the deployment's registered baseline event type, the five tool
-        // names its Tool Catalog either carries or does not, and the four
-        // journal payloads a suite has to be able to tell apart.
+        // trips over them. A role's vocabulary is the second half of one of
+        // them: the five Tool names this deployment's declarations either carry
+        // or do not.
         //
         // Each is a case that would otherwise pass while proving nothing, and
         // the directory is the only place both halves exist. R8's one half that
@@ -1122,24 +954,12 @@ namespace uf::deployment
         {
             auto const& vocabulary = played.vocabulary;
             auto const& catalog    = deployment.catalog;
-            auto const  registered =
-                operator_runtime::ProjectIdentity{deployment.generation}
-                    .baselineEventType();
-            if (vocabulary.baselineEntry.eventType != registered)
-            {
-                return refuse(std::format(
-                    "the deployment {} is registered with baseline_event_type "
-                    "{}, and its vocabulary provisions {}",
-                    played.deployment,
-                    registered,
-                    vocabulary.baselineEntry.eventType
-                ));
-            }
 
-            // The four names the catalog must carry, and the mutability each is
-            // provisioned to demonstrate. A name the catalog carries as the
+            // The four names the deployment must declare, and the mutability
+            // each is provisioned to demonstrate. A name declared with the
             // other mutability is worse than a missing one: the suite still
-            // runs, and what it proves is that mutability came from the caller.
+            // runs, and what it proves is that mutability came from the
+            // caller.
             struct CarriedToolClaim final
             {
                 std::string_view                 member{};
@@ -1175,8 +995,8 @@ namespace uf::deployment
                 if (!carried.has_value())
                 {
                     return refuse(std::format(
-                        "{}'s {} names {}, which the deployment {}'s Tool "
-                        "Catalog does not carry",
+                        "{}'s {} names {}, which the deployment {} does "
+                        "not declare",
                         role,
                         claim.member,
                         claim.name,
@@ -1186,8 +1006,8 @@ namespace uf::deployment
                 if (carried->mutability != claim.mutability)
                 {
                     return refuse(std::format(
-                        "{}'s {} names {}, which the deployment {}'s Tool "
-                        "Catalog carries as {} rather than as {}",
+                        "{}'s {} names {}, which the deployment {} declares "
+                        "as {} rather than as {}",
                         role,
                         claim.member,
                         claim.name,
@@ -1216,52 +1036,16 @@ namespace uf::deployment
             if (catalog.carriedTool(vocabulary.absentTool).has_value())
             {
                 return refuse(std::format(
-                    "{}'s absent_tool names {}, which the deployment {}'s Tool "
-                    "Catalog carries; the member exists so that the catalog's "
-                    "refusal of an unknown tool is falsifiable, and a carried "
-                    "name leaves that case passing with nothing red anywhere",
+                    "{}'s absent_tool names {}, which the deployment {} "
+                    "declares; the member exists so that the refusal of an "
+                    "unknown tool is falsifiable, and a declared name leaves "
+                    "that case passing with nothing red anywhere",
                     role,
                     vocabulary.absentTool,
                     played.deployment
                 ));
             }
 
-            // All four journal payloads must differ. The reducer-input case
-            // proves that an entry a commit did not name never reaches the
-            // reducer, and two entries carrying one payload cannot show which
-            // of them arrived.
-            struct ProvisionedEntry final
-            {
-                std::string_view              member{};
-                ProjectJournalDocument const* p_entry{};
-            };
-
-            auto const entries = std::array{
-                ProvisionedEntry{"baseline_entry", &vocabulary.baselineEntry},
-                ProvisionedEntry{"progress_entry", &vocabulary.progressEntry},
-                ProvisionedEntry{"confirmed_entry", &vocabulary.confirmedEntry},
-                ProvisionedEntry{"superseded_entry", &vocabulary.supersededEntry},
-            };
-            for (auto first = std::size_t{0}; first < entries.size(); ++first)
-            {
-                for (auto second = first + 1U; second < entries.size(); ++second)
-                {
-                    auto const& earlier = checkedAt(entries, first);
-                    auto const& later   = checkedAt(entries, second);
-                    if (earlier.p_entry->payload != later.p_entry->payload)
-                    {
-                        continue;
-                    }
-                    return refuse(std::format(
-                        "{}'s {} and {} carry one payload; an entry a commit "
-                        "did not name is provably absent from the reducer's "
-                        "input only while the four payloads differ",
-                        role,
-                        earlier.member,
-                        later.member
-                    ));
-                }
-            }
             return ok();
         }
 
@@ -1313,22 +1097,9 @@ namespace uf::deployment
             [[nodiscard]]
             static auto load(
                 std::filesystem::path const& directory,
-                std::span<ExpectedRegistration const> expected,
-                std::shared_ptr<ProjectDocumentInputLog> const& p_inputLog
+                std::span<ExpectedRegistration const> expected
             ) -> Result<LoadedProject>;
         };
-    }
-
-    auto ProjectDocumentInputLog::record(std::string_view exactJcs) -> void
-    {
-        auto lock         = std::lock_guard{m_mutex};
-        m_lastReduceInput = std::string{exactJcs};
-    }
-
-    auto ProjectDocumentInputLog::lastReduceInput() const -> std::string
-    {
-        auto lock = std::lock_guard{m_mutex};
-        return m_lastReduceInput;
     }
 
     auto LoadedProject::findDeployment(std::string_view name) const
@@ -1341,8 +1112,7 @@ namespace uf::deployment
 
     auto ProjectLoader::load(
         std::filesystem::path const& directory,
-        std::span<ExpectedRegistration const> expected,
-        std::shared_ptr<ProjectDocumentInputLog> const& p_inputLog
+        std::span<ExpectedRegistration const> expected
     ) -> Result<LoadedProject>
     {
         UF_TRY(requireUniqueCommitments(expected));
@@ -1378,7 +1148,7 @@ namespace uf::deployment
             readValidated(projectSchema, k_projectManifestFileName, projectBytes)
         );
 
-        // The two-closure reader, held as the validator it is. There is no
+        // The registration reader, held as the validator it is. There is no
         // owner around it: ProjectGeneration::verifyExact takes the reader
         // directly, and a wrapper would only restate that this loader is the
         // one that reads.
@@ -1452,23 +1222,25 @@ namespace uf::deployment
             UF_TRY_VALUE(resourceClaims, projectResourceClaimsOf(resources));
             UF_TRY_VALUE(toolBindings, readToolBindings(block));
 
-            auto const journalViews    = views(files.journalPayloadSchemas);
-            auto const effectViews     = views(files.effectPayloadSchemas);
-            auto const identityViews   = views(files.observedInstanceIdentitySchemas);
-            auto const sources         = ProjectDeploymentSources{
-                     .pluginId                        = pluginId,
-                     .projectState                    = files.projectState,
-                     .toolPrecondition                = files.toolPrecondition,
-                     .toolCatalog                     = files.toolCatalog,
-                     .journalEventManifest            = files.journalEventManifest,
-                     .journalPayloadSchemas           = journalViews,
-                     .effectPayloadSchemas            = effectViews,
-                     .observedInstanceIdentitySchemas = identityViews,
+            auto identityViews = std::vector<ProjectIdentitySchemaSource>{};
+            identityViews.reserve(files.observedInstanceIdentitySchemas.size());
+            for (auto const& declared : files.observedInstanceIdentitySchemas)
+            {
+                identityViews.emplace_back(ProjectIdentitySchemaSource{
+                    .name   = declared.name,
+                    .schema = declared.schema,
+                });
+            }
+            auto const sources = ProjectDeploymentSources{
+                .pluginId                        = pluginId,
+                .tools                           = files.tools,
+                .observedInstanceIdentitySchemas = identityViews,
             };
-            // R5, R6 and R7 are all inside this call. It compiles every schema
-            // under the evaluator's closed keyword set, holds the journal
-            // manifest's per-schema sha256 to the bytes it names, and refuses a
-            // catalog row that omits mutability or surface.
+            // R5, R6 and R7 are all inside this call. It judges the Tool
+            // declarations against the one published statement of their shape,
+            // compiles every schema they and the identity set state inline
+            // under the evaluator's closed keyword set, and refuses a Tool
+            // named outside the namespace this deployment registered.
             auto deployed = ProjectDeployment::create(sources);
             if (!deployed.has_value())
             {
@@ -1480,13 +1252,6 @@ namespace uf::deployment
             }
 
             UF_TRY_VALUE(
-                reducerModuleManifestHash,
-                operator_runtime::derivePluginModuleManifestHash(
-                    files.reducerClosure.entryModule,
-                    files.reducerClosure.modules
-                )
-            );
-            UF_TRY_VALUE(
                 toolModuleManifestHash,
                 operator_runtime::derivePluginModuleManifestHash(
                     files.toolClosure.entryModule,
@@ -1497,22 +1262,19 @@ namespace uf::deployment
                 pluginEnvironmentHash,
                 operator_runtime::currentProjectPluginEnvironmentHash()
             );
-            UF_TRY_VALUE(catalogHash, hashOf(files.toolCatalog));
-            UF_TRY_VALUE(stateHash, hashOf(files.projectState));
-            UF_TRY_VALUE(preconditionHash, hashOf(files.toolPrecondition));
-            UF_TRY_VALUE(journalHash, hashOf(files.journalEventManifest));
+            UF_TRY_VALUE(catalogHash, hashOf(files.tools));
 
-            // The identity schema hashes, derived from the bytes this loader
-            // read and sorted and deduplicated by that derivation. The
-            // registration schema cannot state sortedness, so the framework's
-            // own reading of the derived document refuses any other order;
-            // what a project author writes is never consulted, on the same
-            // terms as every other digest here.
+            // The identity schema hashes, derived from the canonical bytes this
+            // loader rendered and sorted and deduplicated by that derivation.
+            // The registration schema cannot state sortedness, so the
+            // framework's own reading of the derived document refuses any other
+            // order; what a project author writes is never consulted, on the
+            // same terms as every other digest here.
             auto identityHashes = std::vector<ContentHash>{};
             identityHashes.reserve(files.observedInstanceIdentitySchemas.size());
-            for (auto const& identityBytes : files.observedInstanceIdentitySchemas)
+            for (auto const& declared : files.observedInstanceIdentitySchemas)
             {
-                UF_TRY_VALUE(identityHash, hashOf(identityBytes));
+                UF_TRY_VALUE(identityHash, hashOf(declared.schema));
                 identityHashes.emplace_back(identityHash);
             }
             std::ranges::sort(identityHashes);
@@ -1521,21 +1283,13 @@ namespace uf::deployment
             identityHashes.erase(identityUniqueBegin, identityUniqueEnd);
 
             auto const derived = DerivedRegistration{
-                .pluginId          = pluginId,
-                .baselineEventType = text(block, "baseline_event_type"),
-                .reducerClosure                       = operator_runtime::ProjectClosureClaims{
-                    .moduleManifestHash  = reducerModuleManifestHash,
-                    .exportedEntryPoints = files.reducerClosure.declaredEntryPoints,
-                },
-                .toolClosure                          = operator_runtime::ProjectClosureClaims{
+                .pluginId    = pluginId,
+                .toolClosure = operator_runtime::ProjectClosureClaims{
                     .moduleManifestHash  = toolModuleManifestHash,
                     .exportedEntryPoints = files.toolClosure.declaredEntryPoints,
                 },
                 .pluginEnvironmentHash                = pluginEnvironmentHash,
                 .toolCatalogHash                      = catalogHash,
-                .projectStateSchemaHash               = stateHash,
-                .projectToolPreconditionSchemaHash    = preconditionHash,
-                .journalEventSchemaManifestHash       = journalHash,
                 .observedInstanceIdentitySchemaHashes = std::move(identityHashes),
             };
 
@@ -1583,42 +1337,10 @@ namespace uf::deployment
                 ));
             }
 
-            auto const documentSchemas =
-                operator_runtime::ProjectDocumentSchemaBytes{
-                    .projectState     = files.projectState,
-                    .toolPrecondition = files.toolPrecondition,
-                };
-            auto documentValidator = deployed->documentValidator();
-            if (p_inputLog != nullptr)
-            {
-                documentValidator = recordingValidator(
-                    std::move(documentValidator),
-                    p_inputLog
-                );
-            }
-            auto projectSchemaOwner = operator_runtime::ProjectSchemaOwner::create(
-                *registration,
-                documentSchemas,
-                canonicalJsonValidator(),
-                std::move(documentValidator)
-            );
-            if (!projectSchemaOwner.has_value())
-            {
-                return std::unexpected{projectSchemaOwner.error().clone()};
-            }
-            auto journalOwner = operator_runtime::ProjectJournalSchemaOwner::create(
-                *registration,
-                files.journalEventManifest,
-                deployed->journalPayloadValidator()
-            );
-            if (!journalOwner.has_value())
-            {
-                return std::unexpected{journalOwner.error().clone()};
-            }
             auto catalogOwner =
                 operator_runtime::ProjectToolCatalogSchemaOwner::create(
                     *registration,
-                    files.toolCatalog,
+                    files.tools,
                     deployed->toolCatalogReader(),
                     deployed->toolArgumentValidator()
                 );
@@ -1650,12 +1372,9 @@ namespace uf::deployment
             loaded.deployments.emplace_back(LoadedDeployment{
                 .name                            = name,
                 .generation                      = *std::move(registration),
-                .schemaOwner                     = *std::move(projectSchemaOwner),
-                .journalSchemaOwner              = *std::move(journalOwner),
                 .toolCatalogSchemaOwner          = *std::move(catalogOwner),
                 .observedInstanceIdentitySchemas = *std::move(identitySet),
                 .catalog                         = *std::move(deployed),
-                .reducerClosure                  = std::move(files.reducerClosure),
                 .toolClosure                     = std::move(files.toolClosure),
                 .projectResources                = std::move(resources),
             });
@@ -1694,7 +1413,7 @@ namespace uf::deployment
         std::span<ExpectedRegistration const> expected
     ) -> Result<LoadedProject>
     {
-        return ProjectLoader::load(directory, expected, {});
+        return ProjectLoader::load(directory, expected);
     }
 
     auto loadConformanceProject(
@@ -1702,8 +1421,7 @@ namespace uf::deployment
         std::span<ExpectedRegistration const> expected
     ) -> Result<ConformanceProject>
     {
-        auto inputLog = std::make_shared<ProjectDocumentInputLog>();
-        UF_TRY_VALUE(loaded, ProjectLoader::load(directory, expected, inputLog));
+        UF_TRY_VALUE(loaded, ProjectLoader::load(directory, expected));
 
         // The directory is confined a second time rather than threaded out of
         // the load above: what a load returns is what it read, and a project is
@@ -1722,7 +1440,7 @@ namespace uf::deployment
         );
         UF_TRY_VALUE(
             conformanceSchema,
-            compile("umbraflow-conformance/v2", k_conformanceSchema)
+            compile("umbraflow-conformance/v3", k_conformanceSchema)
         );
         UF_TRY_VALUE(
             conformance,
@@ -1793,11 +1511,10 @@ namespace uf::deployment
         }
 
         auto project = ConformanceProject{
-            .loaded           = std::move(loaded),
-            .documentInputLog = std::move(inputLog),
-            .probeFrame       = {frameBytes.begin(), frameBytes.end()},
-            .underTest        = std::move(underTest),
-            .foreign          = std::move(foreign),
+            .loaded     = std::move(loaded),
+            .probeFrame = {frameBytes.begin(), frameBytes.end()},
+            .underTest  = std::move(underTest),
+            .foreign    = std::move(foreign),
         };
 
         // R8, the half a loader can answer, for each role in turn. The member
@@ -1824,81 +1541,5 @@ namespace uf::deployment
         }
 
         return project;
-    }
-
-    auto readDeclaredProjectFiles(
-        std::filesystem::path const& directory
-    ) -> Result<std::vector<DeclaredProjectFile>>
-    {
-        UF_TRY_VALUE(root, openRoot(directory));
-        UF_TRY_VALUE(
-            projectBytes,
-            readRootDocument(
-                root,
-                directory,
-                k_projectManifestFileName,
-                "reading a project's declared files"
-            )
-        );
-        UF_TRY_VALUE(publishedProject, publishedSchema(k_projectSchemaPath));
-        UF_TRY_VALUE(
-            projectSchema,
-            compile(publishedProject.relativePath, publishedProject.exactBytes)
-        );
-        UF_TRY_VALUE(
-            manifest,
-            readValidated(projectSchema, k_projectManifestFileName, projectBytes)
-        );
-
-        auto rows = std::vector<DeclaredProjectFile>{};
-        for (auto const& block : member(manifest, "deployments").items())
-        {
-            for (auto const& name : std::array{
-                     "project_state_schema",
-                     "tool_precondition_schema",
-                     "tool_catalog",
-                     "journal_event_schema_manifest",
-                 })
-            {
-                auto const declaredPath = std::string{
-                    member(block, name).string()
-                };
-                UF_TRY_VALUE(
-                    bytes,
-                    readFile(
-                        root,
-                        std::format("a deployment's {}", name),
-                        declaredPath,
-                        k_maximumDocumentBytes
-                    )
-                );
-                UF_TRY_VALUE(digest, hashOf(bytes));
-                rows.emplace_back(DeclaredProjectFile{
-                    .path   = std::move(declaredPath),
-                    .digest = digest,
-                    .size   = bytes.size(),
-                });
-            }
-            for (auto const& declaredPath :
-                 member(block, "journal_payload_schemas").items())
-            {
-                UF_TRY_VALUE(
-                    bytes,
-                    readFile(
-                        root,
-                        "a deployment's journal_payload_schemas entry",
-                        declaredPath.string(),
-                        k_maximumDocumentBytes
-                    )
-                );
-                UF_TRY_VALUE(digest, hashOf(bytes));
-                rows.emplace_back(DeclaredProjectFile{
-                    .path   = std::string{declaredPath.string()},
-                    .digest = digest,
-                    .size   = bytes.size(),
-                });
-            }
-        }
-        return rows;
     }
 }

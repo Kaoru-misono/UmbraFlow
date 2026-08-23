@@ -1,7 +1,6 @@
 #include "project-kit.hpp"
 
 #include "declarative-workflow-tool.hpp"
-#include "tool-catalog.hpp"
 
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
@@ -54,25 +53,18 @@ namespace uf::project
             "umbraflow-project-kit-artifact-manifest/v1"
         };
         constexpr auto k_executionClosureSchema = std::string_view{
-            "umbraflow-project-kit-execution-closure/v2"
+            "umbraflow-project-kit-execution-closure/v3"
         };
 
-        // The two closure slots of one deployment, spelled once. Each names the
-        // staging subdirectory its modules are written under, which is what
-        // lets both closures carry a logical module of the same name -- and
-        // both of this repository's examples do, since `main` is the natural
-        // name for either entry.
-        constexpr auto k_reducerClosureName = std::string_view{"reducer"};
-        constexpr auto k_toolClosureName    = std::string_view{"tool"};
+        // The one closure slot of a deployment, spelled once. It names the
+        // staging subdirectory its modules are written under.
+        constexpr auto k_toolClosureName = std::string_view{"tool"};
         constexpr auto k_declarativeToolDirectory = std::string_view{
             "declarative-tools"
         };
         constexpr auto k_generatedDirectory = std::string_view{"generated"};
         constexpr auto k_generatedAdapterDirectory = std::string_view{
             "adapters"
-        };
-        constexpr auto k_generatedToolCatalogDirectory = std::string_view{
-            "tool-catalogs"
         };
         constexpr auto k_generatedTemplateDirectory = std::string_view{
             "templates"
@@ -88,9 +80,6 @@ namespace uf::project
         };
         constexpr auto k_generatedRegistrationDirectory = std::string_view{
             "registrations"
-        };
-        constexpr auto k_toolCatalogName = std::string_view{
-            "tool-catalog-v1.json"
         };
         constexpr auto k_frameworkSchemaCatalogName = std::string_view{
             "framework-schema-catalog-v1.json"
@@ -140,7 +129,6 @@ namespace uf::project
         {
             std::string                      deploymentName{};
             std::string                      pluginId{};
-            ProjectClosureBuildSpec          reducerClosure{};
             ProjectClosureBuildSpec          toolClosure{};
             std::vector<ProjectResourceSpec> resources{};
         };
@@ -230,13 +218,10 @@ namespace uf::project
                         "plugin/" + std::string{closureName} + ".luau"
                     )},
                 }));
-                if (closureName == k_reducerClosureName)
-                {
-                    modules.emplace_back(json::Value::ofObject({
-                        {"name", json::Value::ofString("support")},
-                        {"path", json::Value::ofString("plugin/support.luau")},
-                    }));
-                }
+                modules.emplace_back(json::Value::ofObject({
+                    {"name", json::Value::ofString("support")},
+                    {"path", json::Value::ofString("plugin/support.luau")},
+                }));
                 break;
             }
             auto entryPoints = std::vector<json::Value>{};
@@ -252,163 +237,28 @@ namespace uf::project
             });
         }
 
+        // The one Tool a scaffold declares, inline. Its argument_schema is a
+        // real inline schema rather than `unchecked`, because a starter that
+        // declined the guard would teach the shape by omission; a project that
+        // wants no argument enforcement replaces the object with the string.
         [[nodiscard]]
-        auto scaffoldProjectDocument(
-            ProjectScaffoldSpec const& spec
-        ) -> json::Value
+        auto scaffoldTools(std::string const& pluginId) -> json::Value
         {
-            auto deployment = std::vector<json::Member>{
-                {
-                    "baseline_event_type",
-                    json::Value::ofString(
-                        spec.pluginId + ".baseline_created"
-                    ),
-                },
-                {
-                    "effect_payload_schemas",
-                    json::Value::ofArray({}),
-                },
-                {
-                    "journal_event_schema_manifest",
-                    json::Value::ofString(
-                        "schemas/" + spec.pluginId
-                        + "/journal-manifest-v1.json"
-                    ),
-                },
-                {
-                    "journal_payload_schemas",
-                    json::Value::ofArray({json::Value::ofString(
-                        "schemas/" + spec.pluginId
-                        + "/journal-0-v1.schema.json"
-                    )}),
-                },
-                {"name", json::Value::ofString("main")},
-                {
-                    "observed_instance_identity_schemas",
-                    json::Value::ofArray({}),
-                },
-                {
-                    "reducer_closure",
-                    scaffoldClosure(
-                        spec.pluginId,
-                        spec.pluginForm,
-                        k_reducerClosureName,
-                        {"reduce"}
-                    ),
-                },
-                {
-                    // A scaffold binds no Tool, so its tool closure states an
-                    // empty export set. The slot is written out rather than
-                    // omitted on the same terms as tool_bindings below.
-                    "tool_closure",
-                    scaffoldClosure(
-                        spec.pluginId,
-                        spec.pluginForm,
-                        k_toolClosureName,
-                        {}
-                    ),
-                },
-                {
-                    "plugin_authoring",
-                    json::Value::ofString(
-                        spec.pluginForm == ProjectPluginForm::Generated
-                            ? "generated"
-                            : "hand-written"
-                    ),
-                },
-                {"plugin_id", json::Value::ofString(spec.pluginId)},
-                {
-                    "project_state_schema",
-                    json::Value::ofString(
-                        "schemas/" + spec.pluginId
-                        + "/project-state-v1.schema.json"
-                    ),
-                },
-                {
-                    "resources",
-                    json::Value::ofArray({json::Value::ofObject({
-                        {"kind", json::Value::ofString("utf8")},
-                        {"name", json::Value::ofString("facts")},
-                        {
-                            "path",
-                            json::Value::ofString("content/placeholder.txt"),
-                        },
-                    })}),
-                },
-                {
-                    // A scaffold binds no Tool to a closure entry: it ships
-                    // the pure five-function shape, and the empty array is the
-                    // whole statement of that. It is written out rather than
-                    // left out on the same terms as effect_payload_schemas.
-                    "tool_bindings",
-                    json::Value::ofArray({}),
-                },
-                {
-                    "tool_catalog",
-                    json::Value::ofString(
-                        "schemas/" + spec.pluginId
-                        + "/tool-catalog-v1.json"
-                    ),
-                },
-                {
-                    "tool_precondition_schema",
-                    json::Value::ofString(
-                        "schemas/" + spec.pluginId
-                        + "/precondition-v1.schema.json"
-                    ),
-                },
-            };
-            if (spec.pluginForm == ProjectPluginForm::HandWritten)
-            {
-                deployment.emplace_back(
-                    "plugin_justification",
-                    json::Value::ofString(
-                        "Replace this scaffold explanation with the member or "
-                        "semantic that umbraflow-declarative-workflow-tool/v1 "
-                        "cannot express."
-                    )
-                );
-            }
-            return json::Value::ofObject({
-                {
-                    "deployments",
-                    json::Value::ofArray({
-                        json::Value::ofObject(std::move(deployment)),
-                    }),
-                },
-                {"primary_deployment", json::Value::ofString("main")},
-                {"runtime_artifact", json::Value::ofString("runtime/artifact")},
-                {
-                    "schema",
-                    json::Value::ofString(std::string{k_projectContractVersion}),
-                },
-                {"template_cuts", json::Value::ofArray({})},
-            });
-        }
-
-        [[nodiscard]]
-        auto scaffoldToolCatalog(
-            std::string const& pluginId,
-            ContentHash const& preconditionHash
-        ) -> json::Value
-        {
-            return json::Value::ofObject({
-                {
-                    "effect_payload_sha256s",
-                    json::Value::ofArray({}),
-                },
-                {"plugin_id", json::Value::ofString(pluginId)},
-                {"schema", json::Value::ofString("umbraflow-tool-catalog/v1")},
-                {
-                    "tool_precondition_sha256",
-                    json::Value::ofString(preconditionHash.hex()),
-                },
-                {
-                    "tools",
-                    json::Value::ofArray({json::Value::ofObject({
+            return json::Value::ofArray({json::Value::ofObject({
                         {
                             "argument_schema",
-                            json::Value::ofString("observed_instance_id"),
+                            json::Value::ofObject({
+                                {
+                                    "$schema",
+                                    json::Value::ofString(
+                                        "https://json-schema.org/draft/2020-12/schema"
+                                    ),
+                                },
+                                {
+                                    "type",
+                                    json::Value::ofString("object"),
+                                },
+                            }),
                         },
                         {
                             // The empty declaration, written out. A scaffold
@@ -456,10 +306,6 @@ namespace uf::project
                             "required_capabilities",
                             json::Value::ofArray({}),
                         },
-                        {
-                            "result_schema",
-                            json::Value::ofString("tool_result"),
-                        },
                         {"surface", json::Value::ofString("semantic")},
                         {
                             "timeout_policy",
@@ -504,8 +350,87 @@ namespace uf::project
                                 },
                             }),
                         },
+            })});
+        }
+
+        [[nodiscard]]
+        auto scaffoldProjectDocument(
+            ProjectScaffoldSpec const& spec
+        ) -> json::Value
+        {
+            auto deployment = std::vector<json::Member>{
+                {"name", json::Value::ofString("main")},
+                {
+                    "observed_instance_identity_schemas",
+                    json::Value::ofArray({}),
+                },
+                {
+                    // A scaffold binds no Tool, so its tool closure states an
+                    // empty export set. The slot is written out rather than
+                    // omitted on the same terms as tool_bindings below.
+                    "tool_closure",
+                    scaffoldClosure(
+                        spec.pluginId,
+                        spec.pluginForm,
+                        k_toolClosureName,
+                        {}
+                    ),
+                },
+                {
+                    "plugin_authoring",
+                    json::Value::ofString(
+                        spec.pluginForm == ProjectPluginForm::Generated
+                            ? "generated"
+                            : "hand-written"
+                    ),
+                },
+                {"plugin_id", json::Value::ofString(spec.pluginId)},
+                {
+                    "resources",
+                    json::Value::ofArray({json::Value::ofObject({
+                        {"kind", json::Value::ofString("utf8")},
+                        {"name", json::Value::ofString("facts")},
+                        {
+                            "path",
+                            json::Value::ofString("content/placeholder.txt"),
+                        },
                     })}),
                 },
+                {
+                    // A scaffold binds no Tool to a closure entry, and the
+                    // empty array is the whole statement of that. It is
+                    // written out rather than left out on the same terms as
+                    // observed_instance_identity_schemas.
+                    "tool_bindings",
+                    json::Value::ofArray({}),
+                },
+                {"tools", scaffoldTools(spec.pluginId)},
+            };
+            if (spec.pluginForm == ProjectPluginForm::HandWritten)
+            {
+                deployment.emplace_back(
+                    "plugin_justification",
+                    json::Value::ofString(
+                        "Replace this scaffold explanation with the member or "
+                        "semantic that umbraflow-declarative-workflow-tool/v1 "
+                        "cannot express."
+                    )
+                );
+            }
+            return json::Value::ofObject({
+                {
+                    "deployments",
+                    json::Value::ofArray({
+                        json::Value::ofObject(std::move(deployment)),
+                    }),
+                },
+                {"primary_deployment", json::Value::ofString("main")},
+                {"runtime_artifact", json::Value::ofString("runtime/artifact")},
+                {
+                    "schema",
+                    json::Value::ofString(std::string{k_projectContractVersion}),
+                },
+                {"template_cuts", json::Value::ofArray({})},
             });
         }
 
@@ -861,10 +786,7 @@ namespace uf::project
                 return refuseShape();
             }
             auto const closureName = body.substr(slot + 1U);
-            if (
-                closureName != k_reducerClosureName
-                && closureName != k_toolClosureName
-            )
+            if (closureName != k_toolClosureName)
             {
                 return refuseShape();
             }
@@ -1098,29 +1020,26 @@ namespace uf::project
                     member(deployment, "plugin_authoring").string()
                     == "generated"
                 );
-                for (auto const* const slot : {"reducer_closure", "tool_closure"})
+                auto const& closure = member(deployment, "tool_closure");
+                for (auto const& module : member(closure, "modules").items())
                 {
-                    auto const& closure = member(deployment, slot);
-                    for (auto const& module : member(closure, "modules").items())
+                    UF_TRY_VALUE(
+                        normalized,
+                        normalizeInputPath(
+                            std::filesystem::path{member(module, "path").string()}
+                        )
+                    );
+                    if (isGenerated)
                     {
                         UF_TRY_VALUE(
-                            normalized,
-                            normalizeInputPath(
-                                std::filesystem::path{member(module, "path").string()}
-                            )
+                            declaration,
+                            declarativeInputForGeneratedModule(normalized)
                         );
-                        if (isGenerated)
-                        {
-                            UF_TRY_VALUE(
-                                declaration,
-                                declarativeInputForGeneratedModule(normalized)
-                            );
-                            inputs.emplace(std::move(declaration));
-                        }
-                        else
-                        {
-                            inputs.emplace(normalized);
-                        }
+                        inputs.emplace(std::move(declaration));
+                    }
+                    else
+                    {
+                        inputs.emplace(normalized);
                     }
                 }
                 for (auto const& resource : member(deployment, "resources").items())
@@ -1147,7 +1066,7 @@ namespace uf::project
         // One member of an object the published schema has already judged.
         //
         // Total by construction rather than by luck: every member read through
-        // it is `required` in schema/umbraflow-project-v2.schema.json and of
+        // it is `required` in schema/umbraflow-project-v3.schema.json and of
         // the type stated there, so validate() has already refused every
         // document in which the lookup could fail. The check is here so that a
         // member removed from the schema without being removed here stops the
@@ -1274,7 +1193,6 @@ namespace uf::project
                 auto registration = ProjectRegistrationBuildSpec{
                     .deploymentName = std::string{member(deployment, "name").string()},
                     .pluginId       = std::string{member(deployment, "plugin_id").string()},
-                    .reducerClosure = closureOf("reducer_closure"),
                     .toolClosure    = closureOf("tool_closure"),
                 };
                 for (auto const& resource : member(deployment, "resources").items())
@@ -1362,19 +1280,11 @@ namespace uf::project
                         input
                     )
                 );
-                // One declaration generates two modules, so its adapter
-                // directory is the declaration's own name and the two closures
-                // are files inside it. A flat <name>.luau could hold only one
-                // of them, and a deployment needs both.
+                // The adapter directory is the declaration's own name and
+                // the closure is a file inside it, so the staged module path
+                // says which declaration it came from.
                 auto const adapterDirectory =
                     std::filesystem::path{pluginId} / components.back().stem();
-                adapters.emplace_back(
-                    GeneratedArtifact{
-                        .relativePath = adapterDirectory
-                            / (std::string{k_reducerClosureName} + ".luau"),
-                        .bytes = std::move(adapter.reducerModule),
-                    }
-                );
                 adapters.emplace_back(
                     GeneratedArtifact{
                         .relativePath = adapterDirectory
@@ -1384,43 +1294,6 @@ namespace uf::project
                 );
             }
             return adapters;
-        }
-
-        [[nodiscard]]
-        auto generatedToolCatalogs(
-            std::vector<ToolCatalogDeclaration> const& declarations
-        ) -> Result<std::vector<GeneratedArtifact>>
-        {
-            auto catalogs  = std::vector<GeneratedArtifact>{};
-            auto pluginIds = std::set<std::string>{};
-            catalogs.reserve(declarations.size());
-            for (auto const& declaration : declarations)
-            {
-                if (!pluginIds.emplace(declaration.pluginId).second)
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        std::format(
-                            "generated Tool Catalog declared plugin {} more than once",
-                            declaration.pluginId
-                        )
-                    );
-                }
-                UF_TRY_VALUE_CONTEXT(
-                    catalog,
-                    generateToolCatalog(declaration),
-                    std::format(
-                        "generating Tool Catalog for plugin {}",
-                        declaration.pluginId
-                    )
-                );
-                catalogs.emplace_back(GeneratedArtifact{
-                    .relativePath = std::filesystem::path{declaration.pluginId}
-                        / k_toolCatalogName,
-                    .bytes = std::move(catalog),
-                });
-            }
-            return catalogs;
         }
 
         [[nodiscard]]
@@ -1844,17 +1717,6 @@ namespace uf::project
             for (auto& registration : orderedRegistrations)
             {
                 UF_TRY_VALUE(
-                    reducerClosure,
-                    stagedClosure(
-                        sourceDirectory,
-                        inputs,
-                        generatedAdapters,
-                        registration.deploymentName,
-                        k_reducerClosureName,
-                        registration.reducerClosure
-                    )
-                );
-                UF_TRY_VALUE(
                     toolClosure,
                     stagedClosure(
                         sourceDirectory,
@@ -1865,10 +1727,6 @@ namespace uf::project
                         registration.toolClosure
                     )
                 );
-                for (auto& staged : reducerClosure.stagedModules)
-                {
-                    modules.emplace_back(std::move(staged));
-                }
                 for (auto& staged : toolClosure.stagedModules)
                 {
                     modules.emplace_back(std::move(staged));
@@ -1985,10 +1843,6 @@ namespace uf::project
                         {"plugin_environment_hash", json::Value::ofString(environmentHash.hex())},
                         {"plugin_id", json::Value::ofString(registration.pluginId)},
                         {"project_resources", json::Value::ofArray(std::move(resourceRows))},
-                        {"reducer_closure", closureRecord(
-                            registration.reducerClosure,
-                            std::move(reducerClosure)
-                        )},
                         {"schema", json::Value::ofString(std::string{k_executionClosureSchema})},
                         {"tool_closure", closureRecord(
                             registration.toolClosure,
@@ -2027,7 +1881,6 @@ namespace uf::project
                 adapters,
                 generatedAdapters(spec.sourceDirectory, inputs)
             );
-            UF_TRY_VALUE(catalogs, generatedToolCatalogs(spec.toolCatalogs));
             UF_TRY_VALUE(
                 templates,
                 generatedTemplates(templateCuts, resolveTemplateSource)
@@ -2048,10 +1901,6 @@ namespace uf::project
             families.emplace_back(GeneratedArtifactFamily{
                 .directory = std::string{k_generatedAdapterDirectory},
                 .artifacts = std::move(adapters),
-            });
-            families.emplace_back(GeneratedArtifactFamily{
-                .directory = std::string{k_generatedToolCatalogDirectory},
-                .artifacts = std::move(catalogs),
             });
             families.emplace_back(GeneratedArtifactFamily{
                 .directory = std::string{k_generatedTemplateDirectory},
@@ -3093,7 +2942,7 @@ namespace uf::project
     // read every extraction is allowed to follow: template_cuts in
     // readProjectManifest, and the deployment declarations in command.cpp.
     //
-    // schema/umbraflow-project-v2.schema.json
+    // schema/umbraflow-project-v3.schema.json
     // states every rule, including the direct-plugin tier's admission gate:
     // a deployment whose plugin_authoring is "hand-written" must carry a
     // plugin_justification naming the member or semantic of
@@ -3163,135 +3012,15 @@ namespace uf::project
     {
         UF_TRY(requireDirectory(spec.sourceDirectory, "source"));
 
-        auto const objectSchema = [](std::string_view id)
-        {
-            return jsonDocument(json::Value::ofObject({
-                {"$id", json::Value::ofString(std::string{id})},
-                {
-                    "$schema",
-                    json::Value::ofString(
-                        "https://json-schema.org/draft/2020-12/schema"
-                    ),
-                },
-                {"type", json::Value::ofString("object")},
-            }));
-        };
-        auto const projectStateSchema = objectSchema(
-            "https://umbraflow.dev/schema/project/state"
-        );
-        auto const preconditionSchema = jsonDocument(json::Value::ofObject({
-            {
-                "$defs",
-                json::Value::ofObject({
-                    {
-                        "observed_instance_id",
-                        json::Value::ofObject({
-                            {"type", json::Value::ofString("string")},
-                        }),
-                    },
-                    {
-                        "tool_result",
-                        json::Value::ofObject({
-                            {"type", json::Value::ofString("object")},
-                        }),
-                    },
-                }),
-            },
-            {
-                "$id",
-                json::Value::ofString(
-                    "https://umbraflow.dev/schema/project/tool-precondition"
-                ),
-            },
-            {
-                "$schema",
-                json::Value::ofString(
-                    "https://json-schema.org/draft/2020-12/schema"
-                ),
-            },
-            {"type", json::Value::ofString("object")},
-        }));
-        auto const journalPayloadSchema = objectSchema(
-            "https://umbraflow.dev/schema/project/scaffold/journal-payload"
-        );
-        UF_TRY_VALUE(
-            preconditionHash,
-            sha256(std::as_bytes(std::span{preconditionSchema}))
-        );
-        UF_TRY_VALUE(
-            journalPayloadHash,
-            sha256(std::as_bytes(std::span{journalPayloadSchema}))
-        );
+        // A starter authors one JSON document and one Luau closure. It writes
+        // no JSON Schema at all: the Tool it declares carries its argument
+        // shape inline, and a project that observes nothing needs no identity
+        // schema, so there is nothing left for a separate file to hold.
         auto const projectDocument = scaffoldProjectDocument(spec);
         auto const projectBytes    = jsonDocument(projectDocument);
         UF_TRY(validatedProjectDocument(projectBytes));
 
-        auto const toolCatalog = scaffoldToolCatalog(
-            spec.pluginId,
-            preconditionHash
-        );
-        UF_TRY_VALUE(
-            toolDeclaration,
-            parseToolCatalogDeclaration(toolCatalog)
-        );
-        UF_TRY(generateToolCatalog(toolDeclaration));
-
         auto files = std::vector<ScaffoldFile>{
-            {
-                .relativePath = std::filesystem::path{
-                    "schemas"
-                } / spec.pluginId / "precondition-v1.schema.json",
-                .bytes = preconditionSchema,
-            },
-            {
-                .relativePath = std::filesystem::path{
-                    "schemas"
-                } / spec.pluginId / "project-state-v1.schema.json",
-                .bytes = projectStateSchema,
-            },
-            {
-                .relativePath = std::filesystem::path{
-                    "schemas"
-                } / spec.pluginId / "journal-0-v1.schema.json",
-                .bytes = journalPayloadSchema,
-            },
-            {
-                .relativePath = std::filesystem::path{
-                    "schemas"
-                } / spec.pluginId / "journal-manifest-v1.json",
-                .bytes = jsonDocument(json::Value::ofObject({
-                    {"plugin_id", json::Value::ofString(spec.pluginId)},
-                    {
-                        "payload_schemas",
-                        json::Value::ofArray({json::Value::ofObject({
-                            {
-                                "namespaced_event_type",
-                                json::Value::ofString(
-                                    spec.pluginId + ".baseline_created"
-                                ),
-                            },
-                            {
-                                "sha256",
-                                json::Value::ofString(
-                                    journalPayloadHash.hex()
-                                ),
-                            },
-                        })}),
-                    },
-                    {
-                        "schema",
-                        json::Value::ofString(
-                            "umbraflow-journal-event-schema-manifest/v1"
-                        ),
-                    },
-                })),
-            },
-            {
-                .relativePath = std::filesystem::path{
-                    "schemas"
-                } / spec.pluginId / "tool-catalog-v1.json",
-                .bytes = jsonDocument(toolCatalog),
-            },
             {
                 .relativePath = "content/placeholder.txt",
                 .bytes        = "replace this runtime resource\n",
@@ -3327,21 +3056,12 @@ namespace uf::project
                 ),
             });
             files.emplace_back(ScaffoldFile{
-                .relativePath = "plugin/reducer.luau",
-                .bytes = (
-                    "local support = require(\"./support\")\n\n"
-                    "return {\n"
-                    "    plugin_id = \"" + spec.pluginId + "\",\n"
-                    "    reduce = support.identity,\n"
-                    "}\n"
-                ),
-            });
-            files.emplace_back(ScaffoldFile{
                 .relativePath = "plugin/tool.luau",
                 .bytes = (
                     "-- This deployment binds no Tool yet, so this closure\n"
                     "-- exports its identity and nothing else. Add an entry\n"
                     "-- here and name it in tool_bindings together.\n"
+                    "local _support = require(\"./support\")\n\n"
                     "return {\n"
                     "    plugin_id = \"" + spec.pluginId + "\",\n"
                     "}\n"
@@ -3417,7 +3137,6 @@ namespace uf::project
             ProjectBuildSpec{
                 .sourceDirectory = spec.sourceDirectory,
                 .buildDirectory  = spec.buildDirectory,
-                .toolCatalogs    = {},
             }
         ));
         UF_TRY_VALUE(inputs, initializedInputs(spec));

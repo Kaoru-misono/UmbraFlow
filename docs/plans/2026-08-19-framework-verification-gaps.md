@@ -10,16 +10,21 @@ obligations are frozen under [`docs/decisions/`](../decisions/README.md).
 
 ## G-01 - Verify every project-manifest dependency
 
-`project check` currently rebuilds and compares its generated closure but does
-not open every file named by the project directory manifest. A project can name
-tool catalogs, project schemas and manifests that do not exist on disk and still
-pass this command.
+> **Reduced in scope, 2026-08-23**, by
+> [the framework stops interpreting a Project's state](../decisions/2026-08-23-the-framework-stops-interpreting-project-state.md).
+> A deployment names no declarative document by path any more: its Tools and its
+> identity schemas are inline, so the only files it can name are its Luau
+> modules and its resources, which `project build` already opens and stages. The
+> declared-file record this gap once asked for was deleted with the file set it
+> enumerated.
 
-Completion requires one canonical loader-backed verification path. A fixture
-that names a missing tool catalog, project schema, manifest or journal payload
-schema must fail and name the missing path. The implementation must not add a
-second parser to `project`; either the loader boundary is made available without
-creating a dependency cycle, or the ownership boundary is changed explicitly.
+What remains of this gap is the semantic half: `project check` compiles no
+inline schema, performs no Tool-name-to-entry join and derives no registration
+root, so a declaration whose joins do not hold can still pass the kit and be
+refused at `umbra-flow open`. Completion requires one canonical loader-backed
+verification path. The implementation must not add a second parser to `project`;
+either the loader boundary is made available without creating a dependency
+cycle, or the ownership boundary is changed explicitly.
 
 ## G-02 - Make the Operator public-surface scan recurring
 

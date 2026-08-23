@@ -74,11 +74,12 @@ The term itself was ruled on separately:
   entry point. Only `Host.deliver(authority, receipt)` consumes it.
 - Operator owns lease/fence, snapshots, commands, frozen plans, immutable
   authority decisions, policy, approvals, operations, and reconciliation.
-- A project's boundary is two Luau closures — a reducer closure and a tool
-  closure — and nothing else reaches it. Core has no game-name branch. The
-  five-function ProjectPlugin boundary this line used to state was replaced by
-  the Tool Runtime generation; see
-  [`2026-08-21-project-plugin-cycle-spi.md`](2026-08-21-project-plugin-cycle-spi.md).
+- A project's boundary is one Luau closure — the tool closure — and nothing
+  else reaches it. Core has no game-name branch. The five-function ProjectPlugin
+  boundary this line used to state was replaced by the Tool Runtime generation
+  ([`2026-08-21-project-plugin-cycle-spi.md`](2026-08-21-project-plugin-cycle-spi.md)),
+  and the reducer closure that generation kept was deleted on 2026-08-23 by
+  [the framework stops interpreting a Project's state](../decisions/2026-08-23-the-framework-stops-interpreting-project-state.md).
 - Production uses `operator-runtime.sqlite`. Offline authoring uses a separate
   `annotation-workspace.sqlite`; production cannot attach or read it.
 - Production model/session/trace artifacts never carry annotation screenshots.

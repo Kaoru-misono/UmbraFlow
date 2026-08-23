@@ -10,11 +10,10 @@ framework's prose and a consumer's interface lock is exactly that failure.
 
 So this repository publishes exactly one outward document,
 ``docs/PUBLIC-CONTRACT.md``, and every fact in it is read out of bytes here:
-the published schemas under ``schema/``, the project-supplied schema
-identities the deployment header fixes, the schema identities the deployment
-module compiles from its own source, the wire tags the sources write, the
-usage text and refusal strings the CLI entry points hold, and the two fixture
-projects under ``examples/``.
+the published schemas under ``schema/``, the schema identities the
+deployment module compiles from its own source, the wire tags the sources
+write, the usage text and refusal strings the CLI entry points hold, and the
+two fixture projects under ``examples/``.
 
 Nothing about status, and nothing about a consumer's version, may enter the
 output. The document says what this repository offers, not how far anyone has
@@ -41,22 +40,13 @@ GENERATOR_RELATIVE_PATH = "scripts/generate_public_contract.py"
 
 SCHEMA_DIRECTORY = "schema"
 
-# The header that fixes the ``$id`` of every schema a *project* supplies. The
-# framework owns the identity and refuses a deployment declaring another one;
-# the project owns the bytes. tests/framework_support.py in the consuming
-# repository reads the same header with the same regex, so the two sides name
-# one spelling.
-PROJECT_SCHEMA_ID_HEADER = (
-    "modules/deployment/source/deployment/project-deployment.hpp"
-)
-
 # The header whose struct members enumerate one loaded deployment's
 # authorities, and the schema that states what a project directory must
 # declare.
 DEPLOYMENT_DIRECTORY_HEADER = (
     "modules/deployment/source/deployment/project-directory.hpp"
 )
-PROJECT_DIRECTORY_SCHEMA = "schema/umbraflow-project-v2.schema.json"
+PROJECT_DIRECTORY_SCHEMA = "schema/umbraflow-project-v3.schema.json"
 SCRIPT_CONTRACT_HEADER = "modules/script/source/script/pure-data-program.hpp"
 SCRIPT_CONTRACT_SOURCE = "modules/script/source/script/ffi/pure-data-program.cpp"
 # The closed-graph runtime both program types share. The ceilings, the published
@@ -169,7 +159,7 @@ CLI_SURFACE_SOURCES = (
         "entry/project/platform/curl-download-posix.cpp",
         (),
     ),
-    ("project (declared files)", "entry/project/main.cpp", ()),
+    ("project (release bootstrap)", "entry/project/main.cpp", ()),
     (
         "project directory loader",
         "modules/deployment/source/deployment/project-directory.cpp",
@@ -194,12 +184,6 @@ CLI_USAGE_DEFINITIONS = (
 
 EXAMPLES_DIRECTORY = "examples"
 ROOT_CMAKE = "CMakeLists.txt"
-
-# ``inline constexpr auto k_projectStateSchemaId =
-#       std::string_view{"https://umbraflow.dev/schema/project/state"};``
-PROJECT_SCHEMA_ID_CONSTANT = re.compile(
-    r"k_([A-Za-z]+)SchemaId\s*=\s*\n?\s*std::string_view\{\"([^\"]+)\"\}"
-)
 
 # Every ``umbraflow-<name>/v<n>`` literal: how a wire tag is spelled on both
 # sides of this boundary.
@@ -760,17 +744,6 @@ def published_schemas(root: Path) -> list[SchemaIdentity]:
     return identities
 
 
-def project_supplied_identities(root: Path) -> list[tuple[str, str]]:
-    """The $id each schema a project supplies must declare, by its role."""
-    header = read(root, PROJECT_SCHEMA_ID_HEADER)
-    found = PROJECT_SCHEMA_ID_CONSTANT.findall(header)
-    if not found:
-        raise SystemExit(
-            f"{PROJECT_SCHEMA_ID_HEADER}: declares no k_<role>SchemaId constant"
-        )
-    return sorted((role, schema_id) for role, schema_id in found)
-
-
 def embedded_schema_documents(root: Path) -> list[tuple[str, str, dict[str, object]]]:
     """Every schema the deployment module compiles from its own source bytes."""
     documents: list[tuple[str, str, dict[str, object]]] = []
@@ -806,10 +779,9 @@ def reference_targets(root: Path) -> set[str]:
 def written_wire_tags(root: Path) -> set[str]:
     """Every wire tag this repository's first-party sources still write.
 
-    ``entry/`` counts as well as ``modules/``: ``entry/project/main.cpp`` writes
-    the declared-file record a consumer's build tree holds, and a tag only that
-    executable spells is still a tag a consumer sees. ``entry/workbench`` is
-    excluded because it is vendored.
+    ``entry/`` counts as well as ``modules/``: a tag only an entry executable
+    spells is still a tag a consumer sees. ``entry/workbench`` is excluded
+    because it is vendored.
     """
     tags: set[str] = set()
     patterns = (
@@ -1008,21 +980,19 @@ def definition(document: dict[str, object], name: str) -> dict[str, object]:
     return found
 
 
-def tool_catalog_bound(root: Path) -> tuple[str, int]:
-    """The Tool Catalog's own floor on how many tools it may carry."""
-    for schema_id, _relative, document in embedded_schema_documents(root):
-        if not schema_id.endswith("/tool-catalog"):
-            continue
-        properties = document.get("properties")
-        if not isinstance(properties, dict):
-            continue
-        tools = properties.get("tools")
-        if not isinstance(tools, dict):
-            continue
-        minimum = tools.get("minItems")
-        if isinstance(minimum, int):
-            return schema_id, minimum
-    raise SystemExit("the Tool Catalog schema states no minItems for tools any more")
+def tool_declaration_bound(root: Path) -> int:
+    """The ceiling a deployment's inline Tool declarations are held to."""
+    directory_schema = json.loads(read(root, PROJECT_DIRECTORY_SCHEMA))
+    deployment = definition(directory_schema, "Deployment")
+    properties = deployment.get("properties")
+    if not isinstance(properties, dict):
+        raise SystemExit(f"{PROJECT_DIRECTORY_SCHEMA}: Deployment states no properties")
+    tools = properties.get("tools")
+    if not isinstance(tools, dict) or not isinstance(tools.get("maxItems"), int):
+        raise SystemExit(
+            f"{PROJECT_DIRECTORY_SCHEMA}: tools states no maxItems any more"
+        )
+    return int(tools["maxItems"])
 
 
 def fixture_projects(root: Path) -> list[tuple[str, str, dict[str, object]]]:
@@ -1277,7 +1247,7 @@ def script_runtime_contract(root: Path) -> dict[str, object]:
             f"{FRAMEWORK_BUNDLE_SOURCE}: exposes no scoped Framework modules"
         )
     # The two contracts must not overlap: one name that appeared in both tables
-    # would be a module a reader could not tell was loadable in a reducer.
+    # would be a module a reader could not tell which program type loads it.
     shared = {name for _stem, name in pure_bindings} & {
         name for _stem, name in scoped_bindings
     }
@@ -1309,8 +1279,6 @@ def script_runtime_contract(root: Path) -> dict[str, object]:
 
 def render(root: Path) -> str:
     published = published_schemas(root)
-    supplied = project_supplied_identities(root)
-    supplied_ids = {schema_id for _role, schema_id in supplied}
     embedded = embedded_schema_documents(root)
     targets = reference_targets(root)
     tags = written_wire_tags(root)
@@ -1325,7 +1293,7 @@ def render(root: Path) -> str:
     resource_kind_definition = definition(directory_schema, "ResourceKind")
     script_contract = script_runtime_contract(root)
     authorities = deployment_authorities(root)
-    catalog_id, catalog_minimum = tool_catalog_bound(root)
+    tool_maximum = tool_declaration_bound(root)
     proposal = json.loads(read(root, OBSERVATION_PROPOSAL_SCHEMA))
     observation = json.loads(read(root, OBSERVATION_SCHEMA))
     authority_tag, authority_members = authority_input_members(root)
@@ -1371,33 +1339,12 @@ def render(root: Path) -> str:
             ],
         )
     )
-    lines.extend(
-        [
-            "",
-            "### 1.2 Project-supplied identities",
-            "",
-            "This repository fixes the `$id` and refuses a deployment whose document",
-            "declares another one; the **project** supplies the bytes. Parity for one",
-            "of these is identity equality only -- there are no upstream bytes to",
-            f"compare against. Read from `{PROJECT_SCHEMA_ID_HEADER}`.",
-            "",
-        ]
-    )
-    lines.extend(
-        table(
-            ["Role", "`$id` the project's document must declare"],
-            [[f"`{role}`", f"`{schema_id}`"] for role, schema_id in supplied],
-        )
-    )
-
     embedded_rows: list[list[str]] = []
     unclassified: list[tuple[str, str]] = []
     labels = compile_labels(root)
     for schema_id, relative, document in embedded:
         tag = sorted(set(PINNED_WIRE_TAG.findall(json.dumps(document))))
-        if schema_id in supplied_ids:
-            ownership = "project_supplied"
-        elif tag:
+        if tag:
             ownership = "wire_tag_owned"
         elif schema_id in targets:
             ownership = "embedded_fragment"
@@ -1427,7 +1374,7 @@ def render(root: Path) -> str:
     lines.extend(
         [
             "",
-            "### 1.3 Identities compiled from module bytes",
+            "### 1.2 Identities compiled from module bytes",
             "",
             "Schemas this repository compiles out of its own source rather than",
             "publishing as a file. A project's plugin answers the operator-protocol",
@@ -1454,7 +1401,7 @@ def render(root: Path) -> str:
     lines.extend(
         [
             "",
-            "### 1.4 Wire tags no published schema pins",
+            "### 1.3 Wire tags no published schema pins",
             "",
             "Tags this repository's sources write and read, for which no file under",
             f"`{SCHEMA_DIRECTORY}/` pins the value. The tag is the whole ownership",
@@ -1486,7 +1433,7 @@ def render(root: Path) -> str:
     lines.extend(
         [
             "",
-            "### 1.5 The Project Kit release manifest",
+            "### 1.4 The Project Kit release manifest",
             "",
             f"A release bundle ships an immutable manifest tagged `{release_facts['tag']}`,",
             f"written by `{RELEASE_SOURCE}` and never authored by hand.",
@@ -1569,8 +1516,9 @@ def render(root: Path) -> str:
             "### 2.2 Each deployment block",
             "",
             "A deployment block **is** its registration, stated as intent: it names",
-            "files, and the loader derives every digest from the bytes it read. No",
-            "member below is a hash.",
+            "its closure and its resources by path, states everything else inline,",
+            "and the loader derives every registration digest from the bytes it",
+            "read. No member below is a hash.",
             "",
         ]
     )
@@ -1588,15 +1536,12 @@ def render(root: Path) -> str:
             "",
             "### 2.3 Module and resource closures",
             "",
-            "A deployment states TWO closures and both are mandatory:",
-            "`reducer_closure`, compiled on the pure program type, and",
-            "`tool_closure`, compiled on the scoped Tool program type. There is",
-            "no absent-means-pure reading and no registration that carries one",
-            "closure and infers the other; a project that binds no Tool ships a",
-            "tool closure with an explicitly empty `exported_entry_points` and an",
-            "empty `tool_bindings`.",
+            "A deployment states ONE closure, `tool_closure`, compiled on the",
+            "scoped Tool program type. A project that binds no Tool ships that",
+            "closure with an explicitly empty `exported_entry_points` and an",
+            "empty `tool_bindings`; there is no absent form of either.",
             "",
-            "Each closure is an explicit closed module graph. `entry` selects one",
+            "The closure is an explicit closed module graph. `entry` selects one",
             "logical module name, `exported_entry_points` STATES what that graph",
             "exports and is never derived from the binding table, and every module",
             "and resource path is confined to the project directory, while runtime",
@@ -1635,13 +1580,21 @@ def render(root: Path) -> str:
     lines.extend(
         [
             "",
-            "### 2.5 The Tool Catalog floor",
+            "### 2.5 The Tool declarations",
             "",
-            f"`{catalog_id}` states",
-            f'`"tools": {{"type": "array", "minItems": {catalog_minimum}}}`. A tool',
+            "A deployment declares its Tools inline, in `tools`. There is no Tool",
+            "Catalog document and no catalog file: these entries are the whole",
+            f"declaration, at most {tool_maximum} of them, and their exact canonical",
+            "bytes are what `tool_catalog_hash` digests. The array may be empty --",
+            "that is a project declaring no Tool, stated rather than omitted. A tool",
             "declares its own `mutability`, so a project that publishes no *mutating*",
-            "tool is expressible -- every tool declares `read_only`. A catalog that",
-            "publishes no tool **at all** is refused.",
+            "tool is expressible: every tool declares `read_only`.",
+            "",
+            "Each entry carries `argument_schema` as a mandatory member whose value",
+            "is either the string `unchecked` or an inline JSON Schema object. The",
+            "two mean different things: `unchecked` is the project declining",
+            "argument validation, and the framework still records the exact bytes it",
+            "passed, their digest and their coordinates.",
             "",
             "## 3. CLI surface",
             "",
@@ -1763,7 +1716,7 @@ def render(root: Path) -> str:
             + ".",
             "These are a DIFFERENT contract from the pure modules above and are",
             "not interchangeable with them. A pure module loads in every Project",
-            "program, the Journal reducer included. A scoped module loads only",
+            "program of the pure type. A scoped module loads only",
             "inside a scoped Tool execution",
             "program, and `require` of one of these names from any other program",
             "fails in the resolver naming the module, because the scoped set is a",
@@ -1850,7 +1803,6 @@ def render(root: Path) -> str:
             f"{DEPLOYMENT_PROTOCOL_SOURCE}: the protocol material assembles no"
             " module-owned fragment"
         )
-    catalog_schema_id = embedded_schema_id(deployment_text, "operator/tool-catalog")
     catalog_mismatch_refusal = one_message_in(
         invocation_text,
         "ProjectToolCatalogSchemaOwner::create",
@@ -1974,10 +1926,12 @@ def render(root: Path) -> str:
             "",
             "### 5.4 `tool_catalog_hash`",
             "",
-            "A project's `tool_catalog_hash` is the SHA-256 of the exact bytes of",
-            "its Tool Catalog document -- the canonical (RFC 8785 JCS) bytes it",
-            f"registered, judged by `{catalog_schema_id}`. Nothing derives it from a",
-            "parse: `ProjectToolCatalogSchemaOwner::create` in",
+            "A project's `tool_catalog_hash` is the SHA-256 of the exact canonical",
+            "(RFC 8785 JCS) bytes of the `tools` array its deployment declared.",
+            f"There is no Tool Catalog document: `{PROJECT_DIRECTORY_SCHEMA}` states",
+            "the shape of those entries and the loader renders them canonically.",
+            "Nothing derives the digest from a parse:",
+            "`ProjectToolCatalogSchemaOwner::create` in",
             f"`{TOOL_INVOCATION_SOURCE}` hashes the supplied bytes and refuses the",
             "deployment when the digest is not the one the registration pinned:",
             "",
@@ -1987,7 +1941,7 @@ def render(root: Path) -> str:
             "",
             "`tool_catalog_hash` is a member of the canonical registration, so it",
             "reaches `project_registration_hash`; a call minted against other",
-            "catalog bytes cannot present this registration.",
+            "declaration bytes cannot present this registration.",
             "",
             "### 5.5 The durable record",
             "",

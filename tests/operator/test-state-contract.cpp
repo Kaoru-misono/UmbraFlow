@@ -1,8 +1,19 @@
+// The Operator state contracts this repository owns: the shape its own schema
+// documents must have, and the records its own entry points compose.
+//
+// S-06 is absent because its subject is: it was the shape and the revision line
+// of JR:`ProjectState`, and the framework stopped interpreting a Project's
+// state. Its gate was not moved anywhere -- there is nothing left for it to be
+// about. What survived of it is elsewhere already: that a session may only pin
+// a provisioned ProjectInstance is asserted in
+// tests/operator/test-project-generation.cpp, and that provisioning one key
+// twice is one statement rather than two instances is asserted in
+// tests/operator/test-ledger.cpp.
+
 #include <operator/ledger.hpp>
 #include <operator/manifest.hpp>
 
 #include "project-fixture.hpp"
-#include "schema-binding.hpp"
 #include "tool-call-fixture.hpp"
 
 #include <domain/content-hash.hpp>
@@ -145,7 +156,6 @@ namespace uf::operator_runtime
             return *hash;
         }
 
-        using test_support::journalEntry;
         using test_support::makeProject;
         using test_support::prepareStore;
         using test_support::TemporaryDirectory;
@@ -202,18 +212,18 @@ namespace uf::operator_runtime
     TEST_CASE("schema-state-s01")
     {
         auto const operatorSchema = readSchema("umbraflow-operator-v1.schema.json");
-        auto const journalSchema  = readSchema("umbraflow-journal-v1.schema.json");
         auto const parts          = definition(operatorSchema, "SnapshotParts");
-        auto const state          = definition(journalSchema, "ProjectState");
         checkStrictObject(parts);
-        checkStrictObject(state);
         CHECK(parts.find("\"observation_id\"") != std::string::npos);
-        CHECK(parts.find("\"project_state_revision\"") != std::string::npos);
         CHECK(parts.find("\"lease_id\"") != std::string::npos);
         CHECK(parts.find("\"policy_hash\"") != std::string::npos);
         CHECK(parts.find("\"available_tools\"") != std::string::npos);
-        CHECK(state.find("\"last_journal_sequence\"") != std::string::npos);
-        CHECK(state.find("\"canonical_opaque_payload\"") != std::string::npos);
+
+        // The parts name what was observed and under whose authority, and
+        // nothing about what a Project's world holds: the framework reads no
+        // such thing, so a decision that carried one would be asserting a
+        // meaning it never had.
+        CHECK(parts.find("project_state") == std::string::npos);
     }
 
     TEST_CASE("schema-state-s02")
@@ -224,7 +234,7 @@ namespace uf::operator_runtime
         CHECK(snapshot.find("\"identity\"") != std::string::npos);
         CHECK(snapshot.find("\"token\"") != std::string::npos);
         CHECK(snapshot.find("\"project_observation\"") != std::string::npos);
-        CHECK(snapshot.find("\"project_state\"") != std::string::npos);
+        CHECK(snapshot.find("\"project_state\"") == std::string::npos);
         CHECK(snapshot.find("\"event_cursor\"") != std::string::npos);
         CHECK(snapshot.find("frame") == std::string::npos);
     }
@@ -251,8 +261,6 @@ namespace uf::operator_runtime
         REQUIRE(first.has_value());
         CHECK(first->observation.revision() == prepared.snapshot.observation.revision());
         CHECK(first->observation.hash() == prepared.snapshot.observation.hash());
-        CHECK(first->observation.projectStateRevision() == 0U);
-        CHECK(first->observation.projectStateHash() == first->projectStateHash);
 
         // A world that resolves differently is a different reading, so the
         // revision line advances without anything the Operator owns having
@@ -272,12 +280,10 @@ namespace uf::operator_runtime
         );
         REQUIRE(moved.has_value());
         CHECK(moved->observation.revision() == first->observation.revision() + 1U);
-        CHECK(moved->observation.projectStateRevision() == 0U);
 
         // The reading is bound to the registration that produced it. A handle
         // for another registration is valid on its own and still refused here.
-        auto const foreignSource  = test_support::reducerSource("fixture.foreign");
-        auto const foreignProject = makeProject("fixture.foreign", foreignSource);
+        auto const foreignProject = makeProject("fixture.foreign");
         CHECK_FALSE(prepared.store.createSnapshot(
             prepared.lease,
             foreignProject.registration,
@@ -343,7 +349,6 @@ namespace uf::operator_runtime
         CHECK(hashOf(parts) == prepared.snapshot.identityHash);
         CHECK(parts.find("\"decision_basis_hash\":\"" + prepared.snapshot.decisionBasisHash.hex() + "\"") != std::string::npos);
         CHECK(parts.find("\"state_resolution_hash\":\"" + prepared.snapshot.stateResolutionHash.hex() + "\"") != std::string::npos);
-        CHECK(parts.find("\"project_state_hash\":\"" + prepared.snapshot.projectStateHash.hex() + "\"") != std::string::npos);
         CHECK(parts.find("\"project_observation_hash\":\"" + prepared.snapshot.observation.hash().hex() + "\"") != std::string::npos);
         CHECK(parts.find("\"session_manifest_hash\":\"" + prepared.manifest.hash().hex() + "\"") != std::string::npos);
         CHECK(parts.find("\"lease_id\":\"" + prepared.lease.leaseId + "\"") != std::string::npos);
@@ -351,7 +356,6 @@ namespace uf::operator_runtime
         CHECK(parts.find("\"session_epoch\":" + std::to_string(prepared.lease.sessionEpoch)) != std::string::npos);
         CHECK(parts.find("\"controlled_target_id\":\"target-1\"") != std::string::npos);
         CHECK(parts.find("\"project_instance_key\":\"instance-1\"") != std::string::npos);
-        CHECK(parts.find("\"project_state_revision\":0") != std::string::npos);
         CHECK(parts.find("\"project_observation_revision\":1") != std::string::npos);
         CHECK(parts.find("\"availability_revision\":1") != std::string::npos);
         CHECK(
@@ -531,7 +535,7 @@ namespace uf::operator_runtime
         checkStrictObject(basis);
         CHECK(basis.find("\"state_resolution_hash\"") != std::string::npos);
         CHECK(basis.find("\"project_observation_hash\"") != std::string::npos);
-        CHECK(basis.find("\"project_state_hash\"") != std::string::npos);
+        CHECK(basis.find("project_state") == std::string::npos);
         CHECK(basis.find("\"session_manifest_hash\"") != std::string::npos);
         CHECK(basis.find("\"decision_basis_hash\"") != std::string::npos);
     }
@@ -600,101 +604,6 @@ namespace uf::operator_runtime
 
     }
 
-    TEST_CASE("contract-state-s06")
-    {
-        auto const schema   = readSchema("umbraflow-journal-v1.schema.json");
-        auto const instance = definition(schema, "ProjectInstance");
-        auto const state    = definition(schema, "ProjectState");
-        checkStrictObject(instance);
-        checkStrictObject(state);
-        CHECK(instance.find("\"project_instance_key\"") != std::string::npos);
-        CHECK(instance.find("\"creation_event_id\"") != std::string::npos);
-        CHECK(instance.find("\"current_project_state_revision\"") != std::string::npos);
-        CHECK(instance.find("\"current_project_state_hash\"") != std::string::npos);
-        CHECK(state.find("\"project_registration_hash\"") != std::string::npos);
-        CHECK(state.find("\"state_hash\"") != std::string::npos);
-
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-
-        // Everything above reads schema text and passes whether or not the
-        // store agrees. JR:`ProjectState` is not a shape nothing produces: the
-        // project_state row IS that record, member for member, so the schema's
-        // required list and the columns the Operator's own DDL created are the
-        // same set. A column renamed on either side is red here.
-        auto schemaProbe = TemporaryDirectory{};
-        CHECK(
-            test_support::operatorTableColumns(schemaProbe.path(), "project_state")
-            == test_support::requiredMembers(state)
-        );
-
-        // The same check on a record that is assembled rather than stored is
-        // the positive control: JR:`ProjectInstance` names eight members and the
-        // project_instances row carries four, the rest coming from
-        // project_registrations and project_state. Without it, a comparison that
-        // could never fail would read the same as one that pins something.
-        CHECK(
-            test_support::operatorTableColumns(schemaProbe.path(), "project_instances")
-            != test_support::requiredMembers(instance)
-        );
-
-        auto const& registration = prepared.project.registration;
-        auto const baseline = [&prepared, &registration](
-            std::string instanceKey,
-            std::string eventId
-        )
-        {
-            return ProjectInstanceBaseline{
-                .projectInstanceKey  = std::move(instanceKey),
-                .eventId             = std::move(eventId),
-                .sessionManifestHash = prepared.manifest.hash(),
-                .entry               = journalEntry(
-                    prepared.project,
-                    registration.baselineEventType(),
-                    "{\"kind\":\"baseline\"}"
-                ),
-            };
-        };
-
-        // The key is immutable, so no second baseline can restart the revision
-        // line of a key that snapshots and Tool calls already name.
-        CHECK_FALSE(prepared.store.provisionProjectInstance(
-            registration,
-            prepared.generation,
-            baseline("instance-1", "baseline-again")
-        ).has_value());
-
-        // A session may only pin a provisioned key, so naming a fresh one is
-        // not a way to reach revision zero either.
-        auto const missingWorldScope = ObservedInstanceWorldScope::run(
-            "target-2",
-            1
-        );
-        REQUIRE(missingWorldScope.has_value());
-        CHECK_FALSE(prepared.store.pinSession(
-            SessionPin{
-                .sessionId                 = "session-missing-instance",
-                .authenticatedControllerId = "controller-1",
-                .idempotencyNamespace      = "controller-1",
-                .projectRegistrationHash   = registration.hash(),
-                .controllerCapabilities    = {std::string{conformance::k_operateCapability}},
-                .controlledTargetId        = "target-2",
-                .projectInstanceKey        = "instance-missing",
-                .mode                      = SessionMode::Write,
-                .worldScope                = *missingWorldScope,
-            },
-            prepared.manifest,
-            std::nullopt
-        ).has_value());
-
-        // Re-baselining is therefore always a NEW key, and a new key is its own
-        // revision line starting at zero, side by side with the old one.
-        REQUIRE(prepared.store.provisionProjectInstance(
-            registration,
-            prepared.generation,
-            baseline("instance-0", "baseline-0")
-        ).has_value());
-    }
     // The decision basis is a property of the observed world, not of the
     // request and not of the authority holding it. T4, T5 and T6 of the W2
     // specification are one case on purpose: an empty or constant derivation
@@ -783,17 +692,7 @@ namespace uf::operator_runtime
         {
             REQUIRE(availabilityStore.store.provisionProjectInstance(
                 availabilityStore.project.registration,
-                availabilityStore.generation,
-                ProjectInstanceBaseline{
-                    .projectInstanceKey  = instanceId,
-                    .eventId             = "baseline-" + instanceId,
-                    .sessionManifestHash = policyManifest.hash(),
-                    .entry = journalEntry(
-                        availabilityStore.project,
-                        availabilityStore.project.registration.baselineEventType(),
-                        "{\"kind\":\"baseline\"}"
-                    ),
-                }
+                instanceId
             ).has_value());
             auto const sessionWorldScope = ObservedInstanceWorldScope::run(
                 "target-1",

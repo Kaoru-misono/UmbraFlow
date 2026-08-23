@@ -16,8 +16,6 @@
 
 #include "umbraflow/project-schemas.hpp"
 
-#include "json/repository-path.hpp"
-
 #include <deployment/project-directory.hpp>
 
 #include <project/project-kit.hpp>
@@ -28,7 +26,10 @@
 
 #include <image/png.hpp>
 
+#include <json/value.hpp>
+
 #include <operator/manifest.hpp>
+#include <operator/project-plugin.hpp>
 
 #include <script/pure-data-program.hpp>
 
@@ -79,6 +80,19 @@ namespace uf::deployment
             auto stream = std::ofstream{path, std::ios::binary | std::ios::trunc};
             stream.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
             REQUIRE(stream.good());
+        }
+
+        // An inline identity schema's digest, as the registration pins it.
+        // Everything declarative is inline now, so the loader renders the
+        // schema canonically itself and hashes what it rendered -- a project
+        // author never writes that digest, and the source spelling above is not
+        // what it is taken over.
+        [[nodiscard]]
+        auto identitySchemaHash(std::string_view schema) -> ContentHash
+        {
+            auto const parsed = json::parse(schema);
+            REQUIRE(parsed.has_value());
+            return umbraflow::schemaHash(json::canonicalBytes(*parsed));
         }
 
         [[nodiscard]]
@@ -228,7 +242,7 @@ namespace uf::deployment
             {
                 return std::string{R"json({
   "$comment": "Why this fixture has two deployments: the conformance document needs a second registration that can mint documents of its own.",
-  "schema": "umbraflow-project/v2",
+  "schema": "umbraflow-project/v3",
   "runtime_artifact": "runtime/artifact",
   "primary_deployment": "alpha",
   "template_cuts": [],
@@ -237,24 +251,22 @@ namespace uf::deployment
                     + "]}";
             }
 
+            // The whole declaration is this one block: there is no schema file
+            // beside it and no Tool Catalog document. `tools` and the identity
+            // schema are inline, and the only paths left name assets -- the
+            // Luau closure and the opaque resource.
             [[nodiscard]]
             static auto deploymentBlock(std::string_view name) -> std::string
             {
+                auto const pluginId = "fixture." + std::string{name};
                 auto block = std::string{R"json({"name":")json"};
                 block += name;
-                block += R"json(","plugin_id":"fixture.)json";
-                block += name;
-                block += R"json(","baseline_event_type":"fixture.baseline",)json";
-                block += R"json("reducer_closure":{"entry":"main",)json"
-                    R"json("exported_entry_points":["reduce"],)json"
-                    R"json("modules":[{"name":"main","path":"plugin/)json";
-                block += name;
-                block += R"json(-reducer.luau"}]},)json";
-                // This deployment binds no Tool, so its tool closure states an
-                // empty export set. The slot is written out rather than
-                // omitted: an absent slot would be an absent-means-pure
-                // reading, and both closures are always present.
-                block += R"json("tool_closure":{"entry":"main",)json"
+                block += R"json(","plugin_id":")json";
+                block += pluginId;
+                // This deployment binds no Tool, so its closure states an empty
+                // export set. The member is written out rather than omitted: an
+                // absent member would be an absence carrying a meaning.
+                block += R"json(","tool_closure":{"entry":"main",)json"
                     R"json("exported_entry_points":[],)json"
                     R"json("modules":[{"name":"main","path":"plugin/)json";
                 block += name;
@@ -263,33 +275,15 @@ namespace uf::deployment
                 block += R"json("plugin_justification":"A fixture plugin that )json"
                     R"json(answers from constants: umbraflow-declarative-)json"
                     R"json(workflow-tool/v1 has no member that decides what a )json"
-                    R"json(Reduce returns.",)json";
-                auto const document = [name](std::string_view leaf)
-                {
-                    return "\"schema/" + std::string{name} + "/" + std::string{leaf}
-                        + "\"";
-                };
-                block += R"json("project_state_schema":)json" + document("state.json");
-                block += R"json(,"tool_precondition_schema":)json"
-                    + document("precondition.json");
-                block += R"json(,"tool_catalog":)json" + document("catalog.json");
-                block += R"json(,"journal_event_schema_manifest":)json"
-                    + document("journal-manifest.json");
-                block += R"json(,"journal_payload_schemas":[)json";
-                for (auto index = std::size_t{0};
-                     index < umbraflow::k_journalPayloadSchemas.size();
-                     ++index)
-                {
-                    block += index == 0U ? "" : ",";
-                    block += document("journal-" + std::to_string(index) + ".json");
-                }
-                block += R"json(],"effect_payload_schemas":[)json"
-                    + document("effect-0.json") + R"json(],)json";
+                    R"json(handler returns.",)json";
+                block += R"json("tools":)json"
+                    + umbraflow::toolDeclarations(pluginId) + ",";
                 block += R"json("observed_instance_identity_schemas":[)json"
-                    + document("identity-0.json") + R"json(],)json";
-                // The fixture plugin exports nothing but its identity, so this
-                // deployment binds no Tool. The member is written empty, which
-                // is the one spelling of that statement.
+                    R"json({"name":")json"
+                    + std::string{umbraflow::k_observedIdentitySchemaName}
+                    + R"json(","schema":)json"
+                    + std::string{umbraflow::k_observedIdentitySchema}
+                    + R"json(}],)json";
                 block += R"json("tool_bindings":[],)json";
                 block += R"json("resources":[{"kind":"bytes","name":"page-model","path":"blob/)json";
                 block += name;
@@ -299,7 +293,7 @@ namespace uf::deployment
 
             [[nodiscard]] static auto conformanceManifest() -> std::string
             {
-                return R"json({"schema":"umbraflow-conformance/v2",)json"
+                return R"json({"schema":"umbraflow-conformance/v3",)json"
                     R"json("probe_frame":"runtime/probe-frame.png",)json"
                     R"json("under_test":{"deployment":"alpha","vocabulary":)json"
                     + vocabulary("fixture.alpha")
@@ -329,15 +323,6 @@ namespace uf::deployment
                        R"json("refused_tool_arguments":"{\"value\":0}",)json"
                        + R"json("absent_tool":")json" + tool("command-absent")
                        + R"json(",)json"
-                       R"json("baseline_entry":{"event_type":"fixture.baseline",)json"
-                       R"json("payload":"{\"marker\":\"baseline\"}"},)json"
-                       R"json("progress_entry":{"event_type":"fixture.progress",)json"
-                       R"json("payload":"{\"value\":1}"},)json"
-                       R"json("confirmed_entry":{"event_type":"fixture.confirmed",)json"
-                       R"json("payload":"{\"marker\":\"confirmed\"}"},)json"
-                       R"json("superseded_entry":{"event_type":"fixture.duplicate",)json"
-                       R"json("payload":"{\"marker\":\"duplicate\"}"},)json"
-                       R"json("provenance":"{\"kind\":\"observation\"}",)json"
                        + R"json("approval_required_plan_tool":")json"
                        + tool("approval-plan")
                        + R"json(",)json"
@@ -346,35 +331,10 @@ namespace uf::deployment
             }
 
         private:
+            // The only files a deployment names: its one Luau closure and its
+            // one opaque resource. Everything declarative is in the block.
             auto writeDeployment(std::string_view name) const -> void
             {
-                auto const bundle = umbraflow::DeploymentBundle{
-                    "fixture." + std::string{name},
-                };
-                auto const at = [this, name](std::string_view leaf)
-                {
-                    return m_root / "schema" / std::string{name} / std::string{leaf};
-                };
-                write(at("state.json"), umbraflow::k_projectStateSchema);
-                write(at("precondition.json"), umbraflow::k_toolPreconditionSchema);
-                write(at("catalog.json"), bundle.toolCatalog());
-                write(at("journal-manifest.json"), bundle.journalEventManifest());
-                for (auto index = std::size_t{0};
-                     index < umbraflow::k_journalPayloadSchemas.size();
-                     ++index)
-                {
-                    write(
-                        at("journal-" + std::to_string(index) + ".json"),
-                        umbraflow::k_journalPayloadSchemas.at(index)
-                    );
-                }
-                write(at("effect-0.json"), umbraflow::k_effectPayloadSchema);
-                write(at("identity-0.json"), umbraflow::k_observedIdentitySchema);
-                write(
-                    m_root / "plugin" / (std::string{name} + "-reducer.luau"),
-                    "return {plugin_id = \"fixture." + std::string{name}
-                        + "\", reduce = function(input) return input end}\n"
-                );
                 write(
                     m_root / "plugin" / (std::string{name} + "-tool.luau"),
                     "return {plugin_id = \"fixture." + std::string{name} + "\"}\n"
@@ -414,118 +374,6 @@ namespace uf::deployment
                 ? std::string{"<the directory was accepted>"}
                 : std::string{outcome.error().message()};
         }
-    }
-
-    // The design document states these documents by worked example, and this
-    // is what keeps an example a document the framework accepts. Without it the
-    // examples are prose beside a C++ string constant, which is the arrangement
-    // that had one consumer writing CamelCase for `mutating` and `semantic`.
-    //
-    // The examples used to be read out of the archived plan that first stated
-    // them. That made a frozen document a live specification: a schema change
-    // could only stay green by editing an archived file, which the archive rule
-    // forbids. The examples were what that plan still owed, so they were lifted
-    // into the live design document below and it owns them now. The archived
-    // copy keeps its bytes and nothing asserts against it.
-    TEST_CASE("the design document's worked documents are documents this accepts")
-    {
-        constexpr auto k_specification = std::string_view{
-            "docs/design/2026-08-22-framework-document-formats.md"
-        };
-        auto const root = json::repositoryRoot(k_specification);
-        REQUIRE_FALSE(root.empty());
-
-        auto       stream = std::ifstream{root / k_specification, std::ios::binary};
-        auto const text   = std::string{
-            std::istreambuf_iterator<char>{stream},
-            std::istreambuf_iterator<char>{},
-        };
-        REQUIRE_FALSE(text.empty());
-
-        // The examples are discovered from the document's own anchors rather
-        // than looked up one format at a time. A membership kept by hand
-        // drifts: the reconcile payload schema manifest kept its worked
-        // example after the format itself was deleted, and a loop that only
-        // looked up the two surviving formats stayed green beside a block
-        // validateFrameworkFormat now refuses.
-        struct WorkedExample final
-        {
-            std::string format{};
-            std::string document{};
-        };
-
-        // The formats this module owns, and so the complete set of worked
-        // examples the document may carry.
-        constexpr auto k_owned = std::array{
-            std::string_view{"umbraflow-tool-catalog/v1"},
-            std::string_view{"umbraflow-journal-event-schema-manifest/v1"},
-        };
-
-        // An anchor is a line of its own. The paragraph above the examples
-        // names the `<!-- example: ... -->` spelling in prose, and admitting a
-        // mid-line match would take `...` for a format and hand it whichever
-        // block came next -- a third entry that passes by validating a document
-        // another entry already owns.
-        constexpr auto k_anchor = std::string_view{"\n<!-- example: "};
-        constexpr auto k_fence  = std::string_view{"```json\n"};
-        auto discovered         = std::vector<WorkedExample>{};
-        for (auto at = text.find(k_anchor);
-             at != std::string::npos;
-             at = text.find(k_anchor, at + k_anchor.size()))
-        {
-            auto const named = at + k_anchor.size();
-            auto const ended = text.find(" -->", named);
-            REQUIRE(ended != std::string::npos);
-            auto const opened = text.find(k_fence, ended);
-            REQUIRE(opened != std::string::npos);
-            auto const begin  = opened + k_fence.size();
-            auto const closed = text.find("\n```", begin);
-            REQUIRE(closed != std::string::npos);
-
-            discovered.emplace_back(WorkedExample{
-                .format   = text.substr(named, ended - named),
-                .document = text.substr(begin, closed - begin),
-            });
-        }
-
-        // Declared against discovered, both ways. The loop below judges every
-        // example the document carries, so one naming a format this module
-        // dropped is refused there; it says nothing about a format that lost
-        // its example, or about a second block minted under a name an earlier
-        // entry already carries, and neither of those leaves anything red.
-        CHECK(discovered.size() == k_owned.size());
-        for (auto const format : k_owned)
-        {
-            INFO(format);
-            CHECK(
-                std::ranges::find(discovered, format, &WorkedExample::format)
-                != discovered.end()
-            );
-        }
-
-        for (auto const& example : discovered)
-        {
-            INFO(example.format);
-            auto const judged = validateFrameworkFormat(example.document);
-            // Both arms are std::string: message() answers with a view into the
-            // Error, and a conditional mixing it with a std::string temporary
-            // takes the view as its type and outlives what backs it.
-            auto const complaint = judged.has_value()
-                ? std::string{}
-                : std::string{judged.error().message()};
-            INFO(complaint);
-            CHECK(judged.has_value());
-        }
-
-        // Which schema judges a document is the document's own `schema` member,
-        // so one naming a format this module does not own is refused rather
-        // than judged by whichever schema came first. Without this the loop
-        // above would equally describe a function that accepted anything.
-        CHECK_FALSE(
-            validateFrameworkFormat(R"json({"schema":"umbraflow-project/v2"})json")
-                .has_value()
-        );
-        CHECK_FALSE(validateFrameworkFormat(R"json({"tools":[]})json").has_value());
     }
 
     // The two project directories this repository ships as data, read from the
@@ -585,7 +433,12 @@ namespace uf::deployment
         }
     }
 
-    TEST_CASE("project scaffold schemas form one runtime deployment authority")
+    // A starter Project writes no JSON Schema at all: the one Tool it declares
+    // carries its argument shape inline, and the whole declaration is the root
+    // document. What this says is that the document the kit writes is one the
+    // runtime reader compiles -- the two readers cannot link each other, so
+    // nothing else states it.
+    TEST_CASE("a scaffolded declaration forms one runtime deployment authority")
     {
         auto const workspace = TemporaryScaffold{};
         auto const scaffolded = project::scaffoldProject(
@@ -601,34 +454,33 @@ namespace uf::deployment
         INFO(scaffoldDiagnostic);
         REQUIRE(scaffolded.has_value());
 
-        auto const schemaRoot = workspace.path() / "schemas/scaffold.project";
-        auto const projectState = readText(
-            schemaRoot / "project-state-v1.schema.json"
+        // Not one schema file, anywhere in the starter tree.
+        for (auto const& entry : std::filesystem::recursive_directory_iterator{
+                 workspace.path()
+             })
+        {
+            CAPTURE(entry.path().string());
+            CHECK_FALSE(entry.path().filename().string().ends_with(
+                ".schema.json"
+            ));
+        }
+
+        auto document = json::parse(
+            readText(workspace.path() / k_projectManifestFileName)
         );
-        auto const toolPrecondition = readText(
-            schemaRoot / "precondition-v1.schema.json"
-        );
-        auto const toolCatalog = readText(
-            schemaRoot / "tool-catalog-v1.json"
-        );
-        auto const journalManifest = readText(
-            schemaRoot / "journal-manifest-v1.json"
-        );
-        auto const journalPayload = readText(
-            schemaRoot / "journal-0-v1.schema.json"
-        );
-        auto const journalPayloads = std::array{
-            std::string_view{journalPayload},
-        };
+        REQUIRE(document.has_value());
+        auto const* const p_deployments = document->find("deployments");
+        REQUIRE(p_deployments != nullptr);
+        REQUIRE(p_deployments->items().size() == 1U);
+        auto const& block = p_deployments->items().front();
+        auto const* const p_tools = block.find("tools");
+        REQUIRE(p_tools != nullptr);
+        auto const tools = json::canonicalBytes(*p_tools);
+
         auto const deployed = ProjectDeployment::create(
             ProjectDeploymentSources{
                 .pluginId                        = "scaffold.project",
-                .projectState                    = projectState,
-                .toolPrecondition                = toolPrecondition,
-                .toolCatalog                     = toolCatalog,
-                .journalEventManifest            = journalManifest,
-                .journalPayloadSchemas           = journalPayloads,
-                .effectPayloadSchemas            = {},
+                .tools                           = tools,
                 .observedInstanceIdentitySchemas = {},
             }
         );
@@ -642,7 +494,7 @@ namespace uf::deployment
     // Everything below breaks one thing in this directory, so this case is what
     // says the directory is otherwise whole. It also states what a load
     // produces, because no other case reads the result.
-    TEST_CASE("a project directory becomes four authorities per deployment")
+    TEST_CASE("a project directory becomes three authorities per deployment")
     {
         auto const  fixture = Fixture{};
         auto const  loaded  = fixture.load();
@@ -656,24 +508,13 @@ namespace uf::deployment
         auto const* const p_alpha = loaded->findDeployment("alpha");
         REQUIRE(p_alpha != nullptr);
         CHECK(p_alpha->generation.pluginId() == "fixture.alpha");
-        CHECK(
-            operator_runtime::ProjectIdentity{p_alpha->generation}
-                .baselineEventType()
-            == "fixture.baseline"
-        );
-        CHECK(p_alpha->reducerClosure.entryModule == "main");
-        REQUIRE(p_alpha->reducerClosure.modules.size() == 1U);
-        CHECK(p_alpha->reducerClosure.modules.front().source.starts_with(
-            "return {plugin_id ="
-        ));
-        CHECK(
-            p_alpha->reducerClosure.declaredEntryPoints
-            == std::vector<std::string>{"reduce"}
-        );
-        // The tool closure is present and explicitly empty, which is the whole
-        // statement that this deployment binds no Tool.
+        // The deployment ships one closure, present and explicitly empty, which
+        // is the whole statement that it binds no Tool.
         CHECK(p_alpha->toolClosure.entryModule == "main");
         REQUIRE(p_alpha->toolClosure.modules.size() == 1U);
+        CHECK(p_alpha->toolClosure.modules.front().source.starts_with(
+            "return {plugin_id ="
+        ));
         CHECK(p_alpha->toolClosure.declaredEntryPoints.empty());
         REQUIRE(p_alpha->projectResources.size() == 1U);
         CHECK(p_alpha->projectResources.front().name == "page-model");
@@ -686,25 +527,21 @@ namespace uf::deployment
 
         // The authorities are bound to that registration and can be asked to
         // judge, which is the whole of what constructing them was for.
-        CHECK(p_alpha->schemaOwner.projectRegistrationHash()
+        CHECK(p_alpha->toolCatalogSchemaOwner.projectRegistrationHash()
               == p_alpha->generation.hash());
-        CHECK(p_alpha->schemaOwner.canonicalize("{\"revision\":0}").has_value());
-        CHECK_FALSE(p_alpha->schemaOwner.canonicalize("{\"revision\": 0}").has_value());
+        auto const arguments = operator_runtime::CanonicalJson::parseExact(
+            R"({"value":1})"
+        );
+        REQUIRE(arguments.has_value());
         CHECK(p_alpha->toolCatalogSchemaOwner
-                  .validate(
-                      "fixture.alpha.command-1",
-                      *p_alpha->schemaOwner.canonicalize("{\"value\":1}")
-                  )
+                  .validate("fixture.alpha.command-1", *arguments)
                   .has_value());
         CHECK_FALSE(p_alpha->toolCatalogSchemaOwner
-                        .validate(
-                            "fixture.alpha.command-absent",
-                            *p_alpha->schemaOwner.canonicalize("{\"value\":1}")
-                        )
+                        .validate("fixture.alpha.command-absent", *arguments)
                         .has_value());
 
         // The last authority: the loader derived the identity hashes from the
-        // file it read, pinned them in the registration, and built the
+        // bytes it read, pinned them in the registration, and built the
         // authority from the very bindings the deployment compiled -- so the
         // authority answers for exactly the registration it was bound to.
         REQUIRE(
@@ -715,7 +552,7 @@ namespace uf::deployment
         CHECK(
             operator_runtime::ProjectIdentity{p_alpha->generation}
                 .observedInstanceIdentitySchemaHashes()[0]
-            == umbraflow::schemaHash(umbraflow::k_observedIdentitySchema)
+            == identitySchemaHash(umbraflow::k_observedIdentitySchema)
         );
         CHECK(
             p_alpha->observedInstanceIdentitySchemas.projectRegistrationHash()
@@ -724,49 +561,6 @@ namespace uf::deployment
 
         // Production loads retain only the authorities and pinned project data;
         // conformance-only input evidence has no member here to accumulate in.
-    }
-
-    // The deployment block names the identity schemas by path and the loader
-    // opens every path it was given, so a missing document is a refusal naming
-    // the path -- never a load whose registration silently pins fewer schemas
-    // than the deployment supplies.
-    TEST_CASE("a deployment is refused when a named identity schema is missing")
-    {
-        auto const fixture = Fixture{};
-        REQUIRE(fixture.load().has_value());
-
-        fixture.remove("schema/alpha/identity-0.json");
-        auto const refused = fixture.load();
-        REQUIRE_FALSE(refused.has_value());
-        CHECK(why(refused).contains("identity-0.json"));
-        CHECK(why(refused).contains("does not hold"));
-    }
-
-    // The project schema states uniqueItems on the member, so the same path
-    // twice is refused as a duplicate declaration rather than read as two
-    // identical documents -- the document is not the pair of paths.
-    TEST_CASE("a deployment is refused when an identity schema path repeats")
-    {
-        auto const fixture = Fixture{};
-        REQUIRE(fixture.load().has_value());
-
-        auto block = Fixture::deploymentBlock("alpha");
-        block = substituted(
-            block,
-            R"json("observed_instance_identity_schemas":["schema/alpha/identity-0.json"],)json",
-            R"json("observed_instance_identity_schemas":["schema/alpha/identity-0.json",)json"
-                R"json("schema/alpha/identity-0.json"],)json"
-        );
-        fixture.rewrite(
-            "umbraflow-project.json",
-            std::string{R"json({"schema":"umbraflow-project/v2",)json"}
-                + R"json("runtime_artifact":"runtime/artifact",)json"
-                + R"json("primary_deployment":"alpha","template_cuts":[],)json"
-                + R"json("deployments":[)json" + block + "]}"
-        );
-        auto const refused = fixture.load();
-        REQUIRE_FALSE(refused.has_value());
-        CHECK(why(refused).contains("repeats an item"));
     }
 
     // The member is required even when the set is empty, so a deployment
@@ -778,13 +572,16 @@ namespace uf::deployment
         auto const fixture = Fixture{};
         REQUIRE(fixture.load().has_value());
 
+        auto const declared = std::string{
+            R"json("observed_instance_identity_schemas":[{"name":")json"
+        }
+            + std::string{umbraflow::k_observedIdentitySchemaName}
+            + R"json(","schema":)json"
+            + std::string{umbraflow::k_observedIdentitySchema}
+            + R"json(}],)json";
         fixture.rewrite(
             "umbraflow-project.json",
-            substituted(
-                Fixture::projectManifest(),
-                R"json("observed_instance_identity_schemas":["schema/alpha/identity-0.json"],)json",
-                ""
-            )
+            substituted(Fixture::projectManifest(), declared, "")
         );
         auto const refused = fixture.load();
         REQUIRE_FALSE(refused.has_value());
@@ -810,28 +607,40 @@ namespace uf::deployment
     }
 })json"};
 
-        auto const firstHash  = umbraflow::schemaHash(umbraflow::k_observedIdentitySchema);
-        auto const secondHash = umbraflow::schemaHash(secondSchema);
+        auto const firstHash  = identitySchemaHash(umbraflow::k_observedIdentitySchema);
+        auto const secondHash = identitySchemaHash(secondSchema);
         REQUIRE(firstHash != secondHash);
 
+        auto const entry =
+            [](std::string_view name, std::string_view schema) -> std::string
+        {
+            return std::string{R"json({"name":")json"} + std::string{name}
+                + R"json(","schema":)json" + std::string{schema} + "}";
+        };
+        auto const first = entry(
+            umbraflow::k_observedIdentitySchemaName,
+            umbraflow::k_observedIdentitySchema
+        );
+        auto const second =
+            entry("https://fixture.example/identity/overlay/v2", secondSchema);
+
         auto const fixture = Fixture{};
-        fixture.rewrite("schema/alpha/identity-1.json", secondSchema);
         auto block = Fixture::deploymentBlock("alpha");
         // Hash-descending declaration: whichever document hashes lower is
         // declared second, so a loader that kept the declaration order would
         // derive an unsorted registration and the load would refuse below.
         block = substituted(
             block,
-            R"json("observed_instance_identity_schemas":["schema/alpha/identity-0.json"],)json",
-            secondHash < firstHash
-                ? R"json("observed_instance_identity_schemas":["schema/alpha/identity-1.json",)json"
-                      R"json("schema/alpha/identity-0.json"],)json"
-                : R"json("observed_instance_identity_schemas":["schema/alpha/identity-0.json",)json"
-                      R"json("schema/alpha/identity-1.json"],)json"
+            R"json("observed_instance_identity_schemas":[)json" + first + "],",
+            R"json("observed_instance_identity_schemas":[)json"
+                + (secondHash < firstHash
+                       ? second + "," + first
+                       : first + "," + second)
+                + "],"
         );
         fixture.rewrite(
             "umbraflow-project.json",
-            std::string{R"json({"schema":"umbraflow-project/v2",)json"}
+            std::string{R"json({"schema":"umbraflow-project/v3",)json"}
                 + R"json("runtime_artifact":"runtime/artifact",)json"
                 + R"json("primary_deployment":"alpha","template_cuts":[],)json"
                 + R"json("deployments":[)json" + block + "]}"
@@ -857,85 +666,6 @@ namespace uf::deployment
         );
     }
 
-    // An identity document's resolution domain is the registered identity set
-    // and nothing else. The first target below is a published framework
-    // schema, the identity a project schema legitimately references under the
-    // catalog -- before the domain closed, this fixture loaded; now the same
-    // bytes refuse, which is the falsification of the pin: a framework
-    // schema's bytes are outside the domain, so editing one cannot change
-    // what the identity set answers while every identity byte and
-    // project_registration_hash stay unchanged. The second target is a
-    // document nothing in the set holds, pinning the closure on the other
-    // side. Both refusals name the schema and the target.
-    TEST_CASE("an identity schema that reaches outside the registered set is refused")
-    {
-        for (auto const target : std::array{
-                 std::string_view{"https://umbraflow.dev/schema/fact/v1"},
-                 std::string_view{"https://elsewhere.example/not-registered"},
-             })
-        {
-            auto const fixture = Fixture{};
-            REQUIRE(fixture.load().has_value());
-
-            auto identity = std::string{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://fixture.example/identity/overlay/v1",
-    "type": "object",
-    "properties": {
-        "fact": {"$ref": ")json"};
-            identity += target;
-            identity += R"json("}
-    }
-})json";
-            fixture.rewrite("schema/alpha/identity-0.json", identity);
-            auto const refused = fixture.load();
-            INFO(why(refused));
-            REQUIRE_FALSE(refused.has_value());
-            CHECK(why(refused).contains("observed identity"));
-            CHECK(why(refused).contains(target));
-        }
-    }
-
-    // The domain is closed, not empty: a registered identity document may
-    // reference another by its $id, and that is the only reference that
-    // resolves. This is the positive control for the refusal above -- a fix
-    // that sealed the whole domain would fail here, and one that left the
-    // catalog open would pass above.
-    TEST_CASE("an identity schema may reference another registered identity schema")
-    {
-        auto const fixture = Fixture{};
-        REQUIRE(fixture.load().has_value());
-
-        fixture.rewrite(
-            "schema/alpha/identity-1.json",
-            R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://fixture.example/identity/overlay/v2",
-    "type": "object",
-    "properties": {
-        "overlay": {"$ref": "https://fixture.example/identity/overlay/v1"}
-    }
-})json"
-        );
-        auto block = Fixture::deploymentBlock("alpha");
-        block = substituted(
-            block,
-            R"json("observed_instance_identity_schemas":["schema/alpha/identity-0.json"],)json",
-            R"json("observed_instance_identity_schemas":["schema/alpha/identity-0.json",)json"
-                R"json("schema/alpha/identity-1.json"],)json"
-        );
-        fixture.rewrite(
-            "umbraflow-project.json",
-            std::string{R"json({"schema":"umbraflow-project/v2",)json"}
-                + R"json("runtime_artifact":"runtime/artifact",)json"
-                + R"json("primary_deployment":"alpha","template_cuts":[],)json"
-                + R"json("deployments":[)json" + block + "]}"
-        );
-        auto const loaded = fixture.load();
-        INFO(why(loaded));
-        REQUIRE(loaded.has_value());
-    }
-
     // The conformance load is the production load plus a layer, so this states
     // the layer: the same directory, the same deployments, and the three things
     // only umbraflow-conformance.json supplies.
@@ -950,14 +680,12 @@ namespace uf::deployment
         CHECK(loaded->loaded.deployments.size() == 2U);
         CHECK(loaded->loaded.primaryDeployment == "alpha");
         CHECK(loaded->loaded.findDeployment("alpha") != nullptr);
-        REQUIRE(loaded->documentInputLog != nullptr);
-        CHECK(loaded->documentInputLog->lastReduceInput().empty());
 
         CHECK(loaded->underTest.deployment == "alpha");
         CHECK(loaded->foreign.deployment == "beta");
         CHECK_FALSE(loaded->probeFrame.empty());
 
-        // The vocabulary is read as strings and nothing else, and the payload
+        // The vocabulary is read as strings and nothing else, and the argument
         // members carry the project's exact bytes rather than a shape this
         // loader chose.
         CHECK(
@@ -968,15 +696,14 @@ namespace uf::deployment
             loaded->underTest.vocabulary.absentTool
             == "fixture.alpha.command-absent"
         );
-        CHECK(loaded->underTest.vocabulary.baselineEntry.payload
-              == "{\"marker\":\"baseline\"}");
+        CHECK(loaded->underTest.vocabulary.toolArguments == "{\"value\":1}");
         CHECK(loaded->underTest.vocabulary.uiAction.uiTarget == "fixture.target");
     }
 
     // The defect the split repairs, stated as the directory that could not be
     // expressed before it. A project at a read-only phase declares one
-    // deployment, carries no conformance document at all, and every tool its
-    // catalog holds is read_only -- so it has no mutating_tool to name, no
+    // deployment, carries no conformance document at all, and every Tool it
+    // declares is read_only -- so it has no mutating_tool to name, no
     // other_mutating_tool to distinguish from it, and no second deployment to
     // play a foreign role.
     //
@@ -989,11 +716,14 @@ namespace uf::deployment
         auto const fixture = Fixture{};
         REQUIRE(fixture.load().has_value());
 
-        // Every mutating row becomes read_only. The catalog stays a catalog
-        // this deployment's registration pins, so nothing but the mutability
-        // words differ from the accepted directory above.
-        auto const bundle    = umbraflow::DeploymentBundle{"fixture.alpha"};
-        auto       readOnly  = bundle.toolCatalog();
+        // Every mutating Tool becomes read_only. The declaration stays this
+        // deployment's own, so nothing but the mutability words differ from the
+        // accepted directory above.
+        auto readOnly = std::string{R"json({"schema":"umbraflow-project/v3",)json"}
+            + R"json("runtime_artifact":"runtime/artifact",)json"
+            + R"json("primary_deployment":"alpha","template_cuts":[],)json"
+            + R"json("deployments":[)json"
+            + Fixture::deploymentBlock("alpha") + "]}";
         constexpr auto k_was = std::string_view{R"json("mutability":"mutating")json"};
         constexpr auto k_now = std::string_view{R"json("mutability":"read_only")json"};
         auto       replaced  = std::size_t{0};
@@ -1006,17 +736,9 @@ namespace uf::deployment
         }
         REQUIRE(replaced > std::size_t{0});
         REQUIRE_FALSE(readOnly.contains(k_was));
-        fixture.rewrite("schema/alpha/catalog.json", readOnly);
 
         // One deployment, and no second one to play any other role.
-        fixture.rewrite(
-            "umbraflow-project.json",
-            std::string{R"json({"schema":"umbraflow-project/v2",)json"}
-                + R"json("runtime_artifact":"runtime/artifact",)json"
-                + R"json("primary_deployment":"alpha","template_cuts":[],)json"
-                + R"json("deployments":[)json"
-                + Fixture::deploymentBlock("alpha") + "]}"
-        );
+        fixture.rewrite("umbraflow-project.json", readOnly);
         fixture.remove("umbraflow-conformance.json");
 
         auto const loaded = fixture.load();
@@ -1152,8 +874,8 @@ namespace uf::deployment
             "umbraflow-project.json",
             substituted(
                 Fixture::projectManifest(),
-                R"json("path":"plugin/alpha-reducer.luau")json",
-                R"json("path":"schema/../plugin/alpha-reducer.luau")json"
+                R"json("path":"plugin/alpha-tool.luau")json",
+                R"json("path":"schema/../plugin/alpha-tool.luau")json"
             )
         );
         auto const traversal = fixture.load();
@@ -1164,8 +886,8 @@ namespace uf::deployment
             "umbraflow-project.json",
             substituted(
                 Fixture::projectManifest(),
-                R"json("path":"plugin/alpha-reducer.luau")json",
-                R"json("path":"plugin\\alpha-reducer.luau")json"
+                R"json("path":"plugin/alpha-tool.luau")json",
+                R"json("path":"plugin\\alpha-tool.luau")json"
             )
         );
         auto const backslash = fixture.load();
@@ -1246,7 +968,7 @@ namespace uf::deployment
         auto const declarative = substituted(
             substituted(
                 substituted(stated, member, ""),
-                R"json("path":"plugin/alpha-reducer.luau")json",
+                R"json("path":"plugin/alpha-tool.luau")json",
                 std::string{R"json("path":")json"}
                     + std::string{k_generated} + R"json(")json"
             ),
@@ -1276,79 +998,26 @@ namespace uf::deployment
         CHECK(why(invented).contains("plugin_justification"));
     }
 
-    // R4. A named file must exist. This is the directory form of the exemplar
-    // provider's REQUIRE(found != k_schemaFiles.end()), and it is only
-    // equivalent if a missing file is an error rather than a skip.
+    // R4. A named file must exist. Only assets are named by path now -- the
+    // closure's modules and the deployment's resources -- so those are what a
+    // missing file can be, and each must be an error rather than a skip.
     TEST_CASE("R4 a named file that is absent is refused rather than skipped")
     {
         auto const fixture = Fixture{};
         REQUIRE(fixture.load().has_value());
 
-        fixture.remove("schema/alpha/journal-2.json");
-        auto const missing = fixture.load();
-        REQUIRE_FALSE(missing.has_value());
-        CHECK(why(missing).contains("journal_payload_schemas"));
-        CHECK(why(missing).contains("schema/alpha/journal-2.json"));
+        fixture.remove("blob/alpha.blob");
+        auto const noResource = fixture.load();
+        REQUIRE_FALSE(noResource.has_value());
+        CHECK(why(noResource).contains("blob/alpha.blob"));
 
-        // A skip would have left the journal manifest naming a payload schema
-        // nobody supplied, which the deployment refuses for another reason.
-        // Naming the manifest member and the path is what tells the two apart.
-        CHECK_FALSE(why(missing).contains("does not hold together"));
-    }
-
-    // R5. Every stated sha256 equals the digest of the bytes it names, and the
-    // refusal prints the stated digest and what the deployment carries -- which
-    // is the whole of R5's promise that fixing one is a copy. Each half is
-    // asserted: a case asserting only the stated digest was satisfied by two of
-    // the three sites while neither printed anything to copy.
-    TEST_CASE("R5 a stated digest that is not the file's is refused")
-    {
-        auto const fixture = Fixture{};
+        fixture.rewrite("blob/alpha.blob", R"({"blob":"fixture-alpha"})");
         REQUIRE(fixture.load().has_value());
 
-        auto const bundle   = umbraflow::DeploymentBundle{"fixture.alpha"};
-        auto const progress = umbraflow::schemaHashHex(
-            umbraflow::k_progressPayloadSchema
-        );
-        fixture.rewrite(
-            "schema/alpha/journal-manifest.json",
-            substituted(bundle.journalEventManifest(), progress, std::string(64U, 'a'))
-        );
-        auto const journal = fixture.load();
-        REQUIRE_FALSE(journal.has_value());
-        CHECK(why(journal).contains(std::string(64U, 'a')));
-        CHECK(why(journal).contains(progress));
-
-        fixture.rewrite(
-            "schema/alpha/journal-manifest.json",
-            bundle.journalEventManifest()
-        );
-        REQUIRE(fixture.load().has_value());
-    }
-
-    // R5, third site. The Tool Catalog's tool_precondition_sha256 is the only
-    // route by which the precondition schema's bytes reach tool_catalog_hash,
-    // and until this case existed the rule had two of its three sites covered.
-    TEST_CASE("R5 a catalog naming another tool precondition schema is refused")
-    {
-        auto const fixture = Fixture{};
-        REQUIRE(fixture.load().has_value());
-
-        auto const bundle = umbraflow::DeploymentBundle{"fixture.alpha"};
-        fixture.rewrite(
-            "schema/alpha/catalog.json",
-            substituted(
-                bundle.toolCatalog(),
-                umbraflow::schemaHashHex(umbraflow::k_toolPreconditionSchema),
-                std::string(64U, 'c')
-            )
-        );
-        auto const refused = fixture.load();
-        REQUIRE_FALSE(refused.has_value());
-        CHECK(why(refused).contains(std::string(64U, 'c')));
-        CHECK(why(refused).contains(
-            umbraflow::schemaHashHex(umbraflow::k_toolPreconditionSchema)
-        ));
+        fixture.remove("plugin/alpha-tool.luau");
+        auto const noModule = fixture.load();
+        REQUIRE_FALSE(noModule.has_value());
+        CHECK(why(noModule).contains("plugin/alpha-tool.luau"));
     }
 
     // R6. Every schema must compile under the evaluator's closed keyword set. A
@@ -1360,11 +1029,13 @@ namespace uf::deployment
 
         // unevaluatedProperties is Draft 2020-12 and is deliberately outside
         // the implemented set, so a schema carrying it would be silently
-        // under-enforced by anything that skipped it.
+        // under-enforced by anything that skipped it. It goes into the inline
+        // identity schema, which is one of the two documents a project still
+        // supplies and this deployment compiles.
         fixture.rewrite(
-            "schema/alpha/state.json",
+            "umbraflow-project.json",
             substituted(
-                umbraflow::k_projectStateSchema,
+                Fixture::projectManifest(),
                 R"json("additionalProperties": false,)json",
                 R"json("unevaluatedProperties": false,)json"
             )
@@ -1374,72 +1045,48 @@ namespace uf::deployment
         CHECK(why(refused).contains("unevaluatedProperties"));
     }
 
-    // R7. Both mutability and surface are required on every catalog row. A row
-    // omitting one is refused rather than read as the restricted default that
-    // ToolDescriptor carries in C++.
-    TEST_CASE("R7 a catalog row without mutability or surface is refused")
+    // R7. Both mutability and surface are required on every Tool a deployment
+    // declares. An entry omitting one is refused rather than read as the
+    // restricted default that ToolDescriptor carries in C++.
+    TEST_CASE("R7 a Tool declared without mutability or surface is refused")
     {
         auto const fixture = Fixture{};
         REQUIRE(fixture.load().has_value());
 
-        auto const bundle = umbraflow::DeploymentBundle{"fixture.alpha"};
         fixture.rewrite(
-            "schema/alpha/catalog.json",
-            substituted(bundle.toolCatalog(), R"json("mutability":"mutating",)json", "")
+            "umbraflow-project.json",
+            substituted(
+                Fixture::projectManifest(),
+                R"json("mutability":"mutating",)json",
+                ""
+            )
         );
         auto const noMutability = fixture.load();
         REQUIRE_FALSE(noMutability.has_value());
         CHECK(why(noMutability).contains("mutability"));
 
         fixture.rewrite(
-            "schema/alpha/catalog.json",
-            substituted(bundle.toolCatalog(), R"json("surface":"semantic",)json", "")
+            "umbraflow-project.json",
+            substituted(
+                Fixture::projectManifest(),
+                R"json("surface":"semantic",)json",
+                ""
+            )
         );
         auto const noSurface = fixture.load();
         REQUIRE_FALSE(noSurface.has_value());
         CHECK(why(noSurface).contains("surface"));
     }
 
-    // R8, the half a loader can answer. Both sides of the agreement are
-    // authored -- the block's baseline_event_type and the vocabulary's
-    // baseline_entry -- so it is refused where it was written.
-    TEST_CASE("R8 a vocabulary provisioning another baseline event type is refused")
-    {
-        auto const fixture = Fixture{};
-        REQUIRE(fixture.loadForConformance().has_value());
-
-        // fixture.progress is a real event type of this project, with a payload
-        // schema of its own, so nothing but the agreement itself can refuse it.
-        fixture.rewrite(
-            "umbraflow-conformance.json",
-            substituted(
-                Fixture::conformanceManifest(),
-                R"json("baseline_entry":{"event_type":"fixture.baseline")json",
-                R"json("baseline_entry":{"event_type":"fixture.progress")json"
-            )
-        );
-        auto const disagreeing = fixture.loadForConformance();
-        REQUIRE_FALSE(disagreeing.has_value());
-        CHECK(why(disagreeing).contains("baseline_event_type"));
-        CHECK(why(disagreeing).contains("fixture.progress"));
-
-        // The rule belongs to the conformance layer and to nothing below it:
-        // the same directory still starts. Without this the case would equally
-        // describe a production loader that had read the vocabulary too.
-        auto const production = fixture.load();
-        INFO(why(production));
-        CHECK(production.has_value());
-    }
-
     // R8, applied to the five tool names a vocabulary provisions. Each is a
-    // claim about the deployment's Tool Catalog, and each names a case that
-    // runs green while proving nothing when the claim is false -- absent_tool
-    // above all, because a catalog that carries it turns the refusal the field
-    // exists for into a pass with nothing red anywhere.
+    // claim about the deployment's Tool declarations, and each names a case
+    // that runs green while proving nothing when the claim is false --
+    // absent_tool above all, because a declaration that carries it turns the
+    // refusal the member exists for into a pass with nothing red anywhere.
     //
-    // Every substitution below names a tool of this project's own catalog, or
-    // no tool at all, so nothing but the agreement itself can refuse it.
-    TEST_CASE("R8 a vocabulary the deployment's Tool Catalog contradicts is refused")
+    // Every substitution below names a Tool of this project's own declaration,
+    // or no Tool at all, so nothing but the agreement itself can refuse it.
+    TEST_CASE("R8 a vocabulary the deployment's Tool declarations contradict is refused")
     {
         auto const fixture = Fixture{};
         REQUIRE(fixture.loadForConformance().has_value());
@@ -1464,9 +1111,9 @@ namespace uf::deployment
             return why(refused);
         };
 
-        // The alpha catalog's ReadOnly row is observe-1, so this directory would
-        // otherwise submit a read-only tool wherever the suite needs an
-        // Operation that changes something.
+        // The alpha declaration's ReadOnly Tool is observe-1, so this directory
+        // would otherwise submit a read-only tool wherever the suite needs a
+        // call that changes something.
         auto const readOnly = refusing(
             R"json("mutating_tool":"fixture.alpha.command-1")json",
             R"json("mutating_tool":"fixture.alpha.observe-1")json"
@@ -1478,7 +1125,7 @@ namespace uf::deployment
             R"json("mutating_tool":"fixture.alpha.command-1")json",
             R"json("mutating_tool":"fixture.alpha.command-absent")json"
         );
-        CHECK(uncarried.contains("does not carry"));
+        CHECK(uncarried.contains("does not declare"));
         CHECK(uncarried.contains("fixture.alpha.command-absent"));
 
         auto const carriedAsMutating = refusing(
@@ -1495,9 +1142,9 @@ namespace uf::deployment
         CHECK(oneTool.contains("other_mutating_tool"));
         CHECK(oneTool.contains("fixture.alpha.command-1"));
 
-        // The alpha command-1 is Mutating and carried, so nothing but
-        // absent_tool's own rule -- that the catalog must NOT carry it -- can
-        // refuse this one.
+        // The alpha command-1 is Mutating and declared, so nothing but
+        // absent_tool's own rule -- that the deployment must NOT declare it --
+        // can refuse this one.
         auto const carriedAbsent = refusing(
             R"json("absent_tool":"fixture.alpha.command-absent")json",
             R"json("absent_tool":"fixture.alpha.command-1")json"
@@ -1517,124 +1164,9 @@ namespace uf::deployment
         CHECK(foreign.contains("foreign's mutating_tool"));
     }
 
-    // R8, applied to the four journal payloads. The reducer-input case proves
-    // that an entry a commit did not name never reaches the reducer; two
-    // entries carrying one payload cannot show which of them arrived, so the
-    // agreement is refused where the vocabulary was written.
-    TEST_CASE("R8 two journal entries provisioning one payload are refused")
-    {
-        auto const fixture = Fixture{};
-        REQUIRE(fixture.loadForConformance().has_value());
-
-        // The event types stay distinct and each keeps a payload schema of its
-        // own, so only the equality of the two payloads is left to refuse this.
-        fixture.rewrite(
-            "umbraflow-conformance.json",
-            substituted(
-                Fixture::conformanceManifest(),
-                R"json("progress_entry":{"event_type":"fixture.progress","payload":"{\"value\":1}"})json",
-                R"json("progress_entry":{"event_type":"fixture.progress","payload":"{\"marker\":\"confirmed\"}"})json"
-            )
-        );
-        auto const equal = fixture.loadForConformance();
-        REQUIRE_FALSE(equal.has_value());
-        CHECK(why(equal).contains("progress_entry"));
-        CHECK(why(equal).contains("confirmed_entry"));
-    }
-
-    // R8, applied to the two halves of the journal event schema manifest. The
-    // block supplies the files and the manifest names their digests, so a
-    // supplied schema no entry names is refused rather than compiled and never
-    // consulted -- its bytes reach no digest in the design at all.
-    TEST_CASE("R8 a journal payload schema no manifest entry names is refused")
-    {
-        auto const fixture = Fixture{};
-        REQUIRE(fixture.load().has_value());
-
-        // The surplus file is beta's own effect payload schema: a complete
-        // schema this evaluator compiles, carried by the same project, so
-        // nothing but the manifest's silence about it can refuse this.
-        fixture.rewrite(
-            "umbraflow-project.json",
-            substituted(
-                Fixture::projectManifest(),
-                R"json("journal_payload_schemas":["schema/alpha/journal-0.json")json",
-                R"json("journal_payload_schemas":["schema/beta/effect-0.json","schema/alpha/journal-0.json")json"
-            )
-        );
-        auto const surplus = fixture.load();
-        REQUIRE_FALSE(surplus.has_value());
-        CHECK(why(surplus).contains(
-            umbraflow::schemaHashHex(umbraflow::k_effectPayloadSchema)
-        ));
-        CHECK(why(surplus).contains("names under no event type"));
-    }
-
-    // R5. The effect payload schemas reach a digest through exactly one member,
-    // the catalog's effect_payload_sha256s, and both halves are authored in one
-    // directory -- so both directions are refused where they were written.
-    // Without this member their bytes are inside no hash at all and editing one
-    // is answered by a Plan refusal much later
-    // (docs/archive/plans/2026-08-11-project-as-data.md 2.2).
-    TEST_CASE("R5 the catalog and the effect payload schemas must name each other")
-    {
-        auto const fixture = Fixture{};
-        REQUIRE(fixture.load().has_value());
-
-        // A journal payload schema stands in for the effect one: a complete
-        // schema this evaluator compiles, already carried by this deployment,
-        // so nothing but the catalog's digest can tell the two apart.
-        fixture.rewrite(
-            "umbraflow-project.json",
-            substituted(
-                Fixture::projectManifest(),
-                R"json("effect_payload_schemas":["schema/alpha/effect-0.json"])json",
-                R"json("effect_payload_schemas":["schema/alpha/journal-0.json"])json"
-            )
-        );
-        auto const unnamedDigest = fixture.load();
-        REQUIRE_FALSE(unnamedDigest.has_value());
-        CHECK(why(unnamedDigest).contains(
-            umbraflow::schemaHashHex(umbraflow::k_effectPayloadSchema)
-        ));
-        CHECK(why(unnamedDigest).contains("its effect_payload_schemas hash to"));
-
-        fixture.rewrite(
-            "umbraflow-project.json",
-            substituted(
-                Fixture::projectManifest(),
-                R"json("effect_payload_schemas":["schema/alpha/effect-0.json"])json",
-                R"json("effect_payload_schemas":["schema/alpha/effect-0.json","schema/alpha/journal-0.json"])json"
-            )
-        );
-        auto const surplusSchema = fixture.load();
-        REQUIRE_FALSE(surplusSchema.has_value());
-        CHECK(why(surplusSchema).contains(
-            umbraflow::schemaHashHex(umbraflow::k_journalPayloadSchemas.front())
-        ));
-        CHECK(why(surplusSchema).contains("effect_payload_sha256s does not name"));
-
-        // The member is required rather than optional, which is what stops a
-        // catalog from omitting it and putting its effect payload schemas back
-        // outside every hash while both directions above stay satisfied.
-        auto const bundle   = umbraflow::DeploymentBundle{"fixture.alpha"};
-        auto const declared = std::string{R"json("effect_payload_sha256s":[")json"}
-            + umbraflow::schemaHashHex(umbraflow::k_effectPayloadSchema)
-            + R"json("],)json";
-        fixture.rewrite("umbraflow-project.json", Fixture::projectManifest());
-        fixture.rewrite(
-            "schema/alpha/catalog.json",
-            substituted(bundle.toolCatalog(), declared, "")
-        );
-        auto const omitted = fixture.load();
-        REQUIRE_FALSE(omitted.has_value());
-        CHECK(why(omitted).contains("required has no member"));
-        CHECK(why(omitted).contains("effect_payload_sha256s"));
-    }
-
     // R9. probe_frame names a capture, and a file that does not decode is
     // refused where it was written rather than minutes into a suite. Only the
-    // extent is out of reach, and R8 says why.
+    // extent is out of reach, and the header says why.
     TEST_CASE("R9 a probe frame that is not a PNG is refused")
     {
         auto const fixture = Fixture{};
@@ -1648,13 +1180,13 @@ namespace uf::deployment
             substituted(
                 Fixture::conformanceManifest(),
                 R"json("probe_frame":"runtime/probe-frame.png")json",
-                R"json("probe_frame":"schema/alpha/state.json")json"
+                R"json("probe_frame":"umbraflow-project.json")json"
             )
         );
         auto const notAnImage = fixture.loadForConformance();
         REQUIRE_FALSE(notAnImage.has_value());
         CHECK(why(notAnImage).contains("probe_frame"));
-        CHECK(why(notAnImage).contains("schema/alpha/state.json"));
+        CHECK(why(notAnImage).contains("umbraflow-project.json"));
 
         // A truncated capture is the case a signature check cannot reach: the
         // first eight bytes are a PNG's and the file is not one.
@@ -1721,7 +1253,7 @@ namespace uf::deployment
         SUBCASE("one module cannot exceed the VM source ceiling")
         {
             fixture.rewrite(
-                "plugin/alpha-reducer.luau",
+                "plugin/alpha-tool.luau",
                 std::string(
                     script::PureDataProgram::k_maximumModuleSourceBytes + 1U,
                     'x'
@@ -1771,9 +1303,9 @@ namespace uf::deployment
                 "umbraflow-project.json",
                 substituted(
                     Fixture::projectManifest(),
-                    R"json("reducer_closure":{"entry":"main","exported_entry_points":["reduce"],"modules":[{"name":"main","path":"plugin/alpha-reducer.luau"}]})json",
-                    "\"reducer_closure\":{\"entry\":\"m0\","
-                        "\"exported_entry_points\":[\"reduce\"],"
+                    R"json("tool_closure":{"entry":"main","exported_entry_points":[],"modules":[{"name":"main","path":"plugin/alpha-tool.luau"}]})json",
+                    "\"tool_closure\":{\"entry\":\"m0\","
+                        "\"exported_entry_points\":[],"
                         "\"modules\":" + modules + "}"
                 )
             );
@@ -1850,7 +1382,7 @@ namespace uf::deployment
             REQUIRE_FALSE(refused.has_value());
             CHECK(
                 why(refused).contains(
-                    "schema/umbraflow-project-v2.schema.json"
+                    "schema/umbraflow-project-v3.schema.json"
                 )
             );
             CHECK_FALSE(why(refused).contains("missing/0"));
@@ -1925,9 +1457,8 @@ namespace uf::deployment
         CHECK(why(conflicted).contains("more than once"));
 
         fixture.rewrite(
-            "plugin/alpha-reducer.luau",
-            "return {plugin_id = \"fixture.alpha\", "
-            "reduce = function(input) return input end} -- one byte more\n"
+            "plugin/alpha-tool.luau",
+            "return {plugin_id = \"fixture.alpha\"} -- one byte more\n"
         );
 
         auto const resumed = fixture.load(stored);

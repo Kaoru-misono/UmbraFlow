@@ -34,35 +34,35 @@
 #include <utility>
 #include <vector>
 
-// The two-closure registration generation, which is now the only one there is:
-// modules/deployment writes this document, the CLI and ProductLifecycle load
-// it, and the one-closure reader it replaced is gone rather than kept beside
-// it. Nothing inspects a document to decide which reader gets it, because
-// there is one reader.
+// The one-closure registration generation, which is now the only one there
+// is: modules/deployment writes this document, the CLI and ProductLifecycle
+// load it, and the two-closure reader it replaced is gone rather than kept
+// beside it. Nothing inspects a document to decide which reader gets it,
+// because there is one reader.
 //
 // The builder in this file's anonymous namespace writes the document by hand so
 // that a case can state a claim no authoring path would produce. What these
-// cases have to prove is what a successful load cannot show: that both closure
-// slots are mandatory, that `exported_entry_points` is mandatory inside each of
-// them, and that the export join fails on each of its legs independently -- a
-// declaration that overstates, a declaration that understates, and a closure
-// whose real exports disagree with a declaration that looked accurate.
+// cases have to prove is what a successful load cannot show: that the closure
+// slot is mandatory, that `exported_entry_points` is mandatory inside it, and
+// that the export join fails on each of its legs independently -- a declaration
+// that overstates, a declaration that understates, and a closure whose real
+// exports disagree with a declaration that looked accurate.
 namespace uf::operator_runtime
 {
     namespace
     {
-        // The format the one-closure registration document stated. It is a
+        // The format the two-closure registration document stated. It is a
         // number here rather than a constant because the constant that named
         // it died with its reader; keeping the number is what makes "this
         // reader accepts its own generation and nothing else" red against the
-        // document generation the flip replaced.
-        constexpr auto k_oneClosureRegistrationFormat = uint64{4U};
+        // document generation the state cut replaced.
+        constexpr auto k_twoClosureRegistrationFormat = uint64{6U};
 
         constexpr auto k_pluginId     = std::string_view{"chaos.project"};
         constexpr auto k_dismissTool  = std::string_view{"chaos.project.dismiss"};
         constexpr auto k_sweepTool    = std::string_view{"chaos.project.sweep"};
         constexpr auto k_schemaPath   = std::string_view{
-            "schema/umbraflow-project-registration-v3.schema.json"
+            "schema/umbraflow-project-registration-v4.schema.json"
         };
 
         // The catalog bytes are opaque on purpose: the owner proves they hash
@@ -73,26 +73,9 @@ namespace uf::operator_runtime
             R"({"schema":"umbraflow-tool-catalog/v1","tools":["dismiss","sweep"]})"
         };
 
-        // The reducer closure: the whole of the pure type's contract under the
-        // two-closure shape, which is plugin_id and one entry.
-        //
-        // The fold answers for both shapes it is handed: a caller's own value,
-        // and the reduce envelope the Operator assembles for a baseline, which
-        // names journal events and a prior state and never an `event`.
-        constexpr auto k_reducerSource = std::string_view{R"LUAU(
-return {
-    plugin_id = "chaos.project",
-    reduce = function(input)
-        return { folded = input.event or "baseline" }
-    end,
-}
-)LUAU"};
-
-        // A closure that exports nothing but its identity. It stands in twice:
-        // as a reducer that does not carry the one entry a generation's
-        // reducer must, and as the tool closure a project that binds no Tool
-        // ships -- which is a real closure with an explicitly empty declared
-        // entry set, never an absent slot.
+        // A closure that exports nothing but its identity: the tool closure a
+        // project that binds no Tool ships, which is a real closure with an
+        // explicitly empty declared entry set and never an absent slot.
         constexpr auto k_identityOnlySource = std::string_view{R"LUAU(
 return {
     plugin_id = "chaos.project",
@@ -194,11 +177,11 @@ return {
             return {};
         }
 
-        // The authored bytes of the two-closure document contract, held for
+        // The authored bytes of the registration document contract, held for
         // the process because a compiled json::Schema is only as durable as
         // the bytes it was compiled from.
         [[nodiscard]]
-        auto twoClosureSchemaBytes() -> std::string const&
+        auto registrationSchemaBytes() -> std::string const&
         {
             static auto const bytes = [] {
                 auto stream = std::ifstream{
@@ -233,9 +216,9 @@ return {
             return *found;
         }
 
-        // The document spells a digest as bare lowercase hex, exactly as the
-        // one-closure document does. ContentHash's own spelling carries the
-        // algorithm prefix, and this is the one place the two meet.
+        // The document spells a digest as bare lowercase hex. ContentHash's own
+        // spelling carries the algorithm prefix, and this is the one place the
+        // two meet.
         [[nodiscard]]
         auto hashMember(
             json::Value const& document,
@@ -272,9 +255,9 @@ return {
             };
         }
 
-        // The reader of the two-closure document, and the only one there is.
-        // It accepts exactly what schema/umbraflow-project-registration-v3
-        // describes and refuses everything else; the one-closure document has
+        // The reader of the registration document, and the only one there is.
+        // It accepts exactly what schema/umbraflow-project-registration-v4
+        // describes and refuses everything else; the two-closure document has
         // no reader at all any more.
         //
         // It is this file's own rather than modules/deployment's because these
@@ -283,28 +266,27 @@ return {
         // through it; what is compiled against the same schema bytes here is
         // the shape both must agree on.
         [[nodiscard]]
-        auto readTwoClosureDocument(
+        auto readRegistrationDocument(
             std::string_view exactJcs
         ) -> Result<ProjectGenerationClaims>
         {
             UF_TRY(withContext(
                 json::requireExactCanonical(exactJcs),
-                "the two-closure registration is not exact RFC 8785 JCS"
+                "the registration is not exact RFC 8785 JCS"
             ));
             UF_TRY_VALUE(document, json::parse(exactJcs));
             UF_TRY_VALUE(
                 schema,
                 json::Schema::compile(json::Schema::Document{
                     .label      = k_schemaPath,
-                    .exactBytes = twoClosureSchemaBytes(),
+                    .exactBytes = registrationSchemaBytes(),
                 })
             );
             UF_TRY(withContext(
                 schema.validate(document),
-                "validating the two-closure ProjectRegistration document"
+                "validating the ProjectRegistration document"
             ));
 
-            UF_TRY_VALUE(reducerClosure, readClosure(document, "reducer_closure"));
             UF_TRY_VALUE(toolClosure, readClosure(document, "tool_closure"));
             UF_TRY_VALUE(
                 environmentHash,
@@ -313,18 +295,6 @@ return {
             UF_TRY_VALUE(
                 toolCatalogHash,
                 hashMember(document, "tool_catalog_hash")
-            );
-            UF_TRY_VALUE(
-                stateSchemaHash,
-                hashMember(document, "project_state_schema_hash")
-            );
-            UF_TRY_VALUE(
-                preconditionSchemaHash,
-                hashMember(document, "project_tool_precondition_schema_hash")
-            );
-            UF_TRY_VALUE(
-                journalSchemaHash,
-                hashMember(document, "journal_event_schema_manifest_hash")
             );
 
             auto bindings = std::vector<ProjectToolBinding>{};
@@ -343,19 +313,11 @@ return {
                 .projectRegistrationFormat = static_cast<uint64>(
                     memberOf(document, "project_registration_format").number()
                 ),
-                .pluginId       = std::string{memberOf(document, "plugin_id").string()},
-                .reducerClosure = std::move(reducerClosure),
-                .toolClosure    = std::move(toolClosure),
+                .pluginId    = std::string{memberOf(document, "plugin_id").string()},
+                .toolClosure = std::move(toolClosure),
 
-                .pluginEnvironmentHash             = environmentHash,
-                .toolCatalogHash                   = toolCatalogHash,
-                .projectStateSchemaHash            = stateSchemaHash,
-                .projectToolPreconditionSchemaHash = preconditionSchemaHash,
-                .journalEventSchemaManifestHash    = journalSchemaHash,
-
-                .baselineEventType = std::string{
-                    memberOf(document, "baseline_event_type").string()
-                },
+                .pluginEnvironmentHash                = environmentHash,
+                .toolCatalogHash                      = toolCatalogHash,
                 .projectResources                     = {},
                 .observedInstanceIdentitySchemaHashes = {},
                 .projectToolBindings                  = std::move(bindings),
@@ -429,15 +391,13 @@ return {
             });
         }
 
-        // The two-closure document, exactly as an authoring path would write
+        // The registration document, exactly as an authoring path would write
         // it. Every digest is derived from the bytes it describes rather than
         // stated, because a builder that stated them would prove nothing about
-        // the loader's own checks; the declared entry sets are the one thing a
+        // the loader's own checks; the declared entry set is the one thing a
         // caller states, which is the whole subject of these cases.
         [[nodiscard]]
         auto documentOver(
-            std::string_view reducerSource,
-            std::vector<std::string> const& declaredReducerEntries,
             std::string_view toolSource,
             std::vector<std::string> const& declaredToolEntries,
             std::vector<ProjectToolBinding> const& bindings
@@ -453,10 +413,6 @@ return {
                 }));
             }
             return json::Value::ofObject({
-                {"baseline_event_type",
-                 json::Value::ofString("chaos.baseline")},
-                {"journal_event_schema_manifest_hash",
-                 json::Value::ofString(hashOf("journal").hex())},
                 {"observed_instance_identity_schema_hashes",
                  json::Value::ofArray({})},
                 {"plugin_environment_hash",
@@ -467,13 +423,7 @@ return {
                      static_cast<double>(k_projectGenerationFormat)
                  )},
                 {"project_resources", json::Value::ofArray({})},
-                {"project_state_schema_hash",
-                 json::Value::ofString(hashOf("state").hex())},
                 {"project_tool_bindings", json::Value::ofArray(std::move(rows))},
-                {"project_tool_precondition_schema_hash",
-                 json::Value::ofString(hashOf("precondition").hex())},
-                {"reducer_closure",
-                 closureValue(reducerSource, declaredReducerEntries)},
                 {"tool_catalog_hash",
                  json::Value::ofString(hashOf(k_toolCatalogBytes).hex())},
                 {"tool_closure", closureValue(toolSource, declaredToolEntries)},
@@ -523,22 +473,18 @@ return {
             return ProjectGeneration::verifyExact(
                 std::move(exactJcs),
                 rootHash,
-                readTwoClosureDocument
+                readRegistrationDocument
             );
         }
 
         [[nodiscard]]
         auto generationOver(
-            std::string_view reducerSource,
-            std::vector<std::string> const& declaredReducerEntries,
             std::string_view toolSource,
             std::vector<std::string> const& declaredToolEntries,
             std::vector<ProjectToolBinding> const& bindings
         ) -> VerifiedProjectGeneration
         {
             auto generation = verifiedGeneration(documentOver(
-                reducerSource,
-                declaredReducerEntries,
                 toolSource,
                 declaredToolEntries,
                 bindings
@@ -547,9 +493,9 @@ return {
             return *std::move(generation);
         }
 
-        // These cases are about the closures and the join, so the seam answers
+        // These cases are about the closure and the join, so the seam answers
         // anything. It is required all the same: a scoped program with no Tool
-        // Runtime is a pure program wearing the wrong type.
+        // Runtime is not a scoped program at all.
         [[nodiscard]]
         auto acceptingRuntime() -> script::ToolRuntimeInvoke
         {
@@ -586,12 +532,6 @@ return {
         auto bothEntries() -> std::vector<std::string>
         {
             return {"dismiss", "sweep"};
-        }
-
-        [[nodiscard]]
-        auto reducerEntry() -> std::vector<std::string>
-        {
-            return {std::string{k_reducerEntryPoint}};
         }
 
         [[nodiscard]]
@@ -653,59 +593,6 @@ return {
             return *std::move(owner);
         }
 
-        // The document authority the fold's answer is judged by. The schema
-        // bytes are opaque here for the reason the catalog's are: the owner
-        // proves they hash to what the generation pinned, and what it does
-        // with a document arrives through the validator.
-        //
-        // `refuseOutput` and `refuseInput` are what a case aims at the fold. A
-        // generation whose reduced baseline nothing judged would be a
-        // generation whose ProjectState schema is decoration, and the only way
-        // to show each judgement happens is to make it refuse.
-        [[nodiscard]]
-        auto schemaOwnerOver(
-            VerifiedProjectGeneration const& generation,
-            std::string_view refuseOutput = {},
-            std::string_view refuseInput = {}
-        ) -> ProjectSchemaOwner
-        {
-            auto owner = ProjectSchemaOwner::create(
-                generation,
-                ProjectDocumentSchemaBytes{
-                    .projectState     = "state",
-                    .toolPrecondition = "precondition",
-                },
-                [](std::string_view exactJcs) -> Result<json::Value>
-                {
-                    UF_TRY(json::requireExactCanonical(exactJcs));
-                    return json::parse(exactJcs);
-                },
-                [
-                    outputRefusal = std::string{refuseOutput},
-                    inputRefusal  = std::string{refuseInput}
-                ](
-                    ProjectDocumentDirection direction,
-                    std::string_view
-                ) -> Status
-                {
-                    auto const& refusal =
-                        direction == ProjectDocumentDirection::Output
-                            ? outputRefusal
-                            : inputRefusal;
-                    if (!refusal.empty())
-                    {
-                        return fail(
-                            AutomationErrorKind::ActionRejected,
-                            refusal
-                        );
-                    }
-                    return ok();
-                }
-            );
-            REQUIRE(owner.has_value());
-            return *std::move(owner);
-        }
-
         // Artifact bytes for the resource-closure legs below. Every blob is
         // valid JSON even where the closure rule is what must refuse it: a blob
         // that is not JSON is refused at admission, which would leave each of
@@ -742,23 +629,10 @@ return {
             };
         }
 
-        // These cases are about the closures and the joins, so the result
-        // validator accepts unless a case aims it. The case that proves a
-        // refused answer is a refused call belongs to the dispatcher.
-        [[nodiscard]]
-        auto acceptingResults() -> ToolResultValidator
-        {
-            return [](std::string_view, std::string_view) -> Status
-            {
-                return ok();
-            };
-        }
-
         [[nodiscard]]
         auto loadOn(
             ProjectGenerationRegistrar& registrar,
             VerifiedProjectGeneration const& generation,
-            std::string_view reducerSource,
             std::string_view toolSource,
             std::vector<std::string> declaredTools
         ) -> Result<ProjectGenerationHandle>
@@ -766,23 +640,18 @@ return {
             return registrar.registerGeneration(
                 generation,
                 catalogOver(generation, std::move(declaredTools)),
-                schemaOwnerOver(generation),
-                closureModules(reducerSource),
                 closureModules(toolSource),
                 {},
-                acceptingResults(),
                 acceptingRuntime()
             );
         }
     } // namespace
 
-    TEST_CASE("a two-closure generation loads both closures and runs each")
+    TEST_CASE("a generation loads its closure and runs the entries it bound")
     {
         SUBCASE("a generation that binds Tools")
         {
             auto const generation = generationOver(
-                k_reducerSource,
-                reducerEntry(),
                 k_toolSource,
                 bothEntries(),
                 bothBindings()
@@ -792,7 +661,6 @@ return {
             auto const loaded    = loadOn(
                 registrar,
                 generation,
-                k_reducerSource,
                 k_toolSource,
                 bothTools()
             );
@@ -801,39 +669,19 @@ return {
             CHECK(loaded->pluginId() == std::string{k_pluginId});
             CHECK(loaded->projectRegistrationHash() == generation.hash());
 
-            // Two closures, two manifest digests, and they are the ones the
-            // document pinned rather than anything the caller chose. A single
-            // digest over both would make either closure's code move the
-            // other's identity.
-            CHECK(
-                loaded->reducerModuleManifestHash()
-                == manifestHashOf(k_reducerSource)
-            );
+            // The manifest digest is the one the document pinned rather than
+            // anything the caller chose, so moving the closure's code moves
+            // this generation's identity with it.
             CHECK(
                 loaded->toolModuleManifestHash() == manifestHashOf(k_toolSource)
-            );
-            CHECK(
-                loaded->reducerModuleManifestHash()
-                != loaded->toolModuleManifestHash()
             );
 
             auto const scopedEnvironment = currentScopedToolEnvironmentHash();
             REQUIRE(scopedEnvironment.has_value());
             CHECK(loaded->environmentIdentity() == *scopedEnvironment);
 
-            // The pure half runs the one entry the shrunk contract keeps, and
-            // the answer comes back stamped by this generation's ProjectState
-            // authority rather than as a raw value.
-            auto const input = loaded->canonicalize(R"({"event":"admitted"})");
-            REQUIRE(input.has_value());
-            auto const folded = loaded->reduce(*input);
-            REQUIRE(folded.has_value());
-            CHECK(folded->bytes() == R"({"folded":"admitted"})");
-            CHECK(folded->projectRegistrationHash() == generation.hash());
-            CHECK(folded->direction() == ProjectDocumentDirection::Output);
-
-            // The scoped half runs the entries the binding table named, out of
-            // the one loaded value.
+            // The closure runs the entries the binding table named, out of the
+            // one loaded value.
             auto const dismissed = loaded->invokeBoundTool(
                 k_dismissTool,
                 json::Value::ofObject({
@@ -859,15 +707,6 @@ return {
             CHECK(memberOf(*swept, "knows_sibling").boolean());
             CHECK(memberOf(*swept, "knows_framework").boolean());
             CHECK_FALSE(memberOf(*swept, "catalog_hash").string().empty());
-
-            // The answer a bound entry gave, judged by the authority that
-            // declared what it may answer with. The loader carries the
-            // validator; a name this generation never bound never reaches it.
-            CHECK(loaded->validateToolResult(k_sweepTool, "{}").has_value());
-            CHECK_FALSE(
-                loaded->validateToolResult("chaos.project.unknown", "{}")
-                    .has_value()
-            );
 
             // The two joined authorities, held rather than re-derived: the
             // table the tool closure was compiled over, and the catalog the
@@ -908,11 +747,10 @@ return {
             ));
 
             // A registration root is a generation, so the same root cannot be
-            // loaded twice under two pairs of programs.
+            // loaded twice under two different programs.
             auto const again = loadOn(
                 registrar,
                 generation,
-                k_reducerSource,
                 k_toolSource,
                 bothTools()
             );
@@ -927,18 +765,12 @@ return {
             // Explicit emptiness is a value; there is no shorter spelling and
             // no absent slot to reach for.
             auto const generation = generationOver(
-                k_reducerSource,
-                reducerEntry(),
                 k_identityOnlySource,
                 {},
                 {}
             );
             CHECK(generation.toolClosure().exportedEntryPoints.empty());
             CHECK(generation.projectToolBindings().empty());
-            CHECK(
-                generation.reducerClosure().exportedEntryPoints
-                == reducerEntry()
-            );
             CHECK(generation.toolCatalogHash() == hashOf(k_toolCatalogBytes));
 
             // The catalog is stated and declares nothing, on the same terms
@@ -949,19 +781,12 @@ return {
             auto const loaded    = loadOn(
                 registrar,
                 generation,
-                k_reducerSource,
                 k_identityOnlySource,
                 {}
             );
             REQUIRE(loaded.has_value());
             CHECK(loaded->catalog().toolNames().empty());
             CHECK(loaded->bindingTable().entryPoints().empty());
-
-            auto const input = loaded->canonicalize(R"({"event":"pure"})");
-            REQUIRE(input.has_value());
-            auto const folded = loaded->reduce(*input);
-            REQUIRE(folded.has_value());
-            CHECK(folded->bytes() == R"({"folded":"pure"})");
 
             // The tool closure loaded and offers nothing, which is a different
             // fact from a generation that never carried one.
@@ -987,8 +812,6 @@ return {
             // address, so the loader refuses the document rather than
             // compiling it.
             auto const generation = generationOver(
-                k_reducerSource,
-                reducerEntry(),
                 k_toolSource,
                 bothEntries(),
                 {
@@ -1001,7 +824,6 @@ return {
             auto const refused = loadOn(
                 registrar,
                 generation,
-                k_reducerSource,
                 k_toolSource,
                 bothTools()
             );
@@ -1015,8 +837,6 @@ return {
         SUBCASE("a tool declaration that understates what the contract binds")
         {
             auto const generation = generationOver(
-                k_reducerSource,
-                reducerEntry(),
                 k_toolSource,
                 {"dismiss"},
                 bothBindings()
@@ -1024,7 +844,6 @@ return {
             auto const refused = loadOn(
                 registrar,
                 generation,
-                k_reducerSource,
                 k_toolSource,
                 bothTools()
             );
@@ -1043,8 +862,6 @@ return {
             // bridge can find that `sweep` is not there, which is why the
             // load-time leg cannot stand in for this one.
             auto const generation = generationOver(
-                k_reducerSource,
-                reducerEntry(),
                 k_dismissOnlyToolSource,
                 bothEntries(),
                 bothBindings()
@@ -1052,7 +869,6 @@ return {
             auto const refused = loadOn(
                 registrar,
                 generation,
-                k_reducerSource,
                 k_dismissOnlyToolSource,
                 bothTools()
             );
@@ -1063,8 +879,6 @@ return {
         SUBCASE("shipped bytes that export more than the declaration names")
         {
             auto const generation = generationOver(
-                k_reducerSource,
-                reducerEntry(),
                 k_extraFieldToolSource,
                 bothEntries(),
                 bothBindings()
@@ -1072,7 +886,6 @@ return {
             auto const refused = loadOn(
                 registrar,
                 generation,
-                k_reducerSource,
                 k_extraFieldToolSource,
                 bothTools()
             );
@@ -1080,89 +893,23 @@ return {
             CHECK(refused.error().message().contains("undeclared field"));
         }
 
-        SUBCASE("a reducer declaration that is not the one entry the type keeps")
-        {
-            auto const generation = generationOver(
-                k_reducerSource,
-                {"derive", "reduce"},
-                k_toolSource,
-                bothEntries(),
-                bothBindings()
-            );
-            auto const refused = loadOn(
-                registrar,
-                generation,
-                k_reducerSource,
-                k_toolSource,
-                bothTools()
-            );
-            REQUIRE_FALSE(refused.has_value());
-            CHECK(refused.error().message().contains(
-                "the reducer closure states it exports derive, reduce, and a "
-                "generation's reducer closure exports exactly reduce"
-            ));
-
-            // The other side of the same refusal: an empty reducer
-            // declaration is not the pure project's spelling either. Only the
-            // TOOL closure has an empty entry set to state.
-            auto const silent = generationOver(
-                k_reducerSource,
-                {},
-                k_toolSource,
-                bothEntries(),
-                bothBindings()
-            );
-            auto const alsoRefused = loadOn(
-                registrar,
-                silent,
-                k_reducerSource,
-                k_toolSource,
-                bothTools()
-            );
-            REQUIRE_FALSE(alsoRefused.has_value());
-            CHECK(alsoRefused.error().message().contains(
-                "the reducer closure states it exports nothing"
-            ));
-        }
-
-        SUBCASE("a reducer whose shipped bytes carry no fold at all")
-        {
-            auto const generation = generationOver(
-                k_identityOnlySource,
-                reducerEntry(),
-                k_toolSource,
-                bothEntries(),
-                bothBindings()
-            );
-            auto const refused = loadOn(
-                registrar,
-                generation,
-                k_identityOnlySource,
-                k_toolSource,
-                bothTools()
-            );
-            REQUIRE_FALSE(refused.has_value());
-            CHECK(refused.error().message().contains("missing an entry point"));
-        }
     }
 
-    TEST_CASE("the two-closure reader accepts its own generation and nothing else")
+    TEST_CASE("the registration reader accepts its own generation and nothing else")
     {
         auto const healthy = documentOver(
-            k_reducerSource,
-            reducerEntry(),
             k_toolSource,
             bothEntries(),
             bothBindings()
         );
 
-        SUBCASE("a document stating the one-closure generation")
+        SUBCASE("a document stating the two-closure generation")
         {
             auto const stale = withMember(
                 healthy,
                 "project_registration_format",
                 json::Value::ofNumber(
-                    static_cast<double>(k_oneClosureRegistrationFormat)
+                    static_cast<double>(k_twoClosureRegistrationFormat)
                 )
             );
             auto const refused = verifiedGeneration(stale);
@@ -1187,26 +934,15 @@ return {
                 [](std::string_view) -> Result<ProjectGenerationClaims>
                 {
                     return ProjectGenerationClaims{
-                        .projectRegistrationFormat = k_oneClosureRegistrationFormat,
+                        .projectRegistrationFormat = k_twoClosureRegistrationFormat,
                         .pluginId                  = std::string{k_pluginId},
-                        .reducerClosure = ProjectClosureClaims{
-                            .moduleManifestHash  = hashOf("reducer"),
-                            .exportedEntryPoints = {std::string{
-                                k_reducerEntryPoint
-                            }},
-                        },
                         .toolClosure = ProjectClosureClaims{
                             .moduleManifestHash  = hashOf("tool"),
                             .exportedEntryPoints = {},
                         },
 
-                        .pluginEnvironmentHash             = hashOf("environment"),
-                        .toolCatalogHash                   = hashOf("catalog"),
-                        .projectStateSchemaHash            = hashOf("state"),
-                        .projectToolPreconditionSchemaHash = hashOf("precondition"),
-                        .journalEventSchemaManifestHash    = hashOf("journal"),
-
-                        .baselineEventType                    = "chaos.baseline",
+                        .pluginEnvironmentHash                = hashOf("environment"),
+                        .toolCatalogHash                      = hashOf("catalog"),
                         .projectResources                     = {},
                         .observedInstanceIdentitySchemaHashes = {},
                         .projectToolBindings                  = {},
@@ -1215,11 +951,11 @@ return {
             );
             REQUIRE_FALSE(refused.has_value());
             CHECK(refused.error().message().contains(
-                "the registration states 4 and this framework reads 6"
+                "the registration states 6 and this framework reads 7"
             ));
         }
 
-        SUBCASE("a document carrying only one closure")
+        SUBCASE("a document carrying no closure")
         {
             auto const refused = verifiedGeneration(
                 withoutMember(healthy, "tool_closure")
@@ -1289,7 +1025,7 @@ return {
             auto const misrooted = ProjectGeneration::verifyExact(
                 exactJcs,
                 hashOf("another-root"),
-                readTwoClosureDocument
+                readRegistrationDocument
             );
             REQUIRE_FALSE(misrooted.has_value());
             CHECK(misrooted.error().message().contains(
@@ -1299,7 +1035,7 @@ return {
             auto const empty = ProjectGeneration::verifyExact(
                 {},
                 hashOf(""),
-                readTwoClosureDocument
+                readRegistrationDocument
             );
             REQUIRE_FALSE(empty.has_value());
             CHECK(empty.error().message().contains(
@@ -1312,7 +1048,7 @@ return {
             auto const spelled = ProjectGeneration::verifyExact(
                 loose,
                 hashOf(loose),
-                readTwoClosureDocument
+                readRegistrationDocument
             );
             REQUIRE_FALSE(spelled.has_value());
             CHECK(spelled.error().message().contains(
@@ -1325,33 +1061,9 @@ return {
     {
         auto registrar = ProjectGenerationRegistrar{};
 
-        SUBCASE("a reducer closure whose manifest is not the pinned one")
-        {
-            auto const generation = generationOver(
-                k_reducerSource,
-                reducerEntry(),
-                k_toolSource,
-                bothEntries(),
-                bothBindings()
-            );
-            auto const refused = loadOn(
-                registrar,
-                generation,
-                k_identityOnlySource,
-                k_toolSource,
-                bothTools()
-            );
-            REQUIRE_FALSE(refused.has_value());
-            CHECK(refused.error().message().contains(
-                "the reducer closure does not match the verified generation"
-            ));
-        }
-
         SUBCASE("a tool closure whose manifest is not the pinned one")
         {
             auto const generation = generationOver(
-                k_reducerSource,
-                reducerEntry(),
                 k_toolSource,
                 bothEntries(),
                 bothBindings()
@@ -1359,7 +1071,6 @@ return {
             auto const refused = loadOn(
                 registrar,
                 generation,
-                k_reducerSource,
                 k_dismissOnlyToolSource,
                 bothTools()
             );
@@ -1373,8 +1084,6 @@ return {
         {
             auto const foreign = withMember(
                 documentOver(
-                    k_reducerSource,
-                    reducerEntry(),
                     k_toolSource,
                     bothEntries(),
                     bothBindings()
@@ -1388,7 +1097,6 @@ return {
             auto const refused = loadOn(
                 registrar,
                 *generation,
-                k_reducerSource,
                 k_toolSource,
                 bothTools()
             );
@@ -1398,74 +1106,27 @@ return {
             ));
         }
 
-        SUBCASE("a generation whose answers and documents nothing judges")
+        SUBCASE("a generation with no Tool Runtime seam")
         {
             auto const generation = generationOver(
-                k_reducerSource,
-                reducerEntry(),
                 k_toolSource,
                 bothEntries(),
                 bothBindings()
             );
 
-            // The seam and the two authorities are each required, and each
-            // absence is refused at the loader rather than discovered by a run
-            // that finds nothing there.
+            // The seam is required, and its absence is refused at the loader
+            // rather than discovered by a run that finds nothing there.
             auto const unrunnable = registrar.registerGeneration(
                 generation,
                 catalogOver(generation, bothTools()),
-                schemaOwnerOver(generation),
-                closureModules(k_reducerSource),
                 closureModules(k_toolSource),
                 {},
-                acceptingResults(),
                 script::ToolRuntimeInvoke{}
             );
             REQUIRE_FALSE(unrunnable.has_value());
             CHECK(
                 unrunnable.error().message().contains("requires a Tool Runtime")
             );
-
-            auto const unjudged = registrar.registerGeneration(
-                generation,
-                catalogOver(generation, bothTools()),
-                schemaOwnerOver(generation),
-                closureModules(k_reducerSource),
-                closureModules(k_toolSource),
-                {},
-                ToolResultValidator{},
-                acceptingRuntime()
-            );
-            REQUIRE_FALSE(unjudged.has_value());
-            CHECK(unjudged.error().message().contains(
-                "requires a result schema validator"
-            ));
-
-            // A schema owner answering for another root. It is refused here
-            // rather than at the first fold, because a generation whose
-            // ProjectState authority belongs to a different registration would
-            // stamp every baseline it ever wrote with somebody else's name.
-            auto const stranger = generationOver(
-                k_reducerSource,
-                reducerEntry(),
-                k_identityOnlySource,
-                {},
-                {}
-            );
-            auto const foreignOwner = registrar.registerGeneration(
-                generation,
-                catalogOver(generation, bothTools()),
-                schemaOwnerOver(stranger),
-                closureModules(k_reducerSource),
-                closureModules(k_toolSource),
-                {},
-                acceptingResults(),
-                acceptingRuntime()
-            );
-            REQUIRE_FALSE(foreignOwner.has_value());
-            CHECK(foreignOwner.error().message().contains(
-                "answers for another Project registration"
-            ));
         }
     }
 
@@ -1481,8 +1142,6 @@ return {
             // the catalog is a second document and the join above never reads
             // it.
             auto const generation = generationOver(
-                k_reducerSource,
-                reducerEntry(),
                 k_dismissOnlyToolSource,
                 {"dismiss"},
                 {
@@ -1495,7 +1154,6 @@ return {
             auto const refused = loadOn(
                 registrar,
                 generation,
-                k_reducerSource,
                 k_dismissOnlyToolSource,
                 bothTools()
             );
@@ -1509,8 +1167,6 @@ return {
         SUBCASE("a binding naming a Tool the catalog never declared")
         {
             auto const generation = generationOver(
-                k_reducerSource,
-                reducerEntry(),
                 k_toolSource,
                 bothEntries(),
                 bothBindings()
@@ -1518,7 +1174,6 @@ return {
             auto const refused = loadOn(
                 registrar,
                 generation,
-                k_reducerSource,
                 k_toolSource,
                 {std::string{k_dismissTool}}
             );
@@ -1530,15 +1185,18 @@ return {
         }
     }
 
-    // Provisioning and session pinning, reached from a two-closure generation.
+    // Provisioning and session pinning, reached from a verified generation.
     //
     // What it proves is not that a signature was renamed. The Operator's
-    // registration row, its instance row, the reduced baseline it stores and
-    // the session that chains to it are all written here from a generation
-    // whose document generation the ledger has no way to name: the same doors,
-    // the same rows, and no branch anywhere that asks which registration
-    // document a project was deployed as.
-    TEST_CASE("a two-closure generation provisions an instance and pins a session")
+    // registration row, its instance row and the session that chains to it are
+    // all written here from a generation whose document generation the ledger
+    // has no way to name: the same doors, the same rows, and no branch anywhere
+    // that asks which registration document a project was deployed as.
+    //
+    // Nothing about an instance's contents is written with it. Provisioning
+    // records that an instance exists under this key and nothing else, because
+    // what an instance holds is the Project's.
+    TEST_CASE("a generation provisions an instance and pins a session")
     {
         auto const directory = test_support::TemporaryDirectory{};
         auto const release   = test_support::runtimeRelease(
@@ -1556,22 +1214,10 @@ return {
         REQUIRE(installed.has_value());
 
         auto const generation = generationOver(
-            k_reducerSource,
-            reducerEntry(),
             k_toolSource,
             bothEntries(),
             bothBindings()
         );
-        auto       registrar = ProjectGenerationRegistrar{};
-        auto const loaded    = loadOn(
-            registrar,
-            generation,
-            k_reducerSource,
-            k_toolSource,
-            bothTools()
-        );
-        REQUIRE(loaded.has_value());
-
         auto const policyBytes = test_support::policyArtifactBytes();
         auto const manifest    = SessionManifest::create(SessionManifestSpec{
             .runtimeModelArtifactRootHash = installed->rootHash(),
@@ -1582,18 +1228,11 @@ return {
         });
         REQUIRE(manifest.has_value());
 
-        auto const baseline = ProjectInstanceBaseline{
-            .projectInstanceKey = "instance-1",
-            .eventId            = {},
-            .sessionManifestHash = manifest->hash(),
-            .entry               = std::nullopt,
-        };
-
         SUBCASE("the whole chain, from generation to bound controller")
         {
             REQUIRE(store->registerProject(generation).has_value());
             REQUIRE(
-                store->provisionProjectInstance(generation, *loaded, baseline)
+                store->provisionProjectInstance(generation, "instance-1")
                     .has_value()
             );
 
@@ -1620,78 +1259,12 @@ return {
             auto const controller = store->bindController("session-1");
             REQUIRE(controller.has_value());
 
-            // Provisioning is idempotent for a baseline-free instance and
-            // immutable for everything else, exactly as it is on the live
-            // generation.
+            // Provisioning the same key again is the same statement, so it
+            // is admitted rather than refused as a second instance.
             CHECK(
-                store->provisionProjectInstance(generation, *loaded, baseline)
+                store->provisionProjectInstance(generation, "instance-1")
                     .has_value()
             );
-        }
-
-        SUBCASE("a fold this registration did not perform")
-        {
-            // The reducer of another generation, offered for this one. It is
-            // refused before any row is touched, which is what keeps the
-            // stored baseline a statement about the code this registration
-            // pinned.
-            auto const stranger = generationOver(
-                k_reducerSource,
-                reducerEntry(),
-                k_identityOnlySource,
-                {},
-                {}
-            );
-            auto       otherRegistrar = ProjectGenerationRegistrar{};
-            auto const otherLoaded    = loadOn(
-                otherRegistrar,
-                stranger,
-                k_reducerSource,
-                k_identityOnlySource,
-                {}
-            );
-            REQUIRE(otherLoaded.has_value());
-
-            REQUIRE(store->registerProject(generation).has_value());
-            auto const refused = store->provisionProjectInstance(
-                generation,
-                *otherLoaded,
-                baseline
-            );
-            REQUIRE_FALSE(refused.has_value());
-            CHECK(refused.error().message().contains(
-                "requires the exact pinned ProjectPlugin"
-            ));
-        }
-
-        SUBCASE("a baseline the ProjectState authority refuses")
-        {
-            // The fold really runs here, and its answer really is judged: the
-            // same generation, loaded under an owner whose output validator
-            // refuses, cannot write a baseline row.
-            auto refusingRegistrar = ProjectGenerationRegistrar{};
-            auto const refusingLoad = refusingRegistrar.registerGeneration(
-                generation,
-                catalogOver(generation, bothTools()),
-                schemaOwnerOver(generation, "this baseline is not ProjectState"),
-                closureModules(k_reducerSource),
-                closureModules(k_toolSource),
-                {},
-                acceptingResults(),
-                acceptingRuntime()
-            );
-            REQUIRE(refusingLoad.has_value());
-
-            REQUIRE(store->registerProject(generation).has_value());
-            auto const refused = store->provisionProjectInstance(
-                generation,
-                *refusingLoad,
-                baseline
-            );
-            REQUIRE_FALSE(refused.has_value());
-            CHECK(refused.error().message().contains(
-                "this baseline is not ProjectState"
-            ));
         }
 
         SUBCASE("a session for an instance this generation never provisioned")
@@ -1930,84 +1503,6 @@ return {
             REQUIRE(admitted->size() == 2U);
             CHECK((*admitted)[0].name == "attestations");
             CHECK((*admitted)[1].name == "content");
-        }
-    }
-
-    // The fold runs between two judgements by the authority this generation
-    // pinned, and neither may be skipped: a document the input schema refuses
-    // never reaches the VM, and an answer the output schema refuses never
-    // becomes a stamped ValidatedDocument. Retargeted from the five-function
-    // suite onto the one entry the pure type keeps.
-    TEST_CASE("the fold is judged before it runs and after it answers")
-    {
-        auto const generation = generationOver(
-            k_reducerSource,
-            reducerEntry(),
-            k_toolSource,
-            bothEntries(),
-            bothBindings()
-        );
-
-        SUBCASE("an input the pinned schema refuses never reaches the VM")
-        {
-            auto       registrar = ProjectGenerationRegistrar{};
-            auto const loaded    = registrar.registerGeneration(
-                generation,
-                catalogOver(generation, bothTools()),
-                schemaOwnerOver(generation, {}, "input schema refused document"),
-                closureModules(k_reducerSource),
-                closureModules(k_toolSource),
-                {},
-                acceptingResults(),
-                acceptingRuntime()
-            );
-            REQUIRE(loaded.has_value());
-            auto const input = loaded->canonicalize(R"({"event":"admitted"})");
-            REQUIRE(input.has_value());
-            auto const refused = loaded->reduce(*input);
-            REQUIRE_FALSE(refused.has_value());
-            CHECK(refused.error().message().contains(
-                "input schema refused document"
-            ));
-        }
-
-        SUBCASE("an answer the pinned schema refuses is not a stamped document")
-        {
-            auto       registrar = ProjectGenerationRegistrar{};
-            auto const loaded    = registrar.registerGeneration(
-                generation,
-                catalogOver(generation, bothTools()),
-                schemaOwnerOver(generation, "output schema refused document"),
-                closureModules(k_reducerSource),
-                closureModules(k_toolSource),
-                {},
-                acceptingResults(),
-                acceptingRuntime()
-            );
-            REQUIRE(loaded.has_value());
-            auto const input = loaded->canonicalize(R"({"event":"admitted"})");
-            REQUIRE(input.has_value());
-            auto const refused = loaded->reduce(*input);
-            REQUIRE_FALSE(refused.has_value());
-            CHECK(refused.error().message().contains(
-                "output schema refused document"
-            ));
-        }
-
-        SUBCASE("bytes that are not exact JCS never become an input at all")
-        {
-            auto       registrar = ProjectGenerationRegistrar{};
-            auto const loaded    = loadOn(
-                registrar,
-                generation,
-                k_reducerSource,
-                k_toolSource,
-                bothTools()
-            );
-            REQUIRE(loaded.has_value());
-            CHECK_FALSE(
-                loaded->canonicalize(R"({ "event":"spaced" })").has_value()
-            );
         }
     }
 }

@@ -75,7 +75,7 @@ namespace uf::operator_runtime
         // The observation's evidence does not support the requested UI action.
         // A refusal here delivers nothing and therefore spends nothing, which
         // is what keeps a rejected action from publishing stronger observation
-        // or Journal facts than its evidence proved.
+        // or durable facts than its evidence proved.
         ActionRefused,
     };
 

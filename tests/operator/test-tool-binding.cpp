@@ -93,10 +93,6 @@ namespace uf::operator_runtime
                 }));
             }
             return json::canonicalBytes(json::Value::ofObject({
-                {"baseline_event_type",
-                 json::Value::ofString(claims.baselineEventType)},
-                {"journal_event_schema_manifest_hash",
-                 json::Value::ofString(claims.journalEventSchemaManifestHash.hex())},
                 {"observed_instance_identity_schema_hashes",
                  json::Value::ofArray({})},
                 {"plugin_environment_hash",
@@ -107,14 +103,7 @@ namespace uf::operator_runtime
                      static_cast<double>(claims.projectRegistrationFormat)
                  )},
                 {"project_resources", json::Value::ofArray({})},
-                {"project_state_schema_hash",
-                 json::Value::ofString(claims.projectStateSchemaHash.hex())},
                 {"project_tool_bindings", json::Value::ofArray(std::move(bindings))},
-                {"project_tool_precondition_schema_hash",
-                 json::Value::ofString(
-                     claims.projectToolPreconditionSchemaHash.hex()
-                 )},
-                {"reducer_closure", closureValue(claims.reducerClosure)},
                 {"tool_catalog_hash",
                  json::Value::ofString(claims.toolCatalogHash.hex())},
                 {"tool_closure", closureValue(claims.toolClosure)},
@@ -156,22 +145,14 @@ namespace uf::operator_runtime
             auto claims  = ProjectGenerationClaims{
                 .projectRegistrationFormat = k_projectGenerationFormat,
                 .pluginId                  = "chaos.project",
-                .reducerClosure            = ProjectClosureClaims{
-                    .moduleManifestHash  = hashOf("reducer-modules"),
-                    .exportedEntryPoints = {std::string{k_reducerEntryPoint}},
-                },
-                .toolClosure = ProjectClosureClaims{
+                .toolClosure               = ProjectClosureClaims{
                     .moduleManifestHash  = hashOf("tool-modules"),
                     .exportedEntryPoints = std::move(entries),
                 },
-                .pluginEnvironmentHash             = hashOf("environment"),
-                .toolCatalogHash                   = hashOf(catalogBytes),
-                .projectStateSchemaHash            = hashOf("state"),
-                .projectToolPreconditionSchemaHash = hashOf("precondition"),
-                .journalEventSchemaManifestHash    = hashOf("journal"),
-                .baselineEventType                 = "chaos.baseline",
-                .projectResources                  = {},
-                .projectToolBindings               = std::move(bindings),
+                .pluginEnvironmentHash = hashOf("environment"),
+                .toolCatalogHash       = hashOf(catalogBytes),
+                .projectResources      = {},
+                .projectToolBindings   = std::move(bindings),
             };
             auto const exactJcs = generationJcs(claims);
             auto registration   = ProjectGeneration::verifyExact(
@@ -392,22 +373,14 @@ namespace uf::operator_runtime
         auto claims = ProjectGenerationClaims{
             .projectRegistrationFormat = k_projectGenerationFormat,
             .pluginId                  = "chaos.project",
-            .reducerClosure            = ProjectClosureClaims{
-                .moduleManifestHash  = hashOf("reducer-modules"),
-                .exportedEntryPoints = {std::string{k_reducerEntryPoint}},
-            },
-            .toolClosure = ProjectClosureClaims{
+            .toolClosure               = ProjectClosureClaims{
                 .moduleManifestHash  = hashOf("tool-modules"),
                 .exportedEntryPoints = {"dismiss", "sweep"},
             },
-            .pluginEnvironmentHash             = hashOf("environment"),
-            .toolCatalogHash                   = hashOf(k_toolCatalogBytes),
-            .projectStateSchemaHash            = hashOf("state"),
-            .projectToolPreconditionSchemaHash = hashOf("precondition"),
-            .journalEventSchemaManifestHash    = hashOf("journal"),
-            .baselineEventType                 = "chaos.baseline",
-            .projectResources                  = {},
-            .projectToolBindings                = {
+            .pluginEnvironmentHash = hashOf("environment"),
+            .toolCatalogHash       = hashOf(k_toolCatalogBytes),
+            .projectResources      = {},
+            .projectToolBindings   = {
                 ProjectToolBinding{
                     .toolName   = std::string{k_secondTool},
                     .entryPoint = "sweep",
@@ -443,22 +416,14 @@ namespace uf::operator_runtime
         auto claims = ProjectGenerationClaims{
             .projectRegistrationFormat = k_projectGenerationFormat,
             .pluginId                  = "chaos.project",
-            .reducerClosure            = ProjectClosureClaims{
-                .moduleManifestHash  = hashOf("reducer-modules"),
-                .exportedEntryPoints = {std::string{k_reducerEntryPoint}},
-            },
-            .toolClosure = ProjectClosureClaims{
+            .toolClosure               = ProjectClosureClaims{
                 .moduleManifestHash  = hashOf("tool-modules"),
                 .exportedEntryPoints = {"dismiss"},
             },
-            .pluginEnvironmentHash             = hashOf("environment"),
-            .toolCatalogHash                   = hashOf(k_toolCatalogBytes),
-            .projectStateSchemaHash            = hashOf("state"),
-            .projectToolPreconditionSchemaHash = hashOf("precondition"),
-            .journalEventSchemaManifestHash    = hashOf("journal"),
-            .baselineEventType                 = "chaos.baseline",
-            .projectResources                  = {},
-            .projectToolBindings                = {
+            .pluginEnvironmentHash = hashOf("environment"),
+            .toolCatalogHash       = hashOf(k_toolCatalogBytes),
+            .projectResources      = {},
+            .projectToolBindings   = {
                 ProjectToolBinding{
                     .toolName   = "dismiss",
                     .entryPoint = "dismiss",

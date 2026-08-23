@@ -1,13 +1,11 @@
 #include <project/project-kit.hpp>
 #include <project/declarative-workflow-tool.hpp>
-#include <project/tool-catalog.hpp>
 
 #include <script/pure-data-program.hpp>
 
 #include <json/value.hpp>
 
 #include <operator/project-plugin.hpp>
-#include <operator/tool-descriptor.hpp>
 
 #include <core/error/error.hpp>
 
@@ -17,6 +15,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <filesystem>
@@ -162,16 +161,8 @@ namespace uf::project
         inline constexpr auto k_handWrittenPlugin = std::string_view{
             "plugin/dream.luau"
         };
-        // A deployment always states both closures, so every fixture manifest
-        // names a reducer module beside the module under test.
-        inline constexpr auto k_handWrittenReducer = std::string_view{
-            "plugin/dream-reducer.luau"
-        };
         inline constexpr auto k_generatedPlugin = std::string_view{
             "generated/adapters/acme.tool/do-work/tool.luau"
-        };
-        inline constexpr auto k_generatedPluginReducer = std::string_view{
-            "generated/adapters/acme.tool/do-work/reducer.luau"
         };
         inline constexpr auto k_handWrittenAuthoring = std::string_view{
             R"json(      "plugin_authoring": "hand-written",
@@ -182,7 +173,7 @@ namespace uf::project
 )json"
         };
         inline constexpr auto k_statedJustification = std::string_view{
-            R"json(      "plugin_justification": "umbraflow-declarative-workflow-tool/v1 has no member that decides what a Reduce returns.",
+            R"json(      "plugin_justification": "umbraflow-declarative-workflow-tool/v1 has no member that decides what a handler returns.",
 )json"
         };
 
@@ -198,18 +189,11 @@ namespace uf::project
             std::string_view templateCuts
         ) -> std::string
         {
-            // Every deployment states both closures, so the module a case
-            // names is the TOOL closure's and the reducer beside it is the one
-            // its authoring form ships: a generated deployment's reducer is
-            // the second module its declaration renders, a hand-written one's
-            // is the fixture reducer.
-            auto const reducer = std::string_view{plugin}.starts_with(
-                "generated/adapters/"
-            )
-                ? std::string{k_generatedPluginReducer}
-                : std::string{k_handWrittenReducer};
+            // A deployment states one closure, and the module a case names is
+            // that closure's. It declares no Tool and binds none, which is
+            // what a project shipping no handler states.
             return std::string{R"json({
-  "schema": "umbraflow-project/v2",
+  "schema": "umbraflow-project/v3",
   "runtime_artifact": "runtime/artifact",
   "primary_deployment": "dream",
   "template_cuts": )json"}
@@ -219,22 +203,13 @@ namespace uf::project
     {
       "name": "dream",
       "plugin_id": "chaos.dream",
-      "baseline_event_type": "project.baseline_created",
-      "reducer_closure": {"entry":"main","exported_entry_points":["reduce"],"modules":[{"name":"main","path":")json"
-                + std::string{reducer}
-                + R"json("}]},
       "tool_closure": {"entry":"main","exported_entry_points":[],"modules":[{"name":"main","path":")json"
                 + std::string{plugin}
                 + R"json("}]},
 )json"
                 + std::string{authoringMember}
                 + std::string{justificationMember}
-                + R"json(      "project_state_schema": "schema/state.json",
-      "tool_precondition_schema": "schema/precondition.json",
-      "tool_catalog": "schema/catalog.json",
-      "journal_event_schema_manifest": "schema/journal-manifest.json",
-      "journal_payload_schemas": ["schema/journal-0.json"],
-      "effect_payload_schemas": [],
+                + R"json(      "tools": [],
       "observed_instance_identity_schemas": [],
       "tool_bindings": [],
       "resources": []
@@ -292,10 +267,6 @@ namespace uf::project
         ) -> Status
         {
             writeFile(workspace.source() / k_handWrittenPlugin, "return {}\n");
-            writeFile(
-                workspace.source() / k_handWrittenReducer,
-                "return {reduce = function(input) return input end}\n"
-            );
             writeRootManifest(workspace, manifest);
             auto spec = ProjectInitSpec{
                 .sourceDirectory = workspace.source(),
@@ -327,10 +298,6 @@ namespace uf::project
             writeFile(workspace.source() / "content" / "facts.txt", "facts\n");
             writeFile(workspace.source() / "decisions.txt", "decisions\n");
             writeFile(workspace.source() / k_handWrittenPlugin, "return {}\n");
-            writeFile(
-                workspace.source() / k_handWrittenReducer,
-                "return {reduce = function(input) return input end}\n"
-            );
             writeRootManifest(workspace, manifestDeclaringCuts(templateCuts));
             return initProject(
                 ProjectInitSpec{
@@ -352,21 +319,11 @@ namespace uf::project
             return initializedWorkspaceDeclaring(workspace, "[]");
         }
 
-        inline constexpr auto k_reducerEntryPoints = std::array{
-            std::string_view{"reduce"},
-        };
-
         inline constexpr auto k_workflowDeclarationInput = std::string_view{
             "declarative-tools/chaos.project/dismiss-known-overlay.json"
         };
         inline constexpr auto k_generatedWorkflowAdapter = std::string_view{
             "generated/adapters/chaos.project/dismiss-known-overlay/tool.luau"
-        };
-        inline constexpr auto k_generatedWorkflowReducer = std::string_view{
-            "generated/adapters/chaos.project/dismiss-known-overlay/reducer.luau"
-        };
-        inline constexpr auto k_generatedToolCatalog = std::string_view{
-            "generated/tool-catalogs/chaos.project/tool-catalog-v1.json"
         };
         inline constexpr auto k_generatedFrameworkSchemaCatalog = std::string_view{
             "generated/framework-schemas/framework-schema-catalog-v1.json"
@@ -421,10 +378,6 @@ namespace uf::project
                 validWorkflowDeclaration()
             );
             writeFile(workspace.source() / k_handWrittenPlugin, "return {}\n");
-            writeFile(
-                workspace.source() / k_handWrittenReducer,
-                "return {reduce = function(input) return input end}\n"
-            );
             writeRootManifest(workspace, acceptedDeploymentManifest());
             return initProject(
                 ProjectInitSpec{
@@ -435,63 +388,6 @@ namespace uf::project
                     },
                 }
             );
-        }
-
-        [[nodiscard]]
-        auto requiredHash(std::string_view text) -> ContentHash
-        {
-            auto const digest = sha256(std::as_bytes(std::span{text}));
-            REQUIRE_MESSAGE(digest.has_value(), messageOf(digest));
-            return *digest;
-        }
-
-        [[nodiscard]]
-        auto toolCatalogDeclaration() -> ToolCatalogDeclaration
-        {
-            auto const payloadHash = requiredHash("effect payload schema");
-            return ToolCatalogDeclaration{
-                .comment  = "A generated catalog fixture.",
-                .pluginId = "chaos.project",
-                .toolPreconditionSchemaHash = requiredHash(
-                    "tool precondition schema"
-                ),
-                .effectPayloadSchemaHashes = {payloadHash},
-                .tools = {
-                    DeclaredTool{
-                        .name           = "chaos.project.dismiss_known_overlay",
-                        .argumentSchema = "DismissArguments",
-                        .resultSchema   = "DismissResult",
-                        .descriptor     = operator_runtime::ToolDescriptor{
-                            .toolVersion          = "7",
-                            .requiredCapabilities = {"overlay"},
-                            .effectBounds = {
-                                operator_runtime::EffectBound{
-                                    .namespacedType    = "chaos.dismissed",
-                                    .scopeKind         = "overlay",
-                                    .payloadSchemaHash = payloadHash,
-                                    .maximumRisk       = operator_runtime::Risk::Medium,
-                                },
-                            },
-                            .uiActionBounds = {"chaos.ui.dismiss_overlay"},
-                            .limits = operator_runtime::WorkflowLimits{
-                                .maximumSteps        = 1,
-                                .maximumDispatches   = 1,
-                                .maximumObservations = 3,
-                                .maximumWaits        = 0,
-                                .maximumElapsedMillis = 3'000,
-                            },
-                            .timeout = operator_runtime::TimeoutPolicy{
-                                .maximumElapsedMillis = 3'000,
-                                .onTimeout = operator_runtime::TimeoutAction::Reconcile,
-                            },
-                            .mutability = operator_runtime::ToolMutability::Mutating,
-                            .surface    = operator_runtime::ToolSurface::Semantic,
-                            .idempotency =
-                                operator_runtime::ToolIdempotency::DeliverySafe,
-                        },
-                    },
-                },
-            };
         }
 
         [[nodiscard]]
@@ -549,7 +445,6 @@ namespace uf::project
             == "umbraflow-project-kit-inputs-v1\n"
                "content/facts.txt\n"
                "decisions.txt\n"
-               "plugin/dream-reducer.luau\n"
                "plugin/dream.luau\n"
                "umbraflow-project.json\n",
             "project init must record declared inputs in canonical sorted order"
@@ -565,12 +460,6 @@ namespace uf::project
             R"json("tool_closure": {"entry":"main","exported_entry_points":[],"modules":[{"name":"support","path":"plugin/support.luau"},{"name":"main","path":"plugin/main.luau"}]})json"
         );
         writeRootManifest(workspace, manifest);
-        // The reducer closure is authored, so the only missing modules are the
-        // tool closure's -- which is what this case is about.
-        writeFile(
-            workspace.source() / k_handWrittenReducer,
-            "return {reduce = function(input) return input end}\n"
-        );
 
         auto const initialized = initProject(ProjectInitSpec{
             .sourceDirectory = workspace.source(),
@@ -626,8 +515,17 @@ namespace uf::project
 
             auto const source = snapshotTree(workspace.source());
             CHECK(source.contains("umbraflow-project.json"));
-            CHECK(source.contains("schemas/chaos.project/tool-catalog-v1.json"));
             CHECK(source.contains("content/placeholder.txt"));
+            // A starter authors no JSON Schema at all: its one Tool carries
+            // its argument shape inline, so the only files beside the root
+            // document are the placeholder resource and the plugin sources.
+            CHECK_FALSE(std::ranges::any_of(
+                source,
+                [](auto const& entry)
+                {
+                    return entry.first.ends_with(".schema.json");
+                }
+            ));
             if (form == ProjectPluginForm::Generated)
             {
                 CHECK(source.contains(
@@ -636,7 +534,7 @@ namespace uf::project
             }
             else
             {
-                CHECK(source.contains("plugin/reducer.luau"));
+                CHECK(source.contains("plugin/tool.luau"));
                 CHECK(source.contains("plugin/support.luau"));
             }
         }
@@ -674,10 +572,6 @@ namespace uf::project
         writeRootManifest(workspace, manifest);
         writeFile(workspace.source() / "plugin/main.luau", "return require(\"./support\")\n");
         writeFile(workspace.source() / "plugin/support.luau", "return {}\n");
-        writeFile(
-            workspace.source() / k_handWrittenReducer,
-            "return {reduce = function(input) return input end}\n"
-        );
         writeFile(workspace.source() / "runtime/corpus.json", "{\"answer\":42}\n");
         auto const initialized = initProject(ProjectInitSpec{
             .sourceDirectory = workspace.source(),
@@ -742,7 +636,6 @@ namespace uf::project
             ProjectBuildSpec{
                 .sourceDirectory = workspace.source(),
                 .buildDirectory  = workspace.build(),
-                .toolCatalogs    = {},
             },
             {}
         );
@@ -838,7 +731,6 @@ namespace uf::project
             auto const spec = ProjectBuildSpec{
                 .sourceDirectory = workspace.source(),
                 .buildDirectory  = workspace.build(),
-                .toolCatalogs    = {},
             };
 
             auto const built = buildProject(spec, resolver);
@@ -877,7 +769,6 @@ namespace uf::project
             auto const spec = ProjectBuildSpec{
                 .sourceDirectory = workspace.source(),
                 .buildDirectory  = workspace.build(),
-                .toolCatalogs    = {},
             };
             auto const empty = TemplateSourceResolver{
                 [](ContentHash const&) -> Result<std::vector<std::byte>>
@@ -926,7 +817,6 @@ namespace uf::project
             auto const spec = ProjectBuildSpec{
                 .sourceDirectory = workspace.source(),
                 .buildDirectory  = workspace.build(),
-                .toolCatalogs    = {},
             };
             // Answers every hash with the second source's bytes, so the first
             // request gets bytes that are a valid PNG and the wrong one.
@@ -955,7 +845,7 @@ namespace uf::project
         }
     }
 
-    TEST_CASE("project build regenerates both adapter closures solely from declared source")
+    TEST_CASE("project build regenerates its adapter closure solely from declared source")
     {
         auto const workspace = TemporaryWorkspace{
             "uf-project-workflow-generation"
@@ -966,7 +856,6 @@ namespace uf::project
         auto const directories  = ProjectBuildSpec{
             .sourceDirectory = workspace.source(),
             .buildDirectory  = workspace.build(),
-            .toolCatalogs    = {},
         };
 
         auto const built = buildProject(directories, {});
@@ -991,17 +880,8 @@ namespace uf::project
         );
         auto snapshot = snapshotTree(workspace.build());
         REQUIRE_MESSAGE(
-            snapshot.contains(std::string{k_generatedWorkflowReducer}),
-            "project build must generate the named reducer closure"
-        );
-        REQUIRE_MESSAGE(
             snapshot.contains(std::string{k_generatedWorkflowAdapter}),
             "project build must generate the named tool closure"
-        );
-        CHECK_MESSAGE(
-            snapshot.at(std::string{k_generatedWorkflowReducer})
-                == expected->reducerModule,
-            "generated reducer bytes must come from the declared source"
         );
         CHECK_MESSAGE(
             snapshot.at(std::string{k_generatedWorkflowAdapter})
@@ -1010,10 +890,6 @@ namespace uf::project
         );
 
         writeFile(
-            workspace.build() / k_generatedWorkflowReducer,
-            "hand edited\n"
-        );
-        writeFile(
             workspace.build() / k_generatedWorkflowAdapter,
             "hand edited\n"
         );
@@ -1021,230 +897,10 @@ namespace uf::project
         REQUIRE_MESSAGE(rebuilt.has_value(), messageOf(rebuilt));
         snapshot = snapshotTree(workspace.build());
         CHECK_MESSAGE(
-            snapshot.at(std::string{k_generatedWorkflowReducer})
-                == expected->reducerModule,
-            "a generated reducer must never become the next build's input"
-        );
-        CHECK_MESSAGE(
             snapshot.at(std::string{k_generatedWorkflowAdapter})
                 == expected->toolModule,
             "a generated tool closure must never become the next build's input"
         );
-    }
-
-    TEST_CASE("project build regenerates Tool Catalogs solely from declared tools")
-    {
-        auto const workspace   = TemporaryWorkspace{"uf-project-tool-catalog"};
-        auto const initialized = initializedWorkspace(workspace);
-        REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
-        auto const declaration = toolCatalogDeclaration();
-        auto const sourceBefore = snapshotTree(workspace.source());
-        auto const spec = ProjectBuildSpec{
-            .sourceDirectory = workspace.source(),
-            .buildDirectory  = workspace.build(),
-            .toolCatalogs    = {declaration},
-        };
-
-        auto const built = buildProject(spec, {});
-        REQUIRE_MESSAGE(built.has_value(), messageOf(built));
-        REQUIRE_MESSAGE(
-            snapshotTree(workspace.source()) == sourceBefore,
-            "Tool Catalog generation must not change declared source"
-        );
-        auto snapshot = snapshotTree(workspace.build());
-        REQUIRE_MESSAGE(
-            snapshot.contains(std::string{k_generatedToolCatalog}),
-            "project build must generate the named Tool Catalog"
-        );
-        auto const& catalog = snapshot.at(std::string{k_generatedToolCatalog});
-        auto const document = parsedJson(catalog);
-        auto const* schema  = document.find("schema");
-        REQUIRE_MESSAGE(
-            schema != nullptr,
-            "generated Tool Catalog must carry its wire schema"
-        );
-        CHECK_MESSAGE(
-            schema->string() == "umbraflow-tool-catalog/v1",
-            "generated Tool Catalog must identify the v1 wire schema"
-        );
-
-        auto const* pluginId = document.find("plugin_id");
-        REQUIRE_MESSAGE(
-            pluginId != nullptr,
-            "generated Tool Catalog must carry its declared plugin id"
-        );
-        CHECK_MESSAGE(
-            pluginId->string() == "chaos.project",
-            "generated Tool Catalog must render its declared plugin id"
-        );
-
-        auto const* tools = document.find("tools");
-        REQUIRE_MESSAGE(
-            tools != nullptr,
-            "generated Tool Catalog must carry its declared tools"
-        );
-        REQUIRE_MESSAGE(
-            tools->items().size() == 1U,
-            "generated Tool Catalog must carry exactly its declared tools"
-        );
-        auto const& tool = tools->items().front();
-        auto const* name = tool.find("name");
-        REQUIRE_MESSAGE(
-            name != nullptr,
-            "generated Tool Catalog tool must carry its declared name"
-        );
-        CHECK_MESSAGE(
-            name->string() == "chaos.project.dismiss_known_overlay",
-            "generated Tool Catalog must render its declared tool name"
-        );
-
-        auto const* workflowLimits = tool.find("workflow_limits");
-        REQUIRE_MESSAGE(
-            workflowLimits != nullptr,
-            "generated Tool Catalog tool must carry its workflow limits"
-        );
-        auto const* maximumElapsed = workflowLimits->find("maximum_elapsed_ms");
-        REQUIRE_MESSAGE(
-            maximumElapsed != nullptr,
-            "generated Tool Catalog workflow limits must carry maximum elapsed"
-        );
-        CHECK_MESSAGE(
-            maximumElapsed->number() == 3000.0,
-            "generated Tool Catalog must render its declared workflow bound"
-        );
-
-        auto const* effectBounds = tool.find("effect_bounds");
-        REQUIRE_MESSAGE(
-            effectBounds != nullptr,
-            "generated Tool Catalog tool must carry its declared effects"
-        );
-        REQUIRE_MESSAGE(
-            effectBounds->items().size() == 1U,
-            "generated Tool Catalog tool must carry exactly its declared effects"
-        );
-        auto const* maximumRisk = effectBounds->items().front().find("maximum_risk");
-        REQUIRE_MESSAGE(
-            maximumRisk != nullptr,
-            "generated Tool Catalog effect must carry its declared risk"
-        );
-        CHECK_MESSAGE(
-            maximumRisk->string() == "medium",
-            "generated Tool Catalog must render its declared effect risk"
-        );
-
-        auto const* idempotency = tool.find("idempotency");
-        REQUIRE_MESSAGE(
-            idempotency != nullptr,
-            "generated Tool Catalog tool must carry its declared idempotency"
-        );
-        CHECK_MESSAGE(
-            idempotency->string() == "delivery_safe",
-            "generated Tool Catalog must render its declared idempotency"
-        );
-        auto const catalogBefore = catalog;
-
-        writeFile(workspace.build() / k_generatedToolCatalog, "hand edited\n");
-        auto const rebuilt = buildProject(spec, {});
-        REQUIRE_MESSAGE(rebuilt.has_value(), messageOf(rebuilt));
-        snapshot = snapshotTree(workspace.build());
-        CHECK_MESSAGE(
-            snapshot.at(std::string{k_generatedToolCatalog}) == catalogBefore,
-            "a generated Tool Catalog must never become the next build's input"
-        );
-    }
-
-    TEST_CASE("project check verifies the generated Tool Catalog closure by name")
-    {
-        auto const workspace   = TemporaryWorkspace{"uf-project-catalog-closure"};
-        auto const initialized = initializedWorkspace(workspace);
-        REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
-        auto const spec = ProjectBuildSpec{
-            .sourceDirectory = workspace.source(),
-            .buildDirectory  = workspace.build(),
-            .toolCatalogs    = {toolCatalogDeclaration()},
-        };
-        auto const built = buildProject(spec, {});
-        REQUIRE_MESSAGE(built.has_value(), messageOf(built));
-        auto const catalogPath = workspace.build() / k_generatedToolCatalog;
-
-        SUBCASE("altered")
-        {
-            writeFile(catalogPath, "hand edited\n");
-            auto const checked = checkProject(spec, {});
-            REQUIRE_FALSE_MESSAGE(
-                checked.has_value(),
-                "project check must reject an altered generated Tool Catalog"
-            );
-            CHECK_MESSAGE(
-                messageOf(checked).find(k_generatedToolCatalog) != std::string::npos,
-                "altered-catalog refusal must name its generated artifact"
-            );
-            CHECK_MESSAGE(
-                messageOf(checked).find("does not match its declared source")
-                    != std::string::npos,
-                "altered-catalog refusal must name the byte mismatch"
-            );
-        }
-
-        SUBCASE("missing")
-        {
-            REQUIRE(std::filesystem::remove(catalogPath));
-            auto const checked = checkProject(spec, {});
-            REQUIRE_FALSE_MESSAGE(
-                checked.has_value(),
-                "project check must reject a missing generated Tool Catalog"
-            );
-            CHECK_MESSAGE(
-                messageOf(checked).find(k_generatedToolCatalog) != std::string::npos,
-                "missing-catalog refusal must name its generated artifact"
-            );
-            CHECK_MESSAGE(
-                messageOf(checked).find("is missing") != std::string::npos,
-                "missing-catalog refusal must name the missing property"
-            );
-        }
-
-        SUBCASE("extra")
-        {
-            constexpr auto k_extra = std::string_view{
-                "generated/tool-catalogs/chaos.project/extra.json"
-            };
-            writeFile(workspace.build() / k_extra, "{}\n");
-            auto const checked = checkProject(spec, {});
-            REQUIRE_FALSE_MESSAGE(
-                checked.has_value(),
-                "project check must reject an extra generated Tool Catalog artifact"
-            );
-            CHECK_MESSAGE(
-                messageOf(checked).find(k_extra) != std::string::npos,
-                "extra-catalog refusal must name its generated artifact"
-            );
-            CHECK_MESSAGE(
-                messageOf(checked).find("has no declared source") != std::string::npos,
-                "extra-catalog refusal must name the absent declaration"
-            );
-        }
-
-        SUBCASE("linked")
-        {
-            auto const secondName = workspace.build() / "catalog-hard-link.json";
-            auto error            = std::error_code{};
-            std::filesystem::create_hard_link(catalogPath, secondName, error);
-            REQUIRE_FALSE(error);
-            auto const checked = checkProject(spec, {});
-            REQUIRE_FALSE_MESSAGE(
-                checked.has_value(),
-                "project check must reject a linked generated Tool Catalog"
-            );
-            CHECK_MESSAGE(
-                messageOf(checked).find(k_generatedToolCatalog) != std::string::npos,
-                "linked-catalog refusal must name its generated artifact"
-            );
-            CHECK_MESSAGE(
-                messageOf(checked).find("must not be a link") != std::string::npos,
-                "linked-catalog refusal must name the link property"
-            );
-        }
     }
 
     TEST_CASE("project rebuilds a complete byte-identical artifact set at two paths")
@@ -1264,12 +920,10 @@ namespace uf::project
         auto const firstSpec = ProjectBuildSpec{
             .sourceDirectory = first.source(),
             .buildDirectory  = first.build(),
-            .toolCatalogs    = {},
         };
         auto const secondSpec = ProjectBuildSpec{
             .sourceDirectory = second.source(),
             .buildDirectory  = second.build(),
-            .toolCatalogs    = {},
         };
 
         auto const firstBuilt  = buildProject(firstSpec, {});
@@ -1290,7 +944,7 @@ namespace uf::project
         auto const* artifacts = manifest.find("artifacts");
         REQUIRE(inputs != nullptr);
         REQUIRE(artifacts != nullptr);
-        REQUIRE(inputs->items().size() == 4U);
+        REQUIRE(inputs->items().size() == 3U);
         CHECK_MESSAGE(
             std::ranges::any_of(
                 inputs->items(),
@@ -1342,7 +996,6 @@ namespace uf::project
             ProjectBuildSpec{
                 .sourceDirectory = workspace.source(),
                 .buildDirectory  = workspace.build(),
-                .toolCatalogs    = {},
             },
             {}
         );
@@ -1362,33 +1015,6 @@ namespace uf::project
             ),
             "closure refusal must happen before build artifacts are written"
         );
-    }
-
-    TEST_CASE("project generated artifact names cannot escape their family")
-    {
-        auto const workspace = TemporaryWorkspace{"uf-project-generated-path"};
-        auto const initialized = initializedWorkspace(workspace);
-        REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
-
-        auto declaration     = toolCatalogDeclaration();
-        declaration.pluginId = "../../escaped";
-        auto const built = buildProject(
-            ProjectBuildSpec{
-                .sourceDirectory = workspace.source(),
-                .buildDirectory  = workspace.build(),
-                .toolCatalogs    = {std::move(declaration)},
-            },
-            {}
-        );
-        REQUIRE_FALSE_MESSAGE(
-            built.has_value(),
-            "a programmatic ProjectBuildSpec must not write outside its generated family"
-        );
-        CHECK_MESSAGE(
-            messageOf(built).find("one path component") != std::string::npos,
-            "the refusal must identify the caller-controlled artifact name"
-        );
-        CHECK_FALSE(std::filesystem::exists(workspace.build() / "escaped"));
     }
 
     TEST_CASE("project build check and freeze share runtime module admission")
@@ -1471,10 +1097,6 @@ namespace uf::project
         );
         writeRootManifest(workspace, manifest);
         writeFile(workspace.source() / k_handWrittenPlugin, "return {}\n");
-        writeFile(
-            workspace.source() / k_handWrittenReducer,
-            "return {reduce = function(input) return input end}\n"
-        );
         writeFile(workspace.source() / "runtime/corpus.blob", acceptedBytes);
         auto const initialized = initProject(ProjectInitSpec{
             .sourceDirectory = workspace.source(),
@@ -1547,7 +1169,6 @@ namespace uf::project
             return ProjectBuildSpec{
                 .sourceDirectory = workspace.source(),
                 .buildDirectory  = workspace.build(),
-                .toolCatalogs    = {},
             };
         };
 
@@ -1698,10 +1319,6 @@ namespace uf::project
         auto const workspace = TemporaryWorkspace{"uf-project-manifest-undeclared"};
         writeFile(workspace.source() / "dummy.txt", "dummy\n");
         writeFile(workspace.source() / k_handWrittenPlugin, "return {}\n");
-        writeFile(
-            workspace.source() / k_handWrittenReducer,
-            "return {reduce = function(input) return input end}\n"
-        );
         writeRootManifest(
             workspace,
             deploymentManifest(
@@ -1760,7 +1377,6 @@ namespace uf::project
         auto const candidate = ProjectBuildSpec{
             .sourceDirectory = workspace.source(),
             .buildDirectory  = workspace.build(),
-            .toolCatalogs    = {},
         };
         auto const built = buildProject(candidate, {});
         REQUIRE_MESSAGE(built.has_value(), messageOf(built));
@@ -1878,7 +1494,6 @@ namespace uf::project
         auto const directories = ProjectBuildSpec{
             .sourceDirectory = workspace.source(),
             .buildDirectory  = workspace.build(),
-            .toolCatalogs    = {},
         };
         auto const built = buildProject(directories, {});
         REQUIRE_MESSAGE(built.has_value(), messageOf(built));
@@ -1910,7 +1525,6 @@ namespace uf::project
         auto const directories = ProjectBuildSpec{
             .sourceDirectory = workspace.source(),
             .buildDirectory  = workspace.build(),
-            .toolCatalogs    = {},
         };
         auto const built = buildProject(directories, {});
         REQUIRE_MESSAGE(built.has_value(), messageOf(built));
@@ -1956,7 +1570,6 @@ namespace uf::project
             ProjectBuildSpec{
                 .sourceDirectory = workspace.source(),
                 .buildDirectory  = nestedBuild,
-                .toolCatalogs    = {},
             },
             {}
         );
@@ -1983,7 +1596,6 @@ namespace uf::project
             ProjectBuildSpec{
                 .sourceDirectory = workspace.source(),
                 .buildDirectory  = workspace.source().parent_path(),
-                .toolCatalogs    = {},
             },
             {}
         );
@@ -2118,26 +1730,9 @@ namespace uf::project
             "a one-step schedule must generate an adapter"
         );
 
-        auto const reducer = script::PureDataProgram::compile(
-            "chaos.project",
-            "main",
-            {
-                script::PureDataProgram::Module{
-                    .name   = "main",
-                    .source = generated->reducerModule,
-                },
-            },
-            k_reducerEntryPoints,
-            {}
-        );
-        REQUIRE_MESSAGE(
-            reducer.has_value(),
-            "a one-step adapter's reducer closure must compile against the "
-            "pure program type's single entry"
-        );
         CHECK_MESSAGE(
             !generated->toolModule.empty(),
-            "a one-step adapter must also carry its tool closure"
+            "a one-step adapter must carry its tool closure"
         );
     }
 
@@ -2295,147 +1890,5 @@ namespace uf::project
             overlong.error().message().find("refused") != std::string_view::npos,
             "the refusal must come from the published schema"
         );
-    }
-    // A Tool Catalog is generated from a declaration and read back into one,
-    // and `project check` compares the regenerated bytes with the declared
-    // document byte for byte. That comparison only means something if every
-    // member survives both directions: a member the reader drops regenerates a
-    // document that differs, and a member the reader invents one the loader
-    // never saw. child_effects is the newest of them and the only one carrying
-    // three enums, so it gets the round trip stated explicitly.
-    TEST_CASE("a child effect declaration survives the catalog round trip")
-    {
-        auto const preconditionHash =
-            ContentHash::parse("sha256:" + std::string(64U, 'a'));
-        REQUIRE(preconditionHash.has_value());
-        auto const declaration = ToolCatalogDeclaration{
-            .pluginId                   = "chaos.project",
-            .toolPreconditionSchemaHash = *preconditionHash,
-            .effectPayloadSchemaHashes  = {},
-            .tools                     = {
-                DeclaredTool{
-                    .name           = "chaos.project.compose",
-                    .argumentSchema = "Arguments",
-                    .resultSchema   = "Result",
-                    .descriptor     = operator_runtime::ToolDescriptor{
-                        .toolVersion  = "1",
-                        .childEffects = operator_runtime::ChildEffectDeclaration{
-                            // Deliberately not in sorted order and not at any
-                            // default: a reader that dropped a member or a
-                            // generator that failed to sort would be invisible
-                            // against the defaults.
-                            .childToolNames = {
-                                "chaos.project.sweep",
-                                "chaos.project.dismiss",
-                                "framework.audit.record",
-                            },
-                            .maximumChildSurface =
-                                operator_runtime::ToolSurface::Privileged,
-                            .maximumChildMutability =
-                                operator_runtime::ToolMutability::Mutating,
-                            .maximumChildRisk  = operator_runtime::Risk::High,
-                            .maximumChildCalls = 7,
-                        },
-                        .limits = operator_runtime::WorkflowLimits{
-                            .maximumSteps         = 1,
-                            .maximumDispatches    = 1,
-                            .maximumObservations  = 1,
-                            .maximumWaits         = 0,
-                            .maximumElapsedMillis = 1000,
-                        },
-                        .timeout = operator_runtime::TimeoutPolicy{
-                            .maximumElapsedMillis = 1000,
-                            .onTimeout            = operator_runtime::TimeoutAction::Stop,
-                        },
-                        .mutability = operator_runtime::ToolMutability::Mutating,
-                        .surface    = operator_runtime::ToolSurface::Privileged,
-                        .idempotency =
-                            operator_runtime::ToolIdempotency::NonIdempotent,
-                    },
-                },
-            },
-        };
-        auto const rendered = generateToolCatalog(declaration);
-        REQUIRE(rendered.has_value());
-        CHECK(rendered->contains(
-            R"("child_effects":{"child_tool_names":["chaos.project.dismiss",)"
-            R"("chaos.project.sweep","framework.audit.record"],)"
-            R"("maximum_child_calls":7,"maximum_child_mutability":"mutating",)"
-            R"("maximum_child_risk":"high",)"
-            R"("maximum_child_surface":"privileged"})"
-        ));
-
-        auto const document = json::parse(*rendered);
-        REQUIRE(document.has_value());
-        auto const parsed = parseToolCatalogDeclaration(*document);
-        REQUIRE(parsed.has_value());
-        auto const& child = parsed->tools.at(0).descriptor.childEffects;
-        CHECK(
-            child.childToolNames
-            == std::vector<std::string>{
-                "chaos.project.dismiss",
-                "chaos.project.sweep",
-                "framework.audit.record",
-            }
-        );
-        CHECK(child.maximumChildSurface == operator_runtime::ToolSurface::Privileged);
-        CHECK(
-            child.maximumChildMutability == operator_runtime::ToolMutability::Mutating
-        );
-        CHECK(child.maximumChildRisk == operator_runtime::Risk::High);
-        CHECK(child.maximumChildCalls == 7U);
-
-        auto const again = generateToolCatalog(*parsed);
-        REQUIRE(again.has_value());
-        CHECK(*again == *rendered);
-
-        // additionalProperties: false, where the reader states it. A member
-        // this reader does not know would be dropped and regenerate a document
-        // that differs from the one declared, which is the one loss a
-        // byte-for-byte check cannot see.
-        auto widened = *rendered;
-        auto const at = widened.find(R"("maximum_child_calls":7)");
-        REQUIRE(at != std::string::npos);
-        widened.insert(at, R"("also_allowed":true,)");
-        auto const reread = json::parse(widened);
-        REQUIRE(reread.has_value());
-        auto const refused = parseToolCatalogDeclaration(*reread);
-        REQUIRE_FALSE(refused.has_value());
-        CHECK(std::string{refused.error().message()}.contains("also_allowed"));
-    }
-
-    // The ownership rule, at the tier where a name is written. A Tool belongs
-    // to the namespace its declaration registers, so a generator is the first
-    // place an author can learn that a name is somebody else's -- rather than
-    // the registration that would have refused the finished artifact.
-    TEST_CASE("a generated Tool Catalog declares only its own namespace")
-    {
-        auto const refusalFor = [](std::string_view name)
-        {
-            auto declaration = toolCatalogDeclaration();
-            declaration.tools.at(0).name = std::string{name};
-            auto const rendered = generateToolCatalog(declaration);
-            REQUIRE_FALSE(rendered.has_value());
-            return std::string{rendered.error().message()};
-        };
-
-        // Its own namespace, which is what the fixture already declares.
-        CHECK(generateToolCatalog(toolCatalogDeclaration()).has_value());
-
-        // A bare local name has no namespace, so there is nothing to own.
-        CHECK(refusalFor("dismiss_known_overlay")
-                  .contains("is not a canonical namespaced name"));
-
-        // A namespace that is not this declaration's, whether it belongs to
-        // another project or to the Framework.
-        CHECK(refusalFor("chaos.dream.dismiss_known_overlay")
-                  .contains("outside the namespace chaos.project its registrant owns"));
-        CHECK(refusalFor("framework.screen.observe")
-                  .contains("outside the namespace chaos.project its registrant owns"));
-
-        // A prefix is a namespace boundary rather than a spelling: the leading
-        // letters of the owned namespace do not make a name owned.
-        CHECK(refusalFor("chaos.projector.dismiss_known_overlay")
-                  .contains("outside the namespace chaos.project its registrant owns"));
     }
 }

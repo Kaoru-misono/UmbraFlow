@@ -384,31 +384,6 @@ namespace uf::project
             output.push_back('"');
         }
 
-        // The reducer closure a declared workflow tool is generated into:
-        // the whole of the pure program type's contract, which is `plugin_id`
-        // and one entry.
-        //
-        // Nothing of the declaration reaches it. A declaration states a UI
-        // schedule; a fold answers a Journal prefix. The two never shared a
-        // value, and the five-function module only made them look related by
-        // shipping them in one file.
-        [[nodiscard]]
-        auto renderReducerModule(std::string_view pluginId) -> std::string
-        {
-            auto source = std::string{"local plugin_id = "};
-            appendQuoted(source, pluginId);
-            source += R"luau(
-
-return {
-    plugin_id = plugin_id,
-    reduce = function(_input)
-        return canon.emptyObject
-    end,
-}
-)luau";
-            return source;
-        }
-
         // The tool closure a declared workflow tool is generated into.
         //
         // It exports its identity and nothing else, because a declaration
@@ -452,8 +427,7 @@ return {
         }
         UF_TRY_VALUE(tool, parseWorkflowTool(declarationBytes));
         return DeclarativeWorkflowAdapter{
-            .reducerModule = renderReducerModule(pluginId),
-            .toolModule    = renderToolModule(pluginId, tool),
+            .toolModule = renderToolModule(pluginId, tool),
         };
     }
 }

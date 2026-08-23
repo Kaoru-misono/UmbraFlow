@@ -326,8 +326,6 @@ namespace uf::operator_runtime
                 result,
                 CanonicalJson::parseExact(json::canonicalBytes(answer))
             );
-            UF_TRY(program.validateToolResult(call.toolName(), result.bytes()));
-
             // A handler that terminated leaving recorded calls unconsumed for
             // this context issued a different sequence than the one on record,
             // which is divergence even though every call it did issue matched.

@@ -300,106 +300,6 @@ namespace uf::project
             };
         }
 
-        // One member of an object the published project schema has already
-        // judged. Total by construction, the same way the kit's helper is
-        // (project-kit.cpp): every member read through it is required in
-        // schema/umbraflow-project-v2.schema.json and of the type stated
-        // there, so the extraction below happens only on the value
-        // readProjectRootDocument let the schema judge.
-        [[nodiscard]]
-        auto member(json::Value const& object, std::string_view name)
-            -> json::Value const&
-        {
-            auto const* const p_member = object.find(name);
-            UF_CHECK(p_member != nullptr);
-            return *p_member;
-        }
-
-        // One declared tool catalog source: the path a deployment declaration
-        // names, resolved against the source tree the way the runtime loader
-        // resolves every member it reads, and read back into the declaration
-        // the generator renders. A declared source the tree does not hold is
-        // refused by name -- the same rule a declared cut's missing source
-        // obeys -- and never quietly skipped.
-        [[nodiscard]]
-        auto declaredToolCatalog(
-            std::filesystem::path const& sourceDirectory,
-            json::Value const& deployment
-        ) -> Result<ToolCatalogDeclaration>
-        {
-            auto const declaredPath = std::filesystem::path{
-                member(deployment, "tool_catalog").string()
-            };
-            auto const path = sourceDirectory / declaredPath;
-            auto stream     = std::ifstream{path, std::ios::binary};
-            if (!stream.is_open())
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    std::format(
-                        "the deployment declaration names tool catalog source "
-                        "\"{}\", which \"{}\" does not hold",
-                        declaredPath.string(),
-                        sourceDirectory.string()
-                    )
-                );
-            }
-
-            auto const text = std::string{
-                std::istreambuf_iterator<char>{stream},
-                std::istreambuf_iterator<char>{}
-            };
-            if (stream.bad())
-            {
-                return fail(
-                    AutomationErrorKind::IoFailure,
-                    std::format(
-                        "cannot read declared tool catalog source \"{}\"",
-                        path.string()
-                    )
-                );
-            }
-            UF_TRY_VALUE_CONTEXT(
-                document,
-                json::parse(text),
-                std::format(
-                    "reading declared tool catalog source \"{}\"",
-                    path.string()
-                )
-            );
-            UF_TRY_VALUE_CONTEXT(
-                declaration,
-                parseToolCatalogDeclaration(document),
-                std::format(
-                    "reading declared tool catalog source \"{}\"",
-                    path.string()
-                )
-            );
-            return declaration;
-        }
-
-        // The caller supplies only the semantic Tool Catalog declarations it
-        // has parsed. Module and resource closures stay inside the kit and are
-        // derived from the already-validated root manifest; exposing them here
-        // would create a second, caller-controlled spelling of one project.
-        [[nodiscard]]
-        auto attachDeploymentDeclarations(ProjectBuildSpec& spec) -> Status
-        {
-            UF_TRY_VALUE(document, readProjectRootDocument(spec.sourceDirectory));
-            auto toolCatalogs = std::vector<ToolCatalogDeclaration>{};
-            for (auto const& deployment : member(document, "deployments").items())
-            {
-                UF_TRY_VALUE(
-                    catalog,
-                    declaredToolCatalog(spec.sourceDirectory, deployment)
-                );
-                toolCatalogs.emplace_back(std::move(catalog));
-
-            }
-            spec.toolCatalogs = std::move(toolCatalogs);
-            return ok();
-        }
-
         struct ParsedProjectInit final
         {
             ProjectInitSpec                    spec{};
@@ -521,7 +421,6 @@ namespace uf::project
                 .spec = ProjectBuildSpec{
                     .sourceDirectory = std::move(directories.sourceDirectory),
                     .buildDirectory  = std::move(directories.buildDirectory),
-                    .toolCatalogs    = {},
                 },
                 .framesRoot = std::move(parsed.framesRoot),
             };
@@ -554,7 +453,6 @@ namespace uf::project
                     .candidate = ProjectBuildSpec{
                         .sourceDirectory = std::move(directories.sourceDirectory),
                         .buildDirectory  = std::move(directories.buildDirectory),
-                        .toolCatalogs    = {},
                     },
                     .releaseRoot = std::move(release),
                 },
@@ -641,11 +539,6 @@ namespace uf::project
                 return ProjectExitCode::Failure;
             }
 
-            auto const attached = attachDeploymentDeclarations(parsed->spec);
-            if (!attached)
-            {
-                return reportProjectError(attached.error());
-            }
 
             auto const built = buildProject(
                 parsed->spec,
@@ -675,11 +568,6 @@ namespace uf::project
                 return ProjectExitCode::Failure;
             }
 
-            auto const attached = attachDeploymentDeclarations(parsed->spec);
-            if (!attached)
-            {
-                return reportProjectError(attached.error());
-            }
 
             auto const checked = checkProject(
                 parsed->spec,
@@ -710,11 +598,6 @@ namespace uf::project
                 return ProjectExitCode::Failure;
             }
 
-            auto const attached = attachDeploymentDeclarations(parsed->spec.candidate);
-            if (!attached)
-            {
-                return reportProjectError(attached.error());
-            }
 
             auto const release = freezeProject(
                 parsed->spec,

@@ -104,19 +104,7 @@ namespace uf::operator_runtime::conformance
     auto uiActionOf(deployment::ProjectVocabulary const& vocabulary)
         -> task::UiActionUnderTest;
 
-    [[nodiscard]]
-    auto canonical(
-        deployment::ConformanceProject const& project,
-        ProjectRole role,
-        std::string value
-    ) -> CanonicalJson;
-
-    [[nodiscard]]
-    auto journalEntry(
-        deployment::ConformanceProject const& project,
-        ProjectRole role,
-        deployment::ProjectJournalDocument const& document
-    ) -> ValidatedJournalEntryData;
+    [[nodiscard]] auto canonical(std::string value) -> CanonicalJson;
 
     [[nodiscard]]
     auto toolInvocation(
@@ -128,13 +116,12 @@ namespace uf::operator_runtime::conformance
     // The Tool Runtime seam a registration is compiled with when it is
     // registered only to be provisioned from.
     //
-    // Provisioning needs the generation's fold and nothing else: at the point
-    // prepareStore registers it, no session, controller, lease or observation
-    // authority exists yet, so no scoped call could be admitted through any
-    // seam it was handed. That is why it refuses, and it is a fact about the
-    // setup rather than about the suite -- the runs a case builds with
-    // toolRuntimeOver below dispatch real Tool calls through the dispatcher's
-    // own seam.
+    // At the point prepareStore registers it, no session, controller, lease or
+    // observation authority exists yet, so no scoped call could be admitted
+    // through any seam it was handed. That is why it refuses, and it is a fact
+    // about the setup rather than about the suite -- the runs a case builds
+    // with toolRuntimeOver below dispatch real Tool calls through the
+    // dispatcher's own seam.
     [[nodiscard]]
     auto provisioningToolRuntime() -> script::ToolRuntimeInvoke;
 
@@ -230,10 +217,8 @@ namespace uf::operator_runtime::conformance
     auto observeAgain(PreparedStore& prepared) -> task::UiObservationSnapshot;
 
     // A snapshot over the world as it now stands. A token references a
-    // composition rather than a lease, so a reconciliation that advanced
-    // ProjectState makes every earlier token stale -- which is the property
-    // contract-state-s02 proves, and the reason a case that opens a second
-    // Operation after a commit has to re-observe first.
+    // composition rather than a lease, so an observation that read a moved
+    // world makes every earlier token stale.
     [[nodiscard]]
     auto freshSnapshot(PreparedStore& prepared) -> SnapshotRecord;
 

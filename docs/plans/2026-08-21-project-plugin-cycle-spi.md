@@ -4,8 +4,16 @@ Date: 2026-08-21
 Scope: `operator`, `service`, `script`, `deployment`, `task`, Agent bindings,
 Workbench/CLI, schemas, Project Kit, conformance, release publication, and
 consumer migration
-Status: **the generation landed at `afcebd2`; WP9 and the shipped entry point
+Status: **the generation landed at `afcebd2`; the shipped entry point
 followed; WP11, WP12 and the remaining obligations of section 14 are open**
+
+> **Superseded in part, 2026-08-23, by
+> [the framework stops interpreting a Project's state](../decisions/2026-08-23-the-framework-stops-interpreting-project-state.md).**
+> Section 8, section 14.2 and WP9 are void: the Journal, the fold, the revision
+> and the final compare-and-swap are deleted, and a Project's declaration is one
+> inlined document. Section 5.1's declaration shape is superseded by that
+> ruling's own table. Where this plan and that ruling disagree, the ruling
+> decides; nothing here is edited to hide the disagreement.
 
 The ruling is frozen in
 [`tools are the shared game-driving boundary`](../decisions/2026-08-21-tools-are-the-shared-game-driving-boundary.md).
@@ -841,6 +849,14 @@ required, and neither discharges the other.
 
 ## 8. Journal reduction
 
+> **Void, 2026-08-23.** The framework stopped interpreting a Project's state, so
+> there is no reduce envelope, no `prior_project_state`, no `commit_context`, no
+> prospective batch and no final CAS. The pure program type keeps no entry at
+> all, and the resolver refusal this section rests on is now a property of the
+> scoped type alone. Read
+> [the ruling](../decisions/2026-08-23-the-framework-stops-interpreting-project-state.md)
+> instead. The text below keeps its bytes as history.
+
 Reduction remains structurally separate from online Tools and computes a
 candidate over a frozen prospective commit:
 
@@ -1225,6 +1241,12 @@ What is still standing:
   closes the same way.
 
 ### 14.2 The Journal reducer
+
+> **Void, 2026-08-23.** Everything WP9 closed was deleted by
+> [the framework stops interpreting a Project's state](../decisions/2026-08-23-the-framework-stops-interpreting-project-state.md):
+> the three proposal tables, the two commit doors, `journal_events`,
+> `project_state`, the revision rule and the schema identity this section
+> records. The text below keeps its bytes as history.
 
 Closed by WP9. The reduce envelope is now section 8's block byte for byte —
 `commit_context {prior_revision, next_revision}`, `prior_project_state`,

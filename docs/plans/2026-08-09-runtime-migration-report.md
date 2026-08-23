@@ -34,6 +34,12 @@ complete:
 | PR | `schema/umbraflow-project-registration-v1.schema.json` |
 | OP | `schema/umbraflow-operator-v1.schema.json` |
 | PL | `schema/umbraflow-policy-v1.schema.json` |
+> **Superseded in part, 2026-08-23**, by
+> [the framework stops interpreting a Project's state](../decisions/2026-08-23-the-framework-stops-interpreting-project-state.md).
+> `schema/umbraflow-journal-v1.schema.json` is deleted, and with it the
+> `journal_events` and `project_state` tables and the two gates below that
+> bound their column sets to it (`contract-state-s06`, `contract-agent-a04`).
+
 | JR | `schema/umbraflow-journal-v1.schema.json` |
 | AW | `schema/umbraflow-annotation-workspace-v2.schema.json` |
 | TR | `schema/umbraflow-trace-v2.schema.json` |

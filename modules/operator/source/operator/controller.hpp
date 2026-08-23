@@ -27,7 +27,7 @@ namespace uf::operator_runtime
 
     // The only per-kind variation the Operator recognises. Everything else --
     // the fingerprint material, the mutation chain, the fence, the epoch check,
-    // the snapshot freshness rule, the state machine, the Journal -- is one
+    // the snapshot freshness rule, the state machine, the durable record -- is one
     // path for all three kinds. Approval and takeover eligibility are
     // deliberately absent: they are ControllerCapability entries, and
     // expressing them here as well would be a second spelling.

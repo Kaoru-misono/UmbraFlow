@@ -1,7 +1,5 @@
 #pragma once
 
-#include "tool-catalog.hpp"
-
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
 
@@ -39,10 +37,10 @@ namespace uf::project
         "umbraflow-project.json"
     };
     inline constexpr auto k_projectSchemaPath = std::string_view{
-        "schema/umbraflow-project-v2.schema.json"
+        "schema/umbraflow-project-v3.schema.json"
     };
     inline constexpr auto k_projectContractVersion = std::string_view{
-        "umbraflow-project/v2"
+        "umbraflow-project/v3"
     };
 
     enum class ProjectPluginForm : uint8
@@ -84,9 +82,8 @@ namespace uf::project
 
     struct ProjectBuildSpec final
     {
-        std::filesystem::path               sourceDirectory{};
-        std::filesystem::path               buildDirectory{};
-        std::vector<ToolCatalogDeclaration> toolCatalogs{};
+        std::filesystem::path sourceDirectory{};
+        std::filesystem::path buildDirectory{};
     };
 
     struct ProjectFreezeSpec final

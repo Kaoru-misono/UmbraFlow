@@ -13,6 +13,9 @@ Each entry should contain the symptom, root cause, fix, and a regression check. 
 - [Project Kit is not production project admission](project-kit-is-not-production-admission.md)
   — why `project build/check/freeze/run` can be green while production open
   rejects a cross-document schema or RuntimeArtifact inconsistency.
+- [Operator schema identity is the STORED DDL text](operator-schema-identity-and-stored-ddl.md)
+  — two schemas with identical columns hash differently because SQLite stored
+  the trailing whitespace one of them was executed with.
 - [Concurrent agent builds in one worktree](concurrent-agent-builds.md)
 - [Running the repository's own tooling](repository-tooling-invocation.md) — a
   repo-wide formatter rewrites files another agent owns, the documented MSVC

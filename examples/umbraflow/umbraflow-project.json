@@ -1,6 +1,6 @@
 {
-  "$comment": "The framework's own exemplar, as data. Its two deployments hold identical schema documents and differ only in the plugin id every manifest declares, which is what makes their registrations two rather than one.",
-  "schema": "umbraflow-project/v2",
+  "$comment": "The framework's own exemplar, as data. Its two deployments hold identical declarations and differ only in the plugin id every Tool name sits under, which is what makes their registrations two rather than one. The whole declaration is this one document: there is no Tool Catalog file, no state schema and no argument schema beside it, so the only other files this project ships are its two Luau closures and its RuntimeArtifact.",
+  "schema": "umbraflow-project/v3",
   "runtime_artifact": "runtime/artifact",
   "primary_deployment": "alpha",
   "template_cuts": [],
@@ -8,14 +8,8 @@
     {
       "name": "alpha",
       "plugin_id": "fixture.alpha",
-      "baseline_event_type": "fixture.baseline",
-      "reducer_closure": {
-        "entry": "main",
-        "exported_entry_points": ["reduce"],
-        "modules": [{"name": "main", "path": "plugin/alpha-reducer.luau"}]
-      },
       "tool_closure": {
-        "$comment": "One entry per Tool this deployment's Tool Catalog declares. The set is stated here and the join to Tool names is stated in tool_bindings below, so neither document can be derived from the other and the loader's cross-check has two sources to compare.",
+        "$comment": "One entry per Tool this deployment declares, joined to that Tool by tool_bindings below. The set is stated here and the join is stated there, so neither can be derived from the other and the loader's cross-check has two sources to compare.",
         "entry": "main",
         "exported_entry_points": [
           "approval_plan",
@@ -29,52 +23,632 @@
           "reordered_effects",
           "two_step_plan"
         ],
-        "modules": [{"name": "main", "path": "plugin/alpha-tools.luau"}]
+        "modules": [
+          {
+            "name": "main",
+            "path": "plugin/alpha-tools.luau"
+          }
+        ]
       },
       "plugin_authoring": "hand-written",
-      "plugin_justification": "umbraflow-declarative-workflow-tool/v1 declares one tool over a fixed schedule of wait and ui_action states and renders a tool closure that exports no entry at all. This deployment binds ten Tools whose handlers answer different outcomes, and its reducer folds four Journal event types into a revision counter, so neither closure has a declarative spelling.",
-      "project_state_schema": "schema/project-state-v1.schema.json",
-      "tool_precondition_schema": "schema/tool-precondition-v1.schema.json",
-      "tool_catalog": "generated/tool-catalogs/fixture.alpha/tool-catalog-v1.json",
-      "journal_event_schema_manifest": "schema/alpha/journal-manifest-v1.json",
-      "journal_payload_schemas": [
-        "schema/journal/fixture.baseline-v1.schema.json",
-        "schema/journal/fixture.confirmed-v1.schema.json",
-        "schema/journal/fixture.duplicate-v1.schema.json",
-        "schema/journal/fixture.progress-v1.schema.json"
-      ],
-      "effect_payload_schemas": [
-        "schema/effect/fixture.write-v1.schema.json"
-      ],
-      "$comment": "This deployment registers no resource, and the member is written empty rather than left out because an absent member would be read as a declaration gone missing. It binds every Tool its Tool Catalog declares to an entry of its tool closure, which is what makes those Tools reachable: a declared Tool with no binding has no code to run and the loader refuses the generation. It observes the one instance its reducer's fold accounts for, under the identity schema this array names.",
+      "plugin_justification": "umbraflow-declarative-workflow-tool/v1 declares one tool over a fixed schedule of wait and ui_action states and renders a tool closure that exports no entry at all. This deployment binds ten Tools whose handlers answer different outcomes, so its closure has no declarative spelling.",
+      "$comment": "This deployment registers no resource, and the member is written empty rather than left out because an absent member would be read as a declaration gone missing. It binds every Tool it declares to an entry of its tool closure, which is what makes those Tools reachable: a declared Tool with no binding has no code to run and the loader refuses the generation. Each Tool's effect_bounds pins a payload digest the framework compares against what a proposal carries and never resolves to bytes: with no fold, parsing an effect's meaning buys the framework no guarantee of its own.",
       "observed_instance_identity_schemas": [
-        "schema/observed-identity-v1.schema.json"
+        {
+          "name": "https://fixture.example/identity/overlay/v1",
+          "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture observed instance identity basis",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "native_id",
+              "surface_epoch"
+            ],
+            "properties": {
+              "native_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "surface_epoch": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
       ],
       "tool_bindings": [
-        {"tool_name": "fixture.alpha.approval-plan", "entry_point": "approval_plan"},
-        {"tool_name": "fixture.alpha.command-1", "entry_point": "command_1"},
-        {"tool_name": "fixture.alpha.command-2", "entry_point": "command_2"},
-        {"tool_name": "fixture.alpha.different-command", "entry_point": "different_command"},
-        {"tool_name": "fixture.alpha.mismatched-plan", "entry_point": "mismatched_plan"},
-        {"tool_name": "fixture.alpha.observe-1", "entry_point": "observe_1"},
-        {"tool_name": "fixture.alpha.oversized-plan", "entry_point": "oversized_plan"},
-        {"tool_name": "fixture.alpha.raw-coordinate-click", "entry_point": "raw_coordinate_click"},
-        {"tool_name": "fixture.alpha.reordered-effects", "entry_point": "reordered_effects"},
-        {"tool_name": "fixture.alpha.two-step-plan", "entry_point": "two_step_plan"}
+        {
+          "tool_name": "fixture.alpha.approval-plan",
+          "entry_point": "approval_plan"
+        },
+        {
+          "tool_name": "fixture.alpha.command-1",
+          "entry_point": "command_1"
+        },
+        {
+          "tool_name": "fixture.alpha.command-2",
+          "entry_point": "command_2"
+        },
+        {
+          "tool_name": "fixture.alpha.different-command",
+          "entry_point": "different_command"
+        },
+        {
+          "tool_name": "fixture.alpha.mismatched-plan",
+          "entry_point": "mismatched_plan"
+        },
+        {
+          "tool_name": "fixture.alpha.observe-1",
+          "entry_point": "observe_1"
+        },
+        {
+          "tool_name": "fixture.alpha.oversized-plan",
+          "entry_point": "oversized_plan"
+        },
+        {
+          "tool_name": "fixture.alpha.raw-coordinate-click",
+          "entry_point": "raw_coordinate_click"
+        },
+        {
+          "tool_name": "fixture.alpha.reordered-effects",
+          "entry_point": "reordered_effects"
+        },
+        {
+          "tool_name": "fixture.alpha.two-step-plan",
+          "entry_point": "two_step_plan"
+        }
+      ],
+      "tools": [
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "fixture.write",
+              "payload_schema_hash": "ca425bcb531fb9c9631ddbc15bb2cba2ef7133c91efd85dd112bc968e5976953",
+              "scope_kind": "instance"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "fixture.alpha.approval-plan",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "fixture.step"
+          ],
+          "version": "1",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "fixture.write",
+              "payload_schema_hash": "ca425bcb531fb9c9631ddbc15bb2cba2ef7133c91efd85dd112bc968e5976953",
+              "scope_kind": "instance"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "fixture.alpha.command-1",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "fixture.step"
+          ],
+          "version": "1",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "fixture.write",
+              "payload_schema_hash": "ca425bcb531fb9c9631ddbc15bb2cba2ef7133c91efd85dd112bc968e5976953",
+              "scope_kind": "instance"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "fixture.alpha.command-2",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "fixture.step"
+          ],
+          "version": "1",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "fixture.write",
+              "payload_schema_hash": "ca425bcb531fb9c9631ddbc15bb2cba2ef7133c91efd85dd112bc968e5976953",
+              "scope_kind": "instance"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "fixture.alpha.different-command",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "fixture.step"
+          ],
+          "version": "1",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "fixture.write",
+              "payload_schema_hash": "ca425bcb531fb9c9631ddbc15bb2cba2ef7133c91efd85dd112bc968e5976953",
+              "scope_kind": "instance"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "fixture.alpha.mismatched-plan",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "fixture.step"
+          ],
+          "version": "1",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "fixture.write",
+              "payload_schema_hash": "ca425bcb531fb9c9631ddbc15bb2cba2ef7133c91efd85dd112bc968e5976953",
+              "scope_kind": "instance"
+            }
+          ],
+          "idempotency": "read_safe",
+          "mutability": "read_only",
+          "name": "fixture.alpha.observe-1",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "fixture.step"
+          ],
+          "version": "1",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "fixture.write",
+              "payload_schema_hash": "ca425bcb531fb9c9631ddbc15bb2cba2ef7133c91efd85dd112bc968e5976953",
+              "scope_kind": "instance"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "fixture.alpha.oversized-plan",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "fixture.step"
+          ],
+          "version": "1",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "fixture.write",
+              "payload_schema_hash": "ca425bcb531fb9c9631ddbc15bb2cba2ef7133c91efd85dd112bc968e5976953",
+              "scope_kind": "instance"
+            }
+          ],
+          "idempotency": "read_safe",
+          "mutability": "read_only",
+          "name": "fixture.alpha.raw-coordinate-click",
+          "required_capabilities": [],
+          "surface": "privileged",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "fixture.step"
+          ],
+          "version": "1",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "fixture.write",
+              "payload_schema_hash": "ca425bcb531fb9c9631ddbc15bb2cba2ef7133c91efd85dd112bc968e5976953",
+              "scope_kind": "instance"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "fixture.alpha.reordered-effects",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "fixture.step"
+          ],
+          "version": "1",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "fixture.write",
+              "payload_schema_hash": "ca425bcb531fb9c9631ddbc15bb2cba2ef7133c91efd85dd112bc968e5976953",
+              "scope_kind": "instance"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "fixture.alpha.two-step-plan",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "fixture.step"
+          ],
+          "version": "1",
+          "workflow_limits": {
+            "maximum_dispatches": 2,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 2,
+            "maximum_waits": 64
+          }
+        }
       ],
       "resources": []
     },
     {
       "name": "foreign",
       "plugin_id": "fixture.foreign",
-      "baseline_event_type": "fixture.baseline",
-      "reducer_closure": {
-        "entry": "main",
-        "exported_entry_points": ["reduce"],
-        "modules": [{"name": "main", "path": "plugin/foreign-reducer.luau"}]
-      },
       "tool_closure": {
-        "$comment": "The same ten entries the alpha deployment exports, over this deployment's own plugin id. The two closures are separate modules rather than one shared file because each states the identity its registration is judged under.",
+        "$comment": "One entry per Tool this deployment declares, joined to that Tool by tool_bindings below. The set is stated here and the join is stated there, so neither can be derived from the other and the loader's cross-check has two sources to compare.",
         "entry": "main",
         "exported_entry_points": [
           "approval_plan",
@@ -88,38 +662,624 @@
           "reordered_effects",
           "two_step_plan"
         ],
-        "modules": [{"name": "main", "path": "plugin/foreign-tools.luau"}]
+        "modules": [
+          {
+            "name": "main",
+            "path": "plugin/foreign-tools.luau"
+          }
+        ]
       },
       "plugin_authoring": "hand-written",
-      "plugin_justification": "The foreign role exists to hold a second plugin id so that a cross-registration refusal has two registrations to refuse between. umbraflow-declarative-workflow-tool/v1 renders a tool closure exporting no entry and a reducer answering the empty object, so a deployment whose purpose is answering as the wrong registration cannot be declared at that tier.",
-      "project_state_schema": "schema/project-state-v1.schema.json",
-      "tool_precondition_schema": "schema/tool-precondition-v1.schema.json",
-      "tool_catalog": "generated/tool-catalogs/fixture.foreign/tool-catalog-v1.json",
-      "journal_event_schema_manifest": "schema/foreign/journal-manifest-v1.json",
-      "journal_payload_schemas": [
-        "schema/journal/fixture.baseline-v1.schema.json",
-        "schema/journal/fixture.confirmed-v1.schema.json",
-        "schema/journal/fixture.duplicate-v1.schema.json",
-        "schema/journal/fixture.progress-v1.schema.json"
-      ],
-      "effect_payload_schemas": [
-        "schema/effect/fixture.write-v1.schema.json"
-      ],
-      "$comment": "This deployment registers no resource, and the member is written empty rather than left out because an absent member would be read as a declaration gone missing. It binds every Tool its Tool Catalog declares to an entry of its tool closure, and those Tools are its own: the same local names under another plugin id are another registration's Tools. It observes the one instance its reducer's fold accounts for, under the identity schema this array names.",
+      "plugin_justification": "The foreign role exists to hold a second plugin id so that a cross-registration refusal has two registrations to refuse between. umbraflow-declarative-workflow-tool/v1 renders a tool closure exporting no entry, so a deployment whose purpose is answering as the wrong registration cannot be declared at that tier.",
+      "$comment": "This deployment registers no resource, and the member is written empty rather than left out because an absent member would be read as a declaration gone missing. It binds every Tool it declares to an entry of its tool closure, and those Tools are its own: the same local names under another plugin id are another registration's Tools.",
       "observed_instance_identity_schemas": [
-        "schema/observed-identity-v1.schema.json"
+        {
+          "name": "https://fixture.example/identity/overlay/v1",
+          "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture observed instance identity basis",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "native_id",
+              "surface_epoch"
+            ],
+            "properties": {
+              "native_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "surface_epoch": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
       ],
       "tool_bindings": [
-        {"tool_name": "fixture.foreign.approval-plan", "entry_point": "approval_plan"},
-        {"tool_name": "fixture.foreign.command-1", "entry_point": "command_1"},
-        {"tool_name": "fixture.foreign.command-2", "entry_point": "command_2"},
-        {"tool_name": "fixture.foreign.different-command", "entry_point": "different_command"},
-        {"tool_name": "fixture.foreign.mismatched-plan", "entry_point": "mismatched_plan"},
-        {"tool_name": "fixture.foreign.observe-1", "entry_point": "observe_1"},
-        {"tool_name": "fixture.foreign.oversized-plan", "entry_point": "oversized_plan"},
-        {"tool_name": "fixture.foreign.raw-coordinate-click", "entry_point": "raw_coordinate_click"},
-        {"tool_name": "fixture.foreign.reordered-effects", "entry_point": "reordered_effects"},
-        {"tool_name": "fixture.foreign.two-step-plan", "entry_point": "two_step_plan"}
+        {
+          "tool_name": "fixture.foreign.approval-plan",
+          "entry_point": "approval_plan"
+        },
+        {
+          "tool_name": "fixture.foreign.command-1",
+          "entry_point": "command_1"
+        },
+        {
+          "tool_name": "fixture.foreign.command-2",
+          "entry_point": "command_2"
+        },
+        {
+          "tool_name": "fixture.foreign.different-command",
+          "entry_point": "different_command"
+        },
+        {
+          "tool_name": "fixture.foreign.mismatched-plan",
+          "entry_point": "mismatched_plan"
+        },
+        {
+          "tool_name": "fixture.foreign.observe-1",
+          "entry_point": "observe_1"
+        },
+        {
+          "tool_name": "fixture.foreign.oversized-plan",
+          "entry_point": "oversized_plan"
+        },
+        {
+          "tool_name": "fixture.foreign.raw-coordinate-click",
+          "entry_point": "raw_coordinate_click"
+        },
+        {
+          "tool_name": "fixture.foreign.reordered-effects",
+          "entry_point": "reordered_effects"
+        },
+        {
+          "tool_name": "fixture.foreign.two-step-plan",
+          "entry_point": "two_step_plan"
+        }
+      ],
+      "tools": [
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "fixture.write",
+              "payload_schema_hash": "ca425bcb531fb9c9631ddbc15bb2cba2ef7133c91efd85dd112bc968e5976953",
+              "scope_kind": "instance"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "fixture.foreign.approval-plan",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "fixture.step"
+          ],
+          "version": "1",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "fixture.write",
+              "payload_schema_hash": "ca425bcb531fb9c9631ddbc15bb2cba2ef7133c91efd85dd112bc968e5976953",
+              "scope_kind": "instance"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "fixture.foreign.command-1",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "fixture.step"
+          ],
+          "version": "1",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "fixture.write",
+              "payload_schema_hash": "ca425bcb531fb9c9631ddbc15bb2cba2ef7133c91efd85dd112bc968e5976953",
+              "scope_kind": "instance"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "fixture.foreign.command-2",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "fixture.step"
+          ],
+          "version": "1",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "fixture.write",
+              "payload_schema_hash": "ca425bcb531fb9c9631ddbc15bb2cba2ef7133c91efd85dd112bc968e5976953",
+              "scope_kind": "instance"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "fixture.foreign.different-command",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "fixture.step"
+          ],
+          "version": "1",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "fixture.write",
+              "payload_schema_hash": "ca425bcb531fb9c9631ddbc15bb2cba2ef7133c91efd85dd112bc968e5976953",
+              "scope_kind": "instance"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "fixture.foreign.mismatched-plan",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "fixture.step"
+          ],
+          "version": "1",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "fixture.write",
+              "payload_schema_hash": "ca425bcb531fb9c9631ddbc15bb2cba2ef7133c91efd85dd112bc968e5976953",
+              "scope_kind": "instance"
+            }
+          ],
+          "idempotency": "read_safe",
+          "mutability": "read_only",
+          "name": "fixture.foreign.observe-1",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "fixture.step"
+          ],
+          "version": "1",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "fixture.write",
+              "payload_schema_hash": "ca425bcb531fb9c9631ddbc15bb2cba2ef7133c91efd85dd112bc968e5976953",
+              "scope_kind": "instance"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "fixture.foreign.oversized-plan",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "fixture.step"
+          ],
+          "version": "1",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "fixture.write",
+              "payload_schema_hash": "ca425bcb531fb9c9631ddbc15bb2cba2ef7133c91efd85dd112bc968e5976953",
+              "scope_kind": "instance"
+            }
+          ],
+          "idempotency": "read_safe",
+          "mutability": "read_only",
+          "name": "fixture.foreign.raw-coordinate-click",
+          "required_capabilities": [],
+          "surface": "privileged",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "fixture.step"
+          ],
+          "version": "1",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "fixture.write",
+              "payload_schema_hash": "ca425bcb531fb9c9631ddbc15bb2cba2ef7133c91efd85dd112bc968e5976953",
+              "scope_kind": "instance"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "fixture.foreign.reordered-effects",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "fixture.step"
+          ],
+          "version": "1",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "umbraflow fixture tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "fixture.write",
+              "payload_schema_hash": "ca425bcb531fb9c9631ddbc15bb2cba2ef7133c91efd85dd112bc968e5976953",
+              "scope_kind": "instance"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "fixture.foreign.two-step-plan",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "fixture.step"
+          ],
+          "version": "1",
+          "workflow_limits": {
+            "maximum_dispatches": 2,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 2,
+            "maximum_waits": 64
+          }
+        }
       ],
       "resources": []
     }

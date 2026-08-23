@@ -70,8 +70,8 @@ namespace uf::operator_runtime
 
     public:
         // The exact operator protocol schema bytes are required for the same
-        // reason the Journal and Tool Catalog owners require theirs: an owner
-        // that merely names a hash is a convention. The session manifest
+        // reason the Tool declaration owner requires its own: an owner that
+        // merely names a hash is a convention. The session manifest
         // supplies the hash to satisfy, and must itself be pinned to this
         // registration.
         //

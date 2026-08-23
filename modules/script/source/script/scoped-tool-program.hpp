@@ -112,7 +112,7 @@ namespace uf::script
     // seam: the Tool Runtime call.
     //
     // The scoped module catalog is a property of THIS TYPE and not of a VM boot
-    // or a constructor flag, because a pure reducer's inability to load a scoped
+    // or a constructor flag, because a pure program's inability to load a scoped
     // module has to fail in the RESOLVER, naming the module it asked for. Two
     // genuinely different contracts get two types; a capability-set parameter
     // would make purity a value, and a program in a signature would stop telling

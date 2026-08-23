@@ -303,8 +303,8 @@ namespace uf::service
         // The Tool Runtime seam a release upgrade compiles its generation
         // against. An upgrade session holds no lease, no controller binding and
         // no observation authority, so it has nothing a Tool call could be
-        // admitted under; it registers a generation only to reduce a
-        // ProjectInstance baseline through its reducer.
+        // admitted under; it registers a generation only to prove the shipped
+        // closure compiles under the environment the upgrade would run it in.
         //
         // It refuses rather than being absent, because a scoped program with no
         // Tool Runtime is a pure program wearing the wrong type. The refusal is
@@ -467,7 +467,7 @@ namespace uf::service
         // as the generation lives -- so the generation cannot be registered
         // until the dispatcher exists, and the dispatcher cannot be built until
         // its provider has something to point at. Provisioning then needs the
-        // registered generation's reducer, and the session pin needs the
+        // registered generation's closure, and the session pin needs the
         // provisioned instance, so the controller binding is the last of the
         // four rather than the first.
         //
@@ -911,17 +911,11 @@ namespace uf::service
             registrar.registerGeneration(
                 deployed.generation,
                 deployed.toolCatalogSchemaOwner,
-                deployed.schemaOwner,
-                operator_runtime::ProjectGenerationRegistrar::ClosureModules{
-                    .entryModule = deployed.reducerClosure.entryModule,
-                    .modules     = deployed.reducerClosure.modules,
-                },
                 operator_runtime::ProjectGenerationRegistrar::ClosureModules{
                     .entryModule = deployed.toolClosure.entryModule,
                     .modules     = deployed.toolClosure.modules,
                 },
                 deployed.projectResources,
-                deployed.catalog.toolResultValidator(),
                 implementation->dispatcher().toolRuntimeSeam()
             )
         );
@@ -940,16 +934,7 @@ namespace uf::service
             projectInstanceKey,
             internalProjectInstanceKey(project.hash(), start.controlledTargetId)
         );
-        UF_TRY(store.provisionProjectInstance(
-            project,
-            implementation->generationHandle(),
-            operator_runtime::ProjectInstanceBaseline{
-                .projectInstanceKey  = projectInstanceKey,
-                .eventId             = {},
-                .sessionManifestHash = sessionManifest.hash(),
-                .entry               = std::nullopt,
-            }
-        ));
+        UF_TRY(store.provisionProjectInstance(project, projectInstanceKey));
         UF_TRY(store.pinSession(
             operator_runtime::SessionPin{
                 .sessionId                 = implementation->sessionId,
@@ -1558,17 +1543,11 @@ namespace uf::service
             registrar.registerGeneration(
                 selected.generation,
                 selected.toolCatalogSchemaOwner,
-                selected.schemaOwner,
-                operator_runtime::ProjectGenerationRegistrar::ClosureModules{
-                    .entryModule = selected.reducerClosure.entryModule,
-                    .modules     = selected.reducerClosure.modules,
-                },
                 operator_runtime::ProjectGenerationRegistrar::ClosureModules{
                     .entryModule = selected.toolClosure.entryModule,
                     .modules     = selected.toolClosure.modules,
                 },
                 selected.projectResources,
-                selected.catalog.toolResultValidator(),
                 quiescentToolRuntime()
             )
         );
@@ -1601,16 +1580,7 @@ namespace uf::service
                 k_upgradeTargetId
             )
         );
-        UF_TRY(coordinator.provisionProjectInstance(
-            project,
-            generation,
-            operator_runtime::ProjectInstanceBaseline{
-                .projectInstanceKey  = projectInstanceKey,
-                .eventId             = {},
-                .sessionManifestHash = sessionManifest.hash(),
-                .entry               = std::nullopt,
-            }
-        ));
+        UF_TRY(coordinator.provisionProjectInstance(project, projectInstanceKey));
         UF_TRY_VALUE(
             sessionId,
             internalSessionId(

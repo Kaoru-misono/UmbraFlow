@@ -9,7 +9,6 @@
 
 #include <operator/agent-profile.hpp>
 #include <operator/effective-plan.hpp>
-#include <operator/journal-entry.hpp>
 #include <operator/ledger.hpp>
 #include <operator/manifest.hpp>
 #include <operator/project-generation.hpp>
@@ -178,16 +177,14 @@ namespace uf::operator_runtime::test_support
 {
     struct ProjectFixture final
     {
-        // The verified two-closure document, and the projection of it every
+        // The verified registration document, and the projection of it every
         // durable seam takes. Both, because they answer different questions: a
-        // loader is handed the document -- it compiles the closures the
-        // document pinned -- while the ledger, the schema owners and the
-        // session manifest are handed the identity, which is all that outlives
-        // the document.
+        // loader is handed the document -- it compiles the closure the document
+        // pinned -- while the ledger, the declaration owner and the session
+        // manifest are handed the identity, which is all that outlives the
+        // document.
         VerifiedProjectGeneration     generation;
         ProjectIdentity               registration;
-        ProjectSchemaOwner            schemaOwner;
-        ProjectJournalSchemaOwner     journalSchemaOwner;
         ProjectToolCatalogSchemaOwner toolCatalogSchemaOwner;
 
         // The observed-instance identity authority every snapshot of this
@@ -196,18 +193,12 @@ namespace uf::operator_runtime::test_support
         // snapshot cannot pick its own authority, and neither may a case.
         ObservedInstanceIdentitySchemas observedInstanceIdentitySchemas;
 
-        // The exact Tool Catalog bytes this registration pinned. A case that
-        // builds a second catalog owner over the same registration needs them,
-        // because such an owner is bound to their hash.
+        // The exact Tool declaration bytes this registration pinned. A case
+        // that builds a second declaration owner over the same registration
+        // needs them, because such an owner is bound to their hash.
         std::string toolCatalogBytes;
 
-        // The exact bytes the document validator last saw as a reduce input.
-        // The synchronized log is shared with the retained validator because
-        // the property under test is that the Operator decides those bytes and
-        // no caller can.
-        std::shared_ptr<deployment::ProjectDocumentInputLog> documentInputLog;
-
-        // One of this project's catalog names, from the local half a case
+        // One of this project's declared names, from the local half a case
         // knows it by. A fixture tool's namespace is this registration's
         // plugin_id, so a case that spelled the full name itself would be
         // writing down which registration it prepared.
@@ -218,50 +209,6 @@ namespace uf::operator_runtime::test_support
         }
     };
 
-    // The one conforming JR:`JournalProvenance` this fixture project mints, and
-    // six documents that each violate exactly one of that schema's rules. All
-    // seven are exact JCS, so the canonical validator admits every one of them
-    // and the framework's fixed-schema check is the only thing that can tell
-    // them apart. A project supplies these VALUES; the schema that judges them
-    // is the framework's and is not delegated.
-    inline constexpr auto k_fixtureProvenance = std::string_view{
-        "{\"kind\":\"observation\","
-        "\"observation_ids\":[\"fixture-observation-1\"],"
-        "\"principal_id\":null,\"source_hashes\":[]}"
-    };
-    inline constexpr auto k_fixtureProvenanceViolations = std::array{
-        // kind outside the five-value enum.
-        std::string_view{
-            "{\"kind\":\"forged\",\"observation_ids\":[],"
-            "\"principal_id\":null,\"source_hashes\":[]}"
-        },
-        // source_hashes missing, so three of four required members are present.
-        std::string_view{
-            "{\"kind\":\"observation\",\"observation_ids\":[],"
-            "\"principal_id\":null}"
-        },
-        // A fifth member, against additionalProperties: false.
-        std::string_view{
-            "{\"kind\":\"observation\",\"observation_ids\":[],"
-            "\"principal_id\":null,\"source_hashes\":[],\"witness\":\"suite\"}"
-        },
-        // An element that is not a 64-character lowercase hex Hash.
-        std::string_view{
-            "{\"kind\":\"observation\",\"observation_ids\":[],"
-            "\"principal_id\":null,\"source_hashes\":[\"not-a-hash\"]}"
-        },
-        // A repeated element, against uniqueItems.
-        std::string_view{
-            "{\"kind\":\"observation\",\"observation_ids\":[\"a\",\"a\"],"
-            "\"principal_id\":null,\"source_hashes\":[]}"
-        },
-        // An empty principal_id, which the Identifier pattern refuses.
-        std::string_view{
-            "{\"kind\":\"observation\",\"observation_ids\":[],"
-            "\"principal_id\":\"\",\"source_hashes\":[]}"
-        },
-    };
-
     [[nodiscard]]
     inline auto hashOf(std::string_view value) -> ContentHash
     {
@@ -270,13 +217,13 @@ namespace uf::operator_runtime::test_support
         return *result;
     }
 
-    // The one identity schema this fixture's deployments pin, by the $id its
-    // document declares and every instance proposal this fixture's plugins
-    // write names. Spelled once: the C++ validator, the registration closure
-    // and the proposal envelope in the plugin source all say the same string.
-    inline constexpr auto k_fixtureIdentitySchemaId = std::string_view{
-        "https://fixture.example/identity/overlay/v1"
-    };
+    // The one identity schema this fixture's deployments pin, by the name the
+    // deployment declares it under and every instance proposal this fixture's
+    // plugins write names. Spelled once, in project-schemas.hpp: the C++
+    // validator, the registration closure and the proposal envelope in the
+    // plugin source all say the same string.
+    inline constexpr auto k_fixtureIdentitySchemaId =
+        k_observedIdentitySchemaName;
 
     // The observed-instance identity authority this fixture's registrations
     // pin: one schema, the sha256 of k_observedIdentitySchema's bytes, and the
@@ -348,7 +295,7 @@ namespace uf::operator_runtime::test_support
         return rendered;
     }
 
-    // One closure slot of the two-closure registration document.
+    // The closure slot of the registration document.
     [[nodiscard]]
     inline auto closureJcs(
         ContentHash const& moduleManifestHash,
@@ -460,23 +407,18 @@ namespace uf::operator_runtime::test_support
         return source;
     }
 
-    // `preconditionSchema` defaults to the exemplar's; a case that pins a
-    // laxer one -- e.g. a project whose tool arguments admit the
+    // `argumentSchema` defaults to the exemplar's; a case that pins a laxer
+    // one -- e.g. a project whose tool arguments admit the
     // observed_instance_id the admission gate resolves -- states it
     // explicitly. Every hash and every validator must see the same bytes.
-    //
-    // `reducerBytes` is the caller's, because what the fold answers is what a
-    // case varies. The tool closure is this fixture's own and is derived from
-    // the catalog above.
     [[nodiscard]]
     inline auto makeProject(
         std::string pluginId,
-        std::string_view reducerBytes,
-        std::string_view preconditionSchema = k_toolPreconditionSchema,
+        std::string_view argumentSchema = k_toolArgumentSchema,
         std::optional<ContentHash> environmentOverride = std::nullopt
     ) -> ProjectFixture
     {
-        auto const bundle   = DeploymentBundle{pluginId};
+        auto const bundle   = DeploymentBundle{pluginId, argumentSchema};
         auto sources        = bundle.sources();
         auto const deployed = deployment::ProjectDeployment::create(sources);
         {
@@ -487,8 +429,7 @@ namespace uf::operator_runtime::test_support
             REQUIRE(deployed.has_value());
         }
 
-        auto const reducerManifestHash = closureManifestHash(reducerBytes);
-        auto const toolManifestHash    = closureManifestHash(
+        auto const toolManifestHash = closureManifestHash(
             toolClosureSource(pluginId)
         );
         auto environmentHash = currentProjectPluginEnvironmentHash();
@@ -497,58 +438,35 @@ namespace uf::operator_runtime::test_support
         {
             environmentHash = *environmentOverride;
         }
-        auto const toolCatalogHash        = hashOf(bundle.toolCatalog());
-        auto const stateSchemaHash        = hashOf(k_projectStateSchema);
-        auto const preconditionSchemaHash = hashOf(preconditionSchema);
-        auto const journalSchemaHash      = hashOf(bundle.journalEventManifest());
-        auto const bindings               = fixtureToolBindings(pluginId);
-        auto const toolEntryPoints        = fixtureToolEntryPoints();
-        auto const reducerEntryPoints     = std::vector<std::string>{
-            std::string{k_reducerEntryPoint},
-        };
+        auto const toolCatalogHash = hashOf(bundle.tools());
+        auto const bindings        = fixtureToolBindings(pluginId);
+        auto const toolEntryPoints = fixtureToolEntryPoints();
         auto const exactJcs = std::format(
-            "{{\"baseline_event_type\":\"fixture.baseline\","
-            "\"journal_event_schema_manifest_hash\":\"{}\","
-            "\"observed_instance_identity_schema_hashes\":[\"{}\"],"
+            "{{\"observed_instance_identity_schema_hashes\":[\"{}\"],"
             "\"plugin_environment_hash\":\"{}\","
             "\"plugin_id\":\"{}\","
             "\"project_registration_format\":{},"
             "\"project_resources\":[],"
-            "\"project_state_schema_hash\":\"{}\","
             "\"project_tool_bindings\":{},"
-            "\"project_tool_precondition_schema_hash\":\"{}\","
-            "\"reducer_closure\":{},"
             "\"tool_catalog_hash\":\"{}\","
             "\"tool_closure\":{}}}",
-            journalSchemaHash.hex(),
             hashOf(k_observedIdentitySchema).hex(),
             environmentHash->hex(),
             pluginId,
             k_projectGenerationFormat,
-            stateSchemaHash.hex(),
             toolBindingsJcs(bindings),
-            preconditionSchemaHash.hex(),
-            closureJcs(reducerManifestHash, reducerEntryPoints),
             toolCatalogHash.hex(),
             closureJcs(toolManifestHash, toolEntryPoints)
         );
         auto const claims = ProjectGenerationClaims{
             .projectRegistrationFormat = k_projectGenerationFormat,
             .pluginId                  = pluginId,
-            .reducerClosure            = ProjectClosureClaims{
-                .moduleManifestHash  = reducerManifestHash,
-                .exportedEntryPoints = reducerEntryPoints,
-            },
             .toolClosure = ProjectClosureClaims{
                 .moduleManifestHash  = toolManifestHash,
                 .exportedEntryPoints = toolEntryPoints,
             },
             .pluginEnvironmentHash                = *environmentHash,
             .toolCatalogHash                      = toolCatalogHash,
-            .projectStateSchemaHash               = stateSchemaHash,
-            .projectToolPreconditionSchemaHash    = preconditionSchemaHash,
-            .journalEventSchemaManifestHash       = journalSchemaHash,
-            .baselineEventType                    = "fixture.baseline",
             .projectResources                     = {},
             .observedInstanceIdentitySchemaHashes = {hashOf(k_observedIdentitySchema)},
             .projectToolBindings                  = bindings,
@@ -581,45 +499,9 @@ namespace uf::operator_runtime::test_support
             REQUIRE(registration.has_value());
         }
 
-        auto documentInputLog =
-            std::make_shared<deployment::ProjectDocumentInputLog>();
-        auto schemaOwner = ProjectSchemaOwner::create(
-            *registration,
-            ProjectDocumentSchemaBytes{
-                .projectState     = k_projectStateSchema,
-                .toolPrecondition = preconditionSchema,
-            },
-            deployment::canonicalJsonValidator(),
-            // The deployment's own document validator, with the two envelopes
-            // the suite asserts against recorded on the way in. Recording is the
-            // fixture's; deciding is the deployment's.
-            [
-                validate = deployed->documentValidator(),
-                documentInputLog
-            ](
-                ProjectDocumentDirection direction,
-                std::string_view candidateJcs
-            ) -> Status
-            {
-                if (direction == ProjectDocumentDirection::Input)
-                {
-                    documentInputLog->record(candidateJcs);
-                }
-                return validate(direction, candidateJcs);
-            }
-        );
-        REQUIRE(schemaOwner.has_value());
-
-        auto journalSchemaOwner = ProjectJournalSchemaOwner::create(
-            *registration,
-            bundle.journalEventManifest(),
-            deployed->journalPayloadValidator()
-        );
-        REQUIRE(journalSchemaOwner.has_value());
-
         auto toolCatalogSchemaOwner = ProjectToolCatalogSchemaOwner::create(
             *registration,
-            bundle.toolCatalog(),
+            bundle.tools(),
             deployed->toolCatalogReader(),
             deployed->toolArgumentValidator()
         );
@@ -628,41 +510,18 @@ namespace uf::operator_runtime::test_support
         return ProjectFixture{
             .generation             = *registration,
             .registration           = *registration,
-            .schemaOwner            = *schemaOwner,
-            .journalSchemaOwner     = *journalSchemaOwner,
             .toolCatalogSchemaOwner = *toolCatalogSchemaOwner,
             .observedInstanceIdentitySchemas = observedInstanceIdentitySchemas(
                 *registration
             ),
-            .toolCatalogBytes = bundle.toolCatalog(),
-            .documentInputLog = std::move(documentInputLog),
+            .toolCatalogBytes = bundle.tools(),
         };
     }
 
     [[nodiscard]]
-    inline auto canonical(
-        ProjectSchemaOwner const& owner,
-        std::string value
-    ) -> CanonicalJson
+    inline auto canonical(std::string value) -> CanonicalJson
     {
-        auto result = owner.canonicalize(std::move(value));
-        REQUIRE(result.has_value());
-        return *result;
-    }
-
-    [[nodiscard]]
-    inline auto journalEntry(
-        ProjectFixture const& project,
-        std::string eventType,
-        std::string payload,
-        std::string provenance = std::string{k_fixtureProvenance}
-    ) -> ValidatedJournalEntryData
-    {
-        auto result = project.journalSchemaOwner.validate(
-            std::move(eventType),
-            canonical(project.schemaOwner, std::move(payload)),
-            canonical(project.schemaOwner, std::move(provenance))
-        );
+        auto result = CanonicalJson::parseExact(std::move(value));
         REQUIRE(result.has_value());
         return *result;
     }
@@ -676,7 +535,7 @@ namespace uf::operator_runtime::test_support
     {
         auto result = project.toolCatalogSchemaOwner.validate(
             std::move(toolName),
-            canonical(project.schemaOwner, std::move(args))
+            canonical(std::move(args))
         );
         REQUIRE(result.has_value());
         return *result;
@@ -734,25 +593,16 @@ namespace uf::operator_runtime::test_support
         };
     }
 
-    // The loaded generation both closures of this fixture's registration were
-    // compiled into. Provisioning needs it because a ProjectInstance row
-    // carries the reduction of its complete Journal prefix, and only a loaded
-    // generation can perform that fold.
+    // The loaded generation this fixture's registration was compiled into.
     [[nodiscard]]
     inline auto loadGeneration(
-        ProjectFixture const& project,
-        std::string_view reducerBytes
+        ProjectFixture const& project
     ) -> ProjectGenerationHandle
     {
         auto registrar = ProjectGenerationRegistrar{};
         auto result = registrar.registerGeneration(
             project.generation,
             project.toolCatalogSchemaOwner,
-            project.schemaOwner,
-            ProjectGenerationRegistrar::ClosureModules{
-                .entryModule = "main",
-                .modules     = closureModules(reducerBytes),
-            },
             ProjectGenerationRegistrar::ClosureModules{
                 .entryModule = "main",
                 .modules     = closureModules(
@@ -760,7 +610,6 @@ namespace uf::operator_runtime::test_support
                 ),
             },
             {},
-            [](std::string_view, std::string_view) -> Status { return ok(); },
             refusingToolRuntime()
         );
         {
@@ -1131,33 +980,6 @@ identity = ["fixture.panel.anchor"]
         return conformance::observationRelease(root, umbraflowRuntimeArtifact());
     }
 
-    // The reducer closure a prepared store registers. plugin_id must equal the
-    // registration's, so the id is inserted rather than fixed.
-    //
-    // The fold is the whole of the pure type's contract now: it reads the
-    // prospective batch the Operator froze and answers a ProjectState the
-    // pinned schema accepts. `fixture.confirmed` in that batch is what moves
-    // the revision, so a case makes the fold answer differently by writing an
-    // entry rather than by substituting an expression.
-    [[nodiscard]]
-    inline auto reducerSource(std::string_view pluginId) -> std::string
-    {
-        auto source = std::string{"return {\n    plugin_id = \""};
-        source += pluginId;
-        source += R"LUAU(",
-    reduce = function(input)
-        for _, event in ipairs(input.prospective_journal_batch) do
-            if event.namespaced_event_type == "fixture.confirmed" then
-                return { revision = 1 }
-            end
-        end
-        return { revision = 0 }
-    end,
-}
-)LUAU";
-        return source;
-    }
-
     class TemporaryDirectory final
     {
         std::filesystem::path m_path{};
@@ -1384,29 +1206,18 @@ identity = ["fixture.panel.anchor"]
         REQUIRE_MESSAGE(installed.has_value(), installMessage);
         auto const artifactRootHash    = installed->rootHash();
         auto const installedGeneration = installed->installedGeneration();
-        auto const source  = reducerSource(pluginId);
-        auto const project = makeProject(pluginId, source);
+        auto const project = makeProject(pluginId);
         auto const manifest = sessionManifest(
             project.registration,
             installed->rootHash(),
             hashOf("agent"),
             policyArtifactBytes()
         );
-        auto const generation = loadGeneration(project, source);
+        auto const generation = loadGeneration(project);
         REQUIRE(store.registerProject(project.registration).has_value());
         REQUIRE(store.provisionProjectInstance(
             project.registration,
-            generation,
-            ProjectInstanceBaseline{
-                .projectInstanceKey  = "instance-1",
-                .eventId             = "baseline-1",
-                .sessionManifestHash = manifest.hash(),
-                .entry = journalEntry(
-                    project,
-                    project.registration.baselineEventType(),
-                    "{\"kind\":\"baseline\"}"
-                ),
-            }
+            "instance-1"
         ).has_value());
         auto const worldScope = ObservedInstanceWorldScope::run(
             "target-1",
@@ -1509,17 +1320,7 @@ identity = ["fixture.panel.anchor"]
     {
         REQUIRE(prepared.store.provisionProjectInstance(
             prepared.project.registration,
-            prepared.generation,
-            ProjectInstanceBaseline{
-                .projectInstanceKey  = projectInstanceKey,
-                .eventId             = "baseline-" + projectInstanceKey,
-                .sessionManifestHash = prepared.manifest.hash(),
-                .entry               = journalEntry(
-                    prepared.project,
-                    prepared.project.registration.baselineEventType(),
-                    "{\"kind\":\"baseline\"}"
-                ),
-            }
+            projectInstanceKey
         ).has_value());
 
         auto profile  = std::optional<AgentProfile>{};

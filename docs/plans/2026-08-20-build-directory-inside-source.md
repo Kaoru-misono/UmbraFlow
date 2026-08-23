@@ -24,13 +24,15 @@ rejects `isWithinOrEqual(build, source) || isWithinOrEqual(source, build)`.
 
 `project build` must leave the source tree unchanged, and the source tree is a
 byte-pinned input. But the pin domain is **not the whole tree**: it is the
-explicit set of declared files
-(`readDeclaredProjectFiles` in
-`modules/deployment/source/deployment/project-directory.cpp` reads exactly the
-seven single-path members of a deployment plus every
-`journal_payload_schemas` entry, one file per declared path). No directory
-scan, no plugin path, no artifact blob, no generated artifact enters the pin
-domain. The "source is pure input" property therefore does **not** depend on
+explicit set of declared inputs the kit records. No directory scan and no
+generated artifact enters the pin domain.
+
+> **Amended 2026-08-23** by
+> [the framework stops interpreting a Project's state](../decisions/2026-08-23-the-framework-stops-interpreting-project-state.md).
+> `readDeclaredProjectFiles`, and the seven single-path deployment members plus
+> `journal_payload_schemas` it enumerated, are deleted: every declarative member
+> of a deployment is now inline in `umbraflow-project.json`, so the only files a
+> deployment names are its Luau modules and its resources. The "source is pure input" property therefore does **not** depend on
 where the build directory physically sits; a build tree inside the source can
 never leak into the hash set, because the hash set is a fixed declared list.
 

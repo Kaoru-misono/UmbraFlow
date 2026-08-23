@@ -252,32 +252,18 @@ namespace uf::operator_runtime
             REQUIRE(installed.has_value());
             auto const artifactRootHash    = installed->rootHash();
             auto const installedGeneration = installed->installedGeneration();
-            auto const source  = test_support::reducerSource("fixture.nested");
-            auto const project = test_support::makeProject(
-                "fixture.nested",
-                source
-            );
+            auto const project = test_support::makeProject("fixture.nested");
             auto const manifest = test_support::sessionManifest(
                 project.registration,
                 artifactRootHash,
                 hashOf("agent"),
                 policy
             );
-            auto const projectGeneration = test_support::loadGeneration(project, source);
+            auto const projectGeneration = test_support::loadGeneration(project);
             REQUIRE(store.registerProject(project.registration).has_value());
             REQUIRE(store.provisionProjectInstance(
                 project.registration,
-                projectGeneration,
-                ProjectInstanceBaseline{
-                    .projectInstanceKey  = "instance-1",
-                    .eventId             = "baseline-1",
-                    .sessionManifestHash = manifest.hash(),
-                    .entry               = test_support::journalEntry(
-                        project,
-                        project.registration.baselineEventType(),
-                        "{\"kind\":\"baseline\"}"
-                    ),
-                }
+                "instance-1"
             ).has_value());
             auto const worldScope = ObservedInstanceWorldScope::run("target-1", 1);
             REQUIRE(worldScope.has_value());
@@ -368,17 +354,7 @@ namespace uf::operator_runtime
         {
             REQUIRE(prepared.store.provisionProjectInstance(
                 prepared.project.registration,
-                prepared.generation,
-                ProjectInstanceBaseline{
-                    .projectInstanceKey  = projectInstanceKey,
-                    .eventId             = "baseline-" + projectInstanceKey,
-                    .sessionManifestHash = prepared.manifest.hash(),
-                    .entry               = test_support::journalEntry(
-                        prepared.project,
-                        prepared.project.registration.baselineEventType(),
-                        "{\"kind\":\"baseline\"}"
-                    ),
-                }
+                projectInstanceKey
             ).has_value());
 
             auto manifest = prepared.manifest;
@@ -866,10 +842,7 @@ namespace uf::operator_runtime
 
         SUBCASE("a child cannot name another Project's registration")
         {
-            auto const foreign = test_support::makeProject(
-                "fixture.foreign",
-                test_support::reducerSource("fixture.foreign")
-            );
+            auto const foreign = test_support::makeProject("fixture.foreign");
             // The foreign registration owns its own namespace, so its Tool
             // cannot be the same name at all: what the case shows is that a
             // child minted by another registration's catalog owner is refused

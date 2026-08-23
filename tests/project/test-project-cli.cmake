@@ -18,38 +18,17 @@ set(DECLARATIVE_PATH
 set(ADAPTER_DIRECTORY
     "generated/adapters/chaos.project/dismiss-known-overlay"
 )
-set(GENERATED_REDUCER_ADAPTER
-    "${BUILD_DIRECTORY}/${ADAPTER_DIRECTORY}/reducer.luau"
-)
-set(GENERATED_REDUCER_ADAPTER_NAME
-    "${ADAPTER_DIRECTORY}/reducer.luau"
-)
 set(GENERATED_ADAPTER
     "${BUILD_DIRECTORY}/${ADAPTER_DIRECTORY}/tool.luau"
 )
 set(GENERATED_ADAPTER_NAME
     "${ADAPTER_DIRECTORY}/tool.luau"
 )
-set(DECLARED_CATALOG
-    "${SOURCE_DIRECTORY}/generated/tool-catalogs/chaos.project/tool-catalog-v1.json"
-)
-set(GENERATED_CATALOG
-    "${BUILD_DIRECTORY}/generated/tool-catalogs/chaos.project/tool-catalog-v1.json"
-)
-set(GENERATED_CATALOG_NAME
-    "generated/tool-catalogs/chaos.project/tool-catalog-v1.json"
-)
 set(GENERATED_BLOB
     "${BUILD_DIRECTORY}/generated/resources/dream/facts.blob"
 )
 set(GENERATED_BLOB_NAME
     "generated/resources/dream/facts.blob"
-)
-set(GENERATED_REDUCER_MODULE
-    "${BUILD_DIRECTORY}/generated/modules/dream/reducer/main.luau"
-)
-set(GENERATED_REDUCER_MODULE_NAME
-    "generated/modules/dream/reducer/main.luau"
 )
 set(GENERATED_MODULE
     "${BUILD_DIRECTORY}/generated/modules/dream/tool/main.luau"
@@ -72,7 +51,7 @@ file(WRITE "${INPUT_PATH}" "declared input\n")
 # root, so the CLI's own rehearsal writes one. It is deliberately not declared
 # as an input: build and check judge it either way.
 file(WRITE "${SOURCE_DIRECTORY}/umbraflow-project.json" [=[{
-  "schema": "umbraflow-project/v2",
+  "schema": "umbraflow-project/v3",
   "runtime_artifact": "runtime/artifact",
   "primary_deployment": "dream",
   "template_cuts": [],
@@ -80,17 +59,6 @@ file(WRITE "${SOURCE_DIRECTORY}/umbraflow-project.json" [=[{
     {
       "name": "dream",
       "plugin_id": "chaos.dream",
-      "baseline_event_type": "project.baseline_created",
-      "reducer_closure": {
-        "entry": "main",
-        "exported_entry_points": ["reduce"],
-        "modules": [
-          {
-            "name": "main",
-            "path": "generated/adapters/chaos.project/dismiss-known-overlay/reducer.luau"
-          }
-        ]
-      },
       "tool_closure": {
         "entry": "main",
         "exported_entry_points": [],
@@ -102,12 +70,7 @@ file(WRITE "${SOURCE_DIRECTORY}/umbraflow-project.json" [=[{
         ]
       },
       "plugin_authoring": "generated",
-      "project_state_schema": "schema/state.json",
-      "tool_precondition_schema": "schema/precondition.json",
-      "tool_catalog": "generated/tool-catalogs/chaos.project/tool-catalog-v1.json",
-      "journal_event_schema_manifest": "schema/journal-manifest.json",
-      "journal_payload_schemas": ["schema/journal-0.json"],
-      "effect_payload_schemas": [],
+      "tools": [],
       "observed_instance_identity_schemas": [],
       "tool_bindings": [],
       "resources": [
@@ -116,72 +79,7 @@ file(WRITE "${SOURCE_DIRECTORY}/umbraflow-project.json" [=[{
     }
   ]
 }]=])
-file(MAKE_DIRECTORY
-    "${SOURCE_DIRECTORY}/generated/tool-catalogs/chaos.project"
-    "${SOURCE_DIRECTORY}/content"
-    "${SOURCE_DIRECTORY}/schema"
-)
-file(WRITE "${DECLARED_CATALOG}" [=[{
-  "schema": "umbraflow-tool-catalog/v1",
-  "plugin_id": "chaos.project",
-  "tool_precondition_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-  "effect_payload_sha256s": [],
-  "tools": [
-    {
-      "name": "chaos.project.dismiss_known_overlay",
-      "argument_schema": "observed_instance_id",
-      "result_schema": "tool_result",
-      "version": "1.0.0",
-      "mutability": "read_only",
-      "surface": "semantic",
-      "idempotency": "delivery_safe",
-      "required_capabilities": [],
-      "ui_action_bounds": [],
-      "effect_bounds": [],
-      "child_effects": {
-        "child_tool_names": [],
-        "maximum_child_calls": 0,
-        "maximum_child_mutability": "read_only",
-        "maximum_child_risk": "read_only",
-        "maximum_child_surface": "semantic"
-      },
-      "timeout_policy": {
-        "maximum_elapsed_ms": 3000,
-        "on_timeout": "stop"
-      },
-      "workflow_limits": {
-        "maximum_steps": 2,
-        "maximum_dispatches": 1,
-        "maximum_observations": 2,
-        "maximum_waits": 1,
-        "maximum_elapsed_ms": 3000
-      }
-    }
-  ]
-}]=])
-
-# The deployment declaration's other named files: the four schemas, the two
-# manifests and the journal payload schema. The declared-file read pins their
-# bytes without validating their content, so these documents are minimal;
-# what they must be is stable from build to check. The tool precondition
-# schema is the exception: a catalog entry's argument_schema and
-# result_schema each name one of its definitions, so it declares both.
-file(WRITE "${SOURCE_DIRECTORY}/schema/state.json" [=[{
-  "type": "object"
-}]=])
-file(WRITE "${SOURCE_DIRECTORY}/schema/precondition.json" [=[{
-  "$defs": {
-    "observed_instance_id": {"type": "string"},
-    "tool_result": {"type": "object"}
-  },
-  "type": "object"
-}]=])
-file(WRITE "${SOURCE_DIRECTORY}/schema/journal-manifest.json" [=[{
-  "schema": "umbraflow-journal-event-schema-manifest/v1"
-}]=])
-file(WRITE "${SOURCE_DIRECTORY}/schema/journal-0.json" [=[{
-  "type": "object"
-}]=])
+file(MAKE_DIRECTORY "${SOURCE_DIRECTORY}/content")
 file(WRITE "${SOURCE_DIRECTORY}/content/facts.txt" "declared facts\n")
 file(WRITE "${DECLARATIVE_PATH}" [=[{
   "schema": "umbraflow-declarative-workflow-tool/v1",
@@ -288,32 +186,15 @@ if(NOT CHECK_RESULT EQUAL 0)
     )
 endif()
 
-if(NOT EXISTS "${GENERATED_REDUCER_ADAPTER}")
-    message(FATAL_ERROR
-        "project build must generate ${GENERATED_REDUCER_ADAPTER_NAME}"
-    )
-endif()
 if(NOT EXISTS "${GENERATED_ADAPTER}")
     message(FATAL_ERROR
         "project build must generate ${GENERATED_ADAPTER_NAME}"
-    )
-endif()
-if(NOT EXISTS "${GENERATED_CATALOG}")
-    message(FATAL_ERROR
-        "project build must generate ${GENERATED_CATALOG_NAME} from the "
-        "deployment's declared tool catalog source"
     )
 endif()
 if(NOT EXISTS "${GENERATED_BLOB}")
     message(FATAL_ERROR
         "project build must generate ${GENERATED_BLOB_NAME} from the "
         "deployment's declared resource"
-    )
-endif()
-if(NOT EXISTS "${GENERATED_REDUCER_MODULE}")
-    message(FATAL_ERROR
-        "project build must generate ${GENERATED_REDUCER_MODULE_NAME} from the "
-        "deployment's generated reducer closure"
     )
 endif()
 if(NOT EXISTS "${GENERATED_MODULE}")
@@ -426,10 +307,10 @@ function(require_contains LABEL HAYSTACK NEEDLE)
 endfunction()
 
 # ----------------------------------------------------------------------------
-# The deployment declaration's tool catalog and execution closure, end to end.
+# The deployment declaration's execution closure, end to end.
 #
-# Every deployment names its declared tool catalog, module closure and typed
-# resources. build materializes the exact execution bytes and writes one
+# Every deployment names its module closure and its typed resources. build
+# materializes the exact execution bytes and writes one
 # generated/registrations/DEPLOYMENT.json identity record. A hand edit must be
 # named like every other generated artifact.
 #
@@ -439,32 +320,6 @@ endfunction()
 # command names the exact file or blob and that a build replaces it.
 # ----------------------------------------------------------------------------
 file(WRITE "${INPUT_PATH}" "declared input\n")
-
-# G1. A hand-edited generated Tool Catalog is refused by name, and a rebuild
-# replaces it.
-file(WRITE "${GENERATED_CATALOG}" "hand edited\n")
-run_project(EDITED_CATALOG_RESULT EDITED_CATALOG_DIAGNOSTIC check
-    --source "${SOURCE_DIRECTORY}"
-    --build "${BUILD_DIRECTORY}"
-)
-if(EDITED_CATALOG_RESULT EQUAL 0)
-    message(FATAL_ERROR
-        "project check must reject a hand-edited generated Tool Catalog"
-    )
-endif()
-require_contains("the edited-catalog refusal"
-    "${EDITED_CATALOG_DIAGNOSTIC}"
-    "generated project artifact \"${GENERATED_CATALOG_NAME}\" does not match its declared source")
-run_project(EDITED_CATALOG_RESTORE_RESULT EDITED_CATALOG_RESTORE_DIAGNOSTIC build
-    --source "${SOURCE_DIRECTORY}"
-    --build "${BUILD_DIRECTORY}"
-)
-if(NOT EDITED_CATALOG_RESTORE_RESULT EQUAL 0)
-    message(FATAL_ERROR
-        "project build must replace a hand-edited generated Tool Catalog; "
-        "diagnostic=[${EDITED_CATALOG_RESTORE_DIAGNOSTIC}]"
-    )
-endif()
 
 # G2. A deleted generated resource is refused by name.
 file(REMOVE "${GENERATED_BLOB}")
@@ -516,151 +371,6 @@ if(NOT EDITED_REGISTRATION_RESTORE_RESULT EQUAL 0)
     )
 endif()
 
-# G4. A declared tool catalog source the tree does not hold is refused by
-# name at build time, like a declared cut's missing corpus.
-file(REMOVE "${DECLARED_CATALOG}")
-run_project(MISSING_CATALOG_SOURCE_RESULT MISSING_CATALOG_SOURCE_DIAGNOSTIC build
-    --source "${SOURCE_DIRECTORY}"
-    --build "${BUILD_DIRECTORY}"
-)
-if(MISSING_CATALOG_SOURCE_RESULT EQUAL 0)
-    message(FATAL_ERROR
-        "project build must refuse a declared tool catalog source the tree "
-        "does not hold"
-    )
-endif()
-require_contains("the missing-catalog-source refusal"
-    "${MISSING_CATALOG_SOURCE_DIAGNOSTIC}" "tool catalog source")
-require_contains("the missing-catalog-source refusal"
-    "${MISSING_CATALOG_SOURCE_DIAGNOSTIC}" "${GENERATED_CATALOG_NAME}")
-file(WRITE "${DECLARED_CATALOG}" [=[{
-  "schema": "umbraflow-tool-catalog/v1",
-  "plugin_id": "chaos.project",
-  "tool_precondition_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-  "effect_payload_sha256s": [],
-  "tools": [
-    {
-      "name": "chaos.project.dismiss_known_overlay",
-      "argument_schema": "observed_instance_id",
-      "result_schema": "tool_result",
-      "version": "1.0.0",
-      "mutability": "read_only",
-      "surface": "semantic",
-      "idempotency": "delivery_safe",
-      "required_capabilities": [],
-      "ui_action_bounds": [],
-      "effect_bounds": [],
-      "child_effects": {
-        "child_tool_names": [],
-        "maximum_child_calls": 0,
-        "maximum_child_mutability": "read_only",
-        "maximum_child_risk": "read_only",
-        "maximum_child_surface": "semantic"
-      },
-      "timeout_policy": {
-        "maximum_elapsed_ms": 3000,
-        "on_timeout": "stop"
-      },
-      "workflow_limits": {
-        "maximum_steps": 2,
-        "maximum_dispatches": 1,
-        "maximum_observations": 2,
-        "maximum_waits": 1,
-        "maximum_elapsed_ms": 3000
-      }
-    }
-  ]
-}]=])
-run_project(CATALOG_SOURCE_RESTORE_RESULT CATALOG_SOURCE_RESTORE_DIAGNOSTIC build
-    --source "${SOURCE_DIRECTORY}"
-    --build "${BUILD_DIRECTORY}"
-)
-if(NOT CATALOG_SOURCE_RESTORE_RESULT EQUAL 0)
-    message(FATAL_ERROR
-        "project build must accept a restored declared tool catalog source; "
-        "diagnostic=[${CATALOG_SOURCE_RESTORE_DIAGNOSTIC}]"
-    )
-endif()
-
-# ----------------------------------------------------------------------------
-# The declared-file half of build and check, end to end through the command
-# line.
-#
-# Every deployment declaration names eight documents the build pins by
-# digest -- the tool catalog source, the four schemas, the two manifests and
-# the journal payload schemas -- and check holds the tree against that
-# record, because the kit's own check only re-derives the generated artifacts
-# and can say nothing about the schemas and manifests it never reads. The
-# refusals below name the exact file, not the manifest that names it.
-# ----------------------------------------------------------------------------
-
-# H1. A declared schema the tree does not hold is refused by name.
-file(REMOVE "${SOURCE_DIRECTORY}/schema/state.json")
-run_project(MISSING_STATE_RESULT MISSING_STATE_DIAGNOSTIC check
-    --source "${SOURCE_DIRECTORY}"
-    --build "${BUILD_DIRECTORY}"
-)
-if(MISSING_STATE_RESULT EQUAL 0)
-    message(FATAL_ERROR
-        "project check must refuse a declared schema the tree does not hold"
-    )
-endif()
-require_contains("the missing-schema refusal"
-    "${MISSING_STATE_DIAGNOSTIC}" "schema/state.json")
-file(WRITE "${SOURCE_DIRECTORY}/schema/state.json" [=[{
-  "type": "object"
-}]=])
-
-# H2. A declared schema whose bytes differ from what the build recorded is
-# refused by name. The declared read opens the files in the declaration's
-# order, so the fixture must be whole before the altered one can be reached.
-file(APPEND "${SOURCE_DIRECTORY}/schema/journal-0.json" "\n")
-run_project(ALTERED_SCHEMA_RESULT ALTERED_SCHEMA_DIAGNOSTIC check
-    --source "${SOURCE_DIRECTORY}"
-    --build "${BUILD_DIRECTORY}"
-)
-if(ALTERED_SCHEMA_RESULT EQUAL 0)
-    message(FATAL_ERROR
-        "project check must refuse a declared schema whose bytes have moved"
-    )
-endif()
-require_contains("the altered-schema refusal"
-    "${ALTERED_SCHEMA_DIAGNOSTIC}" "schema/journal-0.json")
-
-# H3. The positive control: with the altered file restored, check accepts
-# the tree the build recorded.
-file(WRITE "${SOURCE_DIRECTORY}/schema/journal-0.json" [=[{
-  "type": "object"
-}]=])
-run_project(RESTORED_SCHEMAS_RESULT RESTORED_SCHEMAS_DIAGNOSTIC check
-    --source "${SOURCE_DIRECTORY}"
-    --build "${BUILD_DIRECTORY}"
-)
-if(NOT RESTORED_SCHEMAS_RESULT EQUAL 0)
-    message(FATAL_ERROR
-        "project check must accept a declared-file set that matches the "
-        "build's record; diagnostic=[${RESTORED_SCHEMAS_DIAGNOSTIC}]"
-    )
-endif()
-
-# H4. A whitespace-only alteration of the declared tool catalog source is
-# refused by name, where the kit's own check passes: it re-derives the
-# generated catalog from the parsed document, and JSON ignores the trailing
-# newline, so only the digest record can see the moved bytes.
-file(APPEND "${DECLARED_CATALOG}" "\n")
-run_project(WHITESPACED_CATALOG_RESULT WHITESPACED_CATALOG_DIAGNOSTIC check
-    --source "${SOURCE_DIRECTORY}"
-    --build "${BUILD_DIRECTORY}"
-)
-if(WHITESPACED_CATALOG_RESULT EQUAL 0)
-    message(FATAL_ERROR
-        "project check must refuse a declared tool catalog source whose "
-        "bytes differ, even when they parse to the same catalog"
-    )
-endif()
-require_contains("the whitespaced-catalog refusal"
-    "${WHITESPACED_CATALOG_DIAGNOSTIC}" "${GENERATED_CATALOG_NAME}")
-
 set(CUT_ROOT "${UF_PROJECT_TEST_ROOT}/template-cut")
 set(CUT_SOURCE "${CUT_ROOT}/source")
 set(CUT_BUILD "${CUT_ROOT}/build")
@@ -690,11 +400,6 @@ file(MAKE_DIRECTORY
     "${CUT_LYING_CORPUS}"
 )
 file(WRITE "${CUT_SOURCE}/declared.txt" "declared input\n")
-file(WRITE "${CUT_SOURCE}/plugin/dream-reducer.luau" [=[return {
-    plugin_id = "chaos.dream",
-    reduce = function(input) return input end,
-}
-]=])
 file(WRITE "${CUT_SOURCE}/plugin/dream.luau" [=[return {
     plugin_id = "chaos.dream",
 }
@@ -714,7 +419,7 @@ file(COPY_FILE
 )
 
 file(WRITE "${CUT_SOURCE}/umbraflow-project.json" "{
-  \"schema\": \"umbraflow-project/v2\",
+  \"schema\": \"umbraflow-project/v3\",
   \"runtime_artifact\": \"runtime/artifact\",
   \"primary_deployment\": \"dream\",
   \"template_cuts\": [
@@ -728,14 +433,6 @@ file(WRITE "${CUT_SOURCE}/umbraflow-project.json" "{
     {
       \"name\": \"dream\",
       \"plugin_id\": \"chaos.dream\",
-      \"baseline_event_type\": \"project.baseline_created\",
-      \"reducer_closure\": {
-        \"entry\": \"main\",
-        \"exported_entry_points\": [\"reduce\"],
-        \"modules\": [
-          {\"name\": \"main\", \"path\": \"plugin/dream-reducer.luau\"}
-        ]
-      },
       \"tool_closure\": {
         \"entry\": \"main\",
         \"exported_entry_points\": [],
@@ -744,13 +441,8 @@ file(WRITE "${CUT_SOURCE}/umbraflow-project.json" "{
         ]
       },
       \"plugin_authoring\": \"hand-written\",
-      \"plugin_justification\": \"A fixture plugin that answers from constants: umbraflow-declarative-workflow-tool/v1 has no member that decides what a Reduce returns.\",
-      \"project_state_schema\": \"schema/state.json\",
-      \"tool_precondition_schema\": \"schema/precondition.json\",
-      \"tool_catalog\": \"schema/catalog.json\",
-      \"journal_event_schema_manifest\": \"schema/journal-manifest.json\",
-      \"journal_payload_schemas\": [\"schema/journal-0.json\"],
-      \"effect_payload_schemas\": [],
+      \"plugin_justification\": \"A fixture plugin that answers from constants: umbraflow-declarative-workflow-tool/v1 has no member that decides what a handler returns.\",
+      \"tools\": [],
       \"observed_instance_identity_schemas\": [],
       \"tool_bindings\": [],
       \"resources\": []
@@ -758,63 +450,6 @@ file(WRITE "${CUT_SOURCE}/umbraflow-project.json" "{
   ]
 }
 ")
-file(WRITE "${CUT_SOURCE}/schema/catalog.json" [=[{
-  "schema": "umbraflow-tool-catalog/v1",
-  "plugin_id": "chaos.dream",
-  "tool_precondition_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-  "effect_payload_sha256s": [],
-  "tools": [
-    {
-      "name": "chaos.dream.dismiss_known_overlay",
-      "argument_schema": "observed_instance_id",
-      "result_schema": "tool_result",
-      "version": "1.0.0",
-      "mutability": "read_only",
-      "surface": "semantic",
-      "idempotency": "delivery_safe",
-      "required_capabilities": [],
-      "ui_action_bounds": [],
-      "effect_bounds": [],
-      "child_effects": {
-        "child_tool_names": [],
-        "maximum_child_calls": 0,
-        "maximum_child_mutability": "read_only",
-        "maximum_child_risk": "read_only",
-        "maximum_child_surface": "semantic"
-      },
-      "timeout_policy": {
-        "maximum_elapsed_ms": 3000,
-        "on_timeout": "stop"
-      },
-      "workflow_limits": {
-        "maximum_steps": 2,
-        "maximum_dispatches": 1,
-        "maximum_observations": 2,
-        "maximum_waits": 1,
-        "maximum_elapsed_ms": 3000
-      }
-    }
-  ]
-}]=])
-
-# The declaration's other named files, so the build can record them and F1's
-# check stays green; minimal documents, exactly as in the main fixture.
-file(WRITE "${CUT_SOURCE}/schema/state.json" [=[{
-  "type": "object"
-}]=])
-file(WRITE "${CUT_SOURCE}/schema/precondition.json" [=[{
-  "$defs": {
-    "observed_instance_id": {"type": "string"},
-    "tool_result": {"type": "object"}
-  },
-  "type": "object"
-}]=])
-file(WRITE "${CUT_SOURCE}/schema/journal-manifest.json" [=[{
-  "schema": "umbraflow-journal-event-schema-manifest/v1"
-}]=])
-file(WRITE "${CUT_SOURCE}/schema/journal-0.json" [=[{
-  "type": "object"
-}]=])
 
 foreach(CUT_BUILD_DIRECTORY
     "${CUT_BUILD}"
@@ -984,14 +619,8 @@ file(COPY "${CUT_SOURCE}/" DESTINATION "${BOOTSTRAP_SOURCE}")
 file(REMOVE_RECURSE "${BOOTSTRAP_SOURCE}/plugin")
 file(READ "${BOOTSTRAP_SOURCE}/umbraflow-project.json" BOOTSTRAP_MANIFEST)
 string(REPLACE
-    "{\"name\": \"main\", \"path\": \"plugin/dream-reducer.luau\"}"
-    "{\"name\": \"main\", \"path\": \"plugin/main.luau\"}, {\"name\": \"support\", \"path\": \"plugin/support.luau\"}"
-    BOOTSTRAP_MANIFEST
-    "${BOOTSTRAP_MANIFEST}"
-)
-string(REPLACE
     "{\"name\": \"main\", \"path\": \"plugin/dream.luau\"}"
-    "{\"name\": \"main\", \"path\": \"plugin/main.luau\"}"
+    "{\"name\": \"main\", \"path\": \"plugin/main.luau\"}, {\"name\": \"support\", \"path\": \"plugin/support.luau\"}"
     BOOTSTRAP_MANIFEST
     "${BOOTSTRAP_MANIFEST}"
 )

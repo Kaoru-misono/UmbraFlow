@@ -3,11 +3,11 @@
 //
 // What the descriptor's effect, UI-action, workflow and timeout bounds meant
 // for a frozen plan died with the plan: those clauses were reached only through
-// freezePlan and mintNextStep, and a Project of the two-closure generation
-// exports no plan or next_step for them to run. What survives here is what an
-// Operation never owned -- the call identity builder, the catalog's namespace
-// rule, and the artifact a plan authority is built from -- and the Tool
-// Runtime's own bounds are asserted in tests/operator/test-tool-executor.cpp.
+// freezePlan and mintNextStep, and a Project's one closure exports no plan or
+// next_step for them to run. What survives here is what an Operation never
+// owned -- the call identity builder, the catalog's namespace rule, and the
+// artifact a plan authority is built from -- and the Tool Runtime's own bounds
+// are asserted in tests/operator/test-tool-executor.cpp.
 // The p03 offer side is asserted in contract-product-p03, where the requirement
 // it serves is traced.
 
@@ -341,7 +341,6 @@ namespace uf::operator_runtime
         }
 
         auto arguments = test_support::canonical(
-            prepared.project.schemaOwner,
             R"({"value":1})"
         );
         auto invocation = prepared.project.toolCatalogSchemaOwner.validate(
@@ -486,7 +485,6 @@ namespace uf::operator_runtime
         REQUIRE(root.has_value());
 
         auto arguments = test_support::canonical(
-            prepared.project.schemaOwner,
             R"({"value":1})"
         );
         auto invocation = prepared.project.toolCatalogSchemaOwner.validate(
@@ -597,7 +595,6 @@ namespace uf::operator_runtime
         }
 
         auto changedArguments = test_support::canonical(
-            prepared.project.schemaOwner,
             R"({"value":2})"
         );
         auto changedArgumentInvocation =
@@ -617,7 +614,6 @@ namespace uf::operator_runtime
         CHECK(first->identity() != changedArgument->identity());
 
         auto changedNameArguments = test_support::canonical(
-            prepared.project.schemaOwner,
             R"({"value":1})"
         );
         auto changedNameInvocation =
@@ -659,7 +655,6 @@ namespace uf::operator_runtime
         );
         REQUIRE(changedVersionOwner.has_value());
         auto changedVersionArguments = test_support::canonical(
-            prepared.project.schemaOwner,
             R"({"value":1})"
         );
         auto changedVersionInvocation = changedVersionOwner->validate(
@@ -683,7 +678,6 @@ namespace uf::operator_runtime
             "fixture.identity-b"
         );
         auto changedProviderArguments = test_support::canonical(
-            secondPrepared.project.schemaOwner,
             R"({"value":1})"
         );
         auto changedProviderInvocation =
@@ -780,7 +774,6 @@ namespace uf::operator_runtime
         ));
 
         auto projectArguments = test_support::canonical(
-            prepared.project.schemaOwner,
             R"({"value":1})"
         );
         auto projectInvocation = prepared.project.toolCatalogSchemaOwner.validate(
@@ -931,22 +924,15 @@ namespace uf::operator_runtime
     // refusal one a real deployment could meet.
     TEST_CASE("the generation registrar refuses a forged running environment")
     {
-        auto const source  = test_support::reducerSource("fixture.control");
         auto const project = test_support::makeProject(
             "fixture.control",
-            source,
-            test_support::k_toolPreconditionSchema,
+            test_support::k_toolArgumentSchema,
             test_support::hashOf("forged-plugin-environment")
         );
         auto       registrar = ProjectGenerationRegistrar{};
         auto const refused   = registrar.registerGeneration(
             project.generation,
             project.toolCatalogSchemaOwner,
-            project.schemaOwner,
-            ProjectGenerationRegistrar::ClosureModules{
-                .entryModule = "main",
-                .modules     = test_support::closureModules(source),
-            },
             ProjectGenerationRegistrar::ClosureModules{
                 .entryModule = "main",
                 .modules     = test_support::closureModules(
@@ -954,7 +940,6 @@ namespace uf::operator_runtime
                 ),
             },
             {},
-            [](std::string_view, std::string_view) -> Status { return ok(); },
             test_support::refusingToolRuntime()
         );
         REQUIRE_FALSE(refused.has_value());

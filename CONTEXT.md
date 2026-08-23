@@ -2,7 +2,7 @@
 
 A reusable game-automation host: C++ owns target, capture, input and evidence
 safety; trusted Luau resolves a screenshot-free RuntimeModel; Operator holds the
-session, lease and journal authority; a game connects only through a data-only
+session, lease and Tool call authority; a game connects only through a data-only
 project registration.
 
 This file is the terminology authority — a rename lands here first, then
@@ -10,7 +10,8 @@ propagates. Every current entry names the constant, function, type or schema
 `$def` that pins it. A claim with nothing to point at does not belong here.
 Verified against the tree on 2026-08-11; the ProjectGeneration, Tool,
 LoadedProject, plugin-tier, project-document and schema-id entries re-verified
-2026-08-23 against the two-closure generation cut.
+2026-08-23 against the cut that stopped the framework interpreting a Project's
+state.
 
 Design authority for anything this file does not settle:
 [runtime hardening rewrite](docs/plans/2026-08-09-runtime-hardening-rewrite.md)
@@ -100,8 +101,26 @@ migrated.
 > `observed_instance_bindings` table and its immutability/cleanup-refusal triggers.
 > The table stores the canonical authority and opaque ID bidirectionally and has no scope
 > ownership or cascading deletion: cleanup remains impossible until a future
-> owner can prove every Journal, Operation, backup and audit reference expired
+> owner can prove every Operation, backup and audit reference expired
 > or was deleted. Scope closure alone therefore cannot remove a binding.
+
+> **Re-settled 2026-08-23 by the ProjectState cut, and this supersedes every
+> column spelling above.** The framework stopped interpreting a Project's state
+> ([the ruling](docs/decisions/2026-08-23-the-framework-stops-interpreting-project-state.md)),
+> so `journal_events`, `project_state`, `journal_batch_proposals`,
+> `journal_proposal_events` and `journal_proposal_effects` are **dropped**, and
+> with them every column spelling the 2026-08-12 correction settled. Three
+> surviving tables lost columns: `project_instances.baseline_event_id`,
+> `project_observations.project_state_revision` and `.project_state_hash`, and
+> `snapshots.project_state_revision`. The migration that performs all of this is
+> `dropProjectStateInterpretation` in `ledger.cpp`, and every registered
+> migration ends in it. The one production byte-set that existed --
+> provisioning's `sequence = 0` baseline row and the state it folded to -- is
+> deleted with its tables rather than carried, because what those rows meant was
+> a Project's own state and the framework has no reading of it to preserve.
+> _Avoid_: `opaque_project_payload`, `provenance`, `project_state_schema_hash`
+> and `canonical_opaque_payload` as Operator column names; no table carries any
+> of them.
 
 **RuntimeArtifact** — a verified manifest, one `runtime-model.toml`, and the
 manifest-listed assets under `assets/`. Pinned as
@@ -174,26 +193,21 @@ registration is `VerifiedProjectGeneration` in
 `modules/operator/source/operator/manifest.hpp`, minted only by
 `validateGenerationClaims` in `manifest.cpp`.
 
-A registration carries **two closures, admitted together or not at all**, and
-holding a handle is proof of both halves of the export join:
+A registration carries **one closure**, and holding a handle is proof of both
+halves of the export join:
 
-- the **reducer closure**, compiled on `script::PureDataProgram`
-  (`modules/script/source/script/pure-data-program.hpp`), exporting exactly
-  `reduce` — `k_reducerEntryPoint` in `manifest.hpp`;
 - the **tool closure**, compiled on `script::ScopedToolProgram`
   (`modules/script/source/script/scoped-tool-program.hpp`), exporting exactly
   the union of the entry points its `project_tool_bindings` name. A project
   that binds no Tool ships this closure with an empty export set and an empty
   binding table; the slot is never omitted.
 
-Two types rather than two spellings: reduction runs only on the pure type, whose
-resolver refuses every scoped module by name, and dispatch runs only on the
-scoped type, which is the only one holding a Tool Runtime seam
-(`script::ToolRuntimeInvoke`). Each closure is offered to
-`ProjectGenerationRegistrar::registerGeneration` as
+There is one closure because there is one thing a Project runs: the framework
+asks it to answer calls of the Tools it declared and asks it for nothing else.
+The closure is offered to `ProjectGenerationRegistrar::registerGeneration` as
 `ClosureModules{entryModule, modules}` — its entry module plus the exact blobs
-of the closed graph beneath it — beside **one** resource closure both program
-types read, and each states its own module manifest digest. The host-owned
+of the closed graph beneath it — beside **one** resource closure, and it states
+its own module manifest digest. The host-owned
 `require` resolves canonical Project logical names plus the reserved
 `@umbraflow/` Framework names, with no concatenation, filesystem, package search
 or network fallback; the `umbraflow.` namespace is likewise reserved for
@@ -202,13 +216,13 @@ execution environment (`plugin_environment_hash`) and the Framework Tool Catalog
 its scoped facades were compiled against (`tool_catalog_hash`).
 
 _Avoid_: `ProjectPluginHandle`, `ProjectPluginRegistrar`,
-`VerifiedProjectRegistration`, and the five-function contract
-`Derive | Plan | NextStep | Reconcile | Reduce` as executable entries — no
-closure of a generation exports `derive`, `plan`, `next_step` or `reconcile`,
-and the Tool Runtime replaced what they did. The enum `ProjectPluginFunction`
-survives in `modules/operator/source/operator/project-plugin.hpp`, but only as
-the label a `ProjectDocumentValidator` is told which document it is judging by;
-it names no callable entry.
+`VerifiedProjectRegistration`, the five-function contract
+`Derive | Plan | NextStep | Reconcile | Reduce`, and the two-closure generation
+with its `reducer_closure` and `k_reducerEntryPoint` — no closure of a
+generation exports `derive`, `plan`, `next_step`, `reconcile` or `reduce`, and
+the Tool Runtime replaced what they did. `ProjectPluginFunction`,
+`ProjectSchemaOwner`, `ProjectDocumentValidator` and `ValidatedDocument` are
+gone with the documents they judged.
 
 **Tool name** — the one spelling of a Tool wherever one is written: a namespaced
 dotted name whose namespace is its owner's registered namespace and whose local
@@ -222,8 +236,8 @@ registered namespace, which is its `plugin_id`. Because a registrant's namespace
 is stated once, `validateSharedClaims` refuses a `plugin_id` falling inside
 `framework.*` there rather than re-asking per Tool name. Spelled
 `$defs.namespaced_name` in
-`schema/umbraflow-project-registration-v3.schema.json` and `$defs.NamespacedName`
-in `schema/umbraflow-project-v2.schema.json`.
+`schema/umbraflow-project-registration-v4.schema.json` and `$defs.NamespacedName`
+in `schema/umbraflow-project-v3.schema.json`.
 
 **Tool admission** — the one path a Tool call is admitted through:
 `OperatorCoordinator::admitToolCall` (`modules/operator/source/operator/ledger.hpp`),
@@ -247,7 +261,7 @@ a fifth translator. A proposed caller that cannot be expressed as a translation
 into `ToolAdmissionRequest` is a finding about the design and never a reason for
 a second admission path.
 
-**Operator protocol** — the session, lease, snapshot, operation and journal
+**Operator protocol** — the session, lease, snapshot and operation
 vocabulary. It exists **only** as JSON `$defs` in
 `schema/umbraflow-operator-v1.schema.json` — `OperatorSession`, `ControlLease`,
 `SessionManifest`, `Operation`, `ToolInvocation`, `ToolResult`,
@@ -284,28 +298,27 @@ constructed by `deployment::loadProductionProject(directory, expected)` in
 `modules/deployment/source/deployment/project-directory.hpp`. A project is a
 directory of data with no C++ of its own: `umbraflow-project.json` names every
 other file, and the loader derives each deployment's registration from that
-deployment's block and the digests of the files it read, then builds all **six**
-authorities from them — `VerifiedProjectGeneration`, `ProjectSchemaOwner`,
-`ProjectJournalSchemaOwner`, `ProjectToolCatalogSchemaOwner`,
-`ProjectReconcileSchemaOwner` and `ObservedInstanceIdentitySchemas`, the six
-members of `LoadedDeployment` in the same header. One deployment is enough and
-no tool has to be mutating.
-_Avoid_: "five authorities" (the pre-cut count; read `LoadedDeployment` rather
-than a number stated anywhere else).
+deployment's block and the digests of the bytes it read, then builds the
+authorities from them — `VerifiedProjectGeneration`,
+`ProjectToolCatalogSchemaOwner` and `ObservedInstanceIdentitySchemas`, the
+authority members of `LoadedDeployment` in the same header. One deployment is
+enough and no tool has to be mutating.
+_Avoid_: "five authorities" and "six authorities" (both pre-cut counts, and the
+six named a `ProjectReconcileSchemaOwner` that had already gone; read
+`LoadedDeployment` rather than a number stated anywhere else).
 
 **plugin_authoring** — the deployment-block member that says which of the two
-authoring paths wrote the Luau modules `reducer_closure` and `tool_closure`
-name: `generated` for closures the project kit produced from an
-`umbraflow-declarative-workflow-tool/v1` declaration, `hand-written` for
-author-owned ones. It is stated per deployment and covers both closures
-together; there is no per-closure tier. The author states it because only the
+authoring paths wrote the Luau modules `tool_closure` names: `generated` for a
+closure the project kit produced from an
+`umbraflow-declarative-workflow-tool/v1` declaration, `hand-written` for an
+author-owned one. It is stated per deployment. The author states it because only the
 author knows it: neither source bytes nor a path convention proves how the
 behavior was authored, and a rule the kit could apply but the runtime loader
 could not would make the two readers drift apart.
 
 **plugin_justification** — the deployment-block member stating which member or
 semantic of `umbraflow-declarative-workflow-tool/v1` cannot express this
-deployment's hand-written closures. Required of a deployment whose
+deployment's hand-written closure. Required of a deployment whose
 `plugin_authoring` is `hand-written` and refused from one whose
 `plugin_authoring` is `generated`: the declarative tier is the default and
 hand-written behavior is the exception; demanding a reason from the default is
@@ -322,7 +335,7 @@ it demanded a justification from every deployment with a `plugin` member,
 generated adapters included).
 
 **umbraflow-project.json's shape** — stated once, in
-`schema/umbraflow-project-v2.schema.json`, and reaching both of its readers as
+`schema/umbraflow-project-v3.schema.json`, and reaching both of its readers as
 published bytes through the framework schema catalog. The two readers are
 `deployment::loadProductionProject` and the offline kit's `project build` /
 `project check`, and they live in modules that cannot link one another —
@@ -331,20 +344,35 @@ published bytes through the framework schema catalog. The two readers are
 root whether or not the author declared it as an input, and a source tree
 holding none is not a project.
 
-This implemented generation is the two-closure cut: `umbraflow-project/v2` — the
-`const` at `schema/umbraflow-project-v2.schema.json`'s `schema` member, whose
-`$id` is the unrelated `https://umbraflow.dev/schema/project/directory` — and
-registration format **5**, `k_projectGenerationFormat` in
+This implemented generation is the single-document cut: `umbraflow-project/v3`
+— the `const` at `schema/umbraflow-project-v3.schema.json`'s `schema` member,
+whose `$id` is the unrelated `https://umbraflow.dev/schema/project/directory` —
+and registration format **7**, `k_projectGenerationFormat` in
 `modules/operator/source/operator/manifest.hpp`. There is exactly one reader of
 a registration document, `validateGenerationClaims` in `manifest.cpp`, and it
 refuses every other format rather than falling back to one, so the integer is an
 identity assertion inside that reader and never a dispatch key.
 `modules/deployment` is its production producer: `loadProductionProject` derives
-and renders the two-closure document for every deployment it loads.
-_Avoid_: registration format 3 and format 4, `plugin` as a deployment-block
-member naming one Luau module, and
-`schema/umbraflow-project-registration-v2.schema.json` (the one-closure
-registration; the file no longer exists and no reader accepts its format). Also
+and renders the registration for every deployment it loads.
+
+**Everything declarative is inline.** A deployment declares its Tools in
+`tools`, complete, and its observed-instance identity schemas as `{name,
+schema}` entries. There is no Tool Catalog document, no project state schema, no
+tool precondition schema and no journal payload schema: one document is the
+whole declaration, so it has one identity, one digest and one admission
+decision. `resources` survives as file paths because a resource is an asset the
+framework delivers without reading, not declarative material. A hello-world
+project therefore authors `umbraflow-project.json` and one Luau source, and
+writes no JSON Schema at all.
+_Avoid_: registration format 3, 4, 5 and 6, `plugin` as a deployment-block
+member naming one Luau module,
+`schema/umbraflow-project-registration-v2.schema.json` and
+`schema/umbraflow-project-registration-v3.schema.json` (the one-closure and
+two-closure registrations; neither file exists and no reader accepts either
+format), and the deployment members `reducer_closure`, `baseline_event_type`,
+`project_state_schema`, `tool_precondition_schema`, `tool_catalog`,
+`journal_event_schema_manifest`, `journal_payload_schemas` and
+`effect_payload_schemas`. Also
 `k_projectSchema` inside
 `modules/deployment/source/deployment/project-directory.cpp`, and
 `validatePluginJustifications` inside
@@ -430,7 +458,7 @@ actually travels in `runtime-model.toml` and is validated is the integer
 
 Every other file in `schema/` is identified by its `$id` alone and carries no
 in-band id. The `$id`s are not uniform, so read the file rather than guessing:
-`journal-v1`, `operator-v1`, `policy-v1`, `project-registration-v3` and
+`operator-v1`, `policy-v1`, `project-registration-v4` and
 `trace-v2` are short ids under `https://umbraflow.local/schema/`;
 `umbraflow-annotation-workspace-v2.schema.json`,
 `umbraflow-runtime-artifact-v1.schema.json` and
@@ -441,10 +469,12 @@ that same host — `project/directory`, `collection-fact/v1`,
 `project-attestation/v2`, `project-observation/v1`,
 `project-observation-proposal/v1` and `project-tool-precondition/v1`. Note the
 first of those: the project directory document's `$id` carries no version at all
-while its in-band `schema` const is `umbraflow-project/v2`.
-_Avoid_: `project-registration-v2` (the `$id` until the two-closure cut, which
-renamed the file to `schema/umbraflow-project-registration-v3.schema.json` and
-deleted the v2 file rather than keeping it beside the new one).
+while its in-band `schema` const is `umbraflow-project/v3`.
+_Avoid_: `project-registration-v2` and `project-registration-v3` (the `$id`
+until the two-closure cut and until the ProjectState cut; each rename deleted
+the file it replaced rather than keeping it beside the new one), and
+`journal-v1` (`schema/umbraflow-journal-v1.schema.json`, deleted with the
+Journal it declared).
 
 **No schema digest is pinned outside its schema file.** Editing any document
 under `schema/` moves no constant, refuses no recorded manifest and reddens no

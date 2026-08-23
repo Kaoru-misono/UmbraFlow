@@ -1,8 +1,15 @@
+// The Operator audit and Agent-ceiling contracts this repository owns.
+//
+// A-04 is absent because its subject is: it was the shape of JR:`JournalEvent`,
+// the journal_events row that stored one, and the provenance schema the
+// framework applied to a Project's payload. The framework stopped interpreting
+// a Project's state, so the record, its table and the reading of it are all
+// deleted, and the gate was not moved anywhere.
+
 #include <operator/ledger.hpp>
 #include <operator/tool-admission-request.hpp>
 
 #include "project-fixture.hpp"
-#include "schema-binding.hpp"
 #include "tool-call-fixture.hpp"
 
 #include <json/schema.hpp>
@@ -143,11 +150,7 @@ namespace uf::operator_runtime
             CHECK(value.find("\"properties\": {") != std::string::npos);
         }
 
-        using test_support::canonical;
         using test_support::hashOf;
-        using test_support::journalEntry;
-        using test_support::k_fixtureProvenance;
-        using test_support::k_fixtureProvenanceViolations;
         using test_support::prepareStore;
         using test_support::TemporaryDirectory;
     }
@@ -396,17 +399,7 @@ namespace uf::operator_runtime
         // exactly what masked all three of these when they named instance-1.
         REQUIRE(prepared.store.provisionProjectInstance(
             prepared.project.registration,
-            prepared.generation,
-            ProjectInstanceBaseline{
-                .projectInstanceKey  = "instance-pins",
-                .eventId             = "baseline-pins",
-                .sessionManifestHash = prepared.manifest.hash(),
-                .entry               = journalEntry(
-                    prepared.project,
-                    prepared.project.registration.baselineEventType(),
-                    "{\"kind\":\"baseline\"}"
-                ),
-            }
+            "instance-pins"
         ).has_value());
 
         // Which kinds carry ceilings is ControllerProfile's answer, and
@@ -844,10 +837,8 @@ namespace uf::operator_runtime
 
     TEST_CASE("schema-agent-a03")
     {
-        auto const journalSchema   = readSchema("umbraflow-journal-v1.schema.json");
         auto const workspaceSchema = readSchema("umbraflow-annotation-workspace-v2.schema.json");
         auto const traceSchema     = readSchema("umbraflow-trace-v2.schema.json");
-        checkStrictObject(definition(journalSchema, "JournalEvent"));
         auto const replay = definition(workspaceSchema, "ReplayBundle");
         checkStrictObject(replay);
         CHECK(replay.find("\"baseline_event_id\"") != std::string::npos);
@@ -866,90 +857,19 @@ namespace uf::operator_runtime
         CHECK(fieldName.find("frame[._-]*(bytes|data)") != std::string::npos);
     }
 
-    TEST_CASE("contract-agent-a04")
-    {
-        auto const schema = readSchema("umbraflow-journal-v1.schema.json");
-        auto const event  = definition(schema, "JournalEvent");
-        checkStrictObject(event);
-        CHECK(event.find("\"sequence\"") != std::string::npos);
-        CHECK(event.find("\"prior_project_state_revision\"") != std::string::npos);
-        CHECK(event.find("\"provenance\"") != std::string::npos);
-        CHECK(event.find("\"session_manifest_hash\"") != std::string::npos);
-        CHECK(event.find("\"payload_schema_hash\"") != std::string::npos);
-        CHECK(event.find("\"opaque_project_payload\"") != std::string::npos);
-        CHECK(event.find("\"const\": 0") != std::string::npos);
-        CHECK(event.find("\"type\": \"null\"") != std::string::npos);
-
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-
-        // The journal_events row IS this record, member for member, so the
-        // schema's required list and the columns the Operator's own DDL created
-        // are the same set. Everything above this line reads schema text and
-        // passes whether or not the store agrees; this is the assertion that
-        // ties the two together, and a column renamed on either side is red.
-        auto schemaProbe = TemporaryDirectory{};
-        CHECK(
-            test_support::operatorTableColumns(schemaProbe.path(), "journal_events")
-            == test_support::requiredMembers(event)
-        );
-
-        // Provenance is neither optional nor the caller's to invent, and the
-        // schema that judges it is the framework's: JR:`JournalProvenance` is
-        // fixed, so no ProjectGenerationClaims member pins it and no project
-        // supplies a validator for it. Each document below is exact JCS the
-        // project's canonical validator accepts, and each violates exactly one
-        // of that schema's rules -- enum, required, additionalProperties, the
-        // Hash pattern, uniqueItems, the Identifier pattern. A framework check
-        // that merely compared bytes against the conforming document would pass
-        // these too, so the conforming document is asserted separately below.
-        for (auto const violation : k_fixtureProvenanceViolations)
-        {
-            CAPTURE(violation);
-            CHECK_FALSE(prepared.project.journalSchemaOwner.validate(
-                "fixture.progress",
-                canonical(prepared.project.schemaOwner, "{\"value\":1}"),
-                canonical(
-                    prepared.project.schemaOwner,
-                    std::string{violation}
-                )
-            ).has_value());
-        }
-        CHECK(prepared.project.journalSchemaOwner.validate(
-            "fixture.progress",
-            canonical(prepared.project.schemaOwner, "{\"value\":1}"),
-            canonical(prepared.project.schemaOwner, std::string{k_fixtureProvenance})
-        ).has_value());
-
-        // A payload the event's own schema does not accept cannot be minted
-        // either, so a guessed or expected outcome has no spelling as a fact.
-        CHECK_FALSE(prepared.project.journalSchemaOwner.validate(
-            "fixture.progress",
-            canonical(prepared.project.schemaOwner, "{\"value\":99}"),
-            canonical(prepared.project.schemaOwner, std::string{k_fixtureProvenance})
-        ).has_value());
-
-        // What a disposition may write alongside itself was proved through
-        // commitReconciliation, which the two-closure generation leaves with no
-        // project entry to call. The provenance and payload rules above are the
-        // half that never depended on it, and they are the half that decides
-        // whether a fact may be minted at all.
-    }
-
     TEST_CASE("schema-agent-a05")
     {
         auto const workspaceSchema    = readSchema("umbraflow-annotation-workspace-v2.schema.json");
-        auto const registrationSchema = readSchema("umbraflow-project-registration-v3.schema.json");
+        auto const registrationSchema = readSchema("umbraflow-project-registration-v4.schema.json");
         auto const attestationSchema = readSchema("umbraflow-project-attestation-v2.schema.json");
         auto const replayGate         = definition(workspaceSchema, "ReplayGate");
         checkStrictObject(replayGate);
         CHECK(replayGate.find("\"ui_model_replay\"") != std::string::npos);
         CHECK(replayGate.find("\"project_operation_replay\"") != std::string::npos);
         CHECK(replayGate.find("\"passed\"") != std::string::npos);
-        // The registration document states the code it was deployed as, once
-        // per closure, and never its own root: a document that named the digest
-        // of its own bytes would be attesting to itself.
-        CHECK(registrationSchema.find("\"reducer_closure\"") != std::string::npos);
+        // The registration document states the code it was deployed as, in
+        // its one closure, and never its own root: a document that named the
+        // digest of its own bytes would be attesting to itself.
         CHECK(registrationSchema.find("\"tool_closure\"") != std::string::npos);
         CHECK(registrationSchema.find("\"module_manifest_hash\"") != std::string::npos);
         CHECK(registrationSchema.find("\"plugin_environment_hash\"") != std::string::npos);

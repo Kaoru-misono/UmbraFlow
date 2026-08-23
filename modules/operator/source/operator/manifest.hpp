@@ -17,7 +17,7 @@ namespace uf::operator_runtime
     // framework derives and reads. It is a compatibility statement: a
     // registration declares the number and this binary decides whether it
     // understands what that number describes. Its shape is
-    // schema/umbraflow-project-registration-v3.schema.json.
+    // schema/umbraflow-project-registration-v4.schema.json.
     //
     // It is a generation rather than the digest of that schema, because the
     // digest made every cosmetic edit to the file move every registration
@@ -31,13 +31,7 @@ namespace uf::operator_runtime
     // a behaviour from it, so the integer is an identity assertion inside the
     // reader and never a dispatch key. Code that inspected a document to pick
     // a reader would be the selector this constant exists to avoid.
-    inline constexpr auto k_projectGenerationFormat = uint64{6U};
-
-    // The one entry point the pure program type keeps under the two-closure
-    // contract. It is also the only one: `derive`, `plan`, `next_step` and
-    // `reconcile` died with the five-function contract, and no closure of a
-    // generation exports them.
-    inline constexpr auto k_reducerEntryPoint = std::string_view{"reduce"};
+    inline constexpr auto k_projectGenerationFormat = uint64{7U};
 
     // The namespace the Framework owns. Every Framework Tool is named inside
     // it, and no other registrant may claim it: a ProjectRegistration whose
@@ -48,8 +42,8 @@ namespace uf::operator_runtime
 
     // The one spelling of a Tool name, wherever one is written: a namespaced
     // dotted name whose namespace is its owner's registered namespace and whose
-    // local name is what follows the dot that ends it. A Tool Catalog `name`, a
-    // ProjectRegistration `tool_name`, and every child Tool name a
+    // local name is what follows the dot that ends it. A Tool declaration's
+    // `name`, a ProjectRegistration `tool_name`, and every child Tool name a
     // ChildEffectDeclaration grants are this one type; a document admitting any
     // other spelling would declare a Tool no authoring tier could bind.
     [[nodiscard]]
@@ -82,30 +76,30 @@ namespace uf::operator_runtime
         uint64              size{};
     };
 
-    // One row of the Project Tool binding table: the catalog name of a Tool,
+    // One row of the Project Tool binding table: the declared name of a Tool,
     // and the entry point of that project's closure that implements it.
     //
-    // It is a registration member, beside the Tool Catalog rather than inside
-    // it. The registration already splits identity into contract
+    // It is a registration member, beside the Tool declarations rather than
+    // inside them. The registration already splits identity into contract
     // (tool_catalog_hash) and code (plugin_environment_hash), and a binding is
     // the JOIN of the two -- it names a contract name and a code entry and
     // references both sides -- so it belongs beside both and inside neither.
-    // Three things break if it moves into the catalog:
+    // Three things break if it moves into a Tool entry:
     //
-    // 1. Exact-bytes verifiability dies. The catalog's exact bytes are hashed,
-    //    and a caller may legitimately need existence and schema without being
-    //    entitled to know what implements a Tool. With the binding inside,
-    //    describing the catalog must either leak it or serve a redacted
-    //    projection whose bytes no longer hash to tool_catalog_hash -- so the
-    //    caller can no longer verify the served catalog against the pinned
-    //    digest, which is that digest's entire job.
+    // 1. Exact-bytes verifiability dies. The declarations' exact bytes are
+    //    hashed, and a caller may legitimately need existence and schema
+    //    without being entitled to know what implements a Tool. With the
+    //    binding inside, describing them must either leak it or serve a
+    //    redacted projection whose bytes no longer hash to tool_catalog_hash --
+    //    so the caller can no longer verify what it was served against the
+    //    pinned digest, which is that digest's entire job.
     // 2. Contract churn on refactor. Renaming a handler entry is a pure
-    //    implementation change; with the binding in the catalog it would move
-    //    tool_catalog_hash, invalidating every pin that cares only about the
-    //    contract -- child admission intersects descriptors, and approvals and
-    //    policy reference catalog authority. Implementation motion would force
-    //    contract re-approval.
-    // 3. Audience mismatch. Every catalog field is consumed by callers and by
+    //    implementation change; with the binding inside a Tool entry it would
+    //    move tool_catalog_hash, invalidating every pin that cares only about
+    //    the contract -- child admission intersects descriptors, and approvals
+    //    and policy reference declaration authority. Implementation motion
+    //    would force contract re-approval.
+    // 3. Audience mismatch. Every declared field is consumed by callers and by
     //    admission. A binding is consumed by exactly one party at one moment:
     //    the dispatcher, at dispatch.
     //
@@ -141,9 +135,9 @@ namespace uf::operator_runtime
     // a branch of their own.
     //
     // It is deliberately not every claim a registration carries. The resource
-    // closure, the environment digest and the journal manifest stay with the
-    // verified documents, because the seams that read them are the loaders,
-    // which hold the document itself.
+    // closure and the environment digest stay with the verified documents,
+    // because the seams that read them are the loaders, which hold the
+    // document itself.
     class ProjectIdentity final
     {
         ContentHash                     m_projectRegistrationHash;
@@ -151,10 +145,6 @@ namespace uf::operator_runtime
         std::string                     m_canonicalJcs;
         ContentHash                     m_moduleIdentityHash;
         ContentHash                     m_toolCatalogHash;
-        ContentHash                     m_projectStateSchemaHash;
-        ContentHash                     m_projectToolPreconditionSchemaHash;
-        ContentHash                     m_journalEventSchemaManifestHash;
-        std::string                     m_baselineEventType;
         std::vector<ContentHash>        m_observedInstanceIdentitySchemaHashes;
         std::vector<ProjectToolBinding> m_projectToolBindings;
 
@@ -174,19 +164,11 @@ namespace uf::operator_runtime
             -> std::string const&;
 
         // The digest of the module closure the ledger records this
-        // registration's durable provenance under. It is the REDUCER closure's,
-        // because the rows this digest guards -- the instance baseline, the
-        // project state and the Journal prefix they fold -- are produced by the
-        // fold and by nothing else. The tool closure is not lost by that
-        // choice: it is pinned inside the same root, whose exact bytes the same
-        // ledger row stores.
+        // registration's durable provenance under. A registration ships one
+        // closure, so there is one digest and nothing to choose between.
         [[nodiscard]] auto moduleIdentityHash() const -> ContentHash;
 
         [[nodiscard]] auto toolCatalogHash() const -> ContentHash;
-        [[nodiscard]] auto projectStateSchemaHash() const -> ContentHash;
-        [[nodiscard]] auto projectToolPreconditionSchemaHash() const -> ContentHash;
-        [[nodiscard]] auto journalEventSchemaManifestHash() const -> ContentHash;
-        [[nodiscard]] auto baselineEventType() const -> std::string;
 
         // The closed set of observed-instance identity schema documents this
         // registration owns, in the sorted-unique order the loader derived. It
@@ -203,9 +185,9 @@ namespace uf::operator_runtime
             -> std::vector<ProjectToolBinding> const&;
     };
 
-    // One compiled closure of a two-closure registration generation: the exact
-    // module closure its manifest digest was taken over, and what the authoring
-    // path observed that closure to export.
+    // The compiled closure of a registration generation: the exact module
+    // closure its manifest digest was taken over, and what the authoring path
+    // observed that closure to export.
     //
     // exportedEntryPoints is a STATEMENT and never a derivation. A loader may
     // not compute it from the binding table, because the load-time check would
@@ -226,27 +208,21 @@ namespace uf::operator_runtime
     };
 
     // Values extracted only after a validator has accepted the exact
-    // two-closure ProjectRegistration JCS bytes. This is not a construction
-    // spec: no caller mints a generation from one.
+    // ProjectRegistration JCS bytes. This is not a construction spec: no caller
+    // mints a generation from one.
     struct ProjectGenerationClaims final
     {
         uint64      projectRegistrationFormat{};
         std::string pluginId{};
 
-        // Both slots, always. There is no absent-means-pure reading and no
-        // absent-means-scoped reading: a document carrying one closure is not a
-        // generation, and a project that binds no Tool states an empty tool
-        // closure rather than omitting one.
-        ProjectClosureClaims reducerClosure;
+        // The one closure a generation carries. A project that binds no Tool
+        // states an empty tool closure rather than omitting one, because
+        // explicit emptiness is a value.
         ProjectClosureClaims toolClosure;
 
         ContentHash pluginEnvironmentHash;
         ContentHash toolCatalogHash;
-        ContentHash projectStateSchemaHash;
-        ContentHash projectToolPreconditionSchemaHash;
-        ContentHash journalEventSchemaManifestHash;
 
-        std::string                  baselineEventType{};
         std::vector<ProjectResource> projectResources{};
 
         // Both sorted and unique by the derivation the loader performs before
@@ -259,15 +235,15 @@ namespace uf::operator_runtime
     };
 
     // The implementation must parse the complete generation document, validate
-    // it against the exact two-closure JSON Schema, and reject bytes that are
+    // it against the exact registration JSON Schema, and reject bytes that are
     // not the exact RFC 8785 JCS serialization. Returning claims without doing
     // all three is a validator bug, never an extension point for project code.
     using ProjectGenerationExactValidator = std::function<
         Result<ProjectGenerationClaims>(std::string_view exactJcs)
     >;
 
-    // Authority-bearing identity of one two-closure registration generation.
-    // Its constructor is unreachable except from ProjectGeneration::verifyExact
+    // Authority-bearing identity of one registration generation. Its
+    // constructor is unreachable except from ProjectGeneration::verifyExact
     // after exact JCS validation, exact schema validation, and root
     // verification have all succeeded.
     class VerifiedProjectGeneration final
@@ -295,19 +271,13 @@ namespace uf::operator_runtime
         [[nodiscard]] auto pluginEnvironmentHash() const -> ContentHash;
         [[nodiscard]] auto toolCatalogHash() const -> ContentHash;
 
-        // The two closures, each answered by its own accessor. There is
-        // deliberately no accessor asking whether a generation has a tool
-        // closure: one that could answer "no" would be the optional slot this
-        // contract refuses.
-        [[nodiscard]]
-        auto reducerClosure() const noexcept UF_LIFETIME_BOUND
-            -> ProjectClosureClaims const&;
-
+        // The one closure. There is deliberately no accessor asking whether a
+        // generation has one: an accessor that could answer "no" would be the
+        // optional slot this contract refuses.
         [[nodiscard]]
         auto toolClosure() const noexcept UF_LIFETIME_BOUND
             -> ProjectClosureClaims const&;
 
-        // One resource closure, read by both compiled closures.
         [[nodiscard]]
         auto projectResources() const noexcept UF_LIFETIME_BOUND
             -> std::vector<ProjectResource> const&;
@@ -318,8 +288,8 @@ namespace uf::operator_runtime
     };
 
     // The sole mint for VerifiedProjectGeneration, and the only reader of a
-    // ProjectRegistration document there is. It accepts the two-closure shape
-    // and refuses everything else, including the one-closure document the flip
+    // ProjectRegistration document there is. It accepts one shape and refuses
+    // everything else, including the two-closure document the state cut
     // deleted: nothing inspects a document to decide which reader should have
     // it, because there is no second reader to decide between.
     class ProjectGeneration final

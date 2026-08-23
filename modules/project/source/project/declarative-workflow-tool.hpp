@@ -7,14 +7,11 @@
 
 namespace uf::project
 {
-    // The two closures one declared workflow tool is generated into: the
-    // reducer module the pure program type is compiled from, and the tool
-    // module the scoped program type is compiled from. A deployment needs
-    // both, so the generator answers with both or with a refusal; there is no
-    // spelling of "one closure was generated".
+    // The closure one declared workflow tool is generated into: the tool
+    // module the scoped program type is compiled from. A deployment ships one
+    // closure, so the generator answers with one or with a refusal.
     struct DeclarativeWorkflowAdapter final
     {
-        std::string reducerModule{};
         std::string toolModule{};
     };
 

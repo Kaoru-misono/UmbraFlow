@@ -59,17 +59,11 @@ namespace uf::operator_runtime::conformance
         auto const registration = registrar.registerGeneration(
             underTest.generation,
             underTest.toolCatalogSchemaOwner,
-            underTest.schemaOwner,
-            ProjectGenerationRegistrar::ClosureModules{
-                .entryModule = underTest.reducerClosure.entryModule,
-                .modules     = underTest.reducerClosure.modules,
-            },
             ProjectGenerationRegistrar::ClosureModules{
                 .entryModule = underTest.toolClosure.entryModule,
                 .modules     = underTest.toolClosure.modules,
             },
             std::move(blobs),
-            underTest.catalog.toolResultValidator(),
             provisioningToolRuntime()
         );
         REQUIRE_FALSE(registration.has_value());

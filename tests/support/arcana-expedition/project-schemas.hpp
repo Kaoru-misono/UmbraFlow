@@ -1,18 +1,17 @@
 #pragma once
 
-// Everything a second game's deployment holds for one ProjectRegistration.
+// Everything a second game's deployment declares for one ProjectRegistration.
 //
-// Nothing here is shared with this repository's own exemplar: a different state
-// shape, a bounded numeric tool argument, and four journal payloads of three
-// different shapes.
+// Nothing here is shared with this repository's own exemplar: a bounded numeric
+// tool argument of its own, its own effect type, and its own identity schema.
 //
-// It is written the way a consumer writes one: the schemas are files a project
-// authors, and the manifests are what a deployment assembles from them,
-// because each carries the sha256 of bytes only the deployment can hash.
+// It is written the way a consumer writes one: the whole declaration is inline
+// in umbraflow-project.json, and this header is what renders the same bytes for
+// a test that builds the deployment without opening a project directory.
 
 #include <deployment/project-deployment.hpp>
 
-#include <project/tool-catalog.hpp>
+#include <json/value.hpp>
 
 #include <core/error/contracts.hpp>
 #include <core/safety/annotations.hpp>
@@ -29,103 +28,24 @@
 
 namespace uf::operator_runtime::conformance::expedition
 {
-    // How far the expedition has travelled, counted in turns. The reducer
-    // rebuilds it from the journal prefix and nothing else is in it.
-    inline constexpr auto k_projectStateSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/project/state",
-    "title": "arcana expedition ProjectState",
-    "type": "object",
-    "additionalProperties": false,
-    "required": ["turn"],
-    "properties": {
-        "turn": {"type": "integer", "minimum": 0}
-    }
-})json"};
-
     // Every expedition tool is stated in the expedition's own vocabulary -- a
     // number of leagues to march, and nothing that describes the screen. Eight
     // is the longest march a single command may order.
-    inline constexpr auto k_toolPreconditionSchema = std::string_view{R"json({
+    inline constexpr auto k_toolArgumentSchema = std::string_view{R"json({
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/project/tool-precondition",
     "title": "arcana expedition tool arguments",
-    "$defs": {
-        "MarchArguments": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["steps"],
-            "properties": {
-                "steps": {"type": "integer", "minimum": 1, "maximum": 8}
-            }
-        },
-        "MarchResult": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["leagues"],
-            "properties": {
-                "leagues": {"type": "integer", "minimum": 0, "maximum": 8}
-            }
-        }
-    }
-})json"};
-
-    inline constexpr auto k_foundedPayloadSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/project/journal/expedition.founded",
-    "title": "arcana expedition.founded payload",
     "type": "object",
     "additionalProperties": false,
-    "required": ["camp"],
+    "required": ["steps"],
     "properties": {
-        "camp": {"enum": ["north", "south"]}
+        "steps": {"type": "integer", "minimum": 1, "maximum": 8}
     }
 })json"};
 
-    // The three march events carry the same measurement and differ only in what
-    // they say happened, so one payload shape serves all three. Their schemas
-    // are separate documents because the Operator records one payload schema
-    // hash per event type.
-    inline constexpr auto k_advancedPayloadSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/project/journal/expedition.advanced",
-    "title": "arcana expedition.advanced payload",
-    "type": "object",
-    "additionalProperties": false,
-    "required": ["leagues"],
-    "properties": {
-        "leagues": {"type": "integer", "minimum": 0, "maximum": 64}
-    }
-})json"};
-
-    inline constexpr auto k_arrivedPayloadSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/project/journal/expedition.arrived",
-    "title": "arcana expedition.arrived payload",
-    "type": "object",
-    "additionalProperties": false,
-    "required": ["leagues"],
-    "properties": {
-        "leagues": {"type": "integer", "minimum": 0, "maximum": 64}
-    }
-})json"};
-
-    inline constexpr auto k_blockedPayloadSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/project/journal/expedition.blocked",
-    "title": "arcana expedition.blocked payload",
-    "type": "object",
-    "additionalProperties": false,
-    "required": ["leagues"],
-    "properties": {
-        "leagues": {"type": "integer", "minimum": 0, "maximum": 64}
-    }
-})json"};
-
-    // The payload of every OP:`EffectEnvelope` this project proposes: the turn
-    // the march would be taken on. Its sha256 is the payload_schema_hash the
-    // plugin writes into each effect.
-    inline constexpr auto k_effectPayloadSchema = std::string_view{R"json({
+    // The preimage whose sha256 this project's effect bounds pin, and which the
+    // plugin writes into each effect it proposes. The framework compares the
+    // digest and never reads what the payload means.
+    inline constexpr auto k_effectPayloadPreimage = std::string_view{R"json({
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://umbraflow.dev/schema/project/effect/expedition.march",
     "title": "arcana expedition.march effect payload",
@@ -137,29 +57,31 @@ namespace uf::operator_runtime::conformance::expedition
     }
 })json"};
 
-    struct JournalPayloadSource final
-    {
-        std::string_view eventType{};
-        std::string_view schema{};
+    // The one observed-instance identity basis this project's plugins publish.
+    inline constexpr auto k_observedIdentitySchema = std::string_view{R"json({
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "arcana expedition observed instance identity basis",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["native_id", "surface_epoch"],
+    "properties": {
+        "native_id": {"type": "string", "minLength": 1},
+        "surface_epoch": {"type": "integer", "minimum": 0}
+    }
+})json"};
+
+    inline constexpr auto k_observedIdentitySchemaName = std::string_view{
+        "https://arcana.example/identity/expedition/v1"
     };
 
-    inline constexpr auto k_journalPayloadSources = std::array{
-        JournalPayloadSource{"expedition.advanced", k_advancedPayloadSchema},
-        JournalPayloadSource{"expedition.arrived", k_arrivedPayloadSchema},
-        JournalPayloadSource{"expedition.blocked", k_blockedPayloadSchema},
-        JournalPayloadSource{"expedition.founded", k_foundedPayloadSchema},
+    inline constexpr auto k_observedIdentitySchemas = std::array{
+        deployment::ProjectIdentitySchemaSource{
+            .name   = k_observedIdentitySchemaName,
+            .schema = k_observedIdentitySchema,
+        },
     };
 
-    inline constexpr auto k_journalPayloadSchemas = std::array{
-        k_advancedPayloadSchema,
-        k_arrivedPayloadSchema,
-        k_blockedPayloadSchema,
-        k_foundedPayloadSchema,
-    };
-
-    inline constexpr auto k_effectPayloadSchemas = std::array{k_effectPayloadSchema};
-
-    // `localName` is the LOCAL half of a Tool name. The catalog name is that
+    // `localName` is the LOCAL half of a Tool name. The declared name is that
     // half under the namespace the deployment registers, so the expedition and
     // the rival declare four Tools each and share none of the eight names --
     // which is what a Tool belonging to its registration means.
@@ -177,7 +99,7 @@ namespace uf::operator_runtime::conformance::expedition
         ToolSource{"trade", "3", ToolMutability::Mutating},
     };
 
-    // One catalog name of this exemplar, spelled the only way a Tool name is
+    // One declared name of this exemplar, spelled the only way a Tool name is
     // spelled: the local half under the namespace its registrant owns.
     [[nodiscard]]
     inline auto exampleToolName(
@@ -203,134 +125,95 @@ namespace uf::operator_runtime::conformance::expedition
     }
 
     [[nodiscard]]
-    inline auto toolCatalogDeclaration(
-        std::string_view pluginId
-    ) -> project::ToolCatalogDeclaration
+    inline auto parsedJson(std::string_view bytes) -> json::Value
     {
-        auto const payloadHash = schemaHash(k_effectPayloadSchema);
-        auto tools             = std::vector<project::DeclaredTool>{};
+        auto parsed = json::parse(bytes);
+        UF_CHECK(parsed.has_value());
+        return *std::move(parsed);
+    }
+
+    // This deployment's `tools` array, as the exact canonical bytes the loader
+    // renders from the same document.
+    [[nodiscard]]
+    inline auto toolDeclarations(
+        std::string_view pluginId,
+        ContentHash const& effectPayloadHash
+    ) -> std::string
+    {
+        auto tools = std::vector<json::Value>{};
         tools.reserve(k_toolSources.size());
         for (auto const& tool : k_toolSources)
         {
-            tools.emplace_back(project::DeclaredTool{
-                .name           = exampleToolName(pluginId, tool.localName),
-                .argumentSchema = "MarchArguments",
-                .resultSchema   = "MarchResult",
-                .descriptor     = ToolDescriptor{
-                    .toolVersion          = std::string{tool.version},
-                    .requiredCapabilities = {},
-                    .effectBounds = {
-                        EffectBound{
-                            .namespacedType    = "expedition.march",
-                            .scopeKind         = "camp",
-                            .payloadSchemaHash = payloadHash,
-                            .maximumRisk       = Risk::High,
-                        },
-                    },
-                    .uiActionBounds = {"expedition.step"},
-                    .limits         = WorkflowLimits{
-                        .maximumSteps        = 8,
-                        .maximumDispatches   = 8,
-                        .maximumObservations = 256,
-                        .maximumWaits        = 64,
-                        .maximumElapsedMillis = 600'000,
-                    },
-                    .timeout = TimeoutPolicy{
-                        .maximumElapsedMillis = 60'000,
-                        .onTimeout            = TimeoutAction::Reobserve,
-                    },
-                    .mutability = tool.mutability,
-                    .surface    = ToolSurface::Semantic,
-                    .idempotency = tool.mutability == ToolMutability::ReadOnly
-                        ? ToolIdempotency::ReadSafe
-                        : ToolIdempotency::DeliverySafe,
-                },
-            });
+            auto const idempotency = tool.mutability == ToolMutability::ReadOnly
+                ? ToolIdempotency::ReadSafe
+                : ToolIdempotency::DeliverySafe;
+            tools.emplace_back(json::Value::ofObject({
+                {"argument_schema", parsedJson(k_toolArgumentSchema)},
+                {"child_effects", json::Value::ofObject({
+                     {"child_tool_names", json::Value::ofArray({})},
+                     {"maximum_child_calls", json::Value::ofNumber(0)},
+                     {"maximum_child_mutability", json::Value::ofString("read_only")},
+                     {"maximum_child_risk", json::Value::ofString("read_only")},
+                     {"maximum_child_surface", json::Value::ofString("semantic")},
+                 })},
+                {"effect_bounds", json::Value::ofArray({json::Value::ofObject({
+                     {"maximum_risk", json::Value::ofString("high")},
+                     {"namespaced_type", json::Value::ofString("expedition.march")},
+                     {"payload_schema_hash", json::Value::ofString(effectPayloadHash.hex())},
+                     {"scope_kind", json::Value::ofString("camp")},
+                 })})},
+                {"idempotency", json::Value::ofString(std::string{
+                     toolIdempotencyWireName(idempotency)
+                 })},
+                {"mutability", json::Value::ofString(std::string{
+                     toolMutabilityWireName(tool.mutability)
+                 })},
+                {"name", json::Value::ofString(
+                     exampleToolName(pluginId, tool.localName)
+                 )},
+                {"required_capabilities", json::Value::ofArray({})},
+                {"surface", json::Value::ofString("semantic")},
+                {"timeout_policy", json::Value::ofObject({
+                     {"maximum_elapsed_ms", json::Value::ofNumber(60'000)},
+                     {"on_timeout", json::Value::ofString("reobserve")},
+                 })},
+                {"ui_action_bounds", json::Value::ofArray({
+                     json::Value::ofString("expedition.step"),
+                 })},
+                {"version", json::Value::ofString(std::string{tool.version})},
+                {"workflow_limits", json::Value::ofObject({
+                     {"maximum_dispatches", json::Value::ofNumber(8)},
+                     {"maximum_elapsed_ms", json::Value::ofNumber(600'000)},
+                     {"maximum_observations", json::Value::ofNumber(256)},
+                     {"maximum_steps", json::Value::ofNumber(8)},
+                     {"maximum_waits", json::Value::ofNumber(64)},
+                 })},
+            }));
         }
-        return project::ToolCatalogDeclaration{
-            .comment = "The expedition's Tool Catalog. Every tool is stated in "
-                "the expedition's own vocabulary, so the catalog declares them "
-                "semantic; leaving that to the default would declare the opposite "
-                "by omission.",
-            .pluginId                   = std::string{pluginId},
-            .toolPreconditionSchemaHash = schemaHash(k_toolPreconditionSchema),
-            .effectPayloadSchemaHashes  = {payloadHash},
-            .tools                      = std::move(tools),
-        };
+        return json::canonicalBytes(json::Value::ofArray(std::move(tools)));
     }
 
-    [[nodiscard]]
-    inline auto exampleToolCatalogDeclaration(
-        std::string_view pluginId,
-        ContentHash toolPreconditionSchemaHash,
-        ContentHash effectPayloadSchemaHash
-    ) -> project::ToolCatalogDeclaration
-    {
-        auto declaration                       = toolCatalogDeclaration(pluginId);
-        declaration.toolPreconditionSchemaHash = toolPreconditionSchemaHash;
-        declaration.effectPayloadSchemaHashes  = {effectPayloadSchemaHash};
-        for (auto& tool : declaration.tools)
-        {
-            for (auto& bound : tool.descriptor.effectBounds)
-            {
-                bound.payloadSchemaHash = effectPayloadSchemaHash;
-            }
-        }
-        return declaration;
-    }
-
-    // The two documents this deployment assembles rather than authors. Each
-    // names the schema bytes it governs by sha256 and the registration it
-    // belongs to by plugin id, so neither link is a convention.
+    // The declaration one deployment is built from, as bytes this bundle owns:
+    // ProjectDeploymentSources takes views, so the rendered array has to
+    // outlive the create call.
     class DeploymentBundle final
     {
         std::string m_pluginId{};
-        std::string m_toolCatalog{};
-        std::string m_journalEventManifest{};
+        std::string m_tools{};
 
     public:
         explicit DeploymentBundle(std::string_view pluginId)
             : m_pluginId{pluginId}
+            , m_tools{
+                  toolDeclarations(pluginId, schemaHash(k_effectPayloadPreimage))
+              }
         {
-            auto catalog = project::generateToolCatalog(
-                toolCatalogDeclaration(pluginId)
-            );
-            UF_CHECK(catalog.has_value());
-            m_toolCatalog = *std::move(catalog);
-
-            m_journalEventManifest = R"json({"$comment":)json"
-                R"json("One payload schema per namespaced event type the expedition )json"
-                R"json(can emit, and the sha256 of that schema's exact bytes.",)json"
-                R"json("payload_schemas":[)json";
-            auto first = true;
-            for (auto const& payload : k_journalPayloadSources)
-            {
-                if (!first)
-                {
-                    m_journalEventManifest += ',';
-                }
-                first = false;
-                m_journalEventManifest += R"json({"namespaced_event_type":")json";
-                m_journalEventManifest += payload.eventType;
-                m_journalEventManifest += R"json(","sha256":")json";
-                m_journalEventManifest += schemaHashHex(payload.schema);
-                m_journalEventManifest += R"json("})json";
-            }
-            m_journalEventManifest += R"json(],"plugin_id":")json"
-                + m_pluginId
-                + R"json(","schema":"umbraflow-journal-event-schema-manifest/v1"})json";
         }
 
         [[nodiscard]]
-        auto toolCatalog() const UF_LIFETIME_BOUND -> std::string const&
+        auto tools() const UF_LIFETIME_BOUND -> std::string const&
         {
-            return m_toolCatalog;
-        }
-
-        [[nodiscard]]
-        auto journalEventManifest() const UF_LIFETIME_BOUND -> std::string const&
-        {
-            return m_journalEventManifest;
+            return m_tools;
         }
 
         // Views into this bundle and into the static schema storage above, so
@@ -341,13 +224,8 @@ namespace uf::operator_runtime::conformance::expedition
         {
             return deployment::ProjectDeploymentSources{
                 .pluginId                        = m_pluginId,
-                .projectState                    = k_projectStateSchema,
-                .toolPrecondition                = k_toolPreconditionSchema,
-                .toolCatalog                     = m_toolCatalog,
-                .journalEventManifest            = m_journalEventManifest,
-                .journalPayloadSchemas           = k_journalPayloadSchemas,
-                .effectPayloadSchemas            = k_effectPayloadSchemas,
-                .observedInstanceIdentitySchemas = {},
+                .tools                           = m_tools,
+                .observedInstanceIdentitySchemas = k_observedIdentitySchemas,
             };
         }
     };

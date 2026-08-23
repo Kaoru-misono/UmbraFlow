@@ -17,7 +17,6 @@ namespace uf::operator_runtime
 {
     namespace
     {
-        using test_support::journalEntry;
         using test_support::prepareStore;
         using test_support::TemporaryDirectory;
 
@@ -27,17 +26,7 @@ namespace uf::operator_runtime
         {
             REQUIRE(prepared.store.provisionProjectInstance(
                 prepared.project.registration,
-                prepared.generation,
-                ProjectInstanceBaseline{
-                    .projectInstanceKey  = "instance-2",
-                    .eventId             = "baseline-2",
-                    .sessionManifestHash = prepared.manifest.hash(),
-                    .entry = journalEntry(
-                        prepared.project,
-                        prepared.project.registration.baselineEventType(),
-                        R"({"kind":"baseline"})"
-                    ),
-                }
+                "instance-2"
             ).has_value());
             auto const worldScope = ObservedInstanceWorldScope::run(
                 "target-2",

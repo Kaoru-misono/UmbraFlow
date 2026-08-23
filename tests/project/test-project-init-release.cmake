@@ -71,7 +71,7 @@ endforeach()
 # Exact member order and compact spelling are the JCS bytes the consumer pins.
 string(CONCAT RELEASE_MANIFEST
     "{\"artifacts\":[${ARTIFACT_ROWS}],"
-    "\"contract_versions\":[\"umbraflow-project/v2\"],"
+    "\"contract_versions\":[\"umbraflow-project/v3\"],"
     "\"release\":\"${RELEASE_NAME}\","
     "\"schema\":\"umbraflow-release/v1\"}"
 )

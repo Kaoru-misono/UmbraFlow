@@ -11,16 +11,13 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
-#include <optional>
 #include <string>
 
 namespace uf::service
 {
     namespace
     {
-        using operator_runtime::ProjectInstanceBaseline;
         using operator_runtime::SessionMode;
-        using operator_runtime::SessionPin;
         using operator_runtime::ControllerKind;
         using operator_runtime::test_support::addController;
         using operator_runtime::test_support::k_unconstrainedAgentBudget;
@@ -83,65 +80,6 @@ namespace uf::service
         );
         REQUIRE(clean.has_value());
         CHECK(*clean == "the observation succeeded");
-    }
-
-    TEST_CASE("lifecycle no-baseline ruling reduces an empty Journal to first state")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-
-        REQUIRE(prepared.store.releaseLease(prepared.lease).has_value());
-        auto const provisioned = prepared.store.provisionProjectInstance(
-            prepared.project.registration,
-            prepared.generation,
-            ProjectInstanceBaseline{
-                .projectInstanceKey  = "instance-without-baseline",
-                .eventId             = {},
-                .sessionManifestHash = prepared.manifest.hash(),
-                .entry               = std::nullopt,
-            }
-        );
-        auto const provisionWhy = provisioned.has_value()
-            ? std::string{}
-            : provisioned.error().message();
-        REQUIRE_MESSAGE(
-            provisioned.has_value(),
-            "no-baseline provisioning must reduce an empty Journal: ",
-            provisionWhy
-        );
-        auto const worldScope = operator_runtime::ObservedInstanceWorldScope::run(
-            "target-without-baseline",
-            1
-        );
-        REQUIRE(worldScope.has_value());
-        REQUIRE(prepared.store.pinSession(
-            SessionPin{
-                .sessionId                 = "session-without-baseline",
-                .authenticatedControllerId = "controller-without-baseline",
-                .idempotencyNamespace      = "controller-without-baseline",
-                .projectRegistrationHash   = prepared.project.registration.hash(),
-                .controllerCapabilities    = {},
-                .controlledTargetId        = "target-without-baseline",
-                .projectInstanceKey        = "instance-without-baseline",
-                .mode                      = SessionMode::Write,
-                .kind                      = ControllerKind::Human,
-                .worldScope                = *worldScope,
-            },
-            prepared.manifest,
-            std::nullopt
-        ).has_value());
-        auto controller = prepared.store.bindController("session-without-baseline");
-        REQUIRE(controller.has_value());
-        auto lease = prepared.store.acquireLease(*controller);
-        REQUIRE(lease.has_value());
-        auto snapshot = prepared.store.createSnapshot(
-            *lease,
-            prepared.project.registration,
-            prepared.project.toolCatalogSchemaOwner,
-            prepared.project.observedInstanceIdentitySchemas,
-            observeAgain(prepared)
-        );
-        CHECK(snapshot.has_value());
     }
 
     TEST_CASE("lifecycle tool list comes from U8 offer side")

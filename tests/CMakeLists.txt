@@ -247,7 +247,6 @@ set(UF_REQUIRED_CONTRACT_GATES
     contract-state-s02
     contract-state-s03
     contract-state-s05
-    contract-state-s06
     contract-state-s04
     schema-state-s01
     schema-state-s02
@@ -282,7 +281,6 @@ set(UF_REQUIRED_CONTRACT_GATES
     contract-agent-a01
     contract-agent-a02
     contract-agent-a03
-    contract-agent-a04
     contract-agent-a05
     contract-agent-a06
     contract-agent-a08
@@ -293,7 +291,7 @@ set(UF_REQUIRED_CONTRACT_GATES
     schema-agent-a07
 )
 
-# The 35 REQUIRED_CORE requirements, prefix stripped. The list above says which
+# The 33 REQUIRED_CORE requirements, prefix stripped. The list above says which
 # kind of gate each one owns; this one says that none of them lost every gate.
 # Deriving it from the list above would make it unfalsifiable, so it is written
 # out: dropping both of a requirement's gates has to fail here.
@@ -302,6 +300,12 @@ set(UF_REQUIRED_CONTRACT_GATES
 # C-11, C-13 and C-14 left with it -- not because their gates were hard to
 # keep, but because each named a shape or a transition of that record and there
 # is nothing left for them to require.
+#
+# S-06 and A-04 left on the same terms on 2026-08-23. S-06 was the shape and
+# the revision line of JR:`ProjectState`; A-04 was the shape of a
+# JR:`JournalEvent` row and the framework's own reading of its provenance. The
+# framework stopped interpreting a Project's state, so both records are deleted
+# and neither requirement has a subject a gate could be about.
 set(UF_REQUIRED_CORE_REQUIREMENTS
     product-p01
     product-p02
@@ -322,7 +326,6 @@ set(UF_REQUIRED_CORE_REQUIREMENTS
     state-s03
     state-s04
     state-s05
-    state-s06
     control-c01
     control-c02
     control-c03
@@ -333,16 +336,15 @@ set(UF_REQUIRED_CORE_REQUIREMENTS
     agent-a01
     agent-a02
     agent-a03
-    agent-a04
     agent-a05
     agent-a06
     agent-a07
     agent-a08
 )
 list(LENGTH UF_REQUIRED_CORE_REQUIREMENTS UF_REQUIRED_CORE_REQUIREMENT_COUNT)
-if(NOT UF_REQUIRED_CORE_REQUIREMENT_COUNT EQUAL 35)
+if(NOT UF_REQUIRED_CORE_REQUIREMENT_COUNT EQUAL 33)
     message(FATAL_ERROR
-        "the requirement matrix has 35 REQUIRED_CORE entries; this list has "
+        "the requirement matrix has 33 REQUIRED_CORE entries; this list has "
         "${UF_REQUIRED_CORE_REQUIREMENT_COUNT}"
     )
 endif()
@@ -606,14 +608,16 @@ target_compile_definitions(test-deployment PRIVATE
 )
 
 # The deployment suite installs real projects into real roots and validates
-# their bytes, which costs 57 seconds over 52 cases -- close enough to the
+# their bytes, which once cost 57 seconds over 52 cases -- close enough to the
 # 60-second limit that one gate passed only while nothing ran beside it, and
-# timed out the first time the suite was run six tests at a time. Four shards
-# put the slowest of them at 22 seconds.
+# timed out the first time the suite was run six tests at a time. The cut that
+# stopped the framework interpreting a Project's state took the suite to 32
+# cases; three shards put the slowest of them well inside the limit, and a
+# fourth would be cut over nothing.
 uf_shard_doctest_gates(
     TARGET test-deployment
-    TOTAL_CASES 50
-    SHARDS 4
+    TOTAL_CASES 32
+    SHARDS 3
 )
 
 cpp_add_test(
@@ -698,7 +702,6 @@ if(TARGET ${PROJECT_NAME}_operator)
         NO_CTEST
         SOURCES
             operator/test-host-controller.cpp
-            operator/test-journal-commit.cpp
             operator/test-ledger.cpp
             operator/test-lifecycle-facade.cpp
             operator/test-manifest.cpp
@@ -736,7 +739,7 @@ if(TARGET ${PROJECT_NAME}_operator)
     # beside it.
     uf_shard_doctest_gates(
         TARGET test-operator
-        TOTAL_CASES 176
+        TOTAL_CASES 165
         SHARDS 6
     )
 
@@ -750,11 +753,11 @@ if(TARGET ${PROJECT_NAME}_operator)
         LIBS
             ${PROJECT_NAME}_operator
             ${PROJECT_NAME}_image
-            # tests/operator/schema-binding.hpp opens the database the store
-            # created and reads its columns back. The Operator keeps SQLite
+            # contract-state-s05 and the product gates open the database the
+            # store created and read it back. The Operator keeps SQLite
             # private, as it must -- its public headers expose no sqlite3
-            # handle -- so the gate that binds a stored row to the schema that
-            # declares it links the amalgamation itself.
+            # handle -- so a gate that reads its storage links the
+            # amalgamation itself.
             ${PROJECT_NAME}_operator_sqlite3
             ${PROJECT_NAME}_deployment
             ${PROJECT_NAME}_project
@@ -778,7 +781,6 @@ if(TARGET ${PROJECT_NAME}_operator)
             contract-state-s03
             contract-state-s04
             contract-state-s05
-            contract-state-s06
             schema-state-s01
             schema-state-s02
             schema-state-s04
@@ -790,7 +792,6 @@ if(TARGET ${PROJECT_NAME}_operator)
             schema-control-c12
             contract-agent-a01
             contract-agent-a02
-            contract-agent-a04
             contract-agent-a06
             contract-agent-a08
             schema-agent-a01
@@ -860,8 +861,7 @@ cpp_add_test(
         # state and reaches no verb result, so test-observe.cpp reads the
         # control transitions out of the database the Operator created. The
         # Operator keeps SQLite private, as it must, which is why the case that
-        # reads its storage links the amalgamation itself -- the same reason
-        # tests/operator/schema-binding.hpp does.
+        # reads its storage links the amalgamation itself.
         ${PROJECT_NAME}_operator_sqlite3
 )
 target_include_directories(test-cli PRIVATE
@@ -945,7 +945,7 @@ add_custom_target(generate-example-projects ALL
         generate-arcana-example
         "${PROJECT_SOURCE_DIR}/scripts/build_runtime_corpus.py"
         "${PROJECT_SOURCE_DIR}/examples/arcana-expedition/database/map-regions.csv"
-    COMMENT "[Project] Generating example Tool Catalogs"
+    COMMENT "[Project] Generating example project builds"
     VERBATIM
 )
 add_dependencies(test-deployment generate-example-projects)

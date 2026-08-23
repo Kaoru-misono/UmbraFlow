@@ -1,9 +1,10 @@
 // What the Operator's own ledger owns: the production database, RuntimeArtifact
-// installation and reclamation, and the exact reduce envelope its journal
-// builds. The properties a project's registration decides -- catalog
-// mutability, schema-owner binding, who owns a disposition -- are the exported
-// conformance suite's, because a consuming repository proves them against its own
-// project; see conformance/source/. No property is asserted in both places.
+// installation and reclamation, and the exact schema identity every stored
+// generation of it is admitted under. The properties a project's registration
+// decides -- catalog mutability, schema-owner binding, who owns a disposition
+// -- are the exported conformance suite's, because a consuming repository
+// proves them against its own project; see conformance/source/. No property is
+// asserted in both places.
 
 #include <operator/ledger.hpp>
 #include <operator/manifest.hpp>
@@ -44,11 +45,20 @@ namespace uf::operator_runtime
     {
         using test_support::toolCallAt;
 
-        // The one reducer closure every case here registers. It comes from
-        // the shared fixture because a second spelling of it would be a
-        // second reducer module-manifest hash for one project.
-        inline auto const k_reducerSource = test_support::reducerSource("fixture.alpha");
+        // The Operator schema identity a fresh database is created with, and
+        // therefore the identity every registered migration below must land
+        // on. It is one constant rather than a copy per fixture because it
+        // moves whenever the stored DDL does, and sixteen hand-copies were
+        // sixteen places to forget.
+        constexpr auto k_targetSchemaIdentity = std::string_view{
+            "sha256:5ed5e558e04f24347a97a0de03550eaa02f6e48ddb64c29bf09e05c50e55d194"
+        };
 
+        // The identity the generation immediately before the state cut
+        // created, and the source of that cut's own pair.
+        constexpr auto k_projectStateInterpretationIdentity = std::string_view{
+            "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76"
+        };
 
         class TemporaryDirectory final
         {
@@ -530,6 +540,21 @@ namespace uf::operator_runtime
             return prior;
         }
 
+        // The stored CREATE with its trailing whitespace removed. SQLite keeps
+        // every byte from the table name to the statement's terminator, so a
+        // table this generation creates from a named constant whose raw string
+        // ends in a newline and an indent stores those bytes too. The
+        // generation being reproduced created the same table inside one block
+        // terminated immediately after STRICT, so the restore has to end there.
+        [[nodiscard]]
+        auto withoutTrailingSpace(std::string prior) -> std::string
+        {
+            auto const end = prior.find_last_not_of(" \t\r\n");
+            REQUIRE(end != std::string::npos);
+            prior.erase(end + 1U);
+            return prior;
+        }
+
         // The same, with one removed column put back ahead of the declaration
         // that took its place. Insertion position is part of the DDL text and
         // therefore part of the historical identity, so the anchor names the
@@ -605,8 +630,12 @@ namespace uf::operator_runtime
         //
         // Rows are carried through rather than dropped, exactly as
         // restorePriorToolRunSchema carries its own: the fixtures read the
-        // Journal and the ledger back across their upgrade, and a wind-back
-        // that emptied these would prove the migration preserved nothing.
+        // ledger back across their upgrade, and a wind-back that emptied these
+        // would prove the migration preserved nothing.
+        //
+        // journal_events is one of the tables it rebuilds, and the state cut
+        // deleted it, so restoreProjectStateInterpretationSchema must have put
+        // it back before this runs.
         auto restoreOperationSurfaceSchema(
             test_support::OperatorDatabaseProbe& database
         ) -> void
@@ -711,6 +740,218 @@ namespace uf::operator_runtime
                   "session_epoch, controlled_target_id, kind, subject_id "
                   "FROM carried_ledger_events;"
                   "DROP TABLE carried_ledger_events;"
+                  "PRAGMA foreign_keys=ON;"
+            );
+        }
+
+
+        // journal_events and project_state as the generation before the state
+        // cut stored them, pasted because that generation no longer exists in
+        // the tree to derive them from -- the historical identity IS the
+        // stored text, so one changed byte of indentation reproduces a schema
+        // that generation never had.
+        constexpr auto k_priorJournalEventsDdl = std::string_view{
+            R"sql(CREATE TABLE IF NOT EXISTS journal_events(
+                        event_id TEXT PRIMARY KEY,
+                        plugin_id TEXT NOT NULL,
+                        project_instance_key TEXT NOT NULL,
+                        sequence INTEGER NOT NULL CHECK(sequence >= 0),
+                        prior_project_state_revision INTEGER,
+                        session_manifest_hash TEXT NOT NULL,
+                        namespaced_event_type TEXT NOT NULL,
+                        payload_schema_hash TEXT NOT NULL,
+                        opaque_project_payload TEXT NOT NULL,
+                        provenance TEXT NOT NULL,
+                        FOREIGN KEY(plugin_id, project_instance_key)
+                            REFERENCES project_instances(plugin_id, project_instance_key),
+                        UNIQUE(plugin_id, project_instance_key, sequence)
+                    ) STRICT)sql"
+        };
+
+        constexpr auto k_priorProjectStateDdl = std::string_view{
+            R"sql(CREATE TABLE IF NOT EXISTS project_state(
+                        plugin_id TEXT NOT NULL,
+                        project_instance_key TEXT NOT NULL,
+                        revision INTEGER NOT NULL CHECK(revision >= 0),
+                        project_registration_hash TEXT NOT NULL,
+                        project_state_schema_hash TEXT NOT NULL,
+                        last_journal_sequence INTEGER NOT NULL CHECK(last_journal_sequence >= 0),
+                        canonical_opaque_payload TEXT NOT NULL,
+                        state_hash TEXT NOT NULL,
+                        FOREIGN KEY(plugin_id, project_instance_key)
+                            REFERENCES project_instances(plugin_id, project_instance_key),
+                        PRIMARY KEY(plugin_id, project_instance_key)
+                    ) STRICT)sql"
+        };
+
+        // The three call-bound Journal proposal tables, in the exact one-line
+        // spelling the generation that added them created them with.
+        constexpr auto k_priorJournalBatchProposalsDdl = std::string_view{
+            "CREATE TABLE journal_batch_proposals("
+            "proposal_identity TEXT PRIMARY KEY CHECK(length(proposal_identity)=64 "
+            "AND proposal_identity NOT GLOB '*[^0-9a-f]*'),"
+            "root_identity TEXT NOT NULL REFERENCES tool_runs(root_identity),"
+            "call_identity TEXT NOT NULL REFERENCES tool_call_history(call_identity),"
+            "call_outcome_revision INTEGER NOT NULL "
+            "CHECK(call_outcome_revision > 0),"
+            "plugin_id TEXT NOT NULL,"
+            "project_instance_key TEXT NOT NULL,"
+            "prior_project_state_revision INTEGER NOT NULL "
+            "CHECK(prior_project_state_revision >= 0),"
+            "published_revision INTEGER CHECK(published_revision IS NULL OR "
+            "published_revision > 0),"
+            "FOREIGN KEY(plugin_id, project_instance_key) "
+            "REFERENCES project_instances(plugin_id, project_instance_key)"
+            ") STRICT"
+        };
+
+        constexpr auto k_priorJournalProposalEventsDdl = std::string_view{
+            "CREATE TABLE journal_proposal_events("
+            "proposal_identity TEXT NOT NULL REFERENCES "
+            "journal_batch_proposals(proposal_identity),"
+            "batch_index INTEGER NOT NULL CHECK(batch_index >= 0),"
+            "event_id TEXT NOT NULL,"
+            "namespaced_event_type TEXT NOT NULL,"
+            "opaque_project_payload TEXT NOT NULL,"
+            "provenance TEXT NOT NULL,"
+            "PRIMARY KEY(proposal_identity, batch_index)"
+            ") STRICT"
+        };
+
+        constexpr auto k_priorJournalProposalEffectsDdl = std::string_view{
+            "CREATE TABLE journal_proposal_effects("
+            "proposal_identity TEXT NOT NULL REFERENCES "
+            "journal_batch_proposals(proposal_identity),"
+            "call_identity TEXT NOT NULL REFERENCES tool_call_history(call_identity),"
+            "outcome_revision INTEGER NOT NULL CHECK(outcome_revision > 0),"
+            "PRIMARY KEY(proposal_identity, call_identity)"
+            ") STRICT"
+        };
+
+        // The ProjectState columns the state cut dropped, each with the
+        // declaration it used to sit above. Insertion position is part of the
+        // DDL text and therefore part of the historical identity.
+        constexpr auto k_observationProjectStateColumns = std::string_view{
+            "                        project_state_revision INTEGER NOT NULL\n"
+            "                            CHECK(project_state_revision >= 0),\n"
+            "                        project_state_hash TEXT NOT NULL,\n"
+        };
+
+        constexpr auto k_observationCanonicalColumn = std::string_view{
+            "                        canonical_observation TEXT NOT NULL,"
+        };
+
+        constexpr auto k_snapshotProjectStateColumn = std::string_view{
+            "                        project_state_revision INTEGER NOT NULL\n"
+            "                            CHECK(project_state_revision >= 0),\n"
+        };
+
+        constexpr auto k_snapshotAvailabilityColumn = std::string_view{
+            "                        availability_revision INTEGER NOT NULL"
+        };
+
+        constexpr auto k_instanceBaselineEventColumn = std::string_view{
+            "baseline_event_id TEXT UNIQUE,"
+        };
+
+        constexpr auto k_instancePrimaryKey = std::string_view{
+            "PRIMARY KEY(plugin_id, project_instance_key),"
+        };
+
+        // Winds a fresh database back past the generation in which the
+        // framework stopped interpreting a Project's state: the Journal, the
+        // materialized ProjectState, the call-bound proposals, the baseline
+        // event a ProjectInstance named and the ProjectState revision and
+        // digest the observation and snapshot rows carried.
+        //
+        // Every registered migration below now ends in that step, so every
+        // migration fixture needs this and it must run FIRST in each of them:
+        // restoreOperationSurfaceSchema rebuilds journal_events, which only
+        // exists again once this has put it back.
+        //
+        // The two deleted tables are pasted for the reason
+        // restoreOperationSurfaceSchema pastes its own; the three surviving
+        // ones are derived from their own surviving text, because undoing what
+        // this generation changed cannot drift and a hand-copy can.
+        //
+        // The restored ProjectState columns take revision 0 and an empty
+        // digest. Nothing durable holds those values any more -- the framework
+        // stores no reading of a Project's state to carry back -- and the
+        // schema identity is the DDL text alone, so what the rows say cannot
+        // change which generation this reproduces.
+        auto restoreProjectStateInterpretationSchema(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void
+        {
+            auto const priorProjectInstances = storedCreateWith(
+                database,
+                "project_instances",
+                k_instanceBaselineEventColumn,
+                k_instancePrimaryKey
+            );
+            auto const priorProjectObservations = withoutTrailingSpace(
+                storedCreateWith(
+                    database,
+                    "project_observations",
+                    k_observationProjectStateColumns,
+                    k_observationCanonicalColumn
+                )
+            );
+            auto const priorSnapshots = withoutTrailingSpace(storedCreateWith(
+                database,
+                "snapshots",
+                k_snapshotProjectStateColumn,
+                k_snapshotAvailabilityColumn
+            ));
+
+            // All three are foreign-key participants, so they are carried and
+            // re-created rather than altered, and enforcement is lifted for
+            // the rebuild exactly as the migration itself defers it.
+            database.execute(
+                "PRAGMA foreign_keys=OFF;"
+                "CREATE TABLE carried_project_instances AS SELECT * FROM "
+                "project_instances;"
+                "DROP TABLE project_instances;"
+                + priorProjectInstances
+                + ";INSERT INTO project_instances(plugin_id, "
+                  "project_instance_key, project_registration_hash) SELECT "
+                  "plugin_id, project_instance_key, project_registration_hash "
+                  "FROM carried_project_instances;"
+                  "DROP TABLE carried_project_instances;"
+                  "CREATE TABLE carried_project_observations AS SELECT * FROM "
+                  "project_observations;"
+                  "DROP TABLE project_observations;"
+                + priorProjectObservations
+                + ";INSERT INTO project_observations(plugin_id, "
+                  "project_instance_key, revision, project_registration_hash, "
+                  "state_resolution_hash, project_state_revision, "
+                  "project_state_hash, canonical_observation, observation_hash) "
+                  "SELECT plugin_id, project_instance_key, revision, "
+                  "project_registration_hash, state_resolution_hash, 0, '', "
+                  "canonical_observation, observation_hash FROM "
+                  "carried_project_observations;"
+                  "DROP TABLE carried_project_observations;"
+                  "CREATE TABLE carried_snapshots AS SELECT * FROM snapshots;"
+                  "DROP TABLE snapshots;"
+                + priorSnapshots
+                + ";INSERT INTO snapshots(token, session_id, snapshot_revision, "
+                  "session_epoch, identity_hash, decision_basis_hash, "
+                  "canonical_parts, lease_revision, plugin_id, "
+                  "project_instance_key, observation_id, target_generation, "
+                  "state_resolution_hash, project_observation_revision, "
+                  "project_state_revision, availability_revision) SELECT token, "
+                  "session_id, snapshot_revision, session_epoch, identity_hash, "
+                  "decision_basis_hash, canonical_parts, lease_revision, "
+                  "plugin_id, project_instance_key, observation_id, "
+                  "target_generation, state_resolution_hash, "
+                  "project_observation_revision, 0, availability_revision "
+                  "FROM carried_snapshots;"
+                  "DROP TABLE carried_snapshots;"
+                + std::string{k_priorJournalEventsDdl} + ";"
+                + std::string{k_priorProjectStateDdl} + ";"
+                + std::string{k_priorJournalBatchProposalsDdl} + ";"
+                + std::string{k_priorJournalProposalEventsDdl} + ";"
+                + std::string{k_priorJournalProposalEffectsDdl} + ";"
                   "PRAGMA foreign_keys=ON;"
             );
         }
@@ -1364,30 +1605,21 @@ namespace uf::operator_runtime
             );
         }
 
-        using test_support::canonical;
         using test_support::confirmToolCall;
         using test_support::hashOf;
-        using test_support::journalEntry;
-        using test_support::k_fixtureProvenance;
-        using test_support::k_fixtureProvenanceViolations;
         using test_support::loadGeneration;
         using test_support::makeProject;
         using test_support::sessionManifest;
         using test_support::startToolCall;
         using test_support::toolInvocation;
 
-        // Re-adding any of these members would reopen the two P0 holes: a
-        // reducer input beside the events lets the Journal say A while the
-        // materialized state was reduced from B, and a request-owned tool or
-        // mutability makes the mutation chain opt-out. ToolAdmissionRequest is
-        // where the second one would land: it is the one caller-supplied
-        // admission value, and it names its Tool and mutability only through
-        // the coordinate the catalog minted. The checks go through concepts
-        // because a member lookup on a concrete type is an error rather than a
-        // substitution failure.
-        template <typename T>
-        concept NamesReducerInput = requires(T value) { value.reducerInput; };
-
+        // Re-adding any of these members would reopen the P0 hole a
+        // request-owned tool or mutability is: it would make the mutation
+        // chain opt-out. ToolAdmissionRequest is where it would land -- it is
+        // the one caller-supplied admission value, and it names its Tool and
+        // mutability only through the coordinate the catalog minted. The
+        // checks go through concepts because a member lookup on a concrete
+        // type is an error rather than a substitution failure.
         template <typename T>
         concept NamesMutability = requires(T value) { value.mutating; };
 
@@ -1410,7 +1642,6 @@ namespace uf::operator_runtime
             value.observedInstanceId;
         };
 
-        static_assert(!NamesReducerInput<ProjectInstanceBaseline>);
         static_assert(!NamesMutability<ToolAdmissionRequest>);
         static_assert(!NamesTool<ToolAdmissionRequest>);
         static_assert(!NamesCanonicalArgs<ToolAdmissionRequest>);
@@ -1430,9 +1661,7 @@ namespace uf::operator_runtime
         // The same guard for every authority-bearing value, not just the one
         // that happened to get it: an aggregate could be brace-initialized past
         // its owner, and a public constructor would make the owner optional.
-        static_assert(!std::is_aggregate_v<ValidatedJournalEntryData>);
         static_assert(!std::is_aggregate_v<ValidatedToolInvocation>);
-        static_assert(!std::is_aggregate_v<ValidatedDocument>);
         static_assert(!std::is_aggregate_v<CanonicalJson>);
         static_assert(
             !std::is_constructible_v<
@@ -1445,29 +1674,18 @@ namespace uf::operator_runtime
                 ToolMutability
             >
         );
-        static_assert(
-            !std::is_constructible_v<
-                ValidatedJournalEntryData,
-                ContentHash,
-                std::string,
-                ContentHash,
-                CanonicalJson,
-                CanonicalJson
-            >
-        );
-
         // The shared fixture's prepared store, not a second one shaped like it.
         // The Tool-call fixture's startToolCall takes exactly this type, and a
         // local twin would have made every case here choose between the two.
         // prepareStore below still builds its own, because the cases in this
-        // file pin a reducer and a precondition schema the shared builder does
-        // not take.
+        // file register `fixture.alpha` and vary the argument schema a
+        // registration pins, which the shared builder does not take.
         using test_support::PreparedStore;
 
         [[nodiscard]]
         auto prepareStore(
             std::filesystem::path const& path,
-            std::string_view reducerBytes = k_reducerSource
+            std::string_view argumentSchema = test_support::k_toolArgumentSchema
         ) -> PreparedStore
         {
             auto const release = test_support::runtimeRelease(path / "session-handoff");
@@ -1491,32 +1709,18 @@ namespace uf::operator_runtime
             REQUIRE_MESSAGE(installed.has_value(), installedMessage);
             auto const artifactRootHash    = installed->rootHash();
             auto const installedGeneration = installed->installedGeneration();
-            auto const project = makeProject(
-                "fixture.alpha",
-                reducerBytes,
-                test_support::k_toolPreconditionSchema
-            );
+            auto const project = makeProject("fixture.alpha", argumentSchema);
             auto const manifest = sessionManifest(
                 project.registration,
                 installed->rootHash(),
                 hashOf("agent"),
                 test_support::policyArtifactBytes()
             );
-            auto const projectGeneration = loadGeneration(project, reducerBytes);
+            auto const projectGeneration = loadGeneration(project);
             REQUIRE(store.registerProject(project.registration).has_value());
             REQUIRE(store.provisionProjectInstance(
                 project.registration,
-                projectGeneration,
-                ProjectInstanceBaseline{
-                    .projectInstanceKey  = "instance-1",
-                    .eventId             = "baseline-1",
-                    .sessionManifestHash = manifest.hash(),
-                    .entry = journalEntry(
-                        project,
-                        project.registration.baselineEventType(),
-                        "{\"kind\":\"baseline\"}"
-                    ),
-                }
+                "instance-1"
             ).has_value());
             auto const sessionWorldScope = ObservedInstanceWorldScope::run(
                 "target-1",
@@ -2428,11 +2632,15 @@ namespace uf::operator_runtime
 
     TEST_CASE("collision precedes registration scope mismatch")
     {
-        auto temporary     = TemporaryDirectory{};
-        auto prepared      = test_support::prepareStore(temporary.path());
-        auto foreignSource = k_reducerSource;
-        foreignSource += "\n-- exact registration variant\n";
-        auto const foreign = makeProject("fixture.alpha", foreignSource);
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+        // The same plugin id under a different argument schema, which is a
+        // different tool_catalog_hash and therefore a different exact
+        // registration.
+        auto const foreign = makeProject(
+            "fixture.alpha",
+            test_support::k_toolArgumentSchemaWithInstanceIds
+        );
         auto foreignSchemas = foreign.observedInstanceIdentitySchemas;
         REQUIRE(
             foreign.registration.hash()
@@ -2644,15 +2852,13 @@ namespace uf::operator_runtime
 
     TEST_CASE("observed instance authority isolates exact registrations")
     {
-        auto temporary     = TemporaryDirectory{};
-        auto variantSource = k_reducerSource;
-        variantSource += "\n-- exact registration variant\n";
+        auto temporary = TemporaryDirectory{};
         auto const observeRegistration = [](
             std::filesystem::path const& path,
-            std::string_view source
+            std::string_view argumentSchema
         )
         {
-            auto prepared = prepareStore(path, source);
+            auto prepared = prepareStore(path, argumentSchema);
             auto schemas  = prepared.project.observedInstanceIdentitySchemas;
             auto observation = prepared.store.publishProjectObservation(
                 prepared.lease,
@@ -2680,7 +2886,7 @@ namespace uf::operator_runtime
             firstDatabasePath
         ] = observeRegistration(
             temporary.path() / "registration-a",
-            k_reducerSource
+            test_support::k_toolArgumentSchema
         );
         auto const [
             secondPluginId,
@@ -2689,7 +2895,7 @@ namespace uf::operator_runtime
             secondDatabasePath
         ] = observeRegistration(
             temporary.path() / "registration-b",
-            variantSource
+            test_support::k_toolArgumentSchemaWithInstanceIds
         );
         REQUIRE(firstPluginId == secondPluginId);
         REQUIRE(firstRegistrationHash != secondRegistrationHash);
@@ -2760,7 +2966,7 @@ namespace uf::operator_runtime
                 ObservedInstanceIdentitySchema{
                     .schemaId   = "https://fixture.example/identity/overlay/v1",
                     .schemaHash = test_support::schemaHash(
-                        test_support::k_projectStateSchema
+                        test_support::k_toolArgumentSchema
                     ),
                     .validate   = [](json::Value const&) -> Status
                     {
@@ -2773,7 +2979,7 @@ namespace uf::operator_runtime
         auto const wrongMessage = std::string{wrong.error().message()};
         CHECK(
             wrongMessage.find(
-                test_support::schemaHashHex(test_support::k_projectStateSchema)
+                test_support::schemaHashHex(test_support::k_toolArgumentSchema)
             )
             != std::string::npos
         );
@@ -2854,17 +3060,7 @@ namespace uf::operator_runtime
 
         REQUIRE(prepared.store.provisionProjectInstance(
             prepared.project.registration,
-            prepared.generation,
-            ProjectInstanceBaseline{
-                .projectInstanceKey  = "instance-2",
-                .eventId             = "baseline-2",
-                .sessionManifestHash = prepared.manifest.hash(),
-                .entry = journalEntry(
-                    prepared.project,
-                    prepared.project.registration.baselineEventType(),
-                    "{\"kind\":\"baseline\"}"
-                ),
-            }
+            "instance-2"
         ).has_value());
         auto const projectScope = ObservedInstanceWorldScope::run(
             "target-project-2",
@@ -2920,9 +3116,7 @@ namespace uf::operator_runtime
             ProjectObservationErrorCode::ObservedInstanceScopeMismatch
         );
 
-        auto const foreignSource = test_support::reducerSource("fixture.foreign");
-        auto foreignProject = makeProject("fixture.foreign", foreignSource);
-        auto foreignPlugin  = loadGeneration(foreignProject, foreignSource);
+        auto foreignProject  = makeProject("fixture.foreign");
         auto foreignManifest = test_support::sessionManifest(
             foreignProject.registration,
             prepared.runtimeArtifactRootHash,
@@ -2934,17 +3128,7 @@ namespace uf::operator_runtime
         ).has_value());
         REQUIRE(prepared.store.provisionProjectInstance(
             foreignProject.registration,
-            foreignPlugin,
-            ProjectInstanceBaseline{
-                .projectInstanceKey  = "instance-1",
-                .eventId             = "baseline-foreign",
-                .sessionManifestHash = foreignManifest.hash(),
-                .entry = journalEntry(
-                    foreignProject,
-                    foreignProject.registration.baselineEventType(),
-                    "{\"kind\":\"baseline\"}"
-                ),
-            }
+            "instance-1"
         ).has_value());
         auto const foreignScope = ObservedInstanceWorldScope::run(
             "target-foreign",
@@ -3709,27 +3893,21 @@ namespace uf::operator_runtime
         }
 
         auto sourceIdentity = std::string{};
-        auto auditRows      = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
 
-            // The Journal row provisioning wrote is what this pair has to
-            // carry. The tool identity tables it adds have no predecessor at
+            // The tool identity tables this pair adds have no predecessor at
             // this source, so nothing durable can be seeded in them here and
             // the empty counts below are what proves they arrive created
             // rather than populated.
-            auditRows = prior.readRows(
-                "SELECT event_id, namespaced_event_type, opaque_project_payload, "
-                "provenance FROM journal_events ORDER BY sequence"
-            );
             removeToolIdentityPersistence(prior);
             dropJournalProposalTables(prior);
             sourceIdentity = exactSchemaIdentity(prior);
         }
-        REQUIRE_FALSE(auditRows.empty());
         CHECK(
             sourceIdentity
             == "sha256:d26b0e12be915009587a72312d4b46f4afc88509df5432f967eb15b016c24257"
@@ -3743,13 +3921,7 @@ namespace uf::operator_runtime
         auto const targetIdentity = exactSchemaIdentity(target);
         CHECK(
             targetIdentity
-            == "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76"
-        );
-        CHECK(
-            target.readRows(
-                "SELECT event_id, namespaced_event_type, opaque_project_payload, "
-                "provenance FROM journal_events ORDER BY sequence"
-            ) == auditRows
+            == k_targetSchemaIdentity
         );
         CHECK(
             target.readRows(
@@ -5119,6 +5291,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
@@ -5142,7 +5315,7 @@ namespace uf::operator_runtime
         auto target = test_support::OperatorDatabaseProbe{databasePath};
         CHECK(
             exactSchemaIdentity(target)
-            == "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76"
+            == k_targetSchemaIdentity
         );
         CHECK(
             target.readRows(
@@ -5165,7 +5338,7 @@ namespace uf::operator_runtime
             ) == std::vector<std::vector<std::string>>{
                 {
                     sourceIdentity,
-                    "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76",
+                    std::string{k_targetSchemaIdentity},
                 },
             }
         );
@@ -5320,6 +5493,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior   = test_support::OperatorDatabaseProbe{databasePath};
+            restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
@@ -5448,6 +5622,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
@@ -5544,6 +5719,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
@@ -5577,7 +5753,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76"
+                == k_targetSchemaIdentity
             );
             CHECK(
                 target.readRows(
@@ -5606,8 +5782,7 @@ namespace uf::operator_runtime
                 ) == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f"
-                        "3243b8266119f7dbc4d76",
+                        std::string{k_targetSchemaIdentity},
                     },
                 }
             );
@@ -5687,6 +5862,7 @@ namespace uf::operator_runtime
         auto historyRows    = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             rootRows = prior.readRows(
@@ -5715,7 +5891,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76"
+                == k_targetSchemaIdentity
             );
 
             // The run came across, and it came across running: nothing in a
@@ -5760,8 +5936,7 @@ namespace uf::operator_runtime
                 == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f"
-                        "3243b8266119f7dbc4d76",
+                        std::string{k_targetSchemaIdentity},
                     },
                 }
             );
@@ -5804,6 +5979,7 @@ namespace uf::operator_runtime
         auto eventRows      = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
@@ -5840,7 +6016,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76"
+                == k_targetSchemaIdentity
             );
 
             // The five tables are gone rather than emptied.
@@ -5880,9 +6056,131 @@ namespace uf::operator_runtime
                 == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f"
-                        "3243b8266119f7dbc4d76",
+                        std::string{k_targetSchemaIdentity},
                     },
+                }
+            );
+        }
+    }
+
+    // The pair in which the framework stopped interpreting a Project's state.
+    // The Journal, the materialized ProjectState, the call-bound proposals,
+    // the baseline event a ProjectInstance named and the ProjectState revision
+    // and digest the observation and snapshot rows carried are all deleted,
+    // because each of them was the framework's own reading of what a Project's
+    // world holds.
+    //
+    // Its source is the immediately prior generation, so the fixture winds a
+    // fresh database back with restoreProjectStateInterpretationSchema alone:
+    // nothing else moved in this pair.
+    TEST_CASE("the ProjectState interpretation is dropped under its exact pair")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        auto instanceRows    = std::vector<std::vector<std::string>>{};
+        auto observationRows = std::vector<std::vector<std::string>>{};
+        auto snapshotRows    = std::vector<std::vector<std::string>>{};
+        {
+            auto prepared = prepareStore(temporary.path());
+            static_cast<void>(prepared);
+        }
+
+        auto sourceIdentity = std::string{};
+        {
+            auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreProjectStateInterpretationSchema(prior);
+            instanceRows = prior.readRows(
+                "SELECT plugin_id, project_instance_key, "
+                "project_registration_hash FROM project_instances"
+            );
+            observationRows = prior.readRows(
+                "SELECT plugin_id, project_instance_key, revision, "
+                "observation_hash FROM project_observations ORDER BY revision"
+            );
+            snapshotRows = prior.readRows(
+                "SELECT token, identity_hash, decision_basis_hash FROM snapshots "
+                "ORDER BY snapshot_revision"
+            );
+            sourceIdentity = exactSchemaIdentity(prior);
+        }
+        REQUIRE(instanceRows.size() == 1U);
+        REQUIRE_FALSE(observationRows.empty());
+        REQUIRE_FALSE(snapshotRows.empty());
+        CHECK_MESSAGE(
+            sourceIdentity
+                == k_projectStateInterpretationIdentity,
+            "the fixture must reproduce the exact identity this pair migrates from"
+        );
+
+        {
+            auto migrated = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(migrated.has_value(), migrated.error().message());
+        }
+        {
+            auto target = test_support::OperatorDatabaseProbe{databasePath};
+            auto const targetIdentity = exactSchemaIdentity(target);
+            CHECK(targetIdentity == k_targetSchemaIdentity);
+
+            // The five tables are gone rather than emptied, and the three
+            // columns that carried the framework's reading are gone from the
+            // tables that survive.
+            CHECK(
+                target.readRows(
+                    "SELECT count(*) FROM sqlite_schema WHERE type='table' AND "
+                    "name IN ('journal_events', 'project_state', "
+                    "'journal_batch_proposals', 'journal_proposal_events', "
+                    "'journal_proposal_effects')"
+                ) == std::vector<std::vector<std::string>>{{"0"}}
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT count(*) FROM pragma_table_info('project_instances') "
+                    "WHERE name='baseline_event_id'"
+                ) == std::vector<std::vector<std::string>>{{"0"}}
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT count(*) FROM "
+                    "pragma_table_info('project_observations') WHERE name IN "
+                    "('project_state_revision', 'project_state_hash')"
+                ) == std::vector<std::vector<std::string>>{{"0"}}
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT count(*) FROM pragma_table_info('snapshots') "
+                    "WHERE name='project_state_revision'"
+                ) == std::vector<std::vector<std::string>>{{"0"}}
+            );
+
+            // Everything the deleted reading did not own comes across row for
+            // row.
+            CHECK(
+                target.readRows(
+                    "SELECT plugin_id, project_instance_key, "
+                    "project_registration_hash FROM project_instances"
+                ) == instanceRows
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT plugin_id, project_instance_key, revision, "
+                    "observation_hash FROM project_observations ORDER BY revision"
+                ) == observationRows
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT token, identity_hash, decision_basis_hash "
+                    "FROM snapshots ORDER BY snapshot_revision"
+                ) == snapshotRows
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT source_identity, target_identity FROM "
+                    "schema_identity_transitions WHERE source_identity='"
+                    + sourceIdentity + "'"
+                )
+                == std::vector<std::vector<std::string>>{
+                    {sourceIdentity, targetIdentity},
                 }
             );
         }
@@ -5896,8 +6194,9 @@ namespace uf::operator_runtime
     // could ever occupy. ledger_events loses the detail column and the two
     // kinds that named an Operation as their subject.
     //
-    // Its source is the immediately prior generation, so the fixture winds a
-    // fresh database back with restoreOperationSurfaceSchema alone: nothing
+    // Its source is the generation immediately before that removal, so the
+    // fixture winds a fresh database back with the state-cut restore -- which
+    // every pair now ends in -- and restoreOperationSurfaceSchema, and nothing
     // else moved in this pair.
     TEST_CASE("the Operation surface is dropped under its exact pair")
     {
@@ -5920,10 +6219,10 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         auto rootRows       = std::vector<std::vector<std::string>>{};
         auto positionRows   = std::vector<std::vector<std::string>>{};
-        auto journalRows    = std::vector<std::vector<std::string>>{};
         auto eventRows      = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             rootRows = prior.readRows(
                 "SELECT root_identity, caller_namespace, request_key, "
@@ -5933,10 +6232,6 @@ namespace uf::operator_runtime
                 "SELECT call_identity, root_identity, call_sequence, "
                 "canonical_args FROM tool_call_positions"
             );
-            journalRows = prior.readRows(
-                "SELECT event_id, namespaced_event_type, opaque_project_payload, "
-                "provenance FROM journal_events ORDER BY sequence"
-            );
             eventRows = prior.readRows(
                 "SELECT kind, controlled_target_id, subject_id FROM ledger_events "
                 "ORDER BY sequence"
@@ -5945,7 +6240,6 @@ namespace uf::operator_runtime
         }
         REQUIRE(rootRows.size() == 1U);
         REQUIRE(positionRows.size() == 1U);
-        REQUIRE_FALSE(journalRows.empty());
         REQUIRE_FALSE(eventRows.empty());
         CHECK(rootIdentity == rootRows.front().front());
         CHECK(callIdentity == positionRows.front().front());
@@ -5963,7 +6257,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76"
+                == k_targetSchemaIdentity
             );
 
             // The two tables are gone rather than emptied, and the columns that
@@ -5972,12 +6266,6 @@ namespace uf::operator_runtime
                 target.readRows(
                     "SELECT count(*) FROM sqlite_schema WHERE type='table' "
                     "AND name IN ('operations', 'reconciliations')"
-                ) == std::vector<std::vector<std::string>>{{"0"}}
-            );
-            CHECK(
-                target.readRows(
-                    "SELECT count(*) FROM pragma_table_info('journal_events') "
-                    "WHERE name='operation_id'"
                 ) == std::vector<std::vector<std::string>>{{"0"}}
             );
             CHECK(
@@ -6012,13 +6300,6 @@ namespace uf::operator_runtime
             );
             CHECK(
                 target.readRows(
-                    "SELECT event_id, namespaced_event_type, "
-                    "opaque_project_payload, provenance FROM journal_events "
-                    "ORDER BY sequence"
-                ) == journalRows
-            );
-            CHECK(
-                target.readRows(
                     "SELECT kind, controlled_target_id, subject_id FROM "
                     "ledger_events ORDER BY sequence"
                 ) == eventRows
@@ -6032,21 +6313,21 @@ namespace uf::operator_runtime
                 == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f"
-                        "3243b8266119f7dbc4d76",
+                        std::string{k_targetSchemaIdentity},
                     },
                 }
             );
         }
     }
 
-    // The pair that gave call-bound Journal batch proposals a durable home.
-    // Its three tables have no predecessor, so the migration creates them and
-    // moves nothing else. The fixture proves both halves: it winds a fresh
-    // schema back by dropping exactly those three tables, which must reproduce
-    // the immediately prior identity, and it reads the Journal back across the
-    // upgrade.
-    TEST_CASE("call-bound Journal proposal tables are added under their exact pair")
+    // The generation that stood immediately before call-bound Journal batch
+    // proposals were given a durable home. Its three tables were added by the
+    // pair that followed it and are deleted again by the state cut, so a
+    // database at this source now arrives at a target that has neither them
+    // nor the Journal they proposed into. The fixture winds a fresh schema
+    // back past the state cut and then drops those three tables, which is the
+    // schema this generation actually had, and proves the pair still lands.
+    TEST_CASE("the pair before the Journal proposal tables migrates past them")
     {
         auto temporary          = TemporaryDirectory{};
         auto const production   = temporary.path() / "production";
@@ -6057,19 +6338,14 @@ namespace uf::operator_runtime
         }
 
         auto sourceIdentity = std::string{};
-        auto journalRows    = std::vector<std::vector<std::string>>{};
         {
             auto prior  = test_support::OperatorDatabaseProbe{databasePath};
+            restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
-            journalRows = prior.readRows(
-                "SELECT event_id, namespaced_event_type, opaque_project_payload "
-                "FROM journal_events ORDER BY sequence"
-            );
             dropJournalProposalTables(prior);
             sourceIdentity = exactSchemaIdentity(prior);
         }
-        REQUIRE_FALSE(journalRows.empty());
         CHECK_MESSAGE(
             sourceIdentity
                 == "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235fa0a077598f8016fb11c02",
@@ -6084,26 +6360,17 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76"
+                == k_targetSchemaIdentity
             );
+            // Neither the proposals nor the Journal they proposed into
+            // survives the chain this pair now ends in.
             CHECK(
                 target.readRows(
-                    "SELECT name FROM sqlite_schema WHERE type='table' AND "
+                    "SELECT count(*) FROM sqlite_schema WHERE type='table' AND "
                     "name IN ('journal_batch_proposals', "
-                    "'journal_proposal_effects', 'journal_proposal_events') "
-                    "ORDER BY name"
-                )
-                == std::vector<std::vector<std::string>>{
-                    {"journal_batch_proposals"},
-                    {"journal_proposal_effects"},
-                    {"journal_proposal_events"},
-                }
-            );
-            CHECK(
-                target.readRows(
-                    "SELECT event_id, namespaced_event_type, opaque_project_payload "
-                    "FROM journal_events ORDER BY sequence"
-                ) == journalRows
+                    "'journal_proposal_effects', 'journal_proposal_events', "
+                    "'journal_events', 'project_state')"
+                ) == std::vector<std::vector<std::string>>{{"0"}}
             );
             CHECK(
                 target.readRows(
@@ -6114,8 +6381,7 @@ namespace uf::operator_runtime
                 == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f"
-                        "3243b8266119f7dbc4d76",
+                        std::string{k_targetSchemaIdentity},
                     },
                 }
             );
@@ -6167,6 +6433,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
@@ -6191,7 +6458,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76"
+                == k_targetSchemaIdentity
             );
             CHECK(
                 target.readRows(
@@ -6211,7 +6478,7 @@ namespace uf::operator_runtime
                 == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76",
+                        std::string{k_targetSchemaIdentity},
                     },
                 }
             );
@@ -6237,6 +6504,7 @@ namespace uf::operator_runtime
         auto historicalRows = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
@@ -6343,6 +6611,7 @@ namespace uf::operator_runtime
         auto replayBefore   = std::vector<std::vector<std::string>>{};
         {
             auto source = test_support::OperatorDatabaseProbe{databasePath};
+            restoreProjectStateInterpretationSchema(source);
             restoreOperationSurfaceSchema(source);
             restoreOperationDispatchSchema(source);
             restoreFormat2RegistrationIdentity(source);
@@ -6353,9 +6622,8 @@ namespace uf::operator_runtime
             dropJournalProposalTables(source);
             sourceIdentity = exactSchemaIdentity(source);
             replayBefore = source.readRows(
-                "SELECT sequence, event_id, namespaced_event_type, "
-                "opaque_project_payload, provenance FROM journal_events "
-                "ORDER BY sequence"
+                "SELECT sequence, kind, controlled_target_id, subject_id "
+                "FROM ledger_events ORDER BY sequence"
             );
         }
         CHECK_MESSAGE(
@@ -6389,13 +6657,13 @@ namespace uf::operator_runtime
             ) == expectedTransition
         );
         auto const replayAfter = target.readRows(
-            "SELECT sequence, event_id, namespaced_event_type, "
-            "opaque_project_payload, provenance FROM journal_events "
-            "ORDER BY sequence"
+            "SELECT sequence, kind, controlled_target_id, subject_id "
+            "FROM ledger_events ORDER BY sequence"
         );
         CHECK_MESSAGE(
             replayAfter == replayBefore,
-            "replaying the pre-upgrade Journal must produce an empty domain-history difference"
+            "replaying the pre-upgrade ledger must produce an empty "
+            "domain-history difference"
         );
     }
 
@@ -6421,6 +6689,7 @@ namespace uf::operator_runtime
         auto sessionRows    = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
@@ -6528,6 +6797,7 @@ namespace uf::operator_runtime
         auto bindingRows    = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
@@ -6618,6 +6888,7 @@ namespace uf::operator_runtime
         auto registrationRows = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
@@ -6683,6 +6954,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
@@ -6787,6 +7059,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto priorSchema = test_support::OperatorDatabaseProbe{databasePath};
+            restoreProjectStateInterpretationSchema(priorSchema);
             restoreOperationSurfaceSchema(priorSchema);
             restoreOperationDispatchSchema(priorSchema);
             restoreFormat2RegistrationIdentity(priorSchema);
@@ -6877,22 +7150,6 @@ namespace uf::operator_runtime
                 "FROM schema_identity_transitions"
             ) == expectedTransition,
             "the schema upgrade must record its exact source-target identity pair"
-        );
-
-        auto const expectedJournal = std::vector<std::vector<std::string>>{
-            {
-                "baseline-1",
-                "fixture.baseline",
-                "{\"kind\":\"baseline\"}",
-                std::string{k_fixtureProvenance},
-            },
-        };
-        CHECK_MESSAGE(
-            migrated.readRows(
-                "SELECT event_id, namespaced_event_type, opaque_project_payload, provenance "
-                "FROM journal_events WHERE event_id='baseline-1'"
-            ) == expectedJournal,
-            "the populated Journal entry must remain readable with its exact content"
         );
 
         // The Operation surface is one of the things this chain of pairs now
@@ -7332,45 +7589,6 @@ namespace uf::operator_runtime
         );
     }
 
-    TEST_CASE("Journal schema owner prevents caller-attached payload and provenance labels")
-    {
-        auto const project    = makeProject("fixture.alpha", k_reducerSource);
-        auto const provenance = std::string{k_fixtureProvenance};
-        auto const accepted = project.journalSchemaOwner.validate(
-            "fixture.progress",
-            canonical(project.schemaOwner, "{\"value\":1}"),
-            canonical(project.schemaOwner, provenance)
-        );
-        REQUIRE(accepted.has_value());
-        CHECK(accepted->projectRegistrationHash() == project.registration.hash());
-        // The sha256 of the schema that judged the payload, which is what the
-        // journal event schema manifest names for this event type. It used to
-        // be hashOf("progress-schema") -- a hash of the word, from when no
-        // schema stood behind it.
-        CHECK(
-            accepted->payloadSchemaHash() == hashOf(test_support::k_progressPayloadSchema)
-        );
-
-        CHECK_FALSE(project.journalSchemaOwner.validate(
-            "fixture.progress",
-            canonical(project.schemaOwner, "{\"value\":2}"),
-            canonical(project.schemaOwner, provenance)
-        ).has_value());
-        CHECK_FALSE(project.journalSchemaOwner.validate(
-            "fixture.unknown",
-            canonical(project.schemaOwner, "{\"value\":99}"),
-            canonical(project.schemaOwner, provenance)
-        ).has_value());
-        CHECK_FALSE(project.journalSchemaOwner.validate(
-            "fixture.progress",
-            canonical(project.schemaOwner, "{\"value\":1}"),
-            canonical(
-                project.schemaOwner,
-                std::string{k_fixtureProvenanceViolations.front()}
-            )
-        ).has_value());
-    }
-
     TEST_CASE("installation refuses a release manifest from a generation it cannot read")
     {
         // Both numbers are the deployment principal's half of a cross-boundary
@@ -7464,47 +7682,6 @@ namespace uf::operator_runtime
         first = fail(AutomationErrorKind::Cancelled, "closed");
         auto const reopened = OperatorCoordinator::open(production);
         CHECK(reopened.has_value());
-    }
-
-    TEST_CASE("ProjectInstance provisioning rejects Journal data from another registration")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto const release = test_support::runtimeRelease(temporary.path());
-        auto coordinator = OperatorCoordinator::open(temporary.path() / "production");
-        REQUIRE(coordinator.has_value());
-        auto const installed = coordinator->installRuntimeArtifact(
-            RuntimeArtifactInstallRequest{
-                .handoffRoot                 = release.handoffRoot,
-                .expectedReleaseManifestHash = release.releaseManifestHash,
-                .expectedInstalledGeneration = 0U,
-            }
-        );
-        REQUIRE(installed.has_value());
-
-        auto const project = makeProject("fixture.alpha", k_reducerSource);
-        auto const foreign = makeProject("fixture.foreign", "foreign-plugin-bytes");
-        auto const plugin = loadGeneration(project, k_reducerSource);
-        auto const manifest = sessionManifest(
-            project.registration,
-            installed->rootHash(),
-            hashOf("agent"),
-            test_support::policyArtifactBytes()
-        );
-        REQUIRE(coordinator->registerProject(project.registration).has_value());
-        CHECK_FALSE(coordinator->provisionProjectInstance(
-            project.registration,
-            plugin,
-            ProjectInstanceBaseline{
-                .projectInstanceKey  = "instance-1",
-                .eventId             = "baseline-1",
-                .sessionManifestHash = manifest.hash(),
-                .entry = journalEntry(
-                    foreign,
-                    foreign.registration.baselineEventType(),
-                    "{\"kind\":\"baseline\"}"
-                ),
-            }
-        ).has_value());
     }
 
     TEST_CASE("production RuntimeArtifact installation owns activation CAS")
@@ -8038,14 +8215,11 @@ namespace uf::operator_runtime
                 INSERT INTO project_observations(
                     plugin_id, project_instance_key, revision,
                     project_registration_hash, state_resolution_hash,
-                    project_state_revision, project_state_hash,
                     canonical_observation, observation_hash
                 )
                 SELECT observation.plugin_id, observation.project_instance_key,
                     revisions.value, observation.project_registration_hash,
                     observation.state_resolution_hash,
-                    observation.project_state_revision,
-                    observation.project_state_hash,
                     observation.canonical_observation,
                     observation.observation_hash
                 FROM project_observations observation CROSS JOIN revisions
@@ -8121,17 +8295,7 @@ namespace uf::operator_runtime
             );
             REQUIRE(prepared.store.provisionProjectInstance(
                 prepared.project.registration,
-                prepared.generation,
-                ProjectInstanceBaseline{
-                    .projectInstanceKey  = "instance-ambiguous",
-                    .eventId             = "baseline-ambiguous",
-                    .sessionManifestHash = manifest.hash(),
-                    .entry = journalEntry(
-                        prepared.project,
-                        prepared.project.registration.baselineEventType(),
-                        "{\"kind\":\"baseline\"}"
-                    ),
-                }
+                "instance-ambiguous"
             ).has_value());
             auto const ambiguousScope = ObservedInstanceWorldScope::run(
                 "target-1",

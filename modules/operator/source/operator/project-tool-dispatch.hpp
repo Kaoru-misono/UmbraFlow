@@ -28,8 +28,7 @@ namespace uf::operator_runtime
     // exists. That is here, once: the durable row is read, a terminal one is
     // returned without running anything, and a call that must execute gets an
     // issuing context keyed on its own position, the bound entry run with its
-    // canonical arguments, the answer judged against the entry's declared
-    // result schema, and the outcome written.
+    // canonical arguments, and the outcome written.
     //
     // Its four re-entry behaviours all fall out of that single reading rather
     // than from a case analysis:

@@ -157,8 +157,8 @@ namespace uf::operator_runtime
         }
 
         // Everything a registration document states about its registrant
-        // rather than about its closures: the namespace it owns, the event
-        // type its baseline carries, and the ordering rules its arrays obey.
+        // rather than about its closure: the namespace it owns and the
+        // ordering rules its arrays obey.
         //
         // The format member is deliberately NOT read here. It is the one
         // member that identifies which document this is, so the reader that
@@ -192,12 +192,6 @@ namespace uf::operator_runtime
                     )
                 );
             }
-            UF_TRY(validateDottedName(
-                claims.baselineEventType,
-                "baseline_event_type",
-                true
-            ));
-
             for (auto index = std::size_t{0}; index < claims.projectResources.size(); ++index)
             {
                 auto const& resource = claims.projectResources[index];
@@ -291,7 +285,7 @@ namespace uf::operator_runtime
             return ok();
         }
 
-        // One closure's stated export surface. The names are the same dotted
+        // The closure's stated export surface. The names are the same dotted
         // names an entry point is spelled with everywhere else, and the order
         // is the loader's own derivation, so a statement in any other order is
         // one no authoring path produced.
@@ -333,8 +327,8 @@ namespace uf::operator_runtime
         }
 
         // The one reader. It accepts k_projectGenerationFormat and refuses
-        // every other number, including the one-closure generation the flip
-        // deleted: a document stating another format is not a degraded
+        // every other number, including the two-closure generation the state
+        // cut deleted: a document stating another format is not a degraded
         // generation this reader falls back to, it is a document this
         // framework does not read.
         [[nodiscard]]
@@ -347,10 +341,6 @@ namespace uf::operator_runtime
                 k_projectGenerationFormat
             ));
             UF_TRY(validateSharedClaims(claims));
-            UF_TRY(validateClosureClaims(
-                claims.reducerClosure,
-                "reducer closure exported entry point"
-            ));
             return validateClosureClaims(
                 claims.toolClosure,
                 "tool closure exported entry point"
@@ -428,12 +418,6 @@ namespace uf::operator_runtime
         return m_claims.toolCatalogHash;
     }
 
-    auto VerifiedProjectGeneration::reducerClosure() const noexcept
-        -> ProjectClosureClaims const&
-    {
-        return m_claims.reducerClosure;
-    }
-
     auto VerifiedProjectGeneration::toolClosure() const noexcept
         -> ProjectClosureClaims const&
     {
@@ -497,7 +481,7 @@ namespace uf::operator_runtime
         UF_TRY_VALUE_CONTEXT(
             claims,
             validate(canonicalJcs),
-            "validating exact two-closure ProjectRegistration JCS"
+            "validating exact ProjectRegistration JCS"
         );
         UF_TRY(validateGenerationClaims(claims));
         return VerifiedProjectGeneration{
@@ -512,17 +496,9 @@ namespace uf::operator_runtime
         , m_pluginId{generation.m_claims.pluginId}
         , m_canonicalJcs{generation.m_canonicalJcs}
         , m_moduleIdentityHash{
-              generation.m_claims.reducerClosure.moduleManifestHash
+              generation.m_claims.toolClosure.moduleManifestHash
           }
         , m_toolCatalogHash{generation.m_claims.toolCatalogHash}
-        , m_projectStateSchemaHash{generation.m_claims.projectStateSchemaHash}
-        , m_projectToolPreconditionSchemaHash{
-              generation.m_claims.projectToolPreconditionSchemaHash
-          }
-        , m_journalEventSchemaManifestHash{
-              generation.m_claims.journalEventSchemaManifestHash
-          }
-        , m_baselineEventType{generation.m_claims.baselineEventType}
         , m_observedInstanceIdentitySchemaHashes{
               generation.m_claims.observedInstanceIdentitySchemaHashes
           }
@@ -553,26 +529,6 @@ namespace uf::operator_runtime
     auto ProjectIdentity::toolCatalogHash() const -> ContentHash
     {
         return m_toolCatalogHash;
-    }
-
-    auto ProjectIdentity::projectStateSchemaHash() const -> ContentHash
-    {
-        return m_projectStateSchemaHash;
-    }
-
-    auto ProjectIdentity::projectToolPreconditionSchemaHash() const -> ContentHash
-    {
-        return m_projectToolPreconditionSchemaHash;
-    }
-
-    auto ProjectIdentity::journalEventSchemaManifestHash() const -> ContentHash
-    {
-        return m_journalEventSchemaManifestHash;
-    }
-
-    auto ProjectIdentity::baselineEventType() const -> std::string
-    {
-        return m_baselineEventType;
     }
 
     auto ProjectIdentity::observedInstanceIdentitySchemaHashes() const noexcept

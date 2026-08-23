@@ -254,40 +254,18 @@ namespace uf::operator_runtime
             };
         }
 
-        // Two reducer closures that differ only in what they fold to, so a
-        // folded document read back names which project answered.
-        constexpr auto k_catalogueReducer = std::string_view{R"LUAU(
-return {
-    plugin_id = "fixture.catalogue",
-    reduce = function(_input) return { revision = 1 } end,
-}
-)LUAU"};
-
-        constexpr auto k_workflowReducer = std::string_view{R"LUAU(
-return {
-    plugin_id = "fixture.workflow",
-    reduce = function(_input) return { revision = 2 } end,
-}
-)LUAU"};
-
         // The registrar is the caller's, because the whole point below is that
         // two projects share one, and test_support::loadGeneration keeps its
         // own.
         [[nodiscard]]
         auto loadOn(
             ProjectGenerationRegistrar& registrar,
-            test_support::ProjectFixture const& project,
-            std::string_view reducerBytes
+            test_support::ProjectFixture const& project
         ) -> Result<ProjectGenerationHandle>
         {
             return registrar.registerGeneration(
                 project.generation,
                 project.toolCatalogSchemaOwner,
-                project.schemaOwner,
-                ProjectGenerationRegistrar::ClosureModules{
-                    .entryModule = "main",
-                    .modules     = test_support::closureModules(reducerBytes),
-                },
                 ProjectGenerationRegistrar::ClosureModules{
                     .entryModule = "main",
                     .modules     = test_support::closureModules(
@@ -297,27 +275,43 @@ return {
                     ),
                 },
                 {},
-                [](std::string_view, std::string_view) -> Status { return ok(); },
                 test_support::refusingToolRuntime()
             );
         }
 
-        auto checkFold(
+        // What a loaded program answers for, and what it refuses. A Tool name
+        // is namespaced by the registration that owns it, so the neighbour's
+        // name is one this program can never have bound -- which is the whole
+        // of "each program answers its own contract" once nothing folds.
+        auto checkAnswersOwnTools(
             ProjectGenerationHandle const& program,
             test_support::ProjectFixture const& project,
-            std::string_view expected
+            std::string_view foreignToolName
         ) -> void
         {
-            auto const input = program.canonicalize(
-                R"({"commit_context":{"next_revision":0,"prior_revision":null},)"
-                R"("prior_project_state":null,"prospective_journal_batch":[]})"
+            CHECK(program.pluginId() == project.registration.pluginId());
+            CHECK(
+                program.projectRegistrationHash() == project.registration.hash()
             );
-            REQUIRE(input.has_value());
-            auto const folded = program.reduce(*input);
-            REQUIRE(folded.has_value());
-            CHECK(folded->bytes() == expected);
-            CHECK(folded->projectRegistrationHash() == project.registration.hash());
-            CHECK(folded->direction() == ProjectDocumentDirection::Output);
+
+            auto const own = program.invokeBoundTool(
+                project.toolName("command-1"),
+                json::Value::ofObject({}),
+                script::ScopedRunRequest{
+                    .parentPosition = hashOf("product-p05-position"),
+                }
+            );
+            REQUIRE(own.has_value());
+
+            auto const foreign = program.invokeBoundTool(
+                foreignToolName,
+                json::Value::ofObject({}),
+                script::ScopedRunRequest{
+                    .parentPosition = hashOf("product-p05-position"),
+                }
+            );
+            REQUIRE_FALSE(foreign.has_value());
+            CHECK(foreign.error().message().contains("binds no Tool named"));
         }
     }
 
@@ -326,36 +320,34 @@ return {
     // harness carrying real consumers rather than one, so that everything the
     // Operator keys on a registration is shown to be keyed on THIS one.
     //
-    // Retargeted onto the two-closure generation, with what it proves unchanged.
-    // What moved is the vehicle: the fold is the whole of the pure type's entry
-    // set now, so "each program answers its own documents" is one entry per
-    // project rather than five.
+    // Retargeted onto the one-closure generation, with what it proves
+    // unchanged. What moved is the vehicle: nothing folds any more, so "each
+    // program answers its own contract" is each program's own bound Tool names
+    // rather than each project's own document.
     TEST_CASE("contract-product-p05-fixtures")
     {
-        auto const catalogue = test_support::makeProject(
-            "fixture.catalogue",
-            k_catalogueReducer
-        );
-        auto const workflow = test_support::makeProject(
-            "fixture.workflow",
-            k_workflowReducer
-        );
+        auto const catalogue = test_support::makeProject("fixture.catalogue");
+        auto const workflow  = test_support::makeProject("fixture.workflow");
         CHECK(catalogue.registration.hash() != workflow.registration.hash());
 
-        auto       registrar         = ProjectGenerationRegistrar{};
-        auto const catalogueProgram  = loadOn(
-            registrar,
-            catalogue,
-            k_catalogueReducer
-        );
-        auto const workflowProgram = loadOn(registrar, workflow, k_workflowReducer);
+        auto       registrar        = ProjectGenerationRegistrar{};
+        auto const catalogueProgram = loadOn(registrar, catalogue);
+        auto const workflowProgram  = loadOn(registrar, workflow);
         REQUIRE(catalogueProgram.has_value());
         REQUIRE(workflowProgram.has_value());
 
-        // Each fold answers its own project's document, stamped with its own
-        // registration root: two loaded programs, not one consulted twice.
-        checkFold(*catalogueProgram, catalogue, R"({"revision":1})");
-        checkFold(*workflowProgram, workflow, R"({"revision":2})");
+        // Each program answers its own project's Tools and refuses the
+        // neighbour's: two loaded programs, not one consulted twice.
+        checkAnswersOwnTools(
+            *catalogueProgram,
+            catalogue,
+            workflow.toolName("command-1")
+        );
+        checkAnswersOwnTools(
+            *workflowProgram,
+            workflow,
+            catalogue.toolName("command-1")
+        );
 
         // A registry entry is (plugin id, registration root) and nothing less.
         REQUIRE(registrar
@@ -378,8 +370,8 @@ return {
                         .has_value());
 
         // A registration root is a generation, so the same root cannot be
-        // loaded twice under two pairs of closures.
-        CHECK_FALSE(loadOn(registrar, catalogue, k_catalogueReducer).has_value());
+        // loaded twice under two different closures.
+        CHECK_FALSE(loadOn(registrar, catalogue).has_value());
     }
 
     TEST_CASE("schema-product-p01")
@@ -520,17 +512,7 @@ return {
 
         REQUIRE(prepared.store.provisionProjectInstance(
             prepared.project.registration,
-            prepared.generation,
-            ProjectInstanceBaseline{
-                .projectInstanceKey  = "instance-3",
-                .eventId             = "baseline-instance-3",
-                .sessionManifestHash = prepared.manifest.hash(),
-                .entry = test_support::journalEntry(
-                    prepared.project,
-                    prepared.project.registration.baselineEventType(),
-                    "{\"kind\":\"baseline\"}"
-                ),
-            }
+            "instance-3"
         ).has_value());
         auto const pinnedAgent = test_support::agentProfileFor(
             prepared,
@@ -888,7 +870,7 @@ return {
         REQUIRE(unstated.has_value());
         auto const silent = unstated->validate(
             observeTool,
-            test_support::canonical(prepared.project.schemaOwner, "{\"value\":1}")
+            test_support::canonical("{\"value\":1}")
         );
         REQUIRE(silent.has_value());
         CHECK(silent->descriptor().surface == ToolSurface::Privileged);
@@ -901,23 +883,39 @@ return {
         ).has_value());
     }
 
+    // P-04: the registration root names what a project was deployed as, so
+    // moving anything the document pins moves the root. The declaration is
+    // what moves here rather than the closure, because the closure a fixture
+    // ships is derived from its plugin id and two ids would move the root for
+    // a second reason.
     TEST_CASE("contract-product-p04")
     {
-        auto const first = test_support::makeProject(
-            "fixture.alpha",
-            "plugin-alpha"
-        );
+        auto const first = test_support::makeProject("fixture.alpha");
         CHECK(
             first.registration.canonicalJcs().find(
                 "\"plugin_id\":\"fixture.alpha\""
             ) != std::string::npos
         );
 
-        auto const changedCode = test_support::makeProject(
+        auto const changedDeclaration = test_support::makeProject(
             "fixture.alpha",
-            "plugin-beta"
+            test_support::k_toolArgumentSchemaWithInstanceIds
         );
-        CHECK(first.registration.hash() != changedCode.registration.hash());
+        CHECK(
+            first.registration.hash() != changedDeclaration.registration.hash()
+        );
+
+        // And the environment it runs under, which is inside the root for the
+        // same reason: a registration admitted under one environment is not the
+        // same deployment as the same bytes admitted under another.
+        auto const changedEnvironment = test_support::makeProject(
+            "fixture.alpha",
+            test_support::k_toolArgumentSchema,
+            test_support::hashOf("another-plugin-environment")
+        );
+        CHECK(
+            first.registration.hash() != changedEnvironment.registration.hash()
+        );
     }
 
     TEST_CASE("contract-product-p06")

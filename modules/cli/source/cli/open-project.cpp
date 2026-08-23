@@ -75,17 +75,11 @@ namespace uf::cli
             auto const registered = registrar.registerGeneration(
                 loaded.generation,
                 loaded.toolCatalogSchemaOwner,
-                loaded.schemaOwner,
-                operator_runtime::ProjectGenerationRegistrar::ClosureModules{
-                    .entryModule = loaded.reducerClosure.entryModule,
-                    .modules     = loaded.reducerClosure.modules,
-                },
                 operator_runtime::ProjectGenerationRegistrar::ClosureModules{
                     .entryModule = loaded.toolClosure.entryModule,
                     .modules     = loaded.toolClosure.modules,
                 },
                 loaded.projectResources,
-                loaded.catalog.toolResultValidator(),
                 inertToolRuntime()
             );
             if (!registered)

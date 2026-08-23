@@ -3,7 +3,6 @@
 #include "agent-profile.hpp"
 #include "controller.hpp"
 #include "effective-plan.hpp"
-#include "journal-entry.hpp"
 #include "manifest.hpp"
 #include "project-generation.hpp"
 #include "project-observation.hpp"
@@ -117,19 +116,6 @@ namespace uf::operator_runtime
         uint64 stagingDirectories{};
     };
 
-    struct ProjectInstanceBaseline final
-    {
-        std::string projectInstanceKey{};
-        std::string eventId{};
-        ContentHash sessionManifestHash;
-
-        // No entry is the one spelling of a project with no baseline: the
-        // plugin reduces an empty Journal prefix against null, no Journal row
-        // is fabricated, and eventId must be empty. Operator still owns the
-        // resulting initial ProjectState and every later reduction.
-        std::optional<ValidatedJournalEntryData> entry{};
-    };
-
     // The kinds of controller-visible fact appended to the ledger's one ordered
     // event sequence. Every value has a producer; a value nothing writes would
     // be a promise with no code, so the enumeration grows with its producer
@@ -229,12 +215,10 @@ namespace uf::operator_runtime
         ContentHash              identityHash;
         ContentHash              decisionBasisHash;
         ContentHash              stateResolutionHash;
-        ContentHash              projectStateHash;
         std::string              canonicalParts{};
         uint64                   sessionEpoch{};
         uint64                   leaseRevision{};
         uint64                   snapshotRevision{};
-        uint64                   projectStateRevision{};
         uint64                   availabilityRevision{};
         ContentHash              policyHash;
         std::vector<OfferedTool> availableTools{};
@@ -372,92 +356,6 @@ namespace uf::operator_runtime
         std::string findingId{};
         uint64      detectedAfterCursor{};
         uint64      invalidatedSnapshotRevision{};
-    };
-
-    struct JournalAppend final
-    {
-        std::string               eventId{};
-        ValidatedJournalEntryData entry;
-    };
-
-    // What one running Tool call proposes to commit to its ProjectInstance's
-    // Journal, and the whole of what a proposer is allowed to state.
-    //
-    // Section 7 makes a proposal call-bound: it is not a Journal event and not
-    // a durable Project fact until one final CAS publishes it, and until then
-    // it hangs from the exact call and incarnation that made it. The
-    // ProjectInstance, the revision the batch is proposed against and the
-    // recorded identity of every referenced outcome are therefore NOT here --
-    // the Operator reads all three from rows it already holds, for the reason
-    // the reduce envelope is assembled rather than accepted.
-    //
-    // referencedCalls names the effects these facts interpret, by call
-    // identity. It is a declaration and never a derivation: a proposal that let
-    // the ledger work out which effects it depended on would be compared
-    // against itself at publication, and section 7's "cannot commit while that
-    // effect is possible" would have nothing independent to be about.
-    struct JournalBatchProposal final
-    {
-        std::vector<JournalAppend> events{};
-        std::vector<ContentHash>   referencedCalls{};
-    };
-
-    // One persisted call-bound proposal, as the ledger holds it.
-    //
-    // priorProjectStateRevision is the revision the batch was frozen against
-    // and is read here rather than stated: it is what the publishing CAS
-    // compares the live ProjectState row to, so a caller able to name it could
-    // publish onto a revision its facts were never computed from.
-    //
-    // No in-class initializer for the identity: ContentHash has no default
-    // state.
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
-    struct StoredJournalProposal final
-    {
-        ContentHash        proposalIdentity;
-        ToolIdentityLookup lookup{ToolIdentityLookup::Created};
-        uint64             priorProjectStateRevision{};
-    };
-
-    // What one published batch left behind: the revision the candidate state
-    // was published at, and the Journal sequence the batch reached. Both are
-    // the ledger's own, and both are reported because "the commit landed" and
-    // "it landed here" are different facts.
-    //
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
-    struct PublishedJournalBatch final
-    {
-        ContentHash proposalIdentity;
-        ContentHash projectStateHash;
-        uint64      revision{};
-        uint64      lastJournalSequence{};
-    };
-
-    // What one refold of a ProjectInstance's baseline found: the ProjectState
-    // the database stores for it, and the ProjectState its complete retained
-    // Journal prefix folds to when that prefix is read back out of the
-    // database and run through the registration's own reducer.
-    //
-    // Both sides are carried, hashes and bytes, because the answer to "did the
-    // fold move" is the comparison and not a flag: a caller that was handed
-    // only a verdict could not say what differed, and a stored verdict would
-    // be a third value agreeing with the two it was derived from.
-    //
-    // No in-class initializer for the hashes: ContentHash has no default state.
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
-    struct RefoldedProjectState final
-    {
-        std::string projectInstanceKey{};
-
-        // How many Journal events the prefix held. It is reported because an
-        // equality over an empty prefix is a weaker fact than one over a
-        // prefix with events in it, and only the count says which happened.
-        uint64 journalEventCount{};
-
-        ContentHash storedStateHash;
-        ContentHash refoldedStateHash;
-        std::string storedCanonicalPayload{};
-        std::string refoldedCanonicalPayload{};
     };
 
     // The registration, project instance and plugin facts one observed-instance
@@ -665,46 +563,22 @@ namespace uf::operator_runtime
         auto reclaimUnreferencedRuntimeArtifacts() -> Result<ReclaimedRuntimeArtifacts>;
 
         // Both doors take the registration identity rather than a registration
-        // document, and provisioning takes the fold rather than the loaded
-        // plugin that happens to carry it. Nothing durable here is a fact about
-        // which generation of the registration document a project was deployed
-        // as, so nothing here names one; the flip that replaces that document
-        // therefore leaves this pair untouched.
+        // document. Nothing durable here is a fact about which generation of
+        // the registration document a project was deployed as, so nothing here
+        // names one.
+        //
+        // Provisioning records that an instance of this registration exists
+        // under this key, and records nothing about what the instance holds:
+        // a Project's own state is the Project's, and the framework neither
+        // stores nor folds it.
         [[nodiscard]]
         auto registerProject(ProjectIdentity const& project) -> Status;
 
         [[nodiscard]]
         auto provisionProjectInstance(
             ProjectIdentity const& project,
-            ProjectBaselineReducer const& reducer,
-            ProjectInstanceBaseline const& baseline
-        ) -> Status;
-
-        // Re-derives one ProjectInstance's baseline from the Journal prefix the
-        // database still holds, and hands back that answer beside the baseline
-        // the database stored, so a caller can compare the two.
-        //
-        // Every input comes from a row. The events are read in `sequence`
-        // order and re-validated through the journal owner this registration
-        // pinned, the envelope is assembled by the same private builder
-        // provisioning uses, and the fold runs on the reducer of the
-        // registration the instance row names. Nothing a caller supplies
-        // reaches the computation, which is what makes a disagreement between
-        // the two answers a fact about the stored bytes rather than about the
-        // call.
-        //
-        // It deliberately returns both answers rather than a verdict. A method
-        // that returned `bool equal` would be the only reader of its own
-        // comparison, and a test asserting that bool could not tell a real
-        // match from a comparison that stopped being made; with both hashes
-        // and both payloads in hand, the assertion lives where it can be read.
-        [[nodiscard]]
-        auto refoldProjectState(
-            ProjectIdentity const& project,
-            ProjectJournalSchemaOwner const& journal,
-            ProjectBaselineReducer const& reducer,
             std::string const& projectInstanceKey
-        ) -> Result<RefoldedProjectState>;
+        ) -> Status;
 
         // The trusted setup door, and the only place an Agent's ceilings are
         // established. agentProfile is required for exactly the kinds whose
@@ -765,12 +639,11 @@ namespace uf::operator_runtime
         // BEGIN IMMEDIATE and publishes one complete record before returning a
         // token.
         //
-        // It runs no project code. Under the two-closure generation the
-        // reducer exports `reduce` and nothing else, and a Project's reading of
-        // its own world is a bound Project Tool the actors call -- so the
-        // observation this composes is the empty proposal, and a Project that
-        // wants to propose observed instances publishes them through
-        // publishProjectObservation from inside such a call.
+        // It runs no project code. A Project's reading of its own world is a
+        // bound Project Tool the actors call -- so the observation this
+        // composes is the empty proposal, and a Project that wants to propose
+        // observed instances publishes them through publishProjectObservation
+        // from inside such a call.
         //
         // There is no identity parameter beyond the registration's own and
         // nothing replaces it: a caller that supplied one could pin a snapshot
@@ -1014,62 +887,6 @@ namespace uf::operator_runtime
             ToolCallPositionIdentity const& call,
             ToolReconciliationQuery const& query
         ) -> Result<ToolCallReplay>;
-
-        // Persists one call-bound Journal batch proposal. Section 7: a
-        // proposal is not a Journal event and not a durable Project fact at
-        // this stage, so nothing here appends to the Journal or moves
-        // ProjectState.
-        //
-        // The proposing call must be DISPATCHING, because a proposal is
-        // something a running handler makes; the row records the revision that
-        // call's outcome must carry, which is what binds the proposal to one
-        // incarnation. A crashed incarnation's re-entry moves the history
-        // revision, so the proposal it left behind names a revision the call
-        // has moved past and the re-entered handler proposes its own.
-        //
-        // The identity is the content address of everything the proposer
-        // stated, so re-proposing the same batch from the same incarnation
-        // rejoins the stored row rather than freezing a second copy against a
-        // later instant.
-        [[nodiscard]]
-        auto proposeJournalBatch(
-            ControllerBinding const& controller,
-            ToolRootRequestIdentity const& root,
-            ToolCallPositionIdentity const& call,
-            JournalBatchProposal const& proposal
-        ) -> Result<StoredJournalProposal>;
-
-        // The one final CAS of section 7. It re-verifies, against what the
-        // proposal recorded, that the proposing call is still the same
-        // confirmed incarnation, that every referenced effect still stands at
-        // the outcome revision its facts were computed from, and that the
-        // ProjectState is still at the revision the batch was frozen against;
-        // it refuses while the run's controlled target is frozen, which is the
-        // same statement as section 7's "cannot commit while that effect is
-        // possible" because every uncertain call is a mutating call of this
-        // run; it folds the frozen prior state and the prospective batch
-        // through the registration's own reducer; and it appends the Journal
-        // events and publishes the candidate state in one transaction. A crash
-        // before it publishes neither fact nor state; a crash after it observes
-        // both.
-        //
-        // The registration root is joined rather than stated: it is read from
-        // the reducer this generation loaded and from the session row the
-        // Operator pinned, which are two independently produced values, so a
-        // reducer belonging to another registration is refused here.
-        //
-        // `journal` is required for the reason a refold requires one: the
-        // frozen batch goes back through the schema owner this registration
-        // pinned rather than being trusted as rows, so a publication cannot
-        // append bytes the registration no longer admits.
-        [[nodiscard]]
-        auto publishJournalProposal(
-            ControllerBinding const& controller,
-            ControlLease const& lease,
-            ProjectJournalSchemaOwner const& journal,
-            ProjectBaselineReducer const& reducer,
-            ContentHash const& proposalIdentity
-        ) -> Result<PublishedJournalBatch>;
 
         // Records that the world moved under us, which is what out-of-band
         // human input is. It is not a Tool call and cannot become one: it

@@ -190,7 +190,7 @@ namespace uf::cli
     // the loader's own arithmetic on both sides -- so a closure the script
     // substrate cannot compile loads with a different registration hash and no
     // complaint at all. Only the registrar refuses it.
-    TEST_CASE("a reducer closure missing its entry point loads and does not register")
+    TEST_CASE("a tool closure missing an entry point loads and does not register")
     {
         auto const copy = ExemplarCopy{};
 
@@ -201,15 +201,17 @@ namespace uf::cli
         REQUIRE(whole.has_value());
         REQUIRE(everyPluginRegistered(*whole));
 
-        auto const reducer = copy.read("plugin/alpha-reducer.luau");
-        auto const opens   = reducer.find("    reduce = function(input)");
-        REQUIRE(opens != std::string::npos);
-        constexpr auto k_closes = std::string_view{"    end,\n"};
-        auto const     closes   = reducer.find(k_closes, opens);
-        REQUIRE(closes != std::string::npos);
+        // One entry the deployment block declares this closure exports, cut
+        // out of the shipped bytes. The block still declares it, so the two
+        // sources disagree and only the bridge can say so.
+        auto const closure = copy.read("plugin/alpha-tools.luau");
+        constexpr auto k_entry =
+            std::string_view{"    command_1 = answering(\"command-1\"),\n"};
+        auto const at = closure.find(k_entry);
+        REQUIRE(at != std::string::npos);
         copy.rewrite(
-            "plugin/alpha-reducer.luau",
-            reducer.substr(0U, opens) + reducer.substr(closes + k_closes.size())
+            "plugin/alpha-tools.luau",
+            closure.substr(0U, at) + closure.substr(at + k_entry.size())
         );
 
         auto const opened = openProjectProduct(copy.args());

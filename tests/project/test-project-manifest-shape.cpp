@@ -10,7 +10,7 @@
 // which the loader refused, and it named the wrong defect for a deployment
 // that is not an object at all.
 //
-// The shape now lives in schema/umbraflow-project-v2.schema.json and reaches
+// The shape now lives in schema/umbraflow-project-v3.schema.json and reaches
 // both through the framework schema catalog. Every case below hands one
 // document to both commands and requires not only the same verdict but the
 // same sentence: the refusal each produces is compared for equality from the
@@ -45,7 +45,7 @@ namespace uf::project
         // the two readers' own prefixes, which differ because one is naming a
         // source tree and the other a project directory.
         constexpr auto k_schemaLabel = std::string_view{
-            "schema/umbraflow-project-v2.schema.json"
+            "schema/umbraflow-project-v3.schema.json"
         };
 
         class TemporaryDirectory final
@@ -123,36 +123,20 @@ namespace uf::project
                 : std::string{message.substr(at)};
         }
 
-        // The module a case names is the TOOL closure's, and the reducer beside
-        // it is the one its authoring form ships: a generated deployment's
-        // reducer is the second closure its declaration renders, a hand-written
-        // one's is the fixture reducer.
+        // The module a case names is the deployment's one closure. There is no
+        // second slot beside it: a deployment ships one program, and the two
+        // authoring tiers differ only in who wrote the file it names.
         inline constexpr auto k_handWrittenTool = std::string_view{
             "plugin/dream.luau"
-        };
-        inline constexpr auto k_handWrittenReducer = std::string_view{
-            "plugin/dream-reducer.luau"
         };
         inline constexpr auto k_generatedTool = std::string_view{
             "generated/adapters/acme.tool/do-work/tool.luau"
         };
-        inline constexpr auto k_generatedReducer = std::string_view{
-            "generated/adapters/acme.tool/do-work/reducer.luau"
-        };
-        inline constexpr auto k_generatedAdapterPrefix = std::string_view{
-            "generated/adapters/"
-        };
-
-        [[nodiscard]]
-        auto reducerFor(std::string_view toolModule) -> std::string_view
-        {
-            return toolModule.starts_with(k_generatedAdapterPrefix)
-                ? k_generatedReducer
-                : k_handWrittenReducer;
-        }
 
         // One deployment block, with the three members under test spliced in.
-        // Everything else is a manifest whose shape the loader accepts.
+        // Everything else is a manifest whose shape the loader accepts. It
+        // declares no Tool and binds none, which is the whole statement a
+        // project shipping no handler makes.
         [[nodiscard]]
         auto deploymentBlock(
             std::string_view plugin,
@@ -162,12 +146,6 @@ namespace uf::project
         {
             auto block = std::string{R"json({"name":"dream",)json"};
             block += R"json("plugin_id":"chaos.dream",)json";
-            block += R"json("baseline_event_type":"project.baseline_created",)json";
-            block += R"json("reducer_closure":{"entry":"main",)json"
-                R"json("exported_entry_points":["reduce"],)json"
-                R"json("modules":[{"name":"main","path":")json";
-            block += reducerFor(plugin);
-            block += R"json("}]},)json";
             block += R"json("tool_closure":{"entry":"main",)json"
                 R"json("exported_entry_points":[],)json"
                 R"json("modules":[{"name":"main","path":")json";
@@ -177,13 +155,8 @@ namespace uf::project
             block += authoring;
             block += R"json(",)json";
             block += justification;
-            block += R"json("project_state_schema":"schema/state.json",)json";
-            block += R"json("tool_precondition_schema":"schema/precondition.json",)json";
-            block += R"json("tool_catalog":"schema/catalog.json",)json";
-            block += R"json("journal_event_schema_manifest":"schema/journal.json",)json";
-            block += R"json("journal_payload_schemas":["schema/journal-0.json"],)json";
-            block += R"json("effect_payload_schemas":[],)json";
             block += R"json("observed_instance_identity_schemas":[],)json";
+            block += R"json("tools":[],)json";
             block += R"json("tool_bindings":[],)json";
             block += R"json("resources":[]})json";
             return block;
@@ -192,7 +165,7 @@ namespace uf::project
         [[nodiscard]]
         auto manifestOf(std::string_view deployments) -> std::string
         {
-            auto document = std::string{R"json({"schema":"umbraflow-project/v2",)json"};
+            auto document = std::string{R"json({"schema":"umbraflow-project/v3",)json"};
             document += R"json("runtime_artifact":"runtime/artifact",)json";
             document += R"json("primary_deployment":"dream",)json";
             document += R"json("template_cuts":[],)json";
@@ -219,7 +192,7 @@ namespace uf::project
         {
             return R"json("plugin_justification":"umbraflow-declarative-)json"
                 R"json(workflow-tool/v1 has no member that decides what a )json"
-                R"json(Reduce returns.",)json";
+                R"json(handler returns.",)json";
         }
 
         [[nodiscard]]
@@ -277,10 +250,6 @@ namespace uf::project
             auto const build     = workspace.path() / "build";
             writeFile(source / "dummy.txt", "dummy\n");
             writeFile(source / k_handWrittenTool, "return {}\n");
-            writeFile(
-                source / k_handWrittenReducer,
-                "return {plugin_id = \"chaos.dream\", reduce = function() end}\n"
-            );
             writeFile(source / "umbraflow-project.json", manifest);
 
             auto inputs = std::vector<std::filesystem::path>{"dummy.txt"};
@@ -306,7 +275,6 @@ namespace uf::project
             auto const spec = ProjectBuildSpec{
                 .sourceDirectory = source,
                 .buildDirectory  = build,
-                .toolCatalogs    = {},
             };
             // No resolver: every document below declares no template cut, so a
             // reachable resolver would answer nothing and prove nothing.
@@ -481,7 +449,7 @@ namespace uf::project
     }
 
     // What the pattern refuses is ASCII whitespace and nothing else, which is
-    // what schema/umbraflow-project-v2.schema.json says it refuses. A
+    // what schema/umbraflow-project-v3.schema.json says it refuses. A
     // justification of one NO-BREAK SPACE is accepted by both readers -- it is
     // a review finding at plugin acceptance rather than a gate finding, on the
     // same terms as a justification that is present and false.

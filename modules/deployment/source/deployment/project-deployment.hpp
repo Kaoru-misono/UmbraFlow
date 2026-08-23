@@ -1,7 +1,6 @@
 #pragma once
 
 #include <operator/effective-plan.hpp>
-#include <operator/journal-entry.hpp>
 #include <operator/project-observation.hpp>
 #include <operator/project-plugin.hpp>
 #include <operator/ledger.hpp>
@@ -20,116 +19,55 @@
 
 namespace uf::deployment
 {
-    // Exact RFC 8785 and nothing else, behind operator's
-    // CanonicalJsonValidator signature. It is a free function because it holds
-    // no schema authority and can hold none: canonical bytes are canonical bytes
-    // whatever project minted them, which is the whole of what
-    // ProjectSchemaOwner::canonicalize is allowed to prove.
-    [[nodiscard]]
-    auto canonicalJsonValidator() -> operator_runtime::CanonicalJsonValidator;
-
-    // The $id each project schema document must declare. The Operator-owned
-    // reduce-input schema this module carries references the project's state
-    // document by this identity, so a document that declares another one is
-    // refused when the deployment is created rather than skipped when a
-    // document is judged.
+    // One observed-instance identity schema a deployment declares inline: the
+    // name the framework keys the compiled authority on, and the exact
+    // canonical bytes of the JSON Schema document that judges a semantic
+    // identity basis.
     //
-    // Two deployments may declare the same identities, and the two a project
-    // directory needs necessarily do. Each deployment's schemas are compiled
-    // into a closed set of their own, so an identity is only ever resolved
-    // among the documents of the deployment that declared it.
-    inline constexpr auto k_projectStateSchemaId =
-        std::string_view{"https://umbraflow.dev/schema/project/state"};
-    inline constexpr auto k_toolPreconditionSchemaId =
-        std::string_view{"https://umbraflow.dev/schema/project/tool-precondition"};
+    // Views, not owned strings: create() compiles the bytes and retains
+    // nothing, so they need only outlive the call.
+    struct ProjectIdentitySchemaSource final
+    {
+        std::string_view name{};
+        std::string_view schema{};
+    };
 
-    // Everything one deployment holds for one ProjectRegistration, as exact
-    // bytes. Nothing here is a name, a path or a label: each member is the
-    // document whose sha256 the registration pinned, or a document some other
-    // member names by sha256.
+    // Everything one deployment declares for one ProjectRegistration, as exact
+    // canonical bytes. Nothing here is a path: the declaration is one document
+    // and its declarative members are inline, so what reaches this seam is the
+    // bytes themselves.
     //
-    // Views, not owned strings: create() parses every one of them and retains
+    // Views, not owned strings: create() reads every one of them and retains
     // nothing, so the bytes need only outlive the call.
     struct ProjectDeploymentSources final
     {
-        // The registration's plugin id. Each of the documents below declares
-        // the plugin it belongs to, and a document declaring another one is
-        // refused: a catalog that answered for whichever registration
-        // presented it would be a catalog no registration owns.
+        // The registration's plugin id. Every Tool this deployment declares is
+        // named inside it, and a Tool naming another registrant's namespace is
+        // refused here: a declaration that answered for whichever registration
+        // presented it would be a declaration no registration owns.
         std::string_view pluginId{};
 
-        // JSON Schema documents, each declaring the matching identity above.
-        // Both are the ProjectDocumentSchemaBytes the registration pins
-        // directly.
-        std::string_view projectState{};
-        std::string_view toolPrecondition{};
+        // The exact canonical JCS of the deployment's `tools` array. It is the
+        // whole Tool declaration -- there is no catalog document and no catalog
+        // file -- and its sha256 is the registration's tool_catalog_hash.
+        std::string_view tools{};
 
-        // Documents this module reads rather than evaluates. Each is pinned by
-        // a hash of the registration's own, and each names the schemas it
-        // governs by sha256 -- so the chain from registration to schema bytes
-        // has no link that is only a convention.
-        std::string_view toolCatalog{};
-        std::string_view journalEventManifest{};
-
-        // One complete JSON Schema per namespaced event type the journal
-        // manifest lists, in any order: each is matched to its manifest entry
-        // by its own sha256, which is the payload_schema_hash the Operator
-        // records beside every entry the schema accepted.
-        std::span<std::string_view const> journalPayloadSchemas{};
-
-        // One complete JSON Schema per OP:`EffectEnvelope` payload the project
-        // can propose, matched to an effect by the payload_schema_hash the
-        // effect itself carries, and an effect naming a hash no schema in this
-        // set has is refused.
-        //
-        // No member of ProjectGenerationClaims pins one directly. What puts
-        // their bytes inside a registration is the Tool Catalog's
-        // effect_payload_sha256s, which create() holds to this set both ways --
-        // so editing a pinned effect payload schema moves tool_catalog_hash and
-        // therefore project_registration_hash, rather than moving no hash at
-        // all and surfacing as a Plan refused much later.
-        std::span<std::string_view const> effectPayloadSchemas{};
-
-        // One complete JSON Schema per observed-instance identity basis this
-        // deployment can judge. Each document declares its own absolute $id,
-        // which the compiled authority reads from the bytes rather than
-        // restating. The registration's observed_instance_identity_schema_hashes
-        // pins each of them by sha256, so editing one moves
-        // project_registration_hash rather than surfacing as an observation
-        // refused much later -- a schema no hash names is bytes inside no
-        // digest, and a validator for bytes the registration never pinned
-        // cannot be added.
-        std::span<std::string_view const> observedInstanceIdentitySchemas{};
+        std::span<ProjectIdentitySchemaSource const> observedInstanceIdentitySchemas{};
     };
-
-    // One document whose format is the framework's rather than the project's --
-    // the tool catalog or the journal event schema manifest -- judged against
-    // the framework schema that governs it. Which one it is comes from the
-    // document's own `schema` member, so a caller states no choice and cannot
-    // state the wrong one.
-    //
-    // It is published for one reason. docs/archive/plans/2026-08-11-project-as-data.md
-    // 2.4 specifies these by worked example, and an example that nothing
-    // holds to the bytes that decide drifts from them: the last time this
-    // format was stated only as C++ string constants, the first consumer to
-    // write the six documents guessed CamelCase for two wire words and was
-    // wrong. tests/deployment extracts each example from that document and
-    // requires this to accept it.
-    [[nodiscard]]
-    auto validateFrameworkFormat(std::string_view exactBytes) -> Status;
 
     // The whole of the Tool Runtime protocol this release implements, rendered
     // canonically: the call-state vocabulary and the conclusions that write it,
     // the exact identity preimages, the durable record's stored DDL, the
     // canonical-form contract every one of those bytes is judged under, and the
-    // framework schema that decides what a Tool catalog document is.
+    // published framework schema that decides what a Tool declaration is.
     //
     // It lives in this module and not in operator because of the last member.
-    // The `operator/tool-catalog` schema is a framework format, but its bytes
-    // are compiled here, and operator does not depend on this module and must
-    // not -- an Operator that reached into a deployment for its own validators
-    // would be the deployment. So the assembly happens at the lowest layer that
-    // can see both halves, and each half is rendered by the module that owns it.
+    // The project directory schema is a framework format, but its bytes are
+    // compiled here out of the framework schema catalog, and operator does not
+    // depend on this module and must not -- an Operator that reached into a
+    // deployment for its own validators would be the deployment. So the
+    // assembly happens at the lowest layer that can see both halves, and each
+    // half is rendered by the module that owns it.
     //
     // tool_runtime_protocol_identity is the SHA-256 of these bytes. The
     // recording incarnation writes it into the tool_runs row and a resuming one
@@ -161,59 +99,47 @@ namespace uf::deployment
         auto operator=(ProjectDeployment&&) noexcept -> ProjectDeployment& = default;
         ~ProjectDeployment() = default;
 
-        // Compiles every schema and reads the journal manifest. It refuses a
-        // schema this evaluator cannot apply, a manifest naming a schema this
-        // set does not carry, and a catalog whose tool names an argument
-        // definition the tool-precondition schema does not declare -- at
-        // startup, where a deployment builds its authorities, rather than
-        // years later when a document reaches the hole.
+        // Reads the Tool declarations and compiles every schema they and the
+        // identity set state inline. It refuses a schema this evaluator cannot
+        // apply and a Tool named outside the registrant's namespace -- at
+        // startup, where a deployment builds its authorities, rather than years
+        // later when a document reaches the hole.
+        //
+        // It judges the declaration's SHAPE against the one published statement
+        // of it, `schema/umbraflow-project-v3.schema.json`, compiled out of the
+        // framework schema catalog. There is no second, narrower reading of a
+        // Tool entry anywhere in this module.
         [[nodiscard]]
         static auto create(ProjectDeploymentSources const& sources)
             -> Result<ProjectDeployment>;
 
-        // What this deployment's Tool Catalog carries under one name, or
-        // nothing at all.
+        // What this deployment declares under one Tool name, or nothing at all.
         //
-        // toolCatalogReader() below hands the whole catalog to the Operator's
-        // own owner, which is where a session reads it from. This answers for
-        // one name without building an owner at all, which is what lets a
-        // document that names tools without calling them -- a conformance
-        // vocabulary -- and this deployment's catalog be held to each other
-        // where both were written.
+        // toolCatalogReader() below hands the whole set to the Operator's own
+        // owner, which is where a session reads it from. This answers for one
+        // name without building an owner at all, which is what lets a document
+        // that names tools without calling them -- a conformance vocabulary --
+        // and this deployment's declarations be held to each other where both
+        // were written.
         [[nodiscard]]
         auto carriedTool(std::string_view name) const
             -> std::optional<operator_runtime::ToolDescriptor>;
 
-        [[nodiscard]]
-        auto documentValidator() const
-            -> operator_runtime::ProjectDocumentValidator;
-
-        [[nodiscard]]
-        auto journalPayloadValidator() const
-            -> operator_runtime::JournalPayloadSchemaValidator;
-
-        // The catalog is read once and the arguments of each call are judged
-        // per call, so these are two callbacks rather than one. See
+        // The declarations are read once and the arguments of each call are
+        // judged per call, so these are two callbacks rather than one. See
         // ToolCatalogReader in operator/tool-invocation.hpp for why the split
         // is what keeps the offer side and the accept side answering from one
         // stored declaration.
         [[nodiscard]]
         auto toolCatalogReader() const -> operator_runtime::ToolCatalogReader;
 
+        // A Tool whose argument_schema is the string `unchecked` gets no
+        // argument enforcement, which is the Project declining a guard rather
+        // than the framework skipping one. The framework still records the
+        // exact bytes it passed, their digest and their coordinates.
         [[nodiscard]]
         auto toolArgumentValidator() const
             -> operator_runtime::ToolArgumentValidator;
-
-        // The answer side of the same descriptor row, judged against the
-        // definition its result_schema names. Symmetric with the arguments
-        // above and separate from them for the reason those two callbacks are
-        // separate from the catalog reader: what one call answers cannot be
-        // read once at startup, and only the deployment that carries both the
-        // pinned precondition schema bytes and the catalog that names a
-        // definition inside them can compile one.
-        [[nodiscard]]
-        auto toolResultValidator() const
-            -> operator_runtime::ToolResultValidator;
 
         // The identity schemas this deployment compiled, as the bindings the
         // ObservedInstanceIdentitySchemas authority is built from. Each

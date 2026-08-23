@@ -110,7 +110,7 @@ namespace uf::task
     [[nodiscard]]
     auto frameworkScriptModules() -> std::vector<script::FrameworkModule>;
 
-    // The pure SDK closure admitted to ProjectPlugin/reducer VMs. Public names
+    // The pure SDK closure admitted to pure-program VMs. Public names
     // use their reserved resolver spelling; internal release-owned data modules
     // use reserved names that only another Framework module may resolve. Source
     // views still borrow the generated static literals.
@@ -126,7 +126,7 @@ namespace uf::task
     //
     // Deliberately NOT a superset that any other environment may take: this list
     // is the only place the four are admitted, and pureFrameworkScriptModules()
-    // and frameworkScriptModules() both exclude them, so a reducer's require
+    // and frameworkScriptModules() both exclude them, so a pure program's require
     // fails in the resolver naming the module and no trusted Engine VM ever runs
     // their source.
     [[nodiscard]]

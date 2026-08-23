@@ -6,16 +6,14 @@ version = 0.1.0
 [build]
 unity_build = false
 
-# The trusted deployment layer: the code that turns a project's exact schema,
-# catalog and manifest bytes into the callables
-# modules/operator/source/operator/project-plugin.hpp:90 calls trusted
-# deployment code. `deployment` is the framework's own word for it.
+# The trusted deployment layer: the code that turns a project's exact
+# declaration bytes into the callables the Operator calls trusted deployment
+# code. `deployment` is the framework's own word for it.
 #
-# json, because every validator here is json::requireExactCanonical or a
-# json::Schema and nothing else decides. operator, because the callables this
-# module hands out are operator's own signatures -- CanonicalJsonValidator,
-# ProjectDocumentValidator, JournalPayloadSchemaValidator and
-# ToolCatalogValidator -- and their result type (ToolDescriptor) is operator's.
+# json, because every validator here is a json::Schema and nothing else decides.
+# operator, because the callables this module hands out are operator's own
+# signatures -- ToolCatalogReader and ToolArgumentValidator -- and their result
+# type (ToolDescriptor) is operator's.
 # domain, because a payload schema identity is a ContentHash and a refusal is an
 # AutomationErrorKind, both of which this module names directly. core, for
 # Result and the integer aliases.

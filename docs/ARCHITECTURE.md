@@ -148,28 +148,30 @@ part of this file that cannot be recovered from anywhere else.
 - no Runtime v1, UFR, Page/Element/Hit or Context-truth reader;
 - no C++ partial TOML semantic parser;
 - no caller-supplied model identity, measurement, effect, risk, Binding,
-  coordinate, Receipt, tool mutability, reducer input or reconciliation
-  disposition: each arrives from an authority bound to the exact bytes the
-  ProjectRegistration pinned;
+  coordinate, Receipt, tool mutability or reconciliation disposition: each
+  arrives from an authority bound to the exact bytes the ProjectRegistration
+  pinned;
 - no path that is checked and then opened by name — resource reads and
   deployment staging both resolve once, through held handles that refuse a
   reparse point by attribute;
 - no direct run/check/replay production action path;
 - no compatibility alias, fallback, dual spelling or dual write;
 - no consumer-specific branch in Host, Runtime or Operator;
-- no game entity, tool name, state field, Journal event or content schema in
-  this repository's generic core;
+- no game entity, tool name, state field or content schema in this
+  repository's generic core;
+- no reading of what a Project's state means. The framework records what
+  happened and enforces the limits a registration declared; how a Project's own
+  state evolves is the Project's decision, so there is no Journal, no fold, no
+  revision and no compare-and-swap over meaning the framework cannot read
+  ([the ruling](decisions/2026-08-23-the-framework-stops-interpreting-project-state.md));
 - no ambient policy, filesystem, network, package-search or hidden input
-  reaching project code. A project's boundary is two closures and nothing else:
-  a reducer closure exporting exactly its `plugin_id` and `reduce`, compiled on
-  `script::PureDataProgram`, and a tool closure exporting the entries its
-  declared Tools bind to, compiled on `script::ScopedToolProgram`. Both slots are
-  mandatory and a project that binds no Tool ships an explicitly empty tool
-  closure, because an absent slot would be a second reading of the document.
-  Closed module resolution and registration-pinned read-only resources grant no
-  ambient authority; the tool closure's one native seam is a synchronous Tool
-  call, and the reducer's resolver carries no scoped module at all, so its
-  isolation is a property of the program type rather than a check;
+  reaching project code. A project's boundary is one closure and nothing else:
+  a tool closure exporting the entries its declared Tools bind to, compiled on
+  `script::ScopedToolProgram`. The slot is mandatory and a project that binds no
+  Tool ships an explicitly empty closure, because an absent slot would be a
+  second reading of the document. Closed module resolution and
+  registration-pinned read-only resources grant no ambient authority, and the
+  closure's one native seam is a synchronous Tool call;
 - no gate registered here that requires another repository to be present;
 - no developer-authored digest: a hash exists only where an automatically
   produced content identity sits at a real immutable-byte boundary and something

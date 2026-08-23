@@ -72,12 +72,11 @@ another fixture. A test that assembles the subject's input by hand is testing
 the fixture's idea of the caller.
 
 That episode is from the five-function ProjectPlugin generation, and the
-registrar and the test it named went with it: a project now ships a reducer
-closure and a tool closure, admitted through
-`ProjectGenerationRegistrar::registerGeneration`. The lesson is unchanged and the
-same shape is available under the new boundary — a handler exercised only through
-a hand-built argument value rather than through an admitted Tool call is a
-subject exercised below its own boundary.
+registrar and the test it named went with it: a project now ships one closure,
+admitted through `ProjectGenerationRegistrar::registerGeneration`. The lesson is
+unchanged and the same shape is available under the new boundary — a handler
+exercised only through a hand-built argument value rather than through an
+admitted Tool call is a subject exercised below its own boundary.
 
 `tests/CMakeLists.txt` owns the concrete doctest/CTest registration rules. When
 changing them, inspect the discovered test list in addition to running the
@@ -85,7 +84,7 @@ aggregate; a passing aggregate with a missing child is the defining false green.
 
 A focused test build must also build the fixtures that test opens at runtime.
 `test-cli` used to compile successfully on its own while the staged UmbraFlow
-project still lacked the generated Tool Catalog; every observation case then
+project still lacked its generated closure; every observation case then
 failed in setup with "does not hold" even though the full default build passed.
 The test target now depends on `generate-example-projects`. Regress it with
 `cmake --build --preset x64-debug --target test-cli` from a build tree whose
@@ -124,7 +123,7 @@ Half of this rule is executable. Every deployment block of
 non-empty `plugin_justification` naming the member or semantic of
 `umbraflow-declarative-workflow-tool/v1` that cannot express it, and every block
 whose `plugin_authoring` is `generated` must carry none.
-`schema/umbraflow-project-v2.schema.json` states both directions once, and both
+`schema/umbraflow-project-v3.schema.json` states both directions once, and both
 readers of the document compile those published bytes: `project build` and
 `project check` through `readProjectManifest` in
 `modules/project/source/project/project-kit.cpp`, and the runtime load through

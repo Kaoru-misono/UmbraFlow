@@ -82,7 +82,13 @@ namespace uf::operator_runtime
         // call is declared to do.
         constexpr auto k_mutatingHandlerTool =
             std::string_view{"dispatch.project.mutate"};
-        constexpr auto k_reducerTool = std::string_view{"dispatch.project.reducer"};
+
+        // The mutating COMPOSED call whose handler raises. It is a second
+        // catalog name over its own entry rather than a flag on the handler
+        // above, because a Project's answer is opaque now: the only way a
+        // composed call fails cleanly is that its own code said so.
+        constexpr auto k_refusingHandlerTool =
+            std::string_view{"dispatch.project.refuse"};
         constexpr auto k_auditTool   = std::string_view{"framework.audit.record"};
 
         // The mutating LEAF: a Framework Tool answered by provider code that
@@ -118,23 +124,6 @@ namespace uf::operator_runtime
         constexpr auto k_toolCatalogBytes = std::string_view{
             R"({"schema":"umbraflow-tool-catalog/v1","plugin":"dispatch.project"})"
         };
-        constexpr auto k_stateSchemaBytes       = std::string_view{"state-schema"};
-        constexpr auto k_preconditionSchemaBytes = std::string_view{"precondition"};
-
-        // The reducer closure: the whole of the pure program type's contract,
-        // which is `plugin_id` and one entry. The dispatcher never reaches it;
-        // it is here because a ProjectInstance is provisioned from a fold, and
-        // that fold now lives in its own closure and its own program type.
-        constexpr auto k_reducerSource = std::string_view{R"LUAU(
-return {
-    plugin_id = "dispatch.project",
-
-    reduce = function(_input)
-        return { revision = 0 }
-    end,
-}
-)LUAU"};
-
         // The tool closure: five exported entries, six bound Tools.
         //
         // The entries are named for what they answer rather than for a
@@ -186,8 +175,8 @@ return {
         return { delivered = input.step }
     end,
 
-    fold = function(_input)
-        return { revision = 0 }
+    refuse = function(_input)
+        error("the fixture handler refused")
     end,
 }
 )LUAU"};
@@ -201,12 +190,6 @@ return {
                 .source = std::string{source},
             });
             return blobs;
-        }
-
-        [[nodiscard]]
-        auto reducerModules() -> std::vector<ProjectModuleBlob>
-        {
-            return modulesOf(k_reducerSource);
         }
 
         [[nodiscard]]
@@ -242,8 +225,8 @@ return {
                     .entryPoint = "handle",
                 },
                 ProjectToolBinding{
-                    .toolName   = std::string{k_reducerTool},
-                    .entryPoint = "fold",
+                    .toolName   = std::string{k_refusingHandlerTool},
+                    .entryPoint = "refuse",
                 },
             };
         }
@@ -255,14 +238,7 @@ return {
         [[nodiscard]]
         auto exportedToolEntries() -> std::vector<std::string>
         {
-            return {"deliver", "echo", "fold", "handle", "leaf"};
-        }
-
-        // The reducer closure's whole declared export set.
-        [[nodiscard]]
-        auto exportedReducerEntries() -> std::vector<std::string>
-        {
-            return {"reduce"};
+            return {"deliver", "echo", "handle", "leaf", "refuse"};
         }
 
         [[nodiscard]]
@@ -324,7 +300,7 @@ return {
                     .descriptor = declaredDescriptor(handlerChildDeclaration()),
                 };
             }
-            if (name == k_mutatingHandlerTool)
+            if (name == k_mutatingHandlerTool || name == k_refusingHandlerTool)
             {
                 auto descriptor = declaredDescriptor(handlerChildDeclaration());
                 descriptor.effectBounds = {
@@ -379,7 +355,7 @@ return {
                 std::string{k_handlerTool},
                 std::string{k_leafTool},
                 std::string{k_mutatingHandlerTool},
-                std::string{k_reducerTool},
+                std::string{k_refusingHandlerTool},
             };
         }
 
@@ -474,10 +450,6 @@ return {
                 }));
             }
             return json::canonicalBytes(json::Value::ofObject({
-                {"baseline_event_type",
-                 json::Value::ofString(claims.baselineEventType)},
-                {"journal_event_schema_manifest_hash",
-                 json::Value::ofString(claims.journalEventSchemaManifestHash.hex())},
                 {"observed_instance_identity_schema_hashes",
                  json::Value::ofArray({})},
                 {"plugin_environment_hash",
@@ -488,14 +460,7 @@ return {
                      static_cast<double>(claims.projectRegistrationFormat)
                  )},
                 {"project_resources", json::Value::ofArray({})},
-                {"project_state_schema_hash",
-                 json::Value::ofString(claims.projectStateSchemaHash.hex())},
                 {"project_tool_bindings", json::Value::ofArray(std::move(bindings))},
-                {"project_tool_precondition_schema_hash",
-                 json::Value::ofString(
-                     claims.projectToolPreconditionSchemaHash.hex()
-                 )},
-                {"reducer_closure", closureValue(claims.reducerClosure)},
                 {"tool_catalog_hash",
                  json::Value::ofString(claims.toolCatalogHash.hex())},
                 {"tool_closure", closureValue(claims.toolClosure)},
@@ -511,10 +476,10 @@ return {
             return *hash;
         }
 
-        // This fixture's two-closure registration generation, stated in full
-        // and read back through the same reader shape a deployment uses. The
-        // declared entry sets are the one thing stated rather than derived:
-        // every digest is taken over the bytes it describes.
+        // This fixture's registration generation, stated in full and read back
+        // through the same reader shape a deployment uses. The declared entry
+        // set is the one thing stated rather than derived: every digest is
+        // taken over the bytes it describes.
         [[nodiscard]]
         auto verifiedGeneration() -> VerifiedProjectGeneration
         {
@@ -523,21 +488,12 @@ return {
             auto claims = ProjectGenerationClaims{
                 .projectRegistrationFormat = k_projectGenerationFormat,
                 .pluginId                  = std::string{k_pluginId},
-                .reducerClosure            = ProjectClosureClaims{
-                    .moduleManifestHash  = manifestHashOf(reducerModules()),
-                    .exportedEntryPoints = exportedReducerEntries(),
-                },
-                .toolClosure = ProjectClosureClaims{
+                .toolClosure               = ProjectClosureClaims{
                     .moduleManifestHash  = manifestHashOf(toolModules()),
                     .exportedEntryPoints = exportedToolEntries(),
                 },
-                .pluginEnvironmentHash  = *environmentHash,
-                .toolCatalogHash        = hashOf(k_toolCatalogBytes),
-                .projectStateSchemaHash = hashOf(k_stateSchemaBytes),
-                .projectToolPreconditionSchemaHash    =
-                    hashOf(k_preconditionSchemaBytes),
-                .journalEventSchemaManifestHash       = hashOf("journal"),
-                .baselineEventType                    = "dispatch.baseline",
+                .pluginEnvironmentHash                = *environmentHash,
+                .toolCatalogHash                      = hashOf(k_toolCatalogBytes),
                 .projectResources                     = {},
                 .observedInstanceIdentitySchemaHashes = {},
                 .projectToolBindings                  = boundEntries(),
@@ -564,37 +520,15 @@ return {
             return *std::move(generation);
         }
 
-        // What one dispatch fixture counted. The result validator and the
-        // Framework provider are the two witnesses that a branch actually ran:
-        // the validator runs once per handler INVOCATION, and the provider runs
-        // once per Framework child that actually EXECUTED rather than replayed.
+        // What one dispatch fixture counted. The Framework provider is its one
+        // witness that a branch actually ran: it runs once per Framework child
+        // that actually EXECUTED rather than replayed. Nothing counts a Project
+        // entry's invocations, because the framework never touches a Project's
+        // answer.
         struct RunLog final
         {
-            uint32 handlerAnswers{0};
             uint32 frameworkExecutions{0};
-            bool   refuseResults{false};
         };
-
-        [[nodiscard]]
-        auto resultValidator(std::shared_ptr<RunLog> log) -> ToolResultValidator
-        {
-            return [log = std::move(log)](
-                       std::string_view toolName,
-                       std::string_view
-                   ) -> Status
-            {
-                ++log->handlerAnswers;
-                if (log->refuseResults)
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "the answer of " + std::string{toolName}
-                            + " is not the shape its result schema declares"
-                    );
-                }
-                return ok();
-            };
-        }
 
         [[nodiscard]]
         auto frameworkProvider(std::shared_ptr<RunLog> log) -> ToolProvider
@@ -614,27 +548,6 @@ return {
                 );
                 return ToolCallCompletion::confirmed(std::move(recorded));
             };
-        }
-
-        [[nodiscard]]
-        auto projectSchemaOwner(
-            VerifiedProjectGeneration const& registration
-        ) -> ProjectSchemaOwner
-        {
-            auto owner = ProjectSchemaOwner::create(
-                registration,
-                ProjectDocumentSchemaBytes{
-                    .projectState     = k_stateSchemaBytes,
-                    .toolPrecondition = k_preconditionSchemaBytes,
-                },
-                deployment::canonicalJsonValidator(),
-                [](ProjectDocumentDirection, std::string_view) -> Status
-                {
-                    return ok();
-                }
-            );
-            REQUIRE(owner.has_value());
-            return *std::move(owner);
         }
 
         [[nodiscard]]
@@ -835,25 +748,19 @@ return {
             REQUIRE_MESSAGE(installed.has_value(), failureText(installed));
             auto const artifactRootHash = installed->rootHash();
 
-            // Provisioning needs the generation's fold and nothing else, so
-            // this registration's Tool Runtime seam refuses every call: no
-            // lease, controller or observation authority exists at setup, so
-            // no scoped call could be admitted through it anyway.
+            // A registration loaded at setup answers no call, so its Tool
+            // Runtime seam refuses every one: no lease, controller or
+            // observation authority exists yet for a scoped call to be
+            // admitted under.
             auto registrar   = ProjectGenerationRegistrar{};
             auto provisioned = registrar.registerGeneration(
                 registration,
                 toolCatalogOwner(registration),
-                projectSchemaOwner(registration),
-                ProjectGenerationRegistrar::ClosureModules{
-                    .entryModule = "main",
-                    .modules     = reducerModules(),
-                },
                 ProjectGenerationRegistrar::ClosureModules{
                     .entryModule = "main",
                     .modules     = toolModules(),
                 },
                 {},
-                [](std::string_view, std::string_view) -> Status { return ok(); },
                 refusingToolRuntime()
             );
             REQUIRE_MESSAGE(provisioned.has_value(), failureText(provisioned));
@@ -874,13 +781,7 @@ return {
             {
                 auto const instance = store.provisionProjectInstance(
                     registration,
-                    *provisioned,
-                    ProjectInstanceBaseline{
-                        .projectInstanceKey  = std::string{instanceKey},
-                        .eventId             = "",
-                        .sessionManifestHash = manifest.hash(),
-                        .entry               = std::nullopt,
-                    }
+                    std::string{instanceKey}
                 );
                 REQUIRE_MESSAGE(instance.has_value(), failureText(instance));
             }
@@ -936,24 +837,17 @@ return {
         auto loadProgram(
             VerifiedProjectGeneration const& registration,
             ProjectGenerationRegistrar& registrar,
-            std::shared_ptr<RunLog> const& log,
             ProjectToolDispatcher const& dispatcher
         ) -> ProjectGenerationHandle
         {
             auto loaded = registrar.registerGeneration(
                 registration,
                 toolCatalogOwner(registration),
-                projectSchemaOwner(registration),
-                ProjectGenerationRegistrar::ClosureModules{
-                    .entryModule = "main",
-                    .modules     = reducerModules(),
-                },
                 ProjectGenerationRegistrar::ClosureModules{
                     .entryModule = "main",
                     .modules     = toolModules(),
                 },
                 {},
-                resultValidator(log),
                 dispatcher.toolRuntimeSeam()
             );
             REQUIRE_MESSAGE(loaded.has_value(), failureText(loaded));
@@ -1105,7 +999,7 @@ return {
         REQUIRE_MESSAGE(dispatcher.has_value(), failureText(dispatcher));
         auto registrar = ProjectGenerationRegistrar{};
         auto const program =
-            loadProgram(registration, registrar, log, *dispatcher);
+            loadProgram(registration, registrar, *dispatcher);
 
         auto const root = rootFor("dispatch-happy-path");
         auto const call = rootCall(
@@ -1130,7 +1024,6 @@ return {
 
         // Two nested Project handlers ran beside the parent, and the one
         // Framework child reached the provider once.
-        CHECK(log->handlerAnswers == 3U);
         CHECK(log->frameworkExecutions == 1U);
 
         // The children are at ordinals 1..3 under the parent's own position,
@@ -1159,7 +1052,7 @@ return {
         );
     }
 
-    TEST_CASE("a terminal parent returns its recorded result and never runs its handler")
+    TEST_CASE("a terminal parent returns its recorded result rather than dispatching again")
     {
         auto temporary          = TemporaryDirectory{};
         auto const registration = verifiedGeneration();
@@ -1175,7 +1068,7 @@ return {
         REQUIRE(dispatcher.has_value());
         auto registrar = ProjectGenerationRegistrar{};
         auto const program =
-            loadProgram(registration, registrar, log, *dispatcher);
+            loadProgram(registration, registrar, *dispatcher);
 
         auto const root = rootFor("dispatch-terminal-parent");
         auto const call = rootCall(
@@ -1196,12 +1089,11 @@ return {
         );
         REQUIRE_MESSAGE(first.has_value(), failureText(first));
         CHECK(first->state == ToolCallState::Confirmed);
-        CHECK(log->handlerAnswers == 1U);
         CHECK(log->frameworkExecutions == 1U);
 
-        // The second entry meets a terminal row. The recorded result comes
-        // back, and neither witness moves: the handler was never invoked, so
-        // its whole sub-tree is coordinate space nothing observed.
+        // The second entry meets a terminal row and answers from it: the
+        // recorded result comes back byte for byte, and the Framework child
+        // under it is not executed a second time.
         auto const again = dispatcher->dispatch(
             program,
             ToolAdmissionRequest{
@@ -1215,7 +1107,6 @@ return {
         REQUIRE_MESSAGE(again.has_value(), failureText(again));
         CHECK(again->state == ToolCallState::Confirmed);
         CHECK(payloadOf(*again) == payloadOf(*first));
-        CHECK(log->handlerAnswers == 1U);
         CHECK(log->frameworkExecutions == 1U);
     }
 
@@ -1235,7 +1126,7 @@ return {
         REQUIRE(dispatcher.has_value());
         auto registrar = ProjectGenerationRegistrar{};
         auto const program =
-            loadProgram(registration, registrar, log, *dispatcher);
+            loadProgram(registration, registrar, *dispatcher);
 
         auto const root = rootFor("dispatch-admitted-only");
         auto const call = rootCall(
@@ -1273,7 +1164,6 @@ return {
         REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
         CHECK(answered->state == ToolCallState::Confirmed);
         CHECK(payloadOf(*answered) == R"({"states":["confirmed"]})");
-        CHECK(log->handlerAnswers == 2U);
     }
 
     TEST_CASE("a handler killed mid-dispatch re-enters, numbers from one and executes only past history")
@@ -1301,7 +1191,7 @@ return {
             REQUIRE(dispatcher.has_value());
             auto registrar = ProjectGenerationRegistrar{};
             auto const program =
-                loadProgram(registration, registrar, log, *dispatcher);
+                loadProgram(registration, registrar, *dispatcher);
 
             auto const call = rootCall(
                 program,
@@ -1366,7 +1256,6 @@ return {
             );
             REQUIRE_MESSAGE(audited.has_value(), failureText(audited));
 
-            CHECK(log->handlerAnswers == 1U);
             CHECK(log->frameworkExecutions == 1U);
 
             auto const midFlight = prepared.store.replayToolCall(root, call);
@@ -1396,7 +1285,7 @@ return {
         REQUIRE(dispatcher.has_value());
         auto registrar = ProjectGenerationRegistrar{};
         auto const program =
-            loadProgram(registration, registrar, log, *dispatcher);
+            loadProgram(registration, registrar, *dispatcher);
 
         auto const call = rootCall(
             program,
@@ -1431,7 +1320,6 @@ return {
         // replayed: this incarnation's provider never ran. Only child 3 was new,
         // and only its handler ran beside the parent's own.
         CHECK(log->frameworkExecutions == 0U);
-        CHECK(log->handlerAnswers == 2U);
 
         // Exactly three children exist under the parent. A resumed counter
         // would have numbered this entry's first call 3 and left five.
@@ -1483,7 +1371,7 @@ return {
             REQUIRE(dispatcher.has_value());
             auto registrar = ProjectGenerationRegistrar{};
             auto const program =
-                loadProgram(registration, registrar, log, *dispatcher);
+                loadProgram(registration, registrar, *dispatcher);
 
             auto const call =
                 rootCall(program, root, R"({"children":["dispatch.project.leaf"]})");
@@ -1542,7 +1430,7 @@ return {
         REQUIRE(dispatcher.has_value());
         auto registrar = ProjectGenerationRegistrar{};
         auto const program =
-            loadProgram(registration, registrar, log, *dispatcher);
+            loadProgram(registration, registrar, *dispatcher);
 
         auto const call =
             rootCall(program, root, R"({"children":["dispatch.project.leaf"]})");
@@ -1588,7 +1476,7 @@ return {
             REQUIRE(dispatcher.has_value());
             auto registrar = ProjectGenerationRegistrar{};
             auto const program =
-                loadProgram(registration, registrar, log, *dispatcher);
+                loadProgram(registration, registrar, *dispatcher);
 
             auto const call = rootCall(
                 program,
@@ -1645,7 +1533,7 @@ return {
         REQUIRE(dispatcher.has_value());
         auto registrar = ProjectGenerationRegistrar{};
         auto const program =
-            loadProgram(registration, registrar, log, *dispatcher);
+            loadProgram(registration, registrar, *dispatcher);
 
         auto const call =
             rootCall(program, root, R"({"children":["dispatch.project.leaf"]})");
@@ -1667,7 +1555,6 @@ return {
         CHECK(answered->state == ToolCallState::TerminalFailure);
         CHECK(payloadOf(*answered).contains("canonical_args changed"));
         CHECK(payloadOf(*answered).contains("ordinal 1 under parent coordinate"));
-        CHECK(log->handlerAnswers == 0U);
     }
 
     TEST_CASE("a fenced-out incarnation can neither re-enter its dispatch nor complete it")
@@ -1686,7 +1573,7 @@ return {
         REQUIRE(dispatcher.has_value());
         auto registrar = ProjectGenerationRegistrar{};
         auto const program =
-            loadProgram(registration, registrar, log, *dispatcher);
+            loadProgram(registration, registrar, *dispatcher);
 
         auto const root = rootFor("dispatch-zombie");
         auto const call =
@@ -1776,7 +1663,7 @@ return {
         REQUIRE(dispatcher.has_value());
         auto registrar = ProjectGenerationRegistrar{};
         auto const program =
-            loadProgram(registration, registrar, log, *dispatcher);
+            loadProgram(registration, registrar, *dispatcher);
 
         auto const root = rootFor("dispatch-reentry-scope");
         auto const call =
@@ -1971,20 +1858,18 @@ return {
         {
             // The mirror of the two leaf subcases above, and the whole of what
             // keying completion on the composition rather than on mutability
-            // buys. This handler fails CLEANLY: its answer is refused by its
-            // own result schema, no child is unaccounted for, and its declared
-            // mutability is Mutating. Classifying that `possible` would set a
-            // target-wide mutation barrier only an Operator reconciliation can
-            // lift, over an effect that was never the frame's -- its whole
-            // effect surface is children, and children carry their own
-            // classification.
-            log->refuseResults = true;
+            // buys. This handler fails CLEANLY: its own code raised, no child
+            // is unaccounted for, and its declared mutability is Mutating.
+            // Classifying that `possible` would set a target-wide mutation
+            // barrier only an Operator reconciliation can lift, over an effect
+            // that was never the frame's -- its whole effect surface is
+            // children, and children carry their own classification.
             auto const failingRoot =
                 rootFor("dispatch-composed-clean-failure");
             auto const failing = projectRootCall(
                 program,
                 failingRoot,
-                k_mutatingHandlerTool,
+                k_refusingHandlerTool,
                 R"({"children":[]})"
             );
             auto const authority = prepared.policyAuthority;
@@ -2005,14 +1890,11 @@ return {
             );
             REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
             CHECK(answered->state == ToolCallState::TerminalFailure);
-            CHECK(payloadOf(*answered).contains(
-                "is not the shape its result schema declares"
-            ));
+            CHECK(payloadOf(*answered).contains("the fixture handler refused"));
 
             // The target is still free. A `possible` row would refuse this
             // admission until reconciliation lifted it, so this is the
             // over-refusal itself rather than a proxy for it.
-            log->refuseResults = false;
             auto const nextRoot = rootFor("dispatch-composed-after-failure");
             auto const nextCall = projectRootCall(
                 program,
@@ -2089,45 +1971,6 @@ return {
         ));
     }
 
-    TEST_CASE("an answer the result schema refuses is a failed call rather than a recorded one")
-    {
-        auto temporary          = TemporaryDirectory{};
-        auto const registration = verifiedGeneration();
-        auto prepared = firstIncarnation(temporary.path(), registration);
-        auto const log     = std::make_shared<RunLog>();
-        log->refuseResults = true;
-
-        auto dispatcher = ProjectToolDispatcher::create(
-            prepared.store,
-            prepared.observations,
-            prepared.policyAuthority,
-            frameworkProvider(log)
-        );
-        REQUIRE(dispatcher.has_value());
-        auto registrar = ProjectGenerationRegistrar{};
-        auto const program =
-            loadProgram(registration, registrar, log, *dispatcher);
-
-        auto const root = rootFor("dispatch-bad-answer");
-        auto const call = rootCall(program, root, R"({"children":[]})");
-        auto const answered = dispatcher->dispatch(
-            program,
-            ToolAdmissionRequest{
-                .controller = prepared.controller,
-                .lease      = prepared.lease,
-                .root       = root,
-                .call       = call,
-            },
-            std::stop_token{}
-        );
-        REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
-        CHECK(answered->state == ToolCallState::TerminalFailure);
-        CHECK(payloadOf(*answered).contains(
-            "is not the shape its result schema declares"
-        ));
-        CHECK(log->handlerAnswers == 1U);
-    }
-
     TEST_CASE("the scoped seam resolves its run from the durable coordinate alone")
     {
         auto temporary          = TemporaryDirectory{};
@@ -2144,7 +1987,7 @@ return {
         REQUIRE(dispatcher.has_value());
         auto registrar = ProjectGenerationRegistrar{};
         auto const program =
-            loadProgram(registration, registrar, log, *dispatcher);
+            loadProgram(registration, registrar, *dispatcher);
 
         SUBCASE("a coordinate no live run is anchored on is refused")
         {
@@ -2242,7 +2085,7 @@ return {
             REQUIRE(dispatcher.has_value());
             auto registrar = ProjectGenerationRegistrar{};
             auto const program =
-                loadProgram(registration, registrar, log, *dispatcher);
+                loadProgram(registration, registrar, *dispatcher);
 
             auto const call = projectRootCall(
                 program,
@@ -2309,7 +2152,6 @@ return {
                 frameworkProvider(log)
             );
             REQUIRE_MESSAGE(audited.has_value(), failureText(audited));
-            CHECK(log->handlerAnswers == 1U);
             CHECK(log->frameworkExecutions == 1U);
 
             auto const midFlight = prepared.store.replayToolCall(root, call);
@@ -2335,7 +2177,7 @@ return {
         REQUIRE(dispatcher.has_value());
         auto registrar = ProjectGenerationRegistrar{};
         auto const program =
-            loadProgram(registration, registrar, log, *dispatcher);
+            loadProgram(registration, registrar, *dispatcher);
 
         auto const call =
             projectRootCall(program, root, k_mutatingHandlerTool, k_children);
@@ -2366,7 +2208,6 @@ return {
         // replayed, so this incarnation's provider never ran. Completion: only
         // child 3 was new, and the parent answered.
         CHECK(log->frameworkExecutions == 0U);
-        CHECK(log->handlerAnswers == 2U);
 
         // And the target is free again, which a call left uncertain would not
         // have allowed: the barrier a dispatching mutation holds is released by
@@ -2419,7 +2260,7 @@ return {
             REQUIRE(dispatcher.has_value());
             auto registrar = ProjectGenerationRegistrar{};
             auto const program =
-                loadProgram(registration, registrar, log, *dispatcher);
+                loadProgram(registration, registrar, *dispatcher);
 
             auto const call = projectRootCall(
                 program,
@@ -2485,7 +2326,7 @@ return {
         REQUIRE(dispatcher.has_value());
         auto registrar = ProjectGenerationRegistrar{};
         auto const program =
-            loadProgram(registration, registrar, log, *dispatcher);
+            loadProgram(registration, registrar, *dispatcher);
 
         auto const call =
             projectRootCall(program, root, k_mutatingHandlerTool, k_children);
@@ -2510,7 +2351,6 @@ return {
         CHECK(answered->state == ToolCallState::TerminalFailure);
         CHECK(payloadOf(*answered).contains("canonical_args changed"));
         CHECK(payloadOf(*answered).contains("ordinal 1 under parent coordinate"));
-        CHECK(log->handlerAnswers == 0U);
 
         // And no barrier was set, which is the half a `possible` got wrong: it
         // froze mutation for the whole target over an effect that was never
@@ -2571,7 +2411,7 @@ return {
             REQUIRE(dispatcher.has_value());
             auto registrar = ProjectGenerationRegistrar{};
             auto const program =
-                loadProgram(registration, registrar, log, *dispatcher);
+                loadProgram(registration, registrar, *dispatcher);
             auto const authority = prepared.policyAuthority;
 
             auto const composed = projectRootCall(
@@ -2685,7 +2525,7 @@ return {
         REQUIRE(dispatcher.has_value());
         auto registrar = ProjectGenerationRegistrar{};
         auto const program =
-            loadProgram(registration, registrar, log, *dispatcher);
+            loadProgram(registration, registrar, *dispatcher);
 
         auto const composed = projectRootCall(
             program,
@@ -3148,7 +2988,7 @@ return {
             REQUIRE_MESSAGE(dispatcher.has_value(), failureText(dispatcher));
             auto registrar = ProjectGenerationRegistrar{};
             auto const program =
-                loadProgram(registration, registrar, log, *dispatcher);
+                loadProgram(registration, registrar, *dispatcher);
             auto const catalog =
                 ToolStartCatalog::create(toolCatalogOwner(registration));
             REQUIRE_MESSAGE(catalog.has_value(), failureText(catalog));
@@ -3405,7 +3245,7 @@ return {
             REQUIRE_MESSAGE(dispatcher.has_value(), failureText(dispatcher));
             auto registrar = ProjectGenerationRegistrar{};
             auto const program =
-                loadProgram(registration, registrar, log, *dispatcher);
+                loadProgram(registration, registrar, *dispatcher);
             auto const catalog =
                 ToolStartCatalog::create(toolCatalogOwner(registration));
             REQUIRE_MESSAGE(catalog.has_value(), failureText(catalog));

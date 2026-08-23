@@ -435,26 +435,17 @@ namespace uf::operator_runtime
     };
 
     // Trusted deployment callbacks, and the reason they are two rather than
-    // one. The catalog is read once, when the owner is built, so the offer side
-    // and the accept side answer from the same stored declaration rather than
-    // from two reads that could disagree. Arguments cannot be read once: they
-    // arrive per call and are judged against the argument schema this
-    // descriptor names. Neither is ever passed to plugin code or published in a
+    // one. The declarations are read once, when the owner is built, so the
+    // offer side and the accept side answer from the same stored statement
+    // rather than from two reads that could disagree. Arguments cannot be read
+    // once: they arrive per call and are judged against the schema that Tool's
+    // own entry stated inline, or not judged at all when it stated
+    // `unchecked`. Neither is ever passed to plugin code or published in a
     // business VM.
     using ToolCatalogReader =
         std::function<Result<std::vector<ToolCatalogEntry>>()>;
     using ToolArgumentValidator = std::function<
         Status(std::string_view toolName, std::string_view exactArgsJcs)
-    >;
-
-    // The answer side of the same pair, and a third callback for the same
-    // reason there are two above: a result arrives per call and is judged
-    // against the definition its own descriptor row names. Only the deployment
-    // that carries the pinned tool precondition schema bytes and the catalog
-    // that names a definition inside them can compile one, which is what makes
-    // it a trusted deployment callback rather than anything a caller supplies.
-    using ToolResultValidator = std::function<
-        Status(std::string_view toolName, std::string_view exactResultJcs)
     >;
 
     class ProjectToolCatalogSchemaOwner final
@@ -472,16 +463,15 @@ namespace uf::operator_runtime
         );
 
     public:
-        // The exact Tool Catalog bytes are required, not merely referenced:
+        // The exact Tool declaration bytes are required, not merely referenced:
         // without them an owner is bound to a registration whose
         // tool_catalog_hash it never has to satisfy, and any validator at all
-        // could answer for that catalog.
+        // could answer for it.
         //
         // `project` is the registration identity and not a registration
         // document. Three facts are all this owner reads -- the root it answers
-        // for, the namespace whose Tools it may declare, and the catalog digest
-        // it must satisfy -- and all three are stated by both generations of
-        // the registration document, so one owner serves both.
+        // for, the namespace whose Tools it may declare, and the declaration
+        // digest it must satisfy -- so nothing here names a document type.
         [[nodiscard]]
         static auto create(
             ProjectIdentity const& project,

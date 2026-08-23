@@ -9,12 +9,12 @@
 // which is the property that decides whether the loader is reachable by a real
 // project or only by its own tests.
 //
-// So these cases start from bytes a project author writes: umbraflow-project.json
-// naming a deployment and its tool_bindings, a Tool Catalog rendered by the
-// offline kit's own generator, and a Luau closure on disk. loadProductionProject
-// derives the registration from those bytes, and the derived registration is
-// what the registrar is handed. Nothing between the author and the compiled
-// program is written by a test.
+// So these cases start from bytes a project author writes: one
+// umbraflow-project.json naming a deployment, declaring its Tools inline and
+// joining them to closure entries through tool_bindings, and a Luau closure on
+// disk. loadProductionProject derives the registration from those bytes, and
+// the derived registration is what the registrar is handed. Nothing between the
+// author and the compiled program is written by a test.
 //
 // All of it stays production-unreachable: ProductLifecycle registers no Project
 // Tool program, and these cases are the only callers.
@@ -22,8 +22,6 @@
 #include "umbraflow/project-schemas.hpp"
 
 #include <deployment/project-directory.hpp>
-
-#include <project/tool-catalog.hpp>
 
 #include <core/types/integer.hpp>
 
@@ -60,17 +58,11 @@ namespace uf::deployment
     {
         namespace umbraflow = operator_runtime::test_support;
 
-        using operator_runtime::ChildEffectDeclaration;
-                using operator_runtime::ProjectToolBinding;
+        using operator_runtime::ProjectToolBinding;
         using operator_runtime::ProjectGenerationRegistrar;
         using operator_runtime::Risk;
-        using operator_runtime::TimeoutAction;
-        using operator_runtime::TimeoutPolicy;
-        using operator_runtime::ToolDescriptor;
-        using operator_runtime::ToolIdempotency;
         using operator_runtime::ToolMutability;
         using operator_runtime::ToolSurface;
-        using operator_runtime::WorkflowLimits;
 
         constexpr auto k_pluginId     = std::string_view{"chaos.project"};
         constexpr auto k_dismissTool  = std::string_view{"chaos.project.dismiss"};
@@ -108,24 +100,12 @@ namespace uf::deployment
             return rendered;
         }
 
-        // The reducer closure this project ships: `plugin_id` and one entry,
-        // and no reach for a scoped module. A generation's reducer is compiled
-        // on the pure type, whose resolver would refuse @umbraflow/tools by
-        // name, so the fold cannot live beside the entries below.
-        constexpr auto k_reducerSource = std::string_view{R"LUAU(
-return {
-    plugin_id = "chaos.project",
-    reduce = function(input)
-        return input
-    end,
-}
-)LUAU"};
-
         // Two entries, one closure. `dismiss` reaches the Tool Runtime through
         // the scoped facade -- which is loadable only because the registrar
         // baked the pinned catalog resource -- and `sweep` answers from the
-        // frozen discovery table without spending a call. Both answer the
-        // shape their catalog entry's result_schema declares.
+        // frozen discovery table without spending a call. Nothing judges what
+        // either of them returns: the framework records an answer's bytes and
+        // never reads their meaning.
         constexpr auto k_pluginSource = std::string_view{R"LUAU(
 local tools = require("@umbraflow/tools")
 
@@ -159,97 +139,69 @@ return {
             REQUIRE(stream.good());
         }
 
-        // The ordinary limits every tool below declares. Nothing in these cases
-        // turns on them; they are here because a catalog entry that omitted one
-        // is a catalog the generator refuses.
-        [[nodiscard]] auto ordinaryLimits() -> WorkflowLimits
-        {
-            return WorkflowLimits{
-                .maximumSteps        = 4,
-                .maximumDispatches   = 4,
-                .maximumObservations = 16,
-                .maximumWaits        = 4,
-                .maximumElapsedMillis = 60'000,
-            };
-        }
-
-        [[nodiscard]] auto ordinaryTimeout() -> TimeoutPolicy
-        {
-            return TimeoutPolicy{
-                .maximumElapsedMillis = 30'000,
-                .onTimeout            = TimeoutAction::Stop,
-            };
-        }
-
-        // The empty declaration: no name, no call, and the most restricted
-        // ceiling of each kind. It is what a tool that issues no child call
-        // states, and it is written out rather than left out.
-        [[nodiscard]] auto noChildCalls() -> ChildEffectDeclaration
-        {
-            return ChildEffectDeclaration{};
-        }
-
+        // One Tool of this deployment's declaration, as the author writes it
+        // into `tools`. Every member is stated: a Tool the framework admits is
+        // one whose whole contract was written down, and there is no optional
+        // member for an absence to be read as.
+        //
+        // `childEffects` is spliced in whole so that a case can write the
+        // contradictory declaration the reader must refuse -- which a typed
+        // builder could not express.
         [[nodiscard]]
         auto declaredTool(
             std::string_view name,
-            ChildEffectDeclaration childEffects
-        ) -> project::DeclaredTool
+            std::string_view childEffects
+        ) -> std::string
         {
-            return project::DeclaredTool{
-                .name           = std::string{name},
-                .argumentSchema = "FixtureArguments",
-                .resultSchema   = "FixtureResult",
-                .descriptor     = ToolDescriptor{
-                    .toolVersion  = "1",
-                    .childEffects = std::move(childEffects),
-                    .limits       = ordinaryLimits(),
-                    .timeout      = ordinaryTimeout(),
-                    .mutability   = ToolMutability::ReadOnly,
-                    .surface      = ToolSurface::Semantic,
-                    .idempotency  = ToolIdempotency::ReadSafe,
-                },
-            };
+            auto tool = std::string{R"json({"argument_schema":)json"};
+            tool += umbraflow::k_toolArgumentSchema;
+            tool += R"json(,"child_effects":)json";
+            tool += childEffects;
+            tool += R"json(,"effect_bounds":[],"idempotency":"read_safe",)json";
+            tool += R"json("mutability":"read_only","name":")json";
+            tool += name;
+            tool += R"json(","required_capabilities":[],"surface":"semantic",)json";
+            tool += R"json("timeout_policy":{"maximum_elapsed_ms":30000,)json"
+                R"json("on_timeout":"stop"},"ui_action_bounds":[],)json";
+            tool += R"json("version":"1","workflow_limits":)json"
+                R"json({"maximum_dispatches":4,"maximum_elapsed_ms":60000,)json"
+                R"json("maximum_observations":16,"maximum_steps":4,)json"
+                R"json("maximum_waits":4}})json";
+            return tool;
         }
 
-        // The catalog this project authors. `chaos.project.dismiss` declares a real
-        // child effect set, because the whole point of giving child_effects a
-        // wire spelling is that a project can state one; `chaos.project.sweep` declares
-        // the empty one.
-        [[nodiscard]]
-        auto catalogDeclaration(uint32 maximumChildCalls = 2U)
-            -> project::ToolCatalogDeclaration
-        {
-            auto delegating = ChildEffectDeclaration{
-                .childToolNames         = {std::string{k_sweepTool}},
-                .maximumChildSurface    = ToolSurface::Semantic,
-                .maximumChildMutability = ToolMutability::ReadOnly,
-                .maximumChildRisk       = Risk::Low,
-                .maximumChildCalls      = maximumChildCalls,
-            };
-            return project::ToolCatalogDeclaration{
-                .comment  = "The catalog this deployment authors, child effects "
-                            "and all.",
-                .pluginId                   = std::string{k_pluginId},
-                .toolPreconditionSchemaHash = hashOf(umbraflow::k_toolPreconditionSchema),
-                .effectPayloadSchemaHashes  = {},
-                .tools = {
-                    declaredTool(k_dismissTool, std::move(delegating)),
-                    declaredTool(k_sweepTool, noChildCalls()),
-                },
-            };
-        }
+        // The empty declaration: no name, no call, and the most restricted
+        // ceiling of each kind. It is what a Tool that issues no child call
+        // states, and it is written out rather than left out.
+        constexpr auto k_noChildCalls = std::string_view{
+            R"json({"child_tool_names":[],"maximum_child_calls":0,)json"
+            R"json("maximum_child_mutability":"read_only",)json"
+            R"json("maximum_child_risk":"read_only",)json"
+            R"json("maximum_child_surface":"semantic"})json"
+        };
 
+        // The Tools this deployment declares, inline, as the array the block's
+        // `tools` member carries. `chaos.project.dismiss` declares a real child
+        // effect set, because the whole point of giving child_effects a wire
+        // spelling is that a project can state one; `chaos.project.sweep`
+        // declares the empty one.
         [[nodiscard]]
-        auto generatedCatalog(project::ToolCatalogDeclaration const& declaration)
-            -> std::string
+        auto toolsJson(uint32 maximumChildCalls = 2U) -> std::string
         {
-            auto rendered = project::generateToolCatalog(declaration);
-            auto const why = rendered.has_value()
-                ? std::string{}
-                : std::string{rendered.error().message()};
-            INFO(why);
-            REQUIRE(rendered.has_value());
-            return *std::move(rendered);
+            auto delegating = std::string{R"json({"child_tool_names":[")json"};
+            delegating += k_sweepTool;
+            delegating += R"json("],"maximum_child_calls":)json";
+            delegating += std::to_string(maximumChildCalls);
+            delegating += R"json(,"maximum_child_mutability":"read_only",)json"
+                R"json("maximum_child_risk":"low",)json"
+                R"json("maximum_child_surface":"semantic"})json";
+
+            auto rendered = std::string{"["};
+            rendered += declaredTool(k_dismissTool, delegating);
+            rendered += ",";
+            rendered += declaredTool(k_sweepTool, k_noChildCalls);
+            rendered += "]";
+            return rendered;
         }
 
         // One tool_bindings array, as a project author spells it.
@@ -294,7 +246,7 @@ return {
 
         public:
             AuthoredProject(
-                std::string_view toolCatalog,
+                std::string_view tools,
                 std::string_view toolBindings,
                 std::string_view pluginSource,
                 std::vector<std::string> declaredEntryPoints
@@ -309,33 +261,11 @@ return {
                 std::filesystem::remove_all(m_root);
                 std::filesystem::create_directories(m_root);
 
-                auto const bundle = umbraflow::DeploymentBundle{k_pluginId};
-                write(m_root / "schema/state.json", umbraflow::k_projectStateSchema);
-                write(
-                    m_root / "schema/precondition.json",
-                    umbraflow::k_toolPreconditionSchema
-                );
-                write(m_root / "schema/catalog.json", toolCatalog);
-                write(
-                    m_root / "schema/journal-manifest.json",
-                    bundle.journalEventManifest()
-                );
-                for (auto index = std::size_t{0};
-                     index < umbraflow::k_journalPayloadSchemas.size();
-                     ++index)
-                {
-                    write(
-                        m_root
-                            / ("schema/journal-" + std::to_string(index) + ".json"),
-                        umbraflow::k_journalPayloadSchemas.at(index)
-                    );
-                }
                 write(m_root / "plugin/main.luau", pluginSource);
-                write(m_root / "plugin/reducer.luau", k_reducerSource);
                 write(m_root / "runtime/artifact/runtime-model.toml", "[[page]]\n");
                 write(
                     m_root / "umbraflow-project.json",
-                    manifest(toolBindings, declaredEntryPoints)
+                    manifest(tools, toolBindings, declaredEntryPoints)
                 );
             }
 
@@ -365,23 +295,20 @@ return {
 
             [[nodiscard]]
             static auto manifest(
+                std::string_view tools,
                 std::string_view toolBindings,
                 std::vector<std::string> const& declaredEntryPoints
                     = exportedEntryPoints()
             ) -> std::string
             {
                 auto document =
-                    std::string{R"json({"schema":"umbraflow-project/v2",)json"};
+                    std::string{R"json({"schema":"umbraflow-project/v3",)json"};
                 document += R"json("runtime_artifact":"runtime/artifact",)json";
                 document += R"json("primary_deployment":"main",)json";
                 document += R"json("template_cuts":[],"deployments":[{)json";
                 document += R"json("name":"main","plugin_id":")json";
                 document += k_pluginId;
-                document += R"json(","baseline_event_type":"fixture.baseline",)json";
-                document += R"json("reducer_closure":{"entry":"main",)json"
-                    R"json("exported_entry_points":["reduce"],"modules":)json"
-                    R"json([{"name":"main","path":"plugin/reducer.luau"}]},)json";
-                document += R"json("tool_closure":{"entry":"main",)json"
+                document += R"json(","tool_closure":{"entry":"main",)json"
                     R"json("exported_entry_points":)json";
                 document += entryPointsJson(declaredEntryPoints);
                 document += R"json(,"modules":)json"
@@ -391,23 +318,9 @@ return {
                     R"json(entries are Tool handlers reached through the scoped )json"
                     R"json(Tool Runtime, which umbraflow-declarative-workflow-)json"
                     R"json(tool/v1 has no member for at all.",)json";
-                document += R"json("project_state_schema":"schema/state.json",)json";
-                document += R"json("tool_precondition_schema":)json"
-                    R"json("schema/precondition.json",)json";
-                document += R"json("tool_catalog":"schema/catalog.json",)json";
-                document += R"json("journal_event_schema_manifest":)json"
-                    R"json("schema/journal-manifest.json",)json";
-                document += R"json("journal_payload_schemas":[)json";
-                for (auto index = std::size_t{0};
-                     index < umbraflow::k_journalPayloadSchemas.size();
-                     ++index)
-                {
-                    document += index == 0U ? "" : ",";
-                    document += R"json("schema/journal-)json"
-                        + std::to_string(index) + R"json(.json")json";
-                }
-                document += R"json(],"effect_payload_schemas":[],)json";
-                document += R"json("observed_instance_identity_schemas":[],)json";
+                document += R"json("tools":)json";
+                document += tools;
+                document += R"json(,"observed_instance_identity_schemas":[],)json";
                 document += R"json("tool_bindings":)json";
                 document += toolBindings;
                 document += R"json(,"resources":[]}]})json";
@@ -467,10 +380,7 @@ return {
         // The registrar call every case below makes, over one loaded
         // deployment. Every declared entry set comes from the loaded
         // generation rather than from this call, which is the whole of what
-        // moved when the declaration became an authored member. The result
-        // validator is the deployment's own, minted from the pinned tool
-        // precondition schema and the catalog that names a definition inside
-        // it -- not a lambda that accepts.
+        // moved when the declaration became an authored member.
         [[nodiscard]]
         auto registerLoaded(
             ProjectGenerationRegistrar& registrar,
@@ -481,17 +391,11 @@ return {
             return registrar.registerGeneration(
                 deployment.generation,
                 deployment.toolCatalogSchemaOwner,
-                deployment.schemaOwner,
-                ProjectGenerationRegistrar::ClosureModules{
-                    .entryModule = deployment.reducerClosure.entryModule,
-                    .modules     = deployment.reducerClosure.modules,
-                },
                 ProjectGenerationRegistrar::ClosureModules{
                     .entryModule = deployment.toolClosure.entryModule,
                     .modules     = deployment.toolClosure.modules,
                 },
                 deployment.projectResources,
-                deployment.catalog.toolResultValidator(),
                 recordingRuntime(std::move(p_calls))
             );
         }
@@ -501,7 +405,7 @@ return {
     TEST_CASE("an authored project loads as a Project Tool program")
     {
         auto const authored = AuthoredProject{
-            generatedCatalog(catalogDeclaration()),
+            toolsJson(),
             bindingsJson(acceptedBindings()),
             k_pluginSource,
         };
@@ -521,8 +425,8 @@ return {
         CHECK(bindings[1].toolName == k_sweepTool);
         CHECK(bindings[1].entryPoint == k_sweepEntry);
 
-        // And the descriptor carries the child effect declaration the catalog
-        // document spelled, which is the half of this cut that had no wire
+        // And the descriptor carries the child effect declaration the `tools`
+        // array spelled, which is the half of this cut that had no wire
         // spelling at all before it.
         auto const dismiss =
             p_deployment->toolCatalogSchemaOwner.describe(k_dismissTool);
@@ -587,18 +491,6 @@ return {
         CHECK(p_calls->front().toolName == k_sweepTool);
         CHECK(p_calls->front().parentPosition == runPosition().hex());
         CHECK(p_calls->front().childIndex == 1U);
-
-        // The answer is judged against the definition this tool's own
-        // result_schema names, by a validator the DEPLOYMENT minted. An
-        // accept-all lambda would make both of these pass.
-        CHECK(
-            loaded->validateToolResult(k_sweepTool, R"({"outcome":"swept"})")
-                .has_value()
-        );
-        CHECK_FALSE(
-            loaded->validateToolResult(k_sweepTool, R"({"verdict":"swept"})")
-                .has_value()
-        );
     }
 
     // The binding is inside the registration root, which is what stops a
@@ -607,16 +499,16 @@ return {
     // nothing else must derive two registration hashes.
     TEST_CASE("rebinding a Tool moves the registration root and not the catalog")
     {
-        auto const catalog = generatedCatalog(catalogDeclaration());
+        auto const tools = toolsJson();
         auto const asDeclared = AuthoredProject{
-            catalog,
+            tools,
             bindingsJson(acceptedBindings()),
             k_pluginSource,
         };
         auto swapped = acceptedBindings();
         swapped[0].entryPoint = std::string{k_sweepEntry};
         auto const asRebound =
-            AuthoredProject{catalog, bindingsJson(swapped), k_pluginSource};
+            AuthoredProject{tools, bindingsJson(swapped), k_pluginSource};
 
         auto const first  = asDeclared.load();
         auto const second = asRebound.load();
@@ -640,12 +532,12 @@ return {
     TEST_CASE("a widened child effect declaration moves tool_catalog_hash")
     {
         auto const narrow = AuthoredProject{
-            generatedCatalog(catalogDeclaration(2U)),
+            toolsJson(2U),
             bindingsJson(acceptedBindings()),
             k_pluginSource,
         };
         auto const wide = AuthoredProject{
-            generatedCatalog(catalogDeclaration(64U)),
+            toolsJson(64U),
             bindingsJson(acceptedBindings()),
             k_pluginSource,
         };
@@ -661,25 +553,12 @@ return {
     }
 
     // A declaration that names a child while admitting no call is two halves of
-    // one permission contradicting each other. The kit refuses to render it,
-    // and a document that carries it anyway is refused when the catalog
-    // authority is built -- which is at load, before any program exists.
+    // one permission contradicting each other. It is refused when the catalog
+    // authority is built -- which is at load, where the declaration is read,
+    // before any program exists.
     TEST_CASE("an incoherent child effect declaration is refused where it is written")
     {
-        auto incoherent = catalogDeclaration();
-        incoherent.tools[0].descriptor.childEffects.maximumChildCalls = 0U;
-        auto const rendered = project::generateToolCatalog(incoherent);
-        REQUIRE_FALSE(rendered.has_value());
-        CHECK(
-            std::string{rendered.error().message()}.contains(
-                "names a child tool but admits no child call"
-            )
-        );
-
-        // The same contradiction, written straight into the document rather
-        // than through the generator, so that the loader's own refusal is
-        // exercised and not merely the kit's.
-        auto edited = generatedCatalog(catalogDeclaration());
+        auto edited = toolsJson();
         auto const at = edited.find(R"("maximum_child_calls":2)");
         REQUIRE(at != std::string::npos);
         edited.replace(
@@ -696,7 +575,9 @@ return {
         INFO(why(refused));
         REQUIRE_FALSE(refused.has_value());
         CHECK(
-            std::string{refused.error().message()}.contains("child_effects")
+            std::string{refused.error().message()}.contains(
+                "names a child tool but admits no child call"
+            )
         );
     }
 
@@ -704,18 +585,14 @@ return {
     // call writes the empty declaration; a tool that writes nothing is a
     // document this framework does not read, rather than one whose silence
     // means the empty declaration.
-    TEST_CASE("a Tool Catalog omitting child_effects is refused, not defaulted")
+    TEST_CASE("a Tool declaration omitting child_effects is refused, not defaulted")
     {
-        auto stripped = generatedCatalog(catalogDeclaration());
-        constexpr auto k_empty = std::string_view{
-            R"("child_effects":{"child_tool_names":[],"maximum_child_calls":0,)"
-            R"("maximum_child_mutability":"read_only",)"
-            R"("maximum_child_risk":"read_only",)"
-            R"("maximum_child_surface":"semantic"},)"
-        };
-        auto const at = stripped.find(k_empty);
+        auto stripped = toolsJson();
+        auto const empty = std::string{R"json(,"child_effects":)json"}
+            + std::string{k_noChildCalls};
+        auto const at = stripped.find(empty);
         REQUIRE(at != std::string::npos);
-        stripped.erase(at, k_empty.size());
+        stripped.erase(at, empty.size());
 
         auto const authored = AuthoredProject{
             stripped,
@@ -732,14 +609,14 @@ return {
     // rather than from a binding table built in C++.
     TEST_CASE("the loader refuses an authored contract its code disagrees with")
     {
-        auto const catalog = generatedCatalog(catalogDeclaration());
+        auto const tools = toolsJson();
 
         SUBCASE("a declared Tool with no binding")
         {
             auto only = acceptedBindings();
             only.pop_back();
             auto const authored = AuthoredProject{
-                catalog,
+                tools,
                 bindingsJson(only),
                 k_pluginSource,
                 {std::string{k_dismissEntry}},
@@ -768,7 +645,7 @@ return {
                 .entryPoint = std::string{k_sweepEntry},
             });
             auto const authored =
-                AuthoredProject{catalog, bindingsJson(extra), k_pluginSource};
+                AuthoredProject{tools, bindingsJson(extra), k_pluginSource};
             auto const project = authored.load();
             REQUIRE(project.has_value());
 
@@ -794,7 +671,7 @@ return {
             auto absent = acceptedBindings();
             absent[0].entryPoint = "vanish";
             auto const authored = AuthoredProject{
-                catalog,
+                tools,
                 bindingsJson(absent),
                 k_pluginSource,
                 {std::string{k_sweepEntry}, "vanish"},
@@ -819,7 +696,7 @@ return {
     // The document's own rules, refused where the document is read.
     TEST_CASE("a project directory states its Tool bindings exactly once")
     {
-        auto const catalog = generatedCatalog(catalogDeclaration());
+        auto const tools = toolsJson();
 
         SUBCASE("one Tool bound twice")
         {
@@ -829,7 +706,7 @@ return {
                 .entryPoint = std::string{k_sweepEntry},
             });
             auto const authored =
-                AuthoredProject{catalog, bindingsJson(repeated), k_pluginSource};
+                AuthoredProject{tools, bindingsJson(repeated), k_pluginSource};
             auto const refused = authored.load();
             INFO(why(refused));
             REQUIRE_FALSE(refused.has_value());
@@ -841,7 +718,7 @@ return {
         SUBCASE("the member left out entirely")
         {
             auto const authored = AuthoredProject{
-                catalog,
+                tools,
                 bindingsJson(acceptedBindings()),
                 k_pluginSource,
             };
@@ -850,8 +727,10 @@ return {
             // The same directory with `tool_bindings` deleted from its root
             // document. There is no absent form of the member: a deployment
             // that binds nothing writes the empty array.
-            auto const document =
-                AuthoredProject::manifest(bindingsJson(acceptedBindings()));
+            auto const document = AuthoredProject::manifest(
+                tools,
+                bindingsJson(acceptedBindings())
+            );
             auto const at = document.find(R"("tool_bindings":)");
             REQUIRE(at != std::string::npos);
             auto const closed = document.find(']', at);

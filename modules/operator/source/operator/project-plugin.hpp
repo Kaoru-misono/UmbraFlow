@@ -22,26 +22,16 @@
 
 namespace uf::operator_runtime
 {
-    enum class ProjectDocumentDirection : uint8
-    {
-        Input,
-        Output,
-    };
-
-    class ProjectSchemaOwner;
-
     // Immutable exact JCS with no schema authority. It proves canonical bytes
-    // and their content hash only; it does not claim that any field is valid
-    // against the reduce contract.
+    // and their content hash only; it makes no claim about what those bytes
+    // mean, and there is nothing here that could: the framework records a
+    // Project's bytes and their digest and does not interpret them.
     //
-    // It carries the value those bytes denote beside them. That cached value is
-    // useful only to the owner that minted it: a different ProjectSchemaOwner
-    // re-parses the bytes at its call boundary, and the value produced by that
-    // validation is the only value a ProjectPlugin may execute against.
+    // It carries the value those bytes denote beside them, because parseExact
+    // had to build one to prove the bytes canonical and a consumer would
+    // otherwise parse the same document a second time.
     class CanonicalJson final
     {
-        friend class ProjectSchemaOwner;
-
         ContentHash m_contentHash;
         std::string m_bytes;
         json::Value m_value;
@@ -65,119 +55,6 @@ namespace uf::operator_runtime
         auto value() const noexcept UF_LIFETIME_BOUND -> json::Value const&;
 
         auto operator==(CanonicalJson const&) const -> bool = default;
-    };
-
-    // A document accepted by the schema owner for one exact registration and
-    // direction. No schema hash label is exposed or accepted.
-    //
-    // The value the accepted bytes denote is exposed beside them: the owner
-    // already parsed once to validate, and the Operator consumes the proposal
-    // shape it stamped instead of parsing the same bytes a second time.
-    class ValidatedDocument final
-    {
-        friend class ProjectSchemaOwner;
-
-        ContentHash              m_projectRegistrationHash;
-        ProjectDocumentDirection m_direction;
-        CanonicalJson            m_canonicalJson;
-
-        ValidatedDocument(
-            ContentHash projectRegistrationHash,
-            ProjectDocumentDirection direction,
-            CanonicalJson canonicalJson
-        );
-
-    public:
-        [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;
-
-        [[nodiscard]]
-        auto direction() const noexcept -> ProjectDocumentDirection;
-
-        [[nodiscard]] auto contentHash() const -> ContentHash;
-
-        [[nodiscard]]
-        auto bytes() const noexcept UF_LIFETIME_BOUND -> std::string const&;
-
-        [[nodiscard]]
-        auto value() const noexcept UF_LIFETIME_BOUND -> json::Value const&;
-
-        auto operator==(ValidatedDocument const&) const -> bool = default;
-    };
-
-    // These validators are trusted deployment code. The canonical validator
-    // must reject anything other than exact RFC 8785 JCS, and returns the value
-    // those exact bytes denote -- it had to build one to answer, and returning
-    // it is what keeps the ProjectPlugin boundary from parsing the same
-    // document again. The document validator must validate the complete
-    // direction-specific JSON Schema, including every project-owned nested
-    // payload. Neither callable is passed to plugin code or published in a
-    // business VM.
-    using CanonicalJsonValidator = std::function<Result<json::Value>(std::string_view exactJcs)>;
-    using ProjectDocumentValidator = std::function<
-        Status(ProjectDocumentDirection direction, std::string_view exactJcs)
-    >;
-
-    // The exact bytes of the two schemas this owner answers for. They are
-    // required for the same reason the Journal and Tool Catalog owners require
-    // theirs: an owner that merely names a hash is a convention, and every
-    // ValidatedDocument it stamps is downstream proof that the pinned schema
-    // was applied.
-    struct ProjectDocumentSchemaBytes final
-    {
-        std::string_view projectState{};
-        std::string_view toolPrecondition{};
-    };
-
-    class ProjectSchemaOwner final
-    {
-        class State;
-
-        friend class ProjectGenerationHandle;
-
-        std::shared_ptr<State const> m_state;
-
-        explicit ProjectSchemaOwner(std::shared_ptr<State const> p_state) noexcept;
-
-        [[nodiscard]]
-        auto validate(
-            ProjectDocumentDirection direction,
-            CanonicalJson const& document
-        ) const -> Result<json::Value>;
-
-        // Mints canonical bytes from a value rather than judging bytes a caller
-        // spelled. A plugin returns a value, so its output has no serialization
-        // of its own to be refused: RFC 8785 is applied here, once, and the
-        // canonical form is a fact about the mint rather than a claim about the
-        // plugin.
-        [[nodiscard]]
-        auto canonicalizeValue(json::Value value) const -> Result<CanonicalJson>;
-
-        [[nodiscard]]
-        auto validateOutput(CanonicalJson document) const
-            -> Result<ValidatedDocument>;
-
-    public:
-        ProjectSchemaOwner(ProjectSchemaOwner const&) noexcept = default;
-        ProjectSchemaOwner(ProjectSchemaOwner&&) noexcept = default;
-        auto operator=(ProjectSchemaOwner const&) noexcept -> ProjectSchemaOwner& = default;
-        auto operator=(ProjectSchemaOwner&&) noexcept -> ProjectSchemaOwner& = default;
-        ~ProjectSchemaOwner() = default;
-
-        // `project` is the registration identity: the root this owner stamps
-        // its documents with, and the two schema digests the exact bytes must
-        // satisfy.
-        [[nodiscard]]
-        static auto create(
-            ProjectIdentity const& project,
-            ProjectDocumentSchemaBytes const& exactSchemas,
-            CanonicalJsonValidator validateCanonicalJson,
-            ProjectDocumentValidator validateDocument
-        ) -> Result<ProjectSchemaOwner>;
-
-        [[nodiscard]]
-        auto canonicalize(std::string exactJcs) const -> Result<CanonicalJson>;
-
-        [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;
     };
 
     // One authored module of a Project closure, and one blob of the resource
@@ -216,10 +93,9 @@ namespace uf::operator_runtime
     // registration blob by blob -- name, kind, size and sha256 -- and returned
     // in the registration's own order, ready for a program to be compiled over.
     //
-    // It is one function rather than one per loader because a registration
-    // pins ONE resource closure and both program types a registration loads
-    // read it. Two copies of this check would be two answers to "which bytes
-    // did this project register", and only one of them would be inside
+    // A registration pins ONE resource closure, so this is one function and not
+    // one per caller. Two copies of this check would be two answers to "which
+    // bytes did this project register", and only one of them would be inside
     // project_registration_hash.
     //
     // It takes the pinned rows rather than a registration so that the check

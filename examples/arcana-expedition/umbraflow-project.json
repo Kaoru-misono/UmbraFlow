@@ -1,6 +1,6 @@
 {
-  "$comment": "A second game, as data. Both deployments execute a three-module closure over the same Python-built map resource; their registrations remain distinct because each plugin id and entry module bytes are distinct.",
-  "schema": "umbraflow-project/v2",
+  "$comment": "A second game, as data. Both deployments execute the same closure shape over the same Python-built map resource; their registrations remain distinct because each plugin id and each entry module's bytes are distinct.",
+  "schema": "umbraflow-project/v3",
   "runtime_artifact": "runtime/artifact",
   "primary_deployment": "expedition",
   "template_cuts": [],
@@ -8,89 +8,583 @@
     {
       "name": "expedition",
       "plugin_id": "arcana.expedition",
-      "baseline_event_type": "expedition.founded",
-      "reducer_closure": {
-        "entry": "main",
-        "exported_entry_points": ["reduce"],
-        "modules": [{"name": "main", "path": "plugin/expedition-reducer.luau"}]
-      },
       "tool_closure": {
-        "$comment": "One entry per Tool this deployment's Tool Catalog declares. The set is stated here and the join to Tool names is stated in tool_bindings below, so neither document can be derived from the other and the loader's cross-check has two sources to compare.",
+        "$comment": "One entry per Tool this deployment declares. The set is stated here and the join to Tool names is stated in tool_bindings below, so neither can be derived from the other and the loader's cross-check has two sources to compare.",
         "entry": "main",
-        "exported_entry_points": ["approval", "move", "survey", "trade"],
-        "modules": [{"name": "main", "path": "plugin/expedition-tools.luau"}]
+        "exported_entry_points": [
+          "approval",
+          "move",
+          "survey",
+          "trade"
+        ],
+        "modules": [
+          {
+            "name": "main",
+            "path": "plugin/expedition-tools.luau"
+          }
+        ]
       },
       "plugin_authoring": "hand-written",
-      "plugin_justification": "umbraflow-declarative-workflow-tool/v1 declares one tool over a fixed schedule of wait and ui_action states and renders a tool closure that exports no entry at all. This deployment binds four Tools, one of which turns a MarchArguments into the leagues it marched, and its reducer folds expedition.advanced/arrived/blocked Journal entries into ProjectState, so neither closure has a declarative spelling.",
-      "project_state_schema": "schema/project-state-v1.schema.json",
-      "tool_precondition_schema": "schema/tool-precondition-v1.schema.json",
-      "tool_catalog": "generated/tool-catalogs/arcana.expedition/tool-catalog-v1.json",
-      "journal_event_schema_manifest": "schema/expedition/journal-manifest-v1.json",
-      "journal_payload_schemas": [
-        "schema/journal/expedition.advanced-v1.schema.json",
-        "schema/journal/expedition.arrived-v1.schema.json",
-        "schema/journal/expedition.blocked-v1.schema.json",
-        "schema/journal/expedition.founded-v1.schema.json"
-      ],
-      "effect_payload_schemas": [
-        "schema/effect/expedition.march-v1.schema.json"
-      ],
-      "$comment": "The one observed instance this deployment mints is the expedition's target control, admitted by the identity schema it registers here. It binds every Tool its Tool Catalog declares to an entry of its tool closure, which is what makes those Tools reachable: a declared Tool with no binding has no code to run and the loader refuses the generation.",
+      "plugin_justification": "umbraflow-declarative-workflow-tool/v1 declares one tool over a fixed schedule of wait and ui_action states and renders a tool closure that exports no entry at all. This deployment binds four Tools, one of which turns a march order into the leagues it marched, so its closure has no declarative spelling.",
+      "$comment": "The one observed instance this deployment mints is the expedition's target control, admitted by the identity schema it declares here. It binds every Tool it declares to an entry of its tool closure, which is what makes those Tools reachable: a declared Tool with no binding has no code to run and the loader refuses the generation.",
       "observed_instance_identity_schemas": [
-        "schema/observed-identity-v1.schema.json"
+        {
+          "name": "https://arcana.example/identity/expedition/v1",
+          "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "arcana expedition observed instance identity basis",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "native_id",
+              "surface_epoch"
+            ],
+            "properties": {
+              "native_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "surface_epoch": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
       ],
       "tool_bindings": [
-        {"tool_name": "arcana.expedition.approval", "entry_point": "approval"},
-        {"tool_name": "arcana.expedition.move", "entry_point": "move"},
-        {"tool_name": "arcana.expedition.survey", "entry_point": "survey"},
-        {"tool_name": "arcana.expedition.trade", "entry_point": "trade"}
+        {
+          "tool_name": "arcana.expedition.approval",
+          "entry_point": "approval"
+        },
+        {
+          "tool_name": "arcana.expedition.move",
+          "entry_point": "move"
+        },
+        {
+          "tool_name": "arcana.expedition.survey",
+          "entry_point": "survey"
+        },
+        {
+          "tool_name": "arcana.expedition.trade",
+          "entry_point": "trade"
+        }
+      ],
+      "tools": [
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "arcana expedition tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "steps"
+            ],
+            "properties": {
+              "steps": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "expedition.march",
+              "payload_schema_hash": "0acb39b8ba6f60a152caf4890116f300b5cd39a954de1fc433c0116d999c215a",
+              "scope_kind": "camp"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "arcana.expedition.approval",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "expedition.step"
+          ],
+          "version": "3",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "arcana expedition tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "steps"
+            ],
+            "properties": {
+              "steps": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "expedition.march",
+              "payload_schema_hash": "0acb39b8ba6f60a152caf4890116f300b5cd39a954de1fc433c0116d999c215a",
+              "scope_kind": "camp"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "arcana.expedition.move",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "expedition.step"
+          ],
+          "version": "3",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "arcana expedition tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "steps"
+            ],
+            "properties": {
+              "steps": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "expedition.march",
+              "payload_schema_hash": "0acb39b8ba6f60a152caf4890116f300b5cd39a954de1fc433c0116d999c215a",
+              "scope_kind": "camp"
+            }
+          ],
+          "idempotency": "read_safe",
+          "mutability": "read_only",
+          "name": "arcana.expedition.survey",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "expedition.step"
+          ],
+          "version": "2",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "arcana expedition tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "steps"
+            ],
+            "properties": {
+              "steps": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "expedition.march",
+              "payload_schema_hash": "0acb39b8ba6f60a152caf4890116f300b5cd39a954de1fc433c0116d999c215a",
+              "scope_kind": "camp"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "arcana.expedition.trade",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "expedition.step"
+          ],
+          "version": "3",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        }
       ],
       "resources": [
-        {"kind": "json", "name": "map", "path": "blob/map.blob"}
+        {
+          "kind": "json",
+          "name": "map",
+          "path": "blob/map.blob"
+        }
       ]
     },
     {
       "name": "rival",
       "plugin_id": "arcana.rival",
-      "baseline_event_type": "expedition.founded",
-      "reducer_closure": {
-        "entry": "main",
-        "exported_entry_points": ["reduce"],
-        "modules": [{"name": "main", "path": "plugin/rival-reducer.luau"}]
-      },
       "tool_closure": {
-        "$comment": "The same four entries the expedition deployment exports, over this deployment's own plugin id. The two closures are separate modules rather than one shared file because each states the identity its registration is judged under.",
+        "$comment": "One entry per Tool this deployment declares. The set is stated here and the join to Tool names is stated in tool_bindings below, so neither can be derived from the other and the loader's cross-check has two sources to compare.",
         "entry": "main",
-        "exported_entry_points": ["approval", "move", "survey", "trade"],
-        "modules": [{"name": "main", "path": "plugin/rival-tools.luau"}]
+        "exported_entry_points": [
+          "approval",
+          "move",
+          "survey",
+          "trade"
+        ],
+        "modules": [
+          {
+            "name": "main",
+            "path": "plugin/rival-tools.luau"
+          }
+        ]
       },
       "plugin_authoring": "hand-written",
-      "plugin_justification": "The same reason as the expedition deployment, and it is not shared: umbraflow-declarative-workflow-tool/v1 renders a tool closure exporting no entry and a reducer answering the empty object, so this second registration's four Tool handlers and its Journal fold cannot be declared either. What makes it a separate plugin rather than a second declaration is the plugin_id every Tool name sits under.",
-      "project_state_schema": "schema/project-state-v1.schema.json",
-      "tool_precondition_schema": "schema/tool-precondition-v1.schema.json",
-      "tool_catalog": "generated/tool-catalogs/arcana.rival/tool-catalog-v1.json",
-      "journal_event_schema_manifest": "schema/rival/journal-manifest-v1.json",
-      "journal_payload_schemas": [
-        "schema/journal/expedition.advanced-v1.schema.json",
-        "schema/journal/expedition.arrived-v1.schema.json",
-        "schema/journal/expedition.blocked-v1.schema.json",
-        "schema/journal/expedition.founded-v1.schema.json"
-      ],
-      "effect_payload_schemas": [
-        "schema/effect/expedition.march-v1.schema.json"
-      ],
-      "$comment": "The one observed instance this deployment mints is the expedition's target control, admitted by the identity schema it registers here. It binds every Tool its Tool Catalog declares to an entry of its tool closure, and those Tools are its own: the same local names under another plugin id are another registration's Tools.",
+      "plugin_justification": "The same reason as the expedition deployment, and it is not shared: umbraflow-declarative-workflow-tool/v1 renders a tool closure exporting no entry, so this second registration's four Tool handlers cannot be declared either. What makes it a separate plugin rather than a second declaration is the plugin_id every Tool name sits under.",
+      "$comment": "The one observed instance this deployment mints is the expedition's target control, admitted by the identity schema it declares here. It binds every Tool it declares to an entry of its tool closure, and those Tools are its own: the same local names under another plugin id are another registration's Tools.",
       "observed_instance_identity_schemas": [
-        "schema/observed-identity-v1.schema.json"
+        {
+          "name": "https://arcana.example/identity/expedition/v1",
+          "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "arcana expedition observed instance identity basis",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "native_id",
+              "surface_epoch"
+            ],
+            "properties": {
+              "native_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "surface_epoch": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
       ],
       "tool_bindings": [
-        {"tool_name": "arcana.rival.approval", "entry_point": "approval"},
-        {"tool_name": "arcana.rival.move", "entry_point": "move"},
-        {"tool_name": "arcana.rival.survey", "entry_point": "survey"},
-        {"tool_name": "arcana.rival.trade", "entry_point": "trade"}
+        {
+          "tool_name": "arcana.rival.approval",
+          "entry_point": "approval"
+        },
+        {
+          "tool_name": "arcana.rival.move",
+          "entry_point": "move"
+        },
+        {
+          "tool_name": "arcana.rival.survey",
+          "entry_point": "survey"
+        },
+        {
+          "tool_name": "arcana.rival.trade",
+          "entry_point": "trade"
+        }
+      ],
+      "tools": [
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "arcana expedition tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "steps"
+            ],
+            "properties": {
+              "steps": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "expedition.march",
+              "payload_schema_hash": "0acb39b8ba6f60a152caf4890116f300b5cd39a954de1fc433c0116d999c215a",
+              "scope_kind": "camp"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "arcana.rival.approval",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "expedition.step"
+          ],
+          "version": "3",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "arcana expedition tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "steps"
+            ],
+            "properties": {
+              "steps": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "expedition.march",
+              "payload_schema_hash": "0acb39b8ba6f60a152caf4890116f300b5cd39a954de1fc433c0116d999c215a",
+              "scope_kind": "camp"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "arcana.rival.move",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "expedition.step"
+          ],
+          "version": "3",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "arcana expedition tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "steps"
+            ],
+            "properties": {
+              "steps": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "expedition.march",
+              "payload_schema_hash": "0acb39b8ba6f60a152caf4890116f300b5cd39a954de1fc433c0116d999c215a",
+              "scope_kind": "camp"
+            }
+          ],
+          "idempotency": "read_safe",
+          "mutability": "read_only",
+          "name": "arcana.rival.survey",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "expedition.step"
+          ],
+          "version": "2",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        },
+        {
+          "argument_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "arcana expedition tool arguments",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "steps"
+            ],
+            "properties": {
+              "steps": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8
+              }
+            }
+          },
+          "child_effects": {
+            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
+            "child_tool_names": [],
+            "maximum_child_calls": 0,
+            "maximum_child_mutability": "read_only",
+            "maximum_child_risk": "read_only",
+            "maximum_child_surface": "semantic"
+          },
+          "effect_bounds": [
+            {
+              "maximum_risk": "high",
+              "namespaced_type": "expedition.march",
+              "payload_schema_hash": "0acb39b8ba6f60a152caf4890116f300b5cd39a954de1fc433c0116d999c215a",
+              "scope_kind": "camp"
+            }
+          ],
+          "idempotency": "delivery_safe",
+          "mutability": "mutating",
+          "name": "arcana.rival.trade",
+          "required_capabilities": [],
+          "surface": "semantic",
+          "timeout_policy": {
+            "maximum_elapsed_ms": 60000,
+            "on_timeout": "reobserve"
+          },
+          "ui_action_bounds": [
+            "expedition.step"
+          ],
+          "version": "3",
+          "workflow_limits": {
+            "maximum_dispatches": 8,
+            "maximum_elapsed_ms": 600000,
+            "maximum_observations": 256,
+            "maximum_steps": 8,
+            "maximum_waits": 64
+          }
+        }
       ],
       "resources": [
-        {"kind": "json", "name": "map", "path": "blob/map.blob"}
+        {
+          "kind": "json",
+          "name": "map",
+          "path": "blob/map.blob"
+        }
       ]
     }
   ]

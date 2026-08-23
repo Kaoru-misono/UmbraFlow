@@ -9,6 +9,7 @@
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
@@ -29,532 +30,27 @@ namespace uf::deployment
 {
     namespace
     {
-        // Definitions the Operator owns. A project restates none of them: a
-        // provenance, a hash or a state resolution is the framework's shape
-        // wherever it appears, and the envelope schemas below reference this
-        // document rather than repeating it once per function.
-        //
-        // Every definition here is copied from the repository's own published
-        // schemas -- schema/umbraflow-operator-v1.schema.json,
-        // schema/umbraflow-journal-v1.schema.json and, for StateResolution's
-        // readings, schema/umbraflow-runtime-v3.schema.json -- so a document
-        // this module accepts is a document those accept.
-        //
-        // These bytes are compiled in and read no file: a Host that judges a
-        // plugin's derive input may not depend on a document a project could
-        // swap. The published schema is still the source of the shape, and
-        // readings_contract_errors in tests/test-runtime-surface.py derives
-        // this restatement from it, so editing either alone is red.
-        constexpr auto k_commonSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/operator/common",
-    "$defs": {
-        "Hash": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-        },
-        "Identifier": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
-        },
-        "NamespacedIdentifier": {
-            "type": "string",
-            "pattern": "^[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$"
-        },
-        "ToolName": {
-            "$comment": "The one spelling of a Tool name, in every document that carries one: the Tool Catalog's `name`, a plan's `tool_name`, and each entry of a child_effects `child_tool_names`. A Tool name is namespaced -- the namespace is its owner's registered namespace, `framework` for the Framework and a Project's plugin_id for a Project, and the local name is what follows the dot that ends it -- so the dot is required rather than optional: an unnamespaced name has no owner, and there would be nothing for the ownership rule to check. The grammar is the ProjectRegistration's namespaced_name byte for byte (schema/umbraflow-project-registration-v3.schema.json), because a name a catalog declares and a name a binding carries are one name; a catalog admitting a spelling the binding table refuses would declare a Tool no authoring tier could ever bind.",
-            "type": "string",
-            "minLength": 3,
-            "maxLength": 128,
-            "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)+$"
-        },
-        "JournalProvenance": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["kind", "observation_ids", "principal_id", "source_hashes"],
-            "properties": {
-                "kind": {
-                    "enum": [
-                        "client_db",
-                        "observation",
-                        "inference",
-                        "policy",
-                        "human_correction"
-                    ]
-                },
-                "observation_ids": {
-                    "type": "array",
-                    "items": {"$ref": "#/$defs/Identifier"},
-                    "uniqueItems": true
-                },
-                "principal_id": {
-                    "oneOf": [{"type": "null"}, {"$ref": "#/$defs/Identifier"}]
-                },
-                "source_hashes": {
-                    "type": "array",
-                    "items": {"$ref": "#/$defs/Hash"},
-                    "uniqueItems": true
-                }
-            }
-        },
-        "PendingOperationTransition": {
-            "$comment": "The one non-terminal Operation an instance may have. The state enumerators are exactly the seven the Snapshot Coordinator's own query selects.",
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["operation_id", "revision", "state"],
-            "properties": {
-                "operation_id": {"$ref": "#/$defs/Identifier"},
-                "revision": {"type": "integer", "minimum": 0},
-                "state": {
-                    "enum": [
-                        "proposed",
-                        "awaiting_approval",
-                        "ready",
-                        "needs_revalidation",
-                        "running",
-                        "reconciling",
-                        "ambiguous"
-                    ]
-                }
-            }
-        },
-        "StateResolution": {
-            "$comment": "What the trusted Luau resolver serializes: the kind, the ordered surface stack a resolved state carries, the readings that state reports, and the reason the other kinds failed. Absent members are absent rather than null, so only kind is required. diagnostic is carried only when visible content matched nothing, which is the one unknown that a bounded reason cannot describe; the resolver's other unknown branches send reason alone, so requiring it here would refuse them.",
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["kind"],
-            "properties": {
-                "kind": {
-                    "enum": ["resolved_state", "ambiguous_state", "unknown_state"]
-                },
-                "ordered_surface_stack": {
-                    "type": "array",
-                    "items": {"$ref": "#/$defs/Identifier"}
-                },
-                "readings": {
-                    "$comment": "Every reading a resolved state reports, ordered by ui_target then reader so one world produces one document. One entry per Reader every reporting Binding named, whatever the outcome, so the length is decided by the model and the resolved stack rather than by what the Host managed to answer. A Binding owns the visual variants that share its placement and reads, so changing which one matches does not change the reporting subject. Multiple present Bindings sharing a UiTarget still report nothing for it because they are distinct placements or roles and therefore remain ambiguous.",
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": ["kind", "reader", "ui_target"],
-                        "properties": {
-                            "kind": {"enum": ["read", "absent", "unknown"]},
-                            "lines": {
-                                "type": "array",
-                                "minItems": 1,
-                                "items": {
-                                    "type": "object",
-                                    "additionalProperties": false,
-                                    "required": ["rect", "text"],
-                                    "properties": {
-                                        "rect": {
-                                            "type": "array",
-                                            "prefixItems": [
-                                                {"type": "integer", "minimum": 0},
-                                                {"type": "integer", "minimum": 0},
-                                                {"type": "integer", "minimum": 1},
-                                                {"type": "integer", "minimum": 1}
-                                            ],
-                                            "items": false,
-                                            "minItems": 4,
-                                            "maxItems": 4
-                                        },
-                                        "text": {"type": "string"}
-                                    }
-                                }
-                            },
-                            "reader": {"$ref": "#/$defs/Identifier"},
-                            "reason": {
-                                "enum": [
-                                    "not_measured",
-                                    "budget_exhausted",
-                                    "low_confidence",
-                                    "ocr_unreadable",
-                                    "locator_failed",
-                                    "stale_cycle",
-                                    "host_unavailable",
-                                    "internal_error"
-                                ]
-                            },
-                            "ui_target": {"$ref": "#/$defs/Identifier"}
-                        },
-                        "allOf": [
-                            {
-                                "if": {
-                                    "properties": {"kind": {"const": "read"}},
-                                    "required": ["kind"]
-                                },
-                                "then": {"required": ["lines"]},
-                                "else": {"not": {"required": ["lines"]}}
-                            },
-                            {
-                                "if": {
-                                    "properties": {"kind": {"const": "unknown"}},
-                                    "required": ["kind"]
-                                },
-                                "then": {"required": ["reason"]},
-                                "else": {"not": {"required": ["reason"]}}
-                            }
-                        ]
-                    }
-                },
-                "reason": {"type": "string", "minLength": 1},
-                "diagnostic": {"type": "string", "minLength": 1}
-            }
-        }
-    }
-})json"};
-
-        constexpr auto k_reduceInputSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/operator/reduce-input",
-    "title": "Project reducer input",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-        "commit_context",
-        "prior_project_state",
-        "prospective_journal_batch"
-    ],
-    "properties": {
-        "commit_context": {
-            "$comment": "The trusted commit context: the revision prior_project_state stands at, and the revision the candidate this fold returns will be published at. Both are assembled by the Operator from the project_state row it holds and from its own increment rule, and no Project value reaches either -- a reducer handed a context it could influence could describe one revision while the ledger published another. prior_revision is null exactly when prior_project_state is null, because a baseline stands at no revision; next_revision is never null, because every fold produces the candidate for exactly one revision.",
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["next_revision", "prior_revision"],
-            "properties": {
-                "next_revision": {"type": "integer", "minimum": 0},
-                "prior_revision": {
-                    "oneOf": [
-                        {"type": "null"},
-                        {"type": "integer", "minimum": 0}
-                    ]
-                }
-            }
-        },
-        "prior_project_state": {
-            "$comment": "null for the initial reduction. prospective_journal_batch then contains the declared baseline entry, or is empty when the project declares none.",
-            "oneOf": [
-                {"type": "null"},
-                {"$ref": "https://umbraflow.dev/schema/project/state"}
-            ]
-        },
-        "prospective_journal_batch": {
-            "$comment": "The exact batch the Operator has frozen for this commit, and never recorded Journal history: reduction commits nothing, so these events are facts only once the final CAS publishes them beside the state this fold returns.",
-            "type": "array",
-            "items": {"$ref": "#/$defs/JournalEvent"}
-        }
-    },
-    "$defs": {
-        "JournalEvent": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-                "namespaced_event_type",
-                "opaque_project_payload",
-                "provenance"
-            ],
-            "properties": {
-                "namespaced_event_type": {
-                    "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/NamespacedIdentifier"
-                },
-                "opaque_project_payload": {
-                    "$comment": "Judged against the payload schema this project's journal event schema manifest names for namespaced_event_type."
-                },
-                "provenance": {
-                    "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/JournalProvenance"
-                }
-            }
-        }
-    }
-})json"};
-
-        constexpr auto k_toolCatalogSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/operator/tool-catalog",
-    "title": "Tool Catalog document",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-        "effect_payload_sha256s",
-        "plugin_id",
-        "schema",
-        "tool_precondition_sha256",
-        "tools"
-    ],
-    "properties": {
-        "$comment": {"type": "string"},
-        "effect_payload_sha256s": {
-            "$comment": "The sha256 of each OP:EffectEnvelope payload schema this deployment supplies, and the only path by which those bytes reach tool_catalog_hash and so project_registration_hash. The array may be empty: a project that proposes no effect has nothing to pin.",
-            "type": "array",
-            "items": {
-                "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Hash"
-            },
-            "uniqueItems": true
-        },
-        "plugin_id": {
-            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
-        },
-        "schema": {"const": "umbraflow-tool-catalog/v1"},
-        "tool_precondition_sha256": {
-            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Hash"
-        },
-        "tools": {
-            "$comment": "One complete ToolDescriptor per tool. Every bound a plan is judged against is declared here and nowhere else, so a widened bound moves tool_catalog_hash and therefore project_registration_hash.",
-            "type": "array",
-            "minItems": 1,
-            "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                    "argument_schema",
-                    "child_effects",
-                    "effect_bounds",
-                    "idempotency",
-                    "mutability",
-                    "name",
-                    "required_capabilities",
-                    "result_schema",
-                    "surface",
-                    "timeout_policy",
-                    "ui_action_bounds",
-                    "version",
-                    "workflow_limits"
-                ],
-                "properties": {
-                    "argument_schema": {
-                        "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
-                    },
-                    "child_effects": {
-                        "$comment": "What this tool's own entry may issue while it runs: the exact child Tool names, and the strongest child surface, mutability and effect risk it may delegate, together with how many child calls one invocation may make. Requested, never granted -- admission intersects it with the root envelope, policy, approvals, session authority, lease, fence and remaining budgets. Every member is required and there is no absent form: a tool that issues no child call states the empty declaration -- no names, zero calls, and the most restricted ceiling of each kind -- because an omitted member would be an absence carrying a meaning. A declaration that names a child while admitting no call, or admits calls while naming none, is two halves of one permission contradicting each other and is refused when the catalog owner reads it.",
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": [
-                            "child_tool_names",
-                            "maximum_child_calls",
-                            "maximum_child_mutability",
-                            "maximum_child_risk",
-                            "maximum_child_surface"
-                        ],
-                        "properties": {
-                            "child_tool_names": {
-                                "$comment": "Each child by the name its own catalog declares it under, this project's tools and the framework's alike. A name absent from this list is refused even where every other bound would admit it, which is what makes delegated authority enumerated rather than inferred. A grant crosses a namespace boundary by construction -- a Framework tool, or a tool of the project that declares it -- so the names here are the same ToolName the catalog's own `name` is and nothing looser: an unnamespaced grant would have to mean `the caller's own namespace`, which is an absence carrying a meaning and would make one tool addressable under two spellings.",
-                                "type": "array",
-                                "uniqueItems": true,
-                                "items": {
-                                    "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/ToolName"
-                                }
-                            },
-                            "maximum_child_calls": {
-                                "type": "integer",
-                                "minimum": 0,
-                                "maximum": 4294967295
-                            },
-                            "maximum_child_mutability": {
-                                "enum": ["read_only", "mutating"]
-                            },
-                            "maximum_child_risk": {
-                                "enum": [
-                                    "read_only",
-                                    "low",
-                                    "medium",
-                                    "high",
-                                    "critical"
-                                ]
-                            },
-                            "maximum_child_surface": {
-                                "enum": ["semantic", "privileged"]
-                            }
-                        }
-                    },
-                    "effect_bounds": {
-                        "$comment": "The complete set of OP:EffectEnvelope this tool may propose. An empty set is a tool that may propose none, which is the honest declaration for a read_only tool.",
-                        "type": "array",
-                        "uniqueItems": true,
-                        "items": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "required": [
-                                "maximum_risk",
-                                "namespaced_type",
-                                "payload_schema_hash",
-                                "scope_kind"
-                            ],
-                            "properties": {
-                                "maximum_risk": {
-                                    "enum": [
-                                        "read_only",
-                                        "low",
-                                        "medium",
-                                        "high",
-                                        "critical"
-                                    ]
-                                },
-                                "namespaced_type": {
-                                    "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/NamespacedIdentifier"
-                                },
-                                "payload_schema_hash": {
-                                    "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Hash"
-                                },
-                                "scope_kind": {
-                                    "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
-                                }
-                            }
-                        }
-                    },
-                    "idempotency": {
-                        "enum": [
-                            "read_safe",
-                            "delivery_safe",
-                            "keyed_external",
-                            "non_idempotent"
-                        ]
-                    },
-                    "mutability": {"enum": ["read_only", "mutating"]},
-                    "name": {
-                        "$comment": "The Tool's name, namespaced under the namespace this catalog's plugin_id registers. The dot is required so that the name has an owner at all; that the owner is this registrant is the catalog owner's own admission rule, which no JSON Schema can state because it compares two members of two documents.",
-                        "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/ToolName"
-                    },
-                    "required_capabilities": {
-                        "type": "array",
-                        "uniqueItems": true,
-                        "items": {
-                            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
-                        }
-                    },
-                    "result_schema": {
-                        "$comment": "The definition of this project's tool precondition schema that judges what one call of this tool answers with. It is required for the same reason argument_schema is: a handler's answer is validated against the schema its own entry declared, and a tool that could omit it would answer bytes nothing is entitled to judge.",
-                        "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
-                    },
-                    "surface": {"enum": ["semantic", "privileged"]},
-                    "timeout_policy": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": ["maximum_elapsed_ms", "on_timeout"],
-                        "properties": {
-                            "maximum_elapsed_ms": {"type": "integer", "minimum": 1},
-                            "on_timeout": {
-                                "enum": ["reobserve", "reconcile", "stop"]
-                            }
-                        }
-                    },
-                    "ui_action_bounds": {
-                        "$comment": "The complete set of OP:EffectivePlan allowed_ui_actions entries this tool may propose.",
-                        "type": "array",
-                        "uniqueItems": true,
-                        "items": {
-                            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
-                        }
-                    },
-                    "version": {
-                        "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
-                    },
-                    "workflow_limits": {
-                        "$comment": "This tool's own ceiling. There is no second one compiled into the Operator: a limit stated per tool and another stated in C++ would be two authorities over one number.",
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": [
-                            "maximum_dispatches",
-                            "maximum_elapsed_ms",
-                            "maximum_observations",
-                            "maximum_steps",
-                            "maximum_waits"
-                        ],
-                        "properties": {
-                            "maximum_dispatches": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "maximum": 4294967295
-                            },
-                            "maximum_elapsed_ms": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "maximum": 9007199254740991
-                            },
-                            "maximum_observations": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "maximum": 4294967295
-                            },
-                            "maximum_steps": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "maximum": 4294967295
-                            },
-                            "maximum_waits": {
-                                "type": "integer",
-                                "minimum": 0,
-                                "maximum": 4294967295
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-})json"};
-
-        constexpr auto k_journalManifestSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/operator/journal-event-schema-manifest",
-    "title": "Journal event schema manifest",
-    "type": "object",
-    "additionalProperties": false,
-    "required": ["payload_schemas", "plugin_id", "schema"],
-    "properties": {
-        "$comment": {"type": "string"},
-        "plugin_id": {
-            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
-        },
-        "schema": {"const": "umbraflow-journal-event-schema-manifest/v1"},
-        "payload_schemas": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["namespaced_event_type", "sha256"],
-                "properties": {
-                    "namespaced_event_type": {
-                        "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/NamespacedIdentifier"
-                    },
-                    "sha256": {
-                        "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Hash"
-                    }
-                }
-            }
-        }
-    }
-})json"};
-
-        // One document a deployment authors whose format is the framework's:
-        // the value its `schema` member must carry, the label its refusals are
-        // named by, and the exact bytes that judge it. They are spelled once
-        // here because two readers need them -- create() below, and
-        // validateFrameworkFormat, which is what holds the specification's
-        // worked examples to these bytes.
-        struct FrameworkDocument final
-        {
-            std::string_view schemaName{};
-            std::string_view label{};
-            std::string_view exactBytes{};
+        // umbraflow-project.json's shape, by the path it is published under.
+        // The offline project kit compiles the same bytes out of the same
+        // catalog, which is the whole reason a Tool's shape is not written
+        // here: a second, narrower reading in this module would accept
+        // documents the kit refuses, or refuse ones it accepts.
+        constexpr auto k_projectSchemaPath = std::string_view{
+            "schema/umbraflow-project-v3.schema.json"
         };
 
-        constexpr auto k_toolCatalogDocument = FrameworkDocument{
-            .schemaName = "umbraflow-tool-catalog/v1",
-            .label      = "operator/tool-catalog",
-            .exactBytes = k_toolCatalogSchema,
-        };
-        constexpr auto k_journalManifestDocument = FrameworkDocument{
-            .schemaName = "umbraflow-journal-event-schema-manifest/v1",
-            .label      = "operator/journal-event-schema-manifest",
-            .exactBytes = k_journalManifestSchema,
-        };
-        constexpr auto k_frameworkDocuments = std::array{
-            k_journalManifestDocument,
-            k_toolCatalogDocument,
-        };
+        // The `$defs` of the published project schema that states one Tool
+        // entry's shape. Nothing here restates that shape: this module compiles
+        // the published bytes and asks them to judge each entry, so there is
+        // one statement of a Tool and both readers of the document compile it.
+        constexpr auto k_toolDefinition = std::string_view{"Tool"};
+
+        // The value a Tool's argument_schema carries when the Project declines
+        // argument validation. It is a value rather than an absence so that
+        // declining is written down: the member is mandatory, and the two
+        // readings mean different things rather than being two spellings of
+        // one.
+        constexpr auto k_uncheckedArguments = std::string_view{"unchecked"};
 
         [[nodiscard]]
         auto refuse(std::string message) -> std::unexpected<Error>
@@ -562,9 +58,6 @@ namespace uf::deployment
             return fail(AutomationErrorKind::InvalidResource, std::move(message));
         }
 
-        // A json failure, restated in the Operator's vocabulary. The message is
-        // carried whole because it names the document and the clause, which is
-        // the entire diagnosis a red suite has.
         [[nodiscard]]
         auto adopt(Status outcome, std::string_view what) -> Status
         {
@@ -572,21 +65,18 @@ namespace uf::deployment
             {
                 return ok();
             }
-            return refuse(
+            return fail(
+                AutomationErrorKind::InvalidResource,
                 std::format("{}: {}", what, outcome.error().message())
             );
         }
 
         [[nodiscard]]
-        auto compile(
-            std::string_view label,
-            std::string_view exactBytes,
-            std::span<json::Schema::Document const> referenced
-        ) -> Result<json::Schema>
+        auto compile(std::string_view label, std::string_view exactBytes)
+            -> Result<json::Schema>
         {
             auto compiled = json::Schema::compile(
-                json::Schema::Document{.label = label, .exactBytes = exactBytes},
-                referenced
+                json::Schema::Document{.label = label, .exactBytes = exactBytes}
             );
             if (!compiled.has_value())
             {
@@ -600,19 +90,22 @@ namespace uf::deployment
         }
 
         [[nodiscard]]
-        auto sharedSchemaDocuments() -> std::vector<json::Schema::Document>
+        auto publishedProjectSchema() -> Result<json::Schema::Document>
         {
-            auto documents = std::vector<json::Schema::Document>{};
-            auto const catalog = framework_schema::frameworkSchemaCatalog();
-            documents.reserve(catalog.size());
-            for (auto const& published : catalog)
+            auto const published = framework_schema::findFrameworkSchema(
+                k_projectSchemaPath
+            );
+            if (!published.has_value())
             {
-                documents.emplace_back(json::Schema::Document{
-                    .label      = published.relativePath,
-                    .exactBytes = published.exactBytes,
-                });
+                return refuse(
+                    "generated framework schema catalog is missing "
+                    + std::string{k_projectSchemaPath}
+                );
             }
-            return documents;
+            return json::Schema::Document{
+                .label      = published->relativePath,
+                .exactBytes = published->exactBytes,
+            };
         }
 
         [[nodiscard]]
@@ -627,49 +120,6 @@ namespace uf::deployment
                 ));
             }
             return *std::move(parsed);
-        }
-
-        [[nodiscard]]
-        auto requireIdentity(
-            std::string_view label,
-            std::string_view exactBytes,
-            std::string_view expected
-        ) -> Status
-        {
-            UF_TRY_VALUE(document, parseDocument(exactBytes));
-            auto const* const p_id = document.find("$id");
-            if (p_id == nullptr || p_id->kind() != json::ValueKind::String
-                || p_id->string() != expected)
-            {
-                return refuse(std::format(
-                    "{} must declare \"$id\": \"{}\"",
-                    label,
-                    expected
-                ));
-            }
-            return ok();
-        }
-
-        // The four project schemas declare a fixed identity, but an observed
-        // identity schema declares its own: the compiled authority answers by
-        // whatever absolute $id the document carries, which is why the
-        // registration restates no ID at all. compile() below enforces that
-        // the value is an absolute URI; presence is this check's.
-        [[nodiscard]]
-        auto identityIdOf(std::string_view label, std::string_view exactBytes)
-            -> Result<std::string>
-        {
-            UF_TRY_VALUE(document, parseDocument(exactBytes));
-            auto const* const p_id = document.find("$id");
-            if (p_id == nullptr || p_id->kind() != json::ValueKind::String
-                || p_id->string().empty())
-            {
-                return refuse(std::format(
-                    "{} must declare its own absolute \"$id\"",
-                    label
-                ));
-            }
-            return std::string{p_id->string()};
         }
 
         [[nodiscard]]
@@ -689,27 +139,6 @@ namespace uf::deployment
             auto const* const p_member = object.find(name);
             UF_CHECK(p_member != nullptr);
             return *p_member;
-        }
-
-        [[nodiscard]]
-        auto requirePluginId(
-            json::Value const& manifest,
-            std::string_view expected,
-            std::string_view what
-        ) -> Status
-        {
-            auto const* const p_declared = manifest.find("plugin_id");
-            UF_CHECK(p_declared != nullptr);
-            if (p_declared->string() != expected)
-            {
-                return refuse(std::format(
-                    "{} belongs to plugin {}, not to {}",
-                    what,
-                    p_declared->string(),
-                    expected
-                ));
-            }
-            return ok();
         }
 
         constexpr auto k_mutabilities = std::array{
@@ -733,18 +162,6 @@ namespace uf::deployment
             operator_runtime::Risk::Critical,
         };
 
-        // Both definition names, because a call has two documents to judge and
-        // one entry declares both. Keeping only the argument one and looking
-        // the result one up again from the catalog would be a second read of
-        // the same row.
-        struct ToolEntry final
-        {
-            std::string                      name{};
-            std::string                      argumentDefinition{};
-            std::string                      resultDefinition{};
-            operator_runtime::ToolDescriptor descriptor{};
-        };
-
         constexpr auto k_idempotencies = std::array{
             operator_runtime::ToolIdempotency::ReadSafe,
             operator_runtime::ToolIdempotency::DeliverySafe,
@@ -752,31 +169,26 @@ namespace uf::deployment
             operator_runtime::ToolIdempotency::NonIdempotent,
         };
 
-        struct DeliveryClassName final
-        {
-            std::string_view                wire{};
-            operator_runtime::DeliveryClass deliveryClass{};
-        };
-
-        constexpr auto k_deliveryClasses = std::array{
-            DeliveryClassName{
-                "delivery_safe",
-                operator_runtime::DeliveryClass::DeliverySafe,
-            },
-            DeliveryClassName{
-                "keyed_external",
-                operator_runtime::DeliveryClass::KeyedExternal,
-            },
-            DeliveryClassName{
-                "non_idempotent",
-                operator_runtime::DeliveryClass::NonIdempotent,
-            },
-        };
-
         constexpr auto k_timeoutActions = std::array{
             operator_runtime::TimeoutAction::Reobserve,
             operator_runtime::TimeoutAction::Reconcile,
             operator_runtime::TimeoutAction::Stop,
+        };
+
+        // One Tool as this deployment holds it: the name it is addressed by,
+        // the compiled guard its own declaration asked for, and the descriptor
+        // every bound is read from.
+        //
+        // An absent schema is the Project declining argument validation. It is
+        // std::optional rather than an always-present schema that accepts
+        // everything, because the two are different facts: one is a Project
+        // that stated no shape, the other is a Project that stated the empty
+        // shape, and a reader must be able to tell them apart.
+        struct ToolEntry final
+        {
+            std::string                      name{};
+            std::optional<json::Schema>      argumentSchema{};
+            operator_runtime::ToolDescriptor descriptor{};
         };
 
         [[nodiscard]]
@@ -790,7 +202,7 @@ namespace uf::deployment
             return values;
         }
 
-        // OP:`TimeoutPolicy`, which both step intents and every tool descriptor
+        // OP:`TimeoutPolicy`, which both step intents and every Tool descriptor
         // carry. The schema has already bounded both members, so this reads
         // rather than judges.
         [[nodiscard]]
@@ -816,7 +228,7 @@ namespace uf::deployment
         // schema has already required all five members and bounded each of
         // them, so this reads rather than judges; the one judgement a schema
         // cannot make -- that names and the call ceiling agree -- is
-        // childEffectDeclarationValid's, and the Tool Catalog owner runs it
+        // childEffectDeclarationValid's, and the Tool declaration owner runs it
         // over these exact values when it is built.
         [[nodiscard]]
         auto readChildEffects(
@@ -852,70 +264,83 @@ namespace uf::deployment
             };
         }
 
-        // One payload schema and the identity it answers under: the sha256 of
-        // its own exact bytes, which is what a journal manifest entry and an
-        // OP:`EffectEnvelope` each name.
-        struct PayloadSchema final
-        {
-            ContentHash  hash;
-            json::Schema schema;
-        };
-
-        // The digests of the bytes this deployment holds, for a refusal that
-        // has to say what the document could have named. R5
-        // (project-as-data.md 2.7) requires a digest disagreement to print the
-        // stated digest and what the deployment carries, and for a set of
-        // schemas named only by digest that set is the whole of the other side.
         [[nodiscard]]
-        auto carriedDigests(std::span<PayloadSchema const> schemas) -> std::string
+        auto readEffectBounds(json::Value const& tool)
+            -> Result<std::vector<operator_runtime::EffectBound>>
         {
-            if (schemas.empty())
+            auto bounds = std::vector<operator_runtime::EffectBound>{};
+            for (auto const& bound : member(tool, "effect_bounds").items())
             {
-                return "nothing";
+                UF_TRY_VALUE(
+                    payloadSchemaHash,
+                    ContentHash::parse(
+                        std::string{"sha256:"}
+                        + std::string{member(bound, "payload_schema_hash").string()}
+                    )
+                );
+                auto const risk = std::ranges::find(
+                    k_risks,
+                    member(bound, "maximum_risk").string(),
+                    operator_runtime::riskWireName
+                );
+                UF_CHECK(risk != k_risks.end());
+                bounds.emplace_back(operator_runtime::EffectBound{
+                    .namespacedType = std::string{
+                        member(bound, "namespaced_type").string()
+                    },
+                    .scopeKind         = std::string{
+                        member(bound, "scope_kind").string()
+                    },
+                    .payloadSchemaHash = payloadSchemaHash,
+                    .maximumRisk       = *risk,
+                });
             }
-            auto listed = std::string{};
-            for (auto const& schema : schemas)
-            {
-                if (!listed.empty())
-                {
-                    listed += ", ";
-                }
-                listed += schema.hash.hex();
-            }
-            return listed;
+            return bounds;
         }
 
-        struct JournalPayload final
+        // The guard one Tool's declaration asked for, compiled from the exact
+        // bytes it stated. It compiles on its own: reuse inside one schema is
+        // JSON Schema's own $defs, and a document set around it would let a
+        // schema whose bytes the registration never pinned decide what a call's
+        // arguments are judged against.
+        [[nodiscard]]
+        auto readArgumentSchema(
+            std::string_view toolName,
+            json::Value const& declared
+        ) -> Result<std::optional<json::Schema>>
         {
-            std::string eventType{};
-            std::size_t schemaIndex{};
-        };
+            if (declared.kind() == json::ValueKind::String)
+            {
+                UF_CHECK(declared.string() == k_uncheckedArguments);
+                return std::optional<json::Schema>{};
+            }
+            UF_TRY_VALUE(
+                schema,
+                compile(
+                    std::format("argument schema of {}", toolName),
+                    json::canonicalBytes(declared)
+                )
+            );
+            return std::optional<json::Schema>{std::move(schema)};
+        }
+    } // namespace
 
-    }
-
-    // Everything create() compiled and read, and the whole of what judging a
-    // document consults. It carries the operations rather than leaving them as
-    // free functions, because each of them would otherwise take it as a first
+    // Everything create() read and compiled, and the whole of what judging a
+    // call consults. It carries the operations rather than leaving them as free
+    // functions, because each of them would otherwise take it as a first
     // parameter.
     class ProjectDeployment::State final
     {
     public:
-        json::Schema reduceInput;
-        json::Schema projectState;
-        json::Schema toolPrecondition;
-
-        std::vector<ToolEntry>      tools{};
-        std::vector<PayloadSchema>  journalPayloadSchemas{};
-        std::vector<JournalPayload> journalPayloads{};
-        std::vector<PayloadSchema>  effectPayloadSchemas{};
+        std::vector<ToolEntry> tools{};
 
         // One observed identity schema this deployment compiled, in the order
-        // the deployment block named the documents. The registration pins the
-        // same bytes by sha256, and ObservedInstanceIdentitySchemas::create
-        // refuses any validator set that is not exactly that pinned set.
+        // the deployment declared them. The registration pins the same bytes by
+        // sha256, and ObservedInstanceIdentitySchemas::create refuses any
+        // validator set that is not exactly that pinned set.
         struct IdentitySchema final
         {
-            std::string  schemaId{};
+            std::string  name{};
             ContentHash  schemaHash;
             json::Schema schema;
         };
@@ -934,24 +359,6 @@ namespace uf::deployment
             std::string_view toolName,
             json::Value const& arguments
         ) const -> Status;
-
-        [[nodiscard]]
-        auto validateToolResult(
-            std::string_view toolName,
-            json::Value const& result
-        ) const -> Status;
-
-        [[nodiscard]]
-        auto validateJournalPayload(
-            std::string_view eventType,
-            json::Value const& payload
-        ) const -> Status;
-
-        [[nodiscard]]
-        auto validateInput(json::Value const& document) const -> Status;
-
-        [[nodiscard]]
-        auto validateOutput(json::Value const& document) const -> Status;
     };
 
     auto ProjectDeployment::State::findTool(std::string_view name) const
@@ -971,15 +378,20 @@ namespace uf::deployment
             schema.validate(basis),
             std::format(
                 "observed identity basis under {}",
-                identitySchemas[index].schemaId
+                identitySchemas[index].name
             )
         );
     }
 
-    // The arguments of one call, against the definition this project's Tool
-    // Catalog names for that tool. A tool the catalog does not declare is a
+    // The arguments of one call, against the schema this project's declaration
+    // states for that Tool. A Tool this deployment does not declare is a
     // refusal here, which is what makes tool_name inside an OP:`PlanProposal` a
     // stronger statement than the operator protocol's own NamespacedIdentifier.
+    //
+    // A Tool that declared `unchecked` gets no enforcement. That is the Project
+    // declining a guard rather than the framework skipping one: the trusted
+    // seam builds the Luau value without a schema, and the bytes, their digest
+    // and their coordinates are recorded either way.
     auto ProjectDeployment::State::validateToolArguments(
         std::string_view toolName,
         json::Value const& arguments
@@ -989,122 +401,18 @@ namespace uf::deployment
         if (p_tool == nullptr)
         {
             return refuse(std::format(
-                "this project's Tool Catalog declares no tool named {}",
+                "this project declares no Tool named {}",
                 toolName
             ));
         }
+        if (!p_tool->argumentSchema.has_value())
+        {
+            return ok();
+        }
         return adopt(
-            toolPrecondition.validateDefinition(p_tool->argumentDefinition, arguments),
+            p_tool->argumentSchema->validate(arguments),
             std::format("arguments of {}", toolName)
         );
-    }
-
-    // The other half of one call's contract, judged against the definition the
-    // same catalog row names. It is a separate reading rather than a direction
-    // parameter on the one above, because the two definitions are two members
-    // of the descriptor and a caller that could pass the direction could ask
-    // for the wrong one.
-    auto ProjectDeployment::State::validateToolResult(
-        std::string_view toolName,
-        json::Value const& result
-    ) const -> Status
-    {
-        auto const* const p_tool = findTool(toolName);
-        if (p_tool == nullptr)
-        {
-            return refuse(std::format(
-                "this project's Tool Catalog declares no tool named {}",
-                toolName
-            ));
-        }
-        return adopt(
-            toolPrecondition.validateDefinition(p_tool->resultDefinition, result),
-            std::format("result of {}", toolName)
-        );
-    }
-
-    auto ProjectDeployment::State::validateJournalPayload(
-        std::string_view eventType,
-        json::Value const& payload
-    ) const -> Status
-    {
-        auto const found = std::ranges::find(
-            journalPayloads,
-            eventType,
-            &JournalPayload::eventType
-        );
-        if (found == journalPayloads.end())
-        {
-            return refuse(std::format(
-                "this project's journal event schema manifest names no payload "
-                "schema for {}",
-                eventType
-            ));
-        }
-        return adopt(
-            journalPayloadSchemas[found->schemaIndex].schema.validate(payload),
-            std::format("payload of {}", eventType)
-        );
-    }
-
-    auto ProjectDeployment::State::validateInput(
-        json::Value const& document
-    ) const -> Status
-    {
-        UF_TRY(adopt(reduceInput.validate(document), "reduce input"));
-        for (
-            auto const& event
-            : member(document, "prospective_journal_batch").items()
-        )
-        {
-            UF_TRY(validateJournalPayload(
-                member(event, "namespaced_event_type").string(),
-                member(event, "opaque_project_payload")
-            ));
-        }
-        return ok();
-    }
-
-    auto ProjectDeployment::State::validateOutput(
-        json::Value const& document
-    ) const -> Status
-    {
-        return adopt(projectState.validate(document), "reduced ProjectState");
-    }
-
-    auto validateFrameworkFormat(std::string_view exactBytes) -> Status
-    {
-        UF_TRY_VALUE(document, parseDocument(exactBytes));
-        auto const* const p_schema = document.find("schema");
-        if (p_schema == nullptr || p_schema->kind() != json::ValueKind::String)
-        {
-            return refuse(
-                "a framework-format document names its own format in a schema "
-                "member, and this one carries no such member"
-            );
-        }
-        auto const named = std::ranges::find(
-            k_frameworkDocuments,
-            p_schema->string(),
-            &FrameworkDocument::schemaName
-        );
-        if (named == k_frameworkDocuments.end())
-        {
-            return refuse(std::format(
-                "no framework document format is named {}",
-                p_schema->string()
-            ));
-        }
-
-        auto const commonOnly = std::array{json::Schema::Document{
-            .label      = "operator/common",
-            .exactBytes = k_commonSchema,
-        }};
-        UF_TRY_VALUE(
-            schema,
-            compile(named->label, named->exactBytes, commonOnly)
-        );
-        return adopt(schema.validate(document), named->schemaName);
     }
 
     auto currentToolRuntimeProtocolMaterial() -> Result<std::string>
@@ -1122,6 +430,7 @@ namespace uf::deployment
             durableRecord,
             json::parse(operator_runtime::toolRuntimeDurableRecordMaterial())
         );
+        UF_TRY_VALUE(published, publishedProjectSchema());
         return json::canonicalBytes(json::Value::ofObject({
             {"call_vocabulary", std::move(vocabulary)},
 
@@ -1137,15 +446,15 @@ namespace uf::deployment
             {"durable_record", std::move(durableRecord)},
             {"identity_preimages", std::move(preimages)},
 
-            // The exact bytes that decide what a Tool catalog document IS. A
-            // Tool call's whole provider surface is read out of a document
-            // judged by this schema, so a protocol identity that did not carry
-            // it would be named for a property it cannot observe -- the defect
-            // that made this material necessary in the first place.
-            {"tool_catalog_schema",
-             json::Value::ofString(std::string{k_toolCatalogDocument.exactBytes})},
-            {"tool_catalog_wire_tag",
-             json::Value::ofString(std::string{k_toolCatalogDocument.schemaName})},
+            // The exact bytes that decide what a Tool declaration IS. A Tool
+            // call's whole provider surface is read out of a document judged by
+            // this schema, so a protocol identity that did not carry it would
+            // be named for a property it cannot observe -- the defect that made
+            // this material necessary in the first place.
+            {"tool_declaration_schema",
+             json::Value::ofString(std::string{published.exactBytes})},
+            {"tool_declaration_wire_tag",
+             json::Value::ofString("umbraflow-project/v3")},
         }));
     }
 
@@ -1153,22 +462,6 @@ namespace uf::deployment
     {
         UF_TRY_VALUE(material, currentToolRuntimeProtocolMaterial());
         return sha256(std::as_bytes(std::span{material}));
-    }
-
-    auto canonicalJsonValidator() -> operator_runtime::CanonicalJsonValidator
-    {
-        return [](std::string_view exactJcs) -> Result<json::Value>
-        {
-            // json::requireExactCanonical stays the only statement of RFC 8785
-            // exactness in the tree, and the value is then read out of the same
-            // bytes it accepted. Reading it back is one parse this module would
-            // rather not spend; removing it needs a json::parseExactCanonical,
-            // which belongs to modules/json rather than here, and a second
-            // exactness rule spelled locally would agree with that one by test
-            // instead of by construction.
-            UF_TRY(adopt(json::requireExactCanonical(exactJcs), "canonical bytes"));
-            return parseDocument(exactJcs);
-        };
     }
 
     ProjectDeployment::ProjectDeployment(std::shared_ptr<State const> p_state) noexcept
@@ -1179,271 +472,41 @@ namespace uf::deployment
     auto ProjectDeployment::create(ProjectDeploymentSources const& sources)
         -> Result<ProjectDeployment>
     {
-        UF_TRY(requireIdentity(
-            "the project state schema",
-            sources.projectState,
-            k_projectStateSchemaId
-        ));
-        UF_TRY(requireIdentity(
-            "the tool precondition schema",
-            sources.toolPrecondition,
-            k_toolPreconditionSchemaId
-        ));
-
-        auto const common = json::Schema::Document{
-            .label      = "operator/common",
-            .exactBytes = k_commonSchema,
-        };
-        auto const projectStateDocument = json::Schema::Document{
-            .label      = "project/state",
-            .exactBytes = sources.projectState,
-        };
-        auto const commonOnly      = std::array{common};
-        auto const sharedDocuments = sharedSchemaDocuments();
-
-        // A set that embeds a project document also has to resolve what that
-        // document references, so the published fragments belong in every set
-        // below and not only in the project's own compilations.
-        auto const withShared =
-            [&sharedDocuments](std::vector<json::Schema::Document> local)
+        UF_TRY_VALUE(published, publishedProjectSchema());
+        UF_TRY_VALUE(
+            directorySchema,
+            compile(published.label, published.exactBytes)
+        );
+        UF_TRY_VALUE(declarations, parseDocument(sources.tools));
+        if (declarations.kind() != json::ValueKind::Array)
         {
-            local.insert(
-                local.end(),
-                sharedDocuments.begin(),
-                sharedDocuments.end()
-            );
-            return local;
-        };
-        auto const withState = withShared({common, projectStateDocument});
-
-        UF_TRY_VALUE(
-            reduceInput,
-            compile("operator/reduce-input", k_reduceInputSchema, withState)
-        );
-        UF_TRY_VALUE(
-            projectState,
-            compile("project/state", sources.projectState, sharedDocuments)
-        );
-        UF_TRY_VALUE(
-            toolPrecondition,
-            compile(
-                "project/tool-precondition",
-                sources.toolPrecondition,
-                sharedDocuments
-            )
-        );
-
+            return refuse("a deployment's Tool declarations must be an array");
+        }
         auto state = std::make_shared<State>(State{
-            .reduceInput           = std::move(reduceInput),
-            .projectState          = std::move(projectState),
-            .toolPrecondition      = std::move(toolPrecondition),
-            .tools                 = {},
-            .journalPayloadSchemas = {},
-            .journalPayloads       = {},
-            .effectPayloadSchemas  = {},
-            .identitySchemas       = {},
+            .tools           = {},
+            .identitySchemas = {},
         });
 
-        // The payload schema sets first, because every manifest below names one
-        // of them by sha256 and a manifest naming bytes nobody supplied is the
-        // link that would otherwise be a convention.
-        for (auto const bytes : sources.journalPayloadSchemas)
+        for (auto const& tool : declarations.items())
         {
-            UF_TRY_VALUE(hash, hashOf(bytes));
-            UF_TRY_VALUE(
-                schema,
-                compile(
-                    std::format("journal payload {}", hash.hex()),
-                    bytes,
-                    sharedDocuments
-                )
-            );
-            state->journalPayloadSchemas.emplace_back(PayloadSchema{
-                .hash   = hash,
-                .schema = std::move(schema),
-            });
-        }
-        for (auto const bytes : sources.effectPayloadSchemas)
-        {
-            UF_TRY_VALUE(hash, hashOf(bytes));
-            UF_TRY_VALUE(
-                schema,
-                compile(
-                    std::format("effect payload {}", hash.hex()),
-                    bytes,
-                    sharedDocuments
-                )
-            );
-            state->effectPayloadSchemas.emplace_back(PayloadSchema{
-                .hash   = hash,
-                .schema = std::move(schema),
-            });
-        }
-
-        // The observed identity schemas, compiled under the same closed
-        // keyword set as every other schema this deployment applies. Each is
-        // compiled with the whole identity set around it and with nothing
-        // else: one identity document may reference another by its $id, two
-        // documents declaring the same $id are refused here rather than
-        // surfacing as an authority with one key answered twice, and a $ref
-        // that reaches past the registered set cannot compile. The framework
-        // catalog is outside the resolution domain for exactly this reason:
-        // a catalog schema's bytes are not pinned by the registration, so
-        // editing one must not be able to change what the identity set
-        // answers while every identity byte and project_registration_hash
-        // stay unchanged.
-        // The labels are owned strings the documents' views name: a view into
-        // a formatted temporary would dangle before the compiles below read
-        // it, and the label is what a refusal prints for the document.
-        auto identityLabels = std::vector<std::string>{};
-        identityLabels.reserve(sources.observedInstanceIdentitySchemas.size());
-        for (auto const bytes : sources.observedInstanceIdentitySchemas)
-        {
-            UF_TRY_VALUE(hash, hashOf(bytes));
-            identityLabels.emplace_back(
-                std::format("observed identity {}", hash.hex())
-            );
-        }
-
-        auto identityDocuments = std::vector<json::Schema::Document>{};
-        identityDocuments.reserve(identityLabels.size());
-        for (auto index = std::size_t{0}; index < identityLabels.size(); ++index)
-        {
-            identityDocuments.emplace_back(json::Schema::Document{
-                .label      = identityLabels[index],
-                .exactBytes = sources.observedInstanceIdentitySchemas[index],
-            });
-        }
-        for (auto index = std::size_t{0}; index < identityDocuments.size(); ++index)
-        {
-            UF_TRY_VALUE(
-                schemaId,
-                identityIdOf(
-                    identityDocuments[index].label,
-                    identityDocuments[index].exactBytes
-                )
-            );
-            auto around = std::vector<json::Schema::Document>{};
-            around.reserve(identityDocuments.size() - 1U);
-            for (auto other = std::size_t{0}; other < identityDocuments.size(); ++other)
-            {
-                if (other != index)
-                {
-                    around.emplace_back(identityDocuments[other]);
-                }
-            }
-            UF_TRY_VALUE(
-                schema,
-                compile(
-                    identityDocuments[index].label,
-                    identityDocuments[index].exactBytes,
-                    around
-                )
-            );
-            UF_TRY_VALUE(hash, hashOf(identityDocuments[index].exactBytes));
-            state->identitySchemas.emplace_back(State::IdentitySchema{
-                .schemaId   = std::move(schemaId),
-                .schemaHash = hash,
-                .schema     = std::move(schema),
-            });
-        }
-
-        UF_TRY_VALUE(
-            toolCatalogSchema,
-            compile(
-                k_toolCatalogDocument.label,
-                k_toolCatalogDocument.exactBytes,
-                commonOnly
-            )
-        );
-        UF_TRY_VALUE(catalog, parseDocument(sources.toolCatalog));
-        UF_TRY(adopt(toolCatalogSchema.validate(catalog), "the Tool Catalog"));
-        UF_TRY(requirePluginId(catalog, sources.pluginId, "the Tool Catalog"));
-
-        UF_TRY_VALUE(toolPreconditionHash, hashOf(sources.toolPrecondition));
-        if (member(catalog, "tool_precondition_sha256").string()
-            != toolPreconditionHash.hex())
-        {
-            return refuse(std::format(
-                "the Tool Catalog names tool precondition schema {}, and the "
-                "schema this deployment carries hashes to {}",
-                member(catalog, "tool_precondition_sha256").string(),
-                toolPreconditionHash.hex()
+            // The published shape first, so every member read below is one the
+            // schema has already accepted and of the kind it stated.
+            UF_TRY(adopt(
+                directorySchema.validateDefinition(k_toolDefinition, tool),
+                "a Tool this deployment declares"
             ));
-        }
 
-        // The effect payload schemas' only route into any digest. Nothing else
-        // in a project names them: no member of ProjectGenerationClaims pins
-        // one and no manifest lists one, so without this member editing a byte
-        // of a pinned effect payload schema would move no hash anywhere and the
-        // first consequence would be a Plan refused much later
-        // (project-as-data.md 2.2, 7.0 Q3). Naming them here puts their bytes
-        // inside tool_catalog_hash and so inside project_registration_hash.
-        //
-        // Both directions, for the reason the journal manifest's pair states: a
-        // digest naming bytes nobody supplied is a link that is only a
-        // convention, and a schema no digest names is bytes inside no hash.
-        for (auto const& declared : member(catalog, "effect_payload_sha256s").items())
-        {
-            auto const named = declared.string();
-            auto const found = std::ranges::find_if(
-                state->effectPayloadSchemas,
-                [named](PayloadSchema const& candidate)
-                {
-                    return candidate.hash.hex() == named;
-                }
-            );
-            if (found == state->effectPayloadSchemas.end())
-            {
-                return refuse(std::format(
-                    "the Tool Catalog names effect payload schema {}, which "
-                    "this deployment does not carry: its effect_payload_schemas "
-                    "hash to {}",
-                    named,
-                    carriedDigests(state->effectPayloadSchemas)
-                ));
-            }
-        }
-        for (auto const& supplied : state->effectPayloadSchemas)
-        {
-            auto const named = std::ranges::any_of(
-                member(catalog, "effect_payload_sha256s").items(),
-                [&supplied](json::Value const& declared)
-                {
-                    return declared.string() == supplied.hash.hex();
-                }
-            );
-            if (!named)
-            {
-                return refuse(std::format(
-                    "this deployment supplies an effect payload schema hashing "
-                    "to {}, which the Tool Catalog's effect_payload_sha256s "
-                    "does not name",
-                    supplied.hash.hex()
-                ));
-            }
-        }
+            auto const name = std::string{member(tool, "name").string()};
 
-        for (auto const& tool : member(catalog, "tools").items())
-        {
-            auto const definition = member(tool, "argument_schema").string();
-            if (!state->toolPrecondition.hasDefinition(definition))
-            {
-                return refuse(std::format(
-                    "the Tool Catalog names argument schema {}, which the tool "
-                    "precondition schema does not declare",
-                    definition
-                ));
-            }
-            auto const resultDefinition = member(tool, "result_schema").string();
-            if (!state->toolPrecondition.hasDefinition(resultDefinition))
-            {
-                return refuse(std::format(
-                    "the Tool Catalog names result schema {}, which the tool "
-                    "precondition schema does not declare",
-                    resultDefinition
-                ));
-            }
+            // Ownership is the one rule no JSON Schema can state, because it
+            // compares a Tool's name with the namespace the deployment
+            // registered. It is refused where the Tool is written rather than
+            // when a call of it arrives.
+            UF_TRY(operator_runtime::validateToolNameOwnership(
+                name,
+                sources.pluginId
+            ));
+
             auto const mutability = std::ranges::find(
                 k_mutabilities,
                 member(tool, "mutability").string(),
@@ -1463,161 +526,84 @@ namespace uf::deployment
             UF_CHECK(surface != k_surfaces.end());
             UF_CHECK(idempotency != k_idempotencies.end());
 
-            auto bounds = std::vector<operator_runtime::EffectBound>{};
-            for (auto const& bound : member(tool, "effect_bounds").items())
-            {
-                auto const named = member(bound, "payload_schema_hash").string();
-                auto const carried = std::ranges::find_if(
-                    state->effectPayloadSchemas,
-                    [named](PayloadSchema const& candidate)
-                    {
-                        return candidate.hash.hex() == named;
-                    }
-                );
-                if (carried == state->effectPayloadSchemas.end())
-                {
-                    // A bound naming bytes nobody supplied would admit an
-                    // effect whose payload nothing could judge, so the join is
-                    // made where the bound is read rather than where the
-                    // effect arrives.
-                    return refuse(std::format(
-                        "the Tool Catalog bounds an effect to payload schema "
-                        "{}, which this deployment does not carry: its "
-                        "effect_payload_schemas hash to {}",
-                        named,
-                        carriedDigests(state->effectPayloadSchemas)
-                    ));
-                }
-                auto const risk = std::ranges::find(
-                    k_risks,
-                    member(bound, "maximum_risk").string(),
-                    operator_runtime::riskWireName
-                );
-                UF_CHECK(risk != k_risks.end());
-                bounds.emplace_back(operator_runtime::EffectBound{
-                    .namespacedType = std::string{
-                        member(bound, "namespaced_type").string()
-                    },
-                    .scopeKind = std::string{member(bound, "scope_kind").string()},
-                    .payloadSchemaHash = carried->hash,
-                    .maximumRisk       = *risk,
-                });
-            }
+            UF_TRY_VALUE(bounds, readEffectBounds(tool));
+            UF_TRY_VALUE(
+                argumentSchema,
+                readArgumentSchema(name, member(tool, "argument_schema"))
+            );
 
             auto const& declaredLimits = member(tool, "workflow_limits");
             state->tools.emplace_back(ToolEntry{
-                .name               = std::string{member(tool, "name").string()},
-                .argumentDefinition = std::string{definition},
-                .resultDefinition   = std::string{resultDefinition},
-                .descriptor         = operator_runtime::ToolDescriptor{
-                    .toolVersion = std::string{member(tool, "version").string()},
-                    .requiredCapabilities = names(
+                .name           = name,
+                .argumentSchema = std::move(argumentSchema),
+                .descriptor     = operator_runtime::ToolDescriptor{
+                        .toolVersion = std::string{member(tool, "version").string()},
+                        .requiredCapabilities = names(
                         member(tool, "required_capabilities")
                     ),
-                    .effectBounds   = std::move(bounds),
-                    .uiActionBounds = names(member(tool, "ui_action_bounds")),
-                    .childEffects   = readChildEffects(
+                        .effectBounds   = std::move(bounds),
+                        .uiActionBounds = names(member(tool, "ui_action_bounds")),
+                        .childEffects   = readChildEffects(
                         member(tool, "child_effects")
                     ),
-                    .limits = operator_runtime::WorkflowLimits{
-                        .maximumSteps = static_cast<uint32>(
+                        .limits = operator_runtime::WorkflowLimits{
+                            .maximumSteps = static_cast<uint32>(
                             member(declaredLimits, "maximum_steps").number()
                         ),
-                        .maximumDispatches = static_cast<uint32>(
+                            .maximumDispatches = static_cast<uint32>(
                             member(declaredLimits, "maximum_dispatches").number()
                         ),
-                        .maximumObservations = static_cast<uint32>(
+                            .maximumObservations = static_cast<uint32>(
                             member(declaredLimits, "maximum_observations").number()
                         ),
-                        .maximumWaits = static_cast<uint32>(
+                            .maximumWaits = static_cast<uint32>(
                             member(declaredLimits, "maximum_waits").number()
                         ),
-                        .maximumElapsedMillis = static_cast<uint64>(
+                            .maximumElapsedMillis = static_cast<uint64>(
                             member(declaredLimits, "maximum_elapsed_ms").number()
                         ),
                     },
-                    .timeout     = readTimeoutPolicy(member(tool, "timeout_policy")),
-                    .mutability  = *mutability,
-                    .surface     = *surface,
-                    .idempotency = *idempotency,
+                        .timeout     = readTimeoutPolicy(member(tool, "timeout_policy")),
+                        .mutability  = *mutability,
+                        .surface     = *surface,
+                        .idempotency = *idempotency,
                 },
             });
         }
 
-        UF_TRY_VALUE(
-            journalManifestSchema,
-            compile(
-                k_journalManifestDocument.label,
-                k_journalManifestDocument.exactBytes,
-                commonOnly
+        // The identity schemas, each compiled on its own. One document may not
+        // reference another: reuse inside a schema is JSON Schema's own $defs,
+        // and a set around a document would let bytes the registration never
+        // pinned decide what an identity basis is judged against.
+        for (auto const& declared : sources.observedInstanceIdentitySchemas)
+        {
+            if (
+                std::ranges::contains(
+                    state->identitySchemas,
+                    declared.name,
+                    &State::IdentitySchema::name
+                )
             )
-        );
-        UF_TRY_VALUE(journalManifest, parseDocument(sources.journalEventManifest));
-        UF_TRY(adopt(
-            journalManifestSchema.validate(journalManifest),
-            "the journal event schema manifest"
-        ));
-        UF_TRY(requirePluginId(
-            journalManifest,
-            sources.pluginId,
-            "the journal event schema manifest"
-        ));
-        for (auto const& entry : member(journalManifest, "payload_schemas").items())
-        {
-            auto const declared = member(entry, "sha256").string();
-            auto const found    = std::ranges::find_if(
-                state->journalPayloadSchemas,
-                [declared](PayloadSchema const& candidate)
-                {
-                    return candidate.hash.hex() == declared;
-                }
-            );
-            if (found == state->journalPayloadSchemas.end())
             {
                 return refuse(std::format(
-                    "the journal event schema manifest names payload schema {} "
-                    "for {}, which this deployment does not carry: its "
-                    "journal_payload_schemas hash to {}",
-                    declared,
-                    member(entry, "namespaced_event_type").string(),
-                    carriedDigests(state->journalPayloadSchemas)
+                    "this deployment declares the observed instance identity "
+                    "schema {} twice",
+                    declared.name
                 ));
             }
-            state->journalPayloads.emplace_back(JournalPayload{
-                .eventType = std::string{
-                    member(entry, "namespaced_event_type").string(),
-                },
-                .schemaIndex = static_cast<std::size_t>(
-                    found - state->journalPayloadSchemas.begin()
-                ),
+            UF_TRY_VALUE(schemaHash, hashOf(declared.schema));
+            UF_TRY_VALUE(
+                schema,
+                compile(
+                    std::format("observed identity {}", declared.name),
+                    declared.schema
+                )
+            );
+            state->identitySchemas.emplace_back(State::IdentitySchema{
+                .name       = std::string{declared.name},
+                .schemaHash = schemaHash,
+                .schema     = std::move(schema),
             });
-        }
-
-        // The other direction of the same agreement, and it is the direction
-        // that decides whether the bytes are inside any digest at all. A
-        // payload schema no entry names reaches
-        // journal_event_schema_manifest_hash through nothing, so it would be
-        // compiled, held by this deployment, and consulted by no document ever
-        // -- the shape project-as-data.md 7.0 rules out for pinned schemas.
-        // Both halves are authored in one directory, which is R8's criterion.
-        for (auto index = std::size_t{0};
-             index < state->journalPayloadSchemas.size();
-             ++index)
-        {
-            auto const named = std::ranges::find(
-                state->journalPayloads,
-                index,
-                &JournalPayload::schemaIndex
-            );
-            if (named == state->journalPayloads.end())
-            {
-                return refuse(std::format(
-                    "this deployment supplies a journal payload schema hashing "
-                    "to {}, which the journal event schema manifest names under "
-                    "no event type",
-                    state->journalPayloadSchemas[index].hash.hex()
-                ));
-            }
         }
 
         return ProjectDeployment{std::shared_ptr<State const>{std::move(state)}};
@@ -1632,58 +618,6 @@ namespace uf::deployment
             return std::nullopt;
         }
         return p_tool->descriptor;
-    }
-
-    auto ProjectDeployment::documentValidator() const
-        -> operator_runtime::ProjectDocumentValidator
-    {
-        return [p_state = m_state](
-                   operator_runtime::ProjectDocumentDirection direction,
-                   std::string_view exactJcs
-               ) -> Status
-        {
-            UF_TRY_VALUE(document, parseDocument(exactJcs));
-            switch (direction)
-            {
-            case operator_runtime::ProjectDocumentDirection::Input:
-                return p_state->validateInput(document);
-            case operator_runtime::ProjectDocumentDirection::Output:
-                return p_state->validateOutput(document);
-            }
-
-            UF_UNREACHABLE_MSG("unknown ProjectDocumentDirection");
-        };
-    }
-
-    auto ProjectDeployment::journalPayloadValidator() const
-        -> operator_runtime::JournalPayloadSchemaValidator
-    {
-        return [p_state = m_state](
-                   std::string_view namespacedEventType,
-                   std::string_view exactPayloadJcs
-               ) -> Result<ContentHash>
-        {
-            auto const found = std::ranges::find(
-                p_state->journalPayloads,
-                namespacedEventType,
-                &JournalPayload::eventType
-            );
-            if (found == p_state->journalPayloads.end())
-            {
-                return refuse(std::format(
-                    "this project's journal event schema manifest names no payload "
-                    "schema for {}",
-                    namespacedEventType
-                ));
-            }
-            auto const& pinned = p_state->journalPayloadSchemas[found->schemaIndex];
-            UF_TRY_VALUE(payload, parseDocument(exactPayloadJcs));
-            UF_TRY(adopt(
-                pinned.schema.validate(payload),
-                std::format("payload of {}", namespacedEventType)
-            ));
-            return pinned.hash;
-        };
     }
 
     auto ProjectDeployment::toolCatalogReader() const
@@ -1718,19 +652,6 @@ namespace uf::deployment
         };
     }
 
-    auto ProjectDeployment::toolResultValidator() const
-        -> operator_runtime::ToolResultValidator
-    {
-        return [p_state = m_state](
-                   std::string_view toolName,
-                   std::string_view exactResultJcs
-               ) -> Status
-        {
-            UF_TRY_VALUE(result, parseDocument(exactResultJcs));
-            return p_state->validateToolResult(toolName, result);
-        };
-    }
-
     auto ProjectDeployment::observedIdentitySchemas() const
         -> std::vector<operator_runtime::ObservedInstanceIdentitySchema>
     {
@@ -1739,7 +660,7 @@ namespace uf::deployment
         for (auto index = std::size_t{0}; index < m_state->identitySchemas.size(); ++index)
         {
             bindings.emplace_back(operator_runtime::ObservedInstanceIdentitySchema{
-                .schemaId   = m_state->identitySchemas[index].schemaId,
+                .schemaId   = m_state->identitySchemas[index].name,
                 .schemaHash = m_state->identitySchemas[index].schemaHash,
                 .validate   = [p_state = m_state, index](json::Value const& basis) -> Status
                 {

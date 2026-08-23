@@ -25,30 +25,21 @@ namespace uf::operator_runtime
             return *result;
         }
 
-        // The smallest complete generation: a reducer stating the one entry its
-        // type keeps, and a tool closure whose stated entry set is explicitly
-        // empty because this registration binds no Tool. Both slots are always
-        // present; there is no shorter document.
+        // The smallest complete generation: one tool closure whose stated
+        // entry set is explicitly empty because this registration binds no
+        // Tool. The slot is always present; there is no shorter document.
         [[nodiscard]]
-        auto claimsFor(ContentHash reducerManifestHash) -> ProjectGenerationClaims
+        auto claimsFor(ContentHash toolManifestHash) -> ProjectGenerationClaims
         {
             return ProjectGenerationClaims{
                 .projectRegistrationFormat = k_projectGenerationFormat,
                 .pluginId                  = "fixture.alpha",
-                .reducerClosure            = ProjectClosureClaims{
-                    .moduleManifestHash  = reducerManifestHash,
-                    .exportedEntryPoints = {std::string{k_reducerEntryPoint}},
-                },
-                .toolClosure = ProjectClosureClaims{
-                    .moduleManifestHash  = hashOf("tool-manifest"),
+                .toolClosure               = ProjectClosureClaims{
+                    .moduleManifestHash  = toolManifestHash,
                     .exportedEntryPoints = {},
                 },
-                .pluginEnvironmentHash             = hashOf("environment"),
-                .toolCatalogHash                   = hashOf("catalogue"),
-                .projectStateSchemaHash            = hashOf("state"),
-                .projectToolPreconditionSchemaHash = hashOf("precondition"),
-                .journalEventSchemaManifestHash    = hashOf("journal"),
-                .baselineEventType                 = "fixture.baseline",
+                .pluginEnvironmentHash = hashOf("environment"),
+                .toolCatalogHash       = hashOf("catalogue"),
             };
         }
 
@@ -76,10 +67,7 @@ namespace uf::operator_runtime
         ) -> std::string
         {
             auto result = std::string{
-                "{\"baseline_event_type\":\"" + claims.baselineEventType
-                + "\",\"journal_event_schema_manifest_hash\":\""
-                + claims.journalEventSchemaManifestHash.hex()
-                + "\",\"observed_instance_identity_schema_hashes\":["
+                "{\"observed_instance_identity_schema_hashes\":["
             };
             for (
                 auto index = std::size_t{0};
@@ -107,9 +95,7 @@ namespace uf::operator_runtime
                     + resource.name + "\",\"sha256\":\"" + resource.hash.hex()
                     + "\",\"size\":" + std::to_string(resource.size) + "}";
             }
-            result += "],\"project_state_schema_hash\":\""
-                + claims.projectStateSchemaHash.hex()
-                + "\",\"project_tool_bindings\":[";
+            result += "],\"project_tool_bindings\":[";
             for (
                 auto index = std::size_t{0};
                 index < claims.projectToolBindings.size();
@@ -121,10 +107,7 @@ namespace uf::operator_runtime
                 result += "{\"entry_point\":\"" + binding.entryPoint
                     + "\",\"tool_name\":\"" + binding.toolName + "\"}";
             }
-            result += "],\"project_tool_precondition_schema_hash\":\""
-                + claims.projectToolPreconditionSchemaHash.hex()
-                + "\",\"reducer_closure\":" + closureJcs(claims.reducerClosure)
-                + ",\"tool_catalog_hash\":\""
+            result += "],\"tool_catalog_hash\":\""
                 + claims.toolCatalogHash.hex()
                 + "\",\"tool_closure\":" + closureJcs(claims.toolClosure) + "}";
             return result;
@@ -168,8 +151,8 @@ namespace uf::operator_runtime
 
     TEST_CASE("VerifiedProjectGeneration requires exact JCS schema and root")
     {
-        auto const reducerManifestHash = hashOf("reducer-manifest");
-        auto const claims   = claimsFor(reducerManifestHash);
+        auto const toolManifestHash = hashOf("tool-manifest");
+        auto const claims   = claimsFor(toolManifestHash);
         auto const exactJcs = generationJcs(claims);
         auto const reader   = exactReader(exactJcs, claims);
         auto const rootHash = hashOf(exactJcs);
@@ -184,7 +167,7 @@ namespace uf::operator_runtime
         CHECK(verified->hash() == rootHash);
         CHECK(verified->pluginId() == "fixture.alpha");
         CHECK(
-            verified->reducerClosure().moduleManifestHash == reducerManifestHash
+            verified->toolClosure().moduleManifestHash == toolManifestHash
         );
 
         CHECK_FALSE(
@@ -230,15 +213,15 @@ namespace uf::operator_runtime
     }
 
     // The forward case above proves nothing about the migration itself: a
-    // consumer that accepted any format <= 6 would keep it green. This case
-    // names the generation this framework just stopped reading -- format 5,
-    // the document that still pinned an observation schema and a reconcile
-    // payload schema manifest -- so the 5 -> 6 break is red before any future
-    // format-7 document is.
+    // consumer that accepted any format <= 7 would keep it green. This case
+    // names the generation this framework just stopped reading -- format 6,
+    // the two-closure document that still pinned a project state schema, a
+    // tool precondition schema and a journal event schema manifest -- so the
+    // 6 -> 7 break is red before any future format-8 document is.
     TEST_CASE("VerifiedProjectGeneration refuses the previous generation's format")
     {
         auto claims                      = claimsFor(hashOf("plugin"));
-        claims.projectRegistrationFormat = 5U;
+        claims.projectRegistrationFormat = 6U;
         auto const exactJcs = generationJcs(claims);
         auto const reader   = exactReader(exactJcs, claims);
         auto const refused =
@@ -246,7 +229,7 @@ namespace uf::operator_runtime
         REQUIRE_FALSE(refused.has_value());
         // The message names the stated format and the format this framework
         // reads, so a refusal of the wrong generation cannot be green.
-        CHECK(refused.error().message().contains("5"));
+        CHECK(refused.error().message().contains("6"));
         CHECK(refused.error().message().contains(
             std::to_string(k_projectGenerationFormat)
         ));
@@ -372,18 +355,6 @@ namespace uf::operator_runtime
             );
         }
 
-        SUBCASE("baseline event type is namespaced")
-        {
-            auto claims              = claimsFor(hashOf("plugin"));
-            claims.baselineEventType = "Baseline";
-            auto const exactJcs = generationJcs(claims);
-            auto const reader   = exactReader(exactJcs, std::move(claims));
-            CHECK_FALSE(
-                ProjectGeneration::verifyExact(exactJcs, hashOf(exactJcs), reader)
-                    .has_value()
-            );
-        }
-
         SUBCASE("resources are names, not paths")
         {
             auto claims = claimsFor(hashOf("plugin"));
@@ -471,25 +442,5 @@ namespace uf::operator_runtime
         CHECK(hashOf(generationJcs(base)) != hashOf(generationJcs(retyped)));
         CHECK(hashOf(generationJcs(base)) != hashOf(generationJcs(resized)));
         CHECK(hashOf(generationJcs(base)) != hashOf(generationJcs(rehashed)));
-    }
-
-    // Both closures are inside the root, so moving either one's code moves the
-    // registration identity. It is the two-closure half of the identity
-    // property above, and it is what makes "two closures, two hashes" a fact
-    // about the document rather than a comment on the loader.
-    TEST_CASE("registration identity covers both closures apart")
-    {
-        auto const base = claimsFor(hashOf("plugin"));
-        auto movedReducer                              = base;
-        movedReducer.reducerClosure.moduleManifestHash = hashOf("other-reducer");
-        auto movedTool                                 = base;
-        movedTool.toolClosure.moduleManifestHash       = hashOf("other-tool");
-
-        CHECK(hashOf(generationJcs(base)) != hashOf(generationJcs(movedReducer)));
-        CHECK(hashOf(generationJcs(base)) != hashOf(generationJcs(movedTool)));
-        CHECK(
-            hashOf(generationJcs(movedReducer))
-            != hashOf(generationJcs(movedTool))
-        );
     }
 }

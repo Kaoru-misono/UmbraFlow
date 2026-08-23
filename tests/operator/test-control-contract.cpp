@@ -349,7 +349,7 @@ namespace uf::operator_runtime
         // effect has no spelling that skips the descriptor.
         CHECK_FALSE(prepared.project.toolCatalogSchemaOwner.validate(
             prepared.project.toolName("unlisted-command"),
-            canonical(prepared.project.schemaOwner, "{\"value\":1}")
+            canonical("{\"value\":1}")
         ).has_value());
 
         // Binding is derived too: the Operator takes the registration from the
@@ -359,10 +359,7 @@ namespace uf::operator_runtime
         // registration comparison and not an effect the policy would have
         // denied anyway.
         auto const foreignId = std::string{"fixture.foreign"};
-        auto const foreign   = makeProject(
-            foreignId,
-            test_support::reducerSource(foreignId)
-        );
+        auto const foreign   = makeProject(foreignId);
         CHECK(
             foreign.registration.hash()
             != prepared.project.registration.hash()

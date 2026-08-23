@@ -2,7 +2,6 @@
 
 #include "project-deployment.hpp"
 
-#include <operator/journal-entry.hpp>
 #include <operator/manifest.hpp>
 #include <operator/project-observation.hpp>
 #include <operator/project-plugin.hpp>
@@ -14,8 +13,6 @@
 
 #include <cstddef>
 #include <filesystem>
-#include <memory>
-#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -36,14 +33,6 @@ namespace uf::deployment
     inline constexpr auto k_conformanceManifestFileName =
         std::string_view{"umbraflow-conformance.json"};
 
-    // One Journal entry a project's own event schemas accept, as
-    // umbraflow-conformance.json spells it.
-    struct ProjectJournalDocument final
-    {
-        std::string eventType{};
-        std::string payload{};
-    };
-
     // The one UI action a contract run drives, in the RuntimeModel's own
     // vocabulary.
     struct ProjectUiAction final
@@ -55,10 +44,10 @@ namespace uf::deployment
 
     // Every project document a suite is allowed to use, read as strings and
     // nothing else. Each payload member below carries the project's exact bytes
-    // rather than a nested object, because those bytes are handed to
-    // ProjectSchemaOwner::canonicalize, which refuses anything that is not
-    // exact RFC 8785 JCS. A nested object would make this loader choose a
-    // serialization, and the bytes would stop being the project's.
+    // rather than a nested object, because those bytes are handed to a seam
+    // that refuses anything which is not exact RFC 8785 JCS. A nested object
+    // would make this loader choose a serialization, and the bytes would stop
+    // being the project's.
     struct ProjectVocabulary final
     {
         std::string mutatingTool{};
@@ -67,12 +56,6 @@ namespace uf::deployment
         std::string toolArguments{};
         std::string refusedToolArguments{};
         std::string absentTool{};
-
-        ProjectJournalDocument baselineEntry{};
-        ProjectJournalDocument progressEntry{};
-        ProjectJournalDocument confirmedEntry{};
-        ProjectJournalDocument supersededEntry{};
-        std::string            provenance{};
 
         std::string approvalRequiredPlanTool{};
 
@@ -87,10 +70,10 @@ namespace uf::deployment
         ProjectVocabulary vocabulary{};
     };
 
-    // One closure of a deployment's two-closure generation, as the loader read
-    // it: the entry module its manifest digest is taken over, the exact module
-    // blobs of the closed graph beneath it, and what the deployment block
-    // STATED the closure exports.
+    // The closure of a deployment's generation, as the loader read it: the
+    // entry module its manifest digest is taken over, the exact module blobs of
+    // the closed graph beneath it, and what the deployment block STATED the
+    // closure exports.
     //
     // The declaration is carried rather than derived. A loader that computed it
     // from the binding table would compare the table with itself, and one that
@@ -104,56 +87,37 @@ namespace uf::deployment
     };
 
     // One deployment, loaded: the registration generation this loader derived
-    // from the deployment's block and the digests of the files it read, and the
+    // from the deployment's block and the digests of the bytes it read, and the
     // authorities built from it.
     //
     // There is no authored registration document anywhere in a project
-    // directory. The block states intent -- which closures, which schemas,
-    // which typed resources, each by path -- and every digest in the generation
-    // is this loader's own arithmetic. The one thing it does not derive is each
-    // closure's declared export set: that is the author's own second source.
+    // directory. The block states intent -- which closure, which Tools, which
+    // identity schemas, which typed resources -- and every digest in the
+    // generation is this loader's own arithmetic. The one thing it does not
+    // derive is the closure's declared export set: that is the author's own
+    // second source.
     struct LoadedDeployment final
     {
         std::string name{};
 
         operator_runtime::VerifiedProjectGeneration       generation;
-        operator_runtime::ProjectSchemaOwner              schemaOwner;
-        operator_runtime::ProjectJournalSchemaOwner       journalSchemaOwner;
         operator_runtime::ProjectToolCatalogSchemaOwner   toolCatalogSchemaOwner;
         operator_runtime::ObservedInstanceIdentitySchemas observedInstanceIdentitySchemas;
 
-        // The compiled schemas and read manifests the authorities above were
-        // built from, kept rather than dropped. Every authority judges a
-        // call and therefore needs its arguments; a document that names tools
-        // without calling them -- a conformance vocabulary -- has none to
-        // offer, and carriedTool is what lets such a document and this
-        // deployment's catalog be held to each other.
+        // The compiled schemas the authority above was built from, kept rather
+        // than dropped. The authority judges a call and therefore needs its
+        // arguments; a document that names tools without calling them -- a
+        // conformance vocabulary -- has none to offer, and carriedTool is what
+        // lets such a document and this deployment's declarations be held to
+        // each other.
         ProjectDeployment catalog;
 
         // registerGeneration's exact module and resource closures, as bytes.
         // Paths have already been confined and do not survive into runtime
-        // identity. The resource closure is one per registration and read by
-        // both compiled closures, which is why it sits beside them rather than
-        // inside either.
-        DeploymentClosure reducerClosure{};
+        // identity.
         DeploymentClosure toolClosure{};
         std::vector<operator_runtime::ProjectResourceBlob>
             projectResources{};
-    };
-
-    // The exact ProjectPlugin input bytes observed by the loader's document
-    // validator. Validator callbacks retain a shared owner because LoadedProject
-    // may move after they are installed. Every mutation and read is serialized,
-    // and reads return copies so no borrow escapes the lock.
-    class ProjectDocumentInputLog final
-    {
-        mutable std::mutex m_mutex{};
-        std::string        m_lastReduceInput{};
-
-    public:
-        auto record(std::string_view exactJcs) -> void;
-
-        [[nodiscard]] auto lastReduceInput() const -> std::string;
     };
 
     struct LoadedProject final
@@ -190,11 +154,6 @@ namespace uf::deployment
     {
         LoadedProject loaded{};
 
-        // Shared with the document validators installed only for this
-        // conformance load. Production loads neither allocate this recorder nor
-        // retain plugin inputs after validating them.
-        std::shared_ptr<ProjectDocumentInputLog> documentInputLog{};
-
         // One capture of the project's target, as the project's own PNG bytes.
         // The load decoded them, so these are an image (2.7 R9); its extent is
         // NOT checked here and cannot be, because after the Q2 ruling the
@@ -223,7 +182,7 @@ namespace uf::deployment
 
     // Reads a project directory the way the product reads it:
     // umbraflow-project.json, the RuntimeArtifact it names, and every
-    // deployment's six authorities. One deployment is enough, no conformance
+    // deployment's authorities. One deployment is enough, no conformance
     // document is opened, and no tool is required to be mutating -- a project
     // that honestly implements nothing mutating is a project this starts.
     //
@@ -252,33 +211,4 @@ namespace uf::deployment
         std::filesystem::path const& directory,
         std::span<ExpectedRegistration const> expected
     ) -> Result<ConformanceProject>;
-
-    // One file the offline project check's completion condition names, as the
-    // build records it and the check verifies it: the manifest-relative path a
-    // deployment declaration states, and the digest and size of the bytes this
-    // loader opened at that path.
-    struct DeclaredProjectFile final
-    {
-        std::string path{};
-        ContentHash digest;
-        std::size_t size{};
-    };
-
-    // The narrowest read of umbraflow-project.json that still opens files:
-    // every deployment's document members -- the tool catalog source, the two
-    // project schemas, the journal event schema manifest and the journal
-    // payload schemas -- opened with the same confinement, spelling rules and
-    // size bounds as the full load, and hashed. No deployment is constructed: no
-    // schema is compiled and no registration is derived, so a caller that only
-    // needs the declared files can ask for them without the load.
-    //
-    // The members a deployment can also name but this read does not open --
-    // the plugin, the effect payload schemas, the identity schemas and the
-    // resources -- are outside the file set the check's completion
-    // condition enumerates, and a read that opened them would be more than the
-    // check's caller asked for.
-    [[nodiscard]]
-    auto readDeclaredProjectFiles(
-        std::filesystem::path const& directory
-    ) -> Result<std::vector<DeclaredProjectFile>>;
 }

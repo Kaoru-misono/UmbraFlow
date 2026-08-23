@@ -1129,7 +1129,7 @@ namespace uf::script::detail
                     // The refusal names the module the resolver was asked for,
                     // and says nothing about whether it exists. Which modules a
                     // resolver admits is a property of the program type, so a
-                    // pure reducer asking for a scoped module has to be told
+                    // pure program asking for a scoped module has to be told
                     // which name its own program type does not carry.
                     auto const unknown =
                         "pure data require rejected an unknown module: " + *resolved;

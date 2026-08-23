@@ -1,6 +1,6 @@
 {
-  "$comment": "The expedition drives the run and the rival mints the documents it must refuse. Every reconcile input here is stated in the request's vocabulary, which shares no word with the verdict the disposition is read out of.",
-  "schema": "umbraflow-conformance/v2",
+  "$comment": "The two roles differ in every tool name, because a Tool is named inside the namespace its own registration owns; what separates the roles is the registration a document is minted under.",
+  "schema": "umbraflow-conformance/v3",
   "probe_frame": "runtime/probe-frame.png",
   "under_test": {
     "deployment": "expedition",
@@ -11,23 +11,6 @@
       "tool_arguments": "{\"steps\":2}",
       "refused_tool_arguments": "{\"steps\":9}",
       "absent_tool": "arcana.expedition.smuggle",
-      "baseline_entry": {
-        "event_type": "expedition.founded",
-        "payload": "{\"camp\":\"north\"}"
-      },
-      "progress_entry": {
-        "event_type": "expedition.advanced",
-        "payload": "{\"leagues\":4}"
-      },
-      "confirmed_entry": {
-        "event_type": "expedition.arrived",
-        "payload": "{\"leagues\":7}"
-      },
-      "superseded_entry": {
-        "event_type": "expedition.blocked",
-        "payload": "{\"leagues\":9}"
-      },
-      "provenance": "{\"kind\":\"human_correction\",\"observation_ids\":[],\"principal_id\":\"expedition.witness\",\"source_hashes\":[\"7d4f3b2a19c8e6d5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1\"]}",
       "approval_required_plan_tool": "arcana.expedition.approval",
       "ui_action": {
         "surface": "expedition.surface",
@@ -45,23 +28,6 @@
       "tool_arguments": "{\"steps\":2}",
       "refused_tool_arguments": "{\"steps\":9}",
       "absent_tool": "arcana.rival.smuggle",
-      "baseline_entry": {
-        "event_type": "expedition.founded",
-        "payload": "{\"camp\":\"north\"}"
-      },
-      "progress_entry": {
-        "event_type": "expedition.advanced",
-        "payload": "{\"leagues\":4}"
-      },
-      "confirmed_entry": {
-        "event_type": "expedition.arrived",
-        "payload": "{\"leagues\":7}"
-      },
-      "superseded_entry": {
-        "event_type": "expedition.blocked",
-        "payload": "{\"leagues\":9}"
-      },
-      "provenance": "{\"kind\":\"human_correction\",\"observation_ids\":[],\"principal_id\":\"expedition.witness\",\"source_hashes\":[\"7d4f3b2a19c8e6d5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1\"]}",
       "approval_required_plan_tool": "arcana.rival.approval",
       "ui_action": {
         "surface": "expedition.surface",
