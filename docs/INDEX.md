@@ -31,6 +31,12 @@ could only be kept true by hand.
 
 - [`docs/PUBLIC-CONTRACT.md`](PUBLIC-CONTRACT.md) — generated, and the only
   document a consuming repository reads.
+- [`docs/release-notes/`](release-notes/) — one file per release that broke
+  something a project author had already written. A note states what broke and
+  what the removed member *was*, not only what is new: a note that describes a
+  new capability and omits the deletion it replaced sends a consumer into a wall
+  its own release notes never mentioned.
+  - [2026-08-23 — Project state interpretation removed](release-notes/2026-08-23-project-state-interpretation-removed.md)
 
 ## Two rules about the consumer repository
 
