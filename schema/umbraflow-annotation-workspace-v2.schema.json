@@ -288,37 +288,23 @@
       ]
     },
     "ReplayBundle": {
-      "description": "The offline closure a project/operation replay is run from: one baseline event, the Journal prefix after it, the structured observations, the Operation rows and the session manifest it all happened under. Frames are optional and retention-bounded; an empty frame list still supports audit but cannot stand in for a frame replay.",
+      "description": "The offline closure a project/operation replay is run from: the session's ordered structured observations, and the session manifest that pins the identity they were observed under. Replay hands the same observations to that identity's recognition and compares the facts. Frames are optional and retention-bounded; an empty frame list still supports audit but cannot stand in for a frame replay.",
       "type": "object",
       "additionalProperties": false,
       "required": [
         "bundle_id",
-        "baseline_event_id",
-        "journal_prefix",
         "observations",
-        "operation_rows",
         "session_manifest_hash",
         "frames",
         "frame_retention_expires_at"
       ],
       "properties": {
         "bundle_id": { "$ref": "#/$defs/Sha256" },
-        "baseline_event_id": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "journal_prefix": {
+        "observations": {
           "type": "array",
           "minItems": 1,
           "maxItems": 65536,
-          "items": { "type": "string", "minLength": 1, "maxLength": 128 }
-        },
-        "observations": {
-          "type": "array",
-          "maxItems": 65536,
           "items": { "$ref": "#/$defs/Sha256" }
-        },
-        "operation_rows": {
-          "type": "array",
-          "maxItems": 65536,
-          "items": { "type": "string", "minLength": 1, "maxLength": 128 }
         },
         "session_manifest_hash": { "$ref": "#/$defs/Sha256" },
         "frames": {

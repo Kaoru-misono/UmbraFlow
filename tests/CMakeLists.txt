@@ -1774,7 +1774,7 @@ add_test(
     NAME contract-agent-a03
     COMMAND
         ${Python3_EXECUTABLE} -m unittest
-        tools.annotate.tests.test_backend.ReplayBundleTests.test_bundle_is_the_five_part_closure_and_validates_against_the_checked_in_schema
+        tools.annotate.tests.test_backend.ReplayBundleTests.test_bundle_is_the_observation_closure_and_validates_against_the_checked_in_schema
     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
 )
 add_test(

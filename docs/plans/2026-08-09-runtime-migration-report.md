@@ -92,7 +92,7 @@ fixtures cannot satisfy them.
 | C-12 | Policy ledger | PL:`PolicyArtifact` | CTEST `contract-control-c12` and CTEST `schema-control-c12` |
 | A-01 | Agent event facade | OP:`SubscriptionCursor/ResyncRequired` | CTEST `contract-agent-a01` and CTEST `schema-agent-a01` |
 | A-02 | Agent runtime | OP:`AgentBudget` | CTEST `contract-agent-a02` and CTEST `schema-agent-a02` |
-| A-03 | Audit owners | TR + OP + JR + AW:`ReplayBundle` | CTEST `schema-agent-a03`; behaviour under the aggregate CTEST `test-annotate-backend`, with no per-requirement ID |
+| A-03 | Audit owners | TR + OP + AW:`ReplayBundle` | CTEST `schema-agent-a03`; behaviour under the aggregate CTEST `test-annotate-backend`, with no per-requirement ID |
 | A-04 | Reconciliation coordinator | JR:`JournalEvent` | CTEST `contract-agent-a04` — since 2026-08-11 it also binds the `journal_events` column set to `JR:JournalEvent`'s `required` list and drives six provenance documents that each violate one rule of the fixed `JR:JournalProvenance`, which the framework now enforces itself; see [the journal record binding](../archive/plans/2026-08-11-journal-record-binding.md) |
 | A-05 | Publication gates | AW:`ReplayGate` + PR:`plugin_hash` | CTEST `schema-agent-a05`; behaviour under the aggregate CTEST `test-annotate-backend`, with no per-requirement ID |
 | A-06 | Deployment boundary | AW:`AuthoringCapabilityRoot` + RA | CTEST `contract-agent-a06` |

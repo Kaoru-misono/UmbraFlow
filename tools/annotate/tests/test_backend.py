@@ -335,10 +335,7 @@ class Workspace:
             b"structured observation " + str(len(changes)).encode() + str(with_frames).encode()
         )
         closure: dict[str, object] = {
-            "baseline_event_id": "chaos.run.started#1",
-            "journal_prefix": ["chaos.event.resolved#2", "chaos.reward.observed#3"],
             "observations": [observation.sha256],
-            "operation_rows": ["operation-1"],
             "session_manifest_hash": digest(b"session manifest"),
             "frames": [],
             "frame_retention_expires_at": None,
@@ -1609,10 +1606,7 @@ class ReplayBundleTests(WorkspaceTestCase):
         observation = self.workspace.store.put_evidence_blob(b"observation for closure case")
         frame = self.workspace.store.put_evidence_blob(b"frame for closure case")
         value: dict[str, object] = {
-            "baseline_event_id": "chaos.run.started#1",
-            "journal_prefix": ["chaos.event.resolved#2"],
             "observations": [observation.sha256],
-            "operation_rows": ["operation-1"],
             "session_manifest_hash": digest(b"session manifest"),
             "frames": [frame.sha256],
             "frame_retention_expires_at": in_hours(1),
@@ -1620,7 +1614,7 @@ class ReplayBundleTests(WorkspaceTestCase):
         value.update(changes)
         return value
 
-    def test_bundle_is_the_five_part_closure_and_validates_against_the_checked_in_schema(
+    def test_bundle_is_the_observation_closure_and_validates_against_the_checked_in_schema(
         self,
     ) -> None:
         recorded = self.workspace.add_bundle()
@@ -1633,10 +1627,7 @@ class ReplayBundleTests(WorkspaceTestCase):
             set(document),
             {
                 "bundle_id",
-                "baseline_event_id",
-                "journal_prefix",
                 "observations",
-                "operation_rows",
                 "session_manifest_hash",
                 "frames",
                 "frame_retention_expires_at",
@@ -1656,22 +1647,23 @@ class ReplayBundleTests(WorkspaceTestCase):
         )
 
         # Every part of the closure is load-bearing: drop one and the bundle is
-        # refused, rather than recorded as a partial closure.
+        # refused, rather than recorded as a partial closure. An observation
+        # list that is empty, that repeats an entry, or that names bytes the
+        # workspace never took in is not a closure over a session at all.
+        observed = digest(b"observation for closure case")
         for changes in (
-            {"journal_prefix": []},
+            {"observations": []},
+            {"observations": [observed, observed]},
             {"observations": [digest(b"never uploaded")]},
             {"frames": [digest(b"never uploaded")]},
             {"session_manifest_hash": "not-a-hash"},
-            {"baseline_event_id": ""},
-            {"journal_prefix": ["chaos.run.started#1"]},
-            {"journal_prefix": ["chaos.event.resolved#2", "chaos.event.resolved#2"]},
         ):
             with self.subTest(changes=changes):
                 with self.assertRaises(StoreError):
                     self.workspace.store.record_replay_bundle(
                         self.workspace.replay, self.closure(**changes)
                     )
-        for missing in ("operation_rows", "session_manifest_hash", "frames", "baseline_event_id"):
+        for missing in ("observations", "session_manifest_hash", "frames"):
             value = self.closure()
             value.pop(missing)
             with self.subTest(missing=missing):
@@ -1772,7 +1764,7 @@ class ReplayBundleTests(WorkspaceTestCase):
             / document["bundle_id"]
         )
         stored.unlink()
-        stored.write_bytes(jcs_bytes({**document, "operation_rows": []}))
+        stored.write_bytes(jcs_bytes({**document, "observations": []}))
         with self.assertRaisesRegex(StoreError, "does not match its immutable row"):
             self.workspace.store.replay_bundle(document["bundle_id"])
         with self.assertRaisesRegex(StoreError, "does not match its immutable row"):

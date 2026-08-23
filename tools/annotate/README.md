@@ -126,11 +126,15 @@ replay-runner and publication file capabilities.
 ## Replay Bundle
 
 A Replay Bundle is the offline closure a project/operation replay runs from:
-one baseline event, the Journal prefix after it, the structured observations,
-the Operation rows, and the session manifest they happened under. Frames are
-optional; when a bundle keeps them it must name the window it keeps them for,
-which the workspace bounds at 30 days. A frameless bundle still supports audit
-and can never stand in for a frame replay.
+the session's ordered structured observations, and the session manifest that
+pins the identity they were observed under — the RuntimeModel artifact root,
+the operator protocol schema, the ProjectRegistration, the policy artifact and
+the agent profile. Replay hands the same observations to that identity's
+recognition and compares the facts. A bundle holding no observation is a
+closure over nothing and is refused. Frames are optional; when a bundle keeps
+them it must name the window it keeps them for, which the workspace bounds at
+30 days. A frameless bundle still supports audit and can never stand in for a
+frame replay.
 
 ```powershell
 python -m tools.annotate.trusted record-bundle --store E:\annotation-private `

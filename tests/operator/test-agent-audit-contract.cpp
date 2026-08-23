@@ -524,7 +524,6 @@ namespace uf::operator_runtime
             if (invocation.descriptor().mutability == ToolMutability::Mutating)
             {
                 mutation = ToolAdmissionRequest::Mutation{
-                    .policyAuthority = prepared.policyAuthority,
                     .effects         = {test_support::routineToolEffect(
                         prepared.project,
                         std::string{toolName}
@@ -532,11 +531,12 @@ namespace uf::operator_runtime
                 };
             }
             return prepared.store.admitToolCall(ToolAdmissionRequest{
-                .controller = binding,
-                .lease      = lease,
-                .root       = *root,
-                .call       = *call,
-                .mutation   = std::move(mutation),
+                .controller      = binding,
+                .lease           = lease,
+                .root            = *root,
+                .call            = *call,
+                .policyAuthority = prepared.policyAuthority,
+                .mutation        = std::move(mutation),
             });
         };
 
@@ -841,9 +841,7 @@ namespace uf::operator_runtime
         auto const traceSchema     = readSchema("umbraflow-trace-v2.schema.json");
         auto const replay = definition(workspaceSchema, "ReplayBundle");
         checkStrictObject(replay);
-        CHECK(replay.find("\"baseline_event_id\"") != std::string::npos);
-        CHECK(replay.find("\"journal_prefix\"") != std::string::npos);
-        CHECK(replay.find("\"operation_rows\"") != std::string::npos);
+        CHECK(replay.find("\"observations\"") != std::string::npos);
         CHECK(replay.find("\"session_manifest_hash\"") != std::string::npos);
         CHECK(traceSchema.find("\"additionalProperties\": false") != std::string::npos);
 

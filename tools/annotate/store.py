@@ -66,10 +66,9 @@ _MAX_BLOB_STORE_BYTES = 4 * 1024 * 1024 * 1024
 # workspace database irreversibly.
 _MAX_DOCUMENT_BYTES = 4 * 1024 * 1024
 _MAX_DOCUMENT_STORE_BYTES = 512 * 1024 * 1024
-# The schema bounds every Replay Bundle list at 65536 entries; these are the
-# same ceilings expressed where the rows are written.
+# The schema bounds every Replay Bundle list at 65536 entries; this is the same
+# ceiling expressed where the rows are written.
 _MAX_BUNDLE_ENTRIES = 65536
-_MAX_EVENT_ID_LENGTH = 128
 # Frames are the only part of a Replay Bundle the design keeps under a
 # retention window, so a bundle may not claim to hold them indefinitely.
 _MAX_FRAME_RETENTION_SECONDS = 30 * 24 * 60 * 60
@@ -297,11 +296,7 @@ _SCHEMA_OBJECTS: tuple[tuple[str, str], ...] = (
         "replay_bundles",
         f"""CREATE TABLE replay_bundles(
             bundle_id TEXT PRIMARY KEY CHECK({_hash_check('bundle_id')}),
-            baseline_event_id TEXT NOT NULL CHECK(length(baseline_event_id) > 0
-                AND length(baseline_event_id) <= {_MAX_EVENT_ID_LENGTH}),
             session_manifest_hash TEXT NOT NULL CHECK({_hash_check('session_manifest_hash')}),
-            journal_prefix_length INTEGER NOT NULL CHECK(journal_prefix_length > 0
-                AND journal_prefix_length <= {_MAX_BUNDLE_ENTRIES}),
             frame_count INTEGER NOT NULL CHECK(frame_count >= 0
                 AND frame_count <= {_MAX_BUNDLE_ENTRIES}),
             frame_retention_expires_at TEXT,
@@ -1800,8 +1795,7 @@ class AnnotationStore:
 
         Shape, field set, bounds and the frames/retention pairing are the
         checked-in contract's job and are checked by the official validator
-        against it. Only what a JSON Schema cannot say is checked here: that the
-        Journal prefix follows the baseline rather than repeating it, that no
+        against it. Only what a JSON Schema cannot say is checked here: that no
         list repeats an entry, and that a retained frame window is real.
         """
 
@@ -1813,11 +1807,9 @@ class AnnotationStore:
             require_valid(_ANNOTATION_SCHEMA, document, "replay bundle")
         except ValueError as error:
             raise StoreError(str(error)) from error
-        for name in ("journal_prefix", "operation_rows", "observations", "frames"):
+        for name in ("observations", "frames"):
             if len(set(document[name])) != len(document[name]):
                 raise StoreError(f"replay bundle {name} repeats one entry")
-        if document["baseline_event_id"] in document["journal_prefix"]:
-            raise StoreError("replay bundle journal_prefix must follow its baseline, not repeat it")
         if document["frames"]:
             deadline = _timestamp(
                 document["frame_retention_expires_at"], "replay bundle frame retention"
@@ -1896,15 +1888,13 @@ class AnnotationStore:
                                 )
                     connection.execute(
                         """INSERT INTO replay_bundles(
-                               bundle_id, baseline_event_id, session_manifest_hash,
-                               journal_prefix_length, frame_count, frame_retention_expires_at,
-                               document, runner_principal, capability_hash, created_at
-                           ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                               bundle_id, session_manifest_hash, frame_count,
+                               frame_retention_expires_at, document,
+                               runner_principal, capability_hash, created_at
+                           ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
                             bundle_id,
-                            document["baseline_event_id"],
                             document["session_manifest_hash"],
-                            len(document["journal_prefix"]),
                             len(document["frames"]),
                             document["frame_retention_expires_at"],
                             encoded.decode("utf-8"),
@@ -1931,9 +1921,9 @@ class AnnotationStore:
         _hash(bundle_id, "replay bundle id")
         with contextlib.closing(self._connect()) as connection:
             row = connection.execute(
-                """SELECT bundle_id, baseline_event_id, session_manifest_hash,
-                          journal_prefix_length, frame_count, frame_retention_expires_at,
-                          document, runner_principal, capability_hash, created_at
+                """SELECT bundle_id, session_manifest_hash, frame_count,
+                          frame_retention_expires_at, document,
+                          runner_principal, capability_hash, created_at
                    FROM replay_bundles WHERE bundle_id = ?""",
                 (bundle_id,),
             ).fetchone()
