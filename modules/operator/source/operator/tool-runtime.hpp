@@ -90,7 +90,6 @@ namespace uf::operator_runtime
         Confirmed,
         ProvenAbsent,
         Possible,
-        Rejected,
         TerminalFailure,
         TerminallyUnresolved,
     };

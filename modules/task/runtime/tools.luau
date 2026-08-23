@@ -41,7 +41,7 @@
 --     {
 --         tool          = "<the tool name the seam ran>",
 --         call_identity = "<64 lowercase hex, the recorded position>",
---         state         = "<one of the nine delivery classifications>",
+--         state         = "<one of the eight delivery classifications>",
 --         result        = <the Tool's own answer, absent when it carries none>,
 --         evidence      = <canonical evidence, absent when there is none>,
 --     }
@@ -70,7 +70,6 @@ local k_states = table.freeze({
     "confirmed",
     "proven_absent",
     "possible",
-    "rejected",
     "terminal_failure",
     "terminally_unresolved",
 })
@@ -177,7 +176,7 @@ local descriptorByName, catalogNames, catalogHash = loadedCatalog()
 -- records it has recorded which descriptions it acted on.
 tools.catalog_hash = catalogHash
 
--- The nine delivery classifications, in the Operator's own order.
+-- The eight delivery classifications, in the Operator's own order.
 tools.states = k_states
 
 function tools.names(): any

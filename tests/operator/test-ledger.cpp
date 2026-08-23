@@ -113,6 +113,94 @@ namespace uf::operator_runtime
             );
         }
 
+        // Winds a fresh database back past the generation that gave a run its
+        // own durable state and retired the `rejected` Tool call state. Both
+        // tables are rebuilt into their exact prior DDL TEXT, pasted rather
+        // than derived for the reason restoreOperationDispatchSchema states:
+        // the historical identity IS that text, so one changed byte reproduces
+        // a schema that generation never had.
+        //
+        // Rows are carried through an untyped copy rather than dropped: every
+        // migration fixture below reads something back across its upgrade, and
+        // a wind-back that emptied these tables would prove the migration
+        // preserved nothing.
+        auto restorePriorToolRunSchema(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void
+        {
+            database.execute(
+                // Both tables are foreign-key targets, so they are rebuilt
+                // rather than altered and the enforcement is lifted for the
+                // rebuild exactly as the migration itself defers it.
+                "PRAGMA foreign_keys=OFF;"
+                "CREATE TABLE carried_tool_root_requests("
+                "root_identity TEXT PRIMARY KEY,caller_namespace TEXT NOT NULL,"
+                "request_key TEXT NOT NULL,request_preimage TEXT NOT NULL,"
+                "request_preimage_hash TEXT NOT NULL) STRICT;"
+                "INSERT INTO carried_tool_root_requests SELECT root_identity,"
+                "caller_namespace,request_key,request_preimage,"
+                "request_preimage_hash FROM tool_root_requests;"
+                "DROP TABLE tool_root_requests;"
+                "CREATE TABLE tool_root_requests(root_identity TEXT PRIMARY KEY "
+                "CHECK(length(root_identity)=64 AND root_identity NOT GLOB "
+                "'*[^0-9a-f]*'),"
+                "caller_namespace TEXT NOT NULL CHECK(length(CAST(caller_namespace "
+                "AS BLOB)) BETWEEN 1 AND 256),"
+                "request_key TEXT NOT NULL CHECK(length(CAST(request_key AS BLOB)) "
+                "BETWEEN 1 AND 256),"
+                "request_preimage TEXT NOT NULL CHECK(length(CAST(request_preimage "
+                "AS BLOB)) > 0),"
+                "request_preimage_hash TEXT NOT NULL "
+                "CHECK(length(request_preimage_hash)=64 AND request_preimage_hash "
+                "NOT GLOB '*[^0-9a-f]*'),"
+                "UNIQUE(caller_namespace, request_key)) STRICT;"
+                "INSERT INTO tool_root_requests SELECT * FROM "
+                "carried_tool_root_requests;"
+                "DROP TABLE carried_tool_root_requests;"
+                "CREATE TABLE carried_tool_call_history("
+                "call_identity TEXT PRIMARY KEY,mutating INTEGER NOT NULL,"
+                "state TEXT NOT NULL,revision INTEGER NOT NULL,"
+                "active_admission_attempt INTEGER NOT NULL,outcome_payload TEXT,"
+                "outcome_payload_hash TEXT,evidence TEXT,evidence_hash TEXT"
+                ") STRICT;"
+                "INSERT INTO carried_tool_call_history SELECT call_identity,"
+                "mutating,state,revision,active_admission_attempt,"
+                "outcome_payload,outcome_payload_hash,evidence,evidence_hash "
+                "FROM tool_call_history;"
+                "DROP TABLE tool_call_history;"
+                "CREATE TABLE tool_call_history(call_identity TEXT PRIMARY KEY "
+                "REFERENCES tool_call_positions(call_identity),"
+                "mutating INTEGER NOT NULL CHECK(mutating IN (0,1)),"
+                "state TEXT NOT NULL CHECK(state IN ('proposed','admitted',"
+                "'dispatching','confirmed','proven_absent','possible','rejected',"
+                "'terminal_failure','terminally_unresolved')),"
+                "revision INTEGER NOT NULL CHECK(revision > 0),"
+                "active_admission_attempt INTEGER NOT NULL "
+                "CHECK(active_admission_attempt >= 0),outcome_payload TEXT,"
+                "outcome_payload_hash TEXT,evidence TEXT,evidence_hash TEXT,"
+                "CHECK((evidence IS NULL AND evidence_hash IS NULL) OR (evidence IS "
+                "NOT NULL AND evidence_hash IS NOT NULL AND "
+                "length(evidence_hash)=64 AND evidence_hash NOT GLOB "
+                "'*[^0-9a-f]*')),"
+                "CHECK((state='proposed' AND active_admission_attempt=0 AND "
+                "outcome_payload IS NULL AND outcome_payload_hash IS NULL AND "
+                "evidence IS NULL AND evidence_hash IS NULL) OR "
+                "(state IN ('admitted','dispatching') AND "
+                "active_admission_attempt>0 AND outcome_payload "
+                "IS NULL AND outcome_payload_hash IS NULL AND evidence IS NULL AND "
+                "evidence_hash IS NULL) OR (state IN ('confirmed','proven_absent',"
+                "'possible','rejected','terminal_failure',"
+                "'terminally_unresolved') AND active_admission_attempt>0 AND "
+                "outcome_payload IS NOT NULL AND outcome_payload_hash IS NOT NULL "
+                "AND length(outcome_payload_hash)=64 AND outcome_payload_hash NOT "
+                "GLOB '*[^0-9a-f]*'))) STRICT;"
+                "INSERT INTO tool_call_history SELECT * FROM "
+                "carried_tool_call_history;"
+                "DROP TABLE carried_tool_call_history;"
+                "PRAGMA foreign_keys=ON;"
+            );
+        }
+
         // Every migration fixture below constructs the exact schema of the
         // generation its pair migrates FROM, and all of those generations
         // predate the call-bound Journal proposal tables. Dropping them is part
@@ -3113,13 +3201,6 @@ namespace uf::operator_runtime
             execution,
             *observe
         );
-        auto changedAtFirstPosition = toolCallAt(
-            *root,
-            nullptr,
-            1U,
-            execution,
-            *wait
-        );
         auto parent = toolCallAt(
             *root,
             nullptr,
@@ -3128,7 +3209,6 @@ namespace uf::operator_runtime
             *observe
         );
         REQUIRE(first.has_value());
-        REQUIRE(changedAtFirstPosition.has_value());
         REQUIRE(parent.has_value());
         auto child = toolCallAt(
             *root,
@@ -3176,16 +3256,6 @@ namespace uf::operator_runtime
             auto repeatedCall = store->persistToolCallPosition(*root, *first);
             REQUIRE(repeatedCall.has_value());
             CHECK(repeatedCall->lookup == ToolIdentityLookup::Existing);
-
-            auto nondeterministic =
-                store->persistToolCallPosition(*root, *changedAtFirstPosition);
-            REQUIRE_FALSE(nondeterministic.has_value());
-            CHECK(nondeterministic.error().message().contains(
-                "diverged from durable history: tool_name changed"
-            ));
-            CHECK(nondeterministic.error().message().contains(
-                "ordinal 1 under parent coordinate " + root->identity().hex()
-            ));
 
             auto missingParent = store->persistToolCallPosition(*root, *child);
             REQUIRE_FALSE(missingParent.has_value());
@@ -3267,6 +3337,255 @@ namespace uf::operator_runtime
         CHECK(repeatedCall->lookup == ToolIdentityLookup::Existing);
     }
 
+    // Section 5.3 item 3: a deterministic-replay divergence terminates the RUN,
+    // not only the call that noticed it. This case is the whole definition of
+    // what terminated means, in both directions: the root takes no new work,
+    // and everything already recorded stays readable, rejoinable and
+    // completable. It also carries both arms of the coordinate-miss read, which
+    // is what tells a changed parent from an ordinal past the frontier.
+    TEST_CASE("a replay divergence stops the run and closes it to new work")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto preimage  = CanonicalJson::parseExact(R"({"objective":"diverge"})");
+        REQUIRE(preimage.has_value());
+        auto root = ToolRootRequestIdentity::create(
+            "controller-1",
+            "divergence-request",
+            std::move(*preimage)
+        );
+        REQUIRE(root.has_value());
+        auto catalog = FrameworkToolCatalogOwner::create();
+        REQUIRE(catalog.has_value());
+        auto observeArguments = CanonicalJson::parseExact("{}");
+        auto waitArguments    = CanonicalJson::parseExact(
+            R"({"duration_ms":250})"
+        );
+        REQUIRE(observeArguments.has_value());
+        REQUIRE(waitArguments.has_value());
+        auto observe = catalog->validate(
+            "framework.screen.observe",
+            std::move(*observeArguments)
+        );
+        auto wait = catalog->validate(
+            "framework.workflow.wait",
+            std::move(*waitArguments)
+        );
+        REQUIRE(observe.has_value());
+        REQUIRE(wait.has_value());
+        auto const execution = ToolExecutionIdentity{
+            .runIdentity                 = hashOf("divergence-run"),
+            .frameworkReleaseIdentity    = hashOf("divergence-framework"),
+            .toolRuntimeProtocolIdentity = hashOf("divergence-protocol"),
+            .environmentIdentity         = hashOf("divergence-environment"),
+        };
+        auto recorded = toolCallAt(*root, nullptr, 1U, execution, *observe);
+        auto inFlight = toolCallAt(*root, nullptr, 2U, execution, *observe);
+        auto beyond   = toolCallAt(*root, nullptr, 3U, execution, *observe);
+        auto changed  = toolCallAt(*root, nullptr, 1U, execution, *wait);
+        REQUIRE(recorded.has_value());
+        REQUIRE(inFlight.has_value());
+        REQUIRE(beyond.has_value());
+        REQUIRE(changed.has_value());
+
+        REQUIRE(prepared.store.persistToolRootRequest(*root).has_value());
+        REQUIRE(
+            prepared.store.persistToolCallPosition(*root, *recorded).has_value()
+        );
+        auto const admitted = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *root,
+                .call       = *recorded,
+            }
+        );
+        REQUIRE_MESSAGE(admitted.has_value(), admitted.error().message());
+        auto const dispatch = prepared.store.beginToolCallDispatch(*admitted);
+        REQUIRE_MESSAGE(dispatch.has_value(), dispatch.error().message());
+        auto result = CanonicalJson::parseExact(R"({"snapshot_ref":"one"})");
+        REQUIRE(result.has_value());
+        REQUIRE(prepared.store.completeToolCallDispatch(
+            *dispatch,
+            ToolCallCompletion::confirmed(*result)
+        ).has_value());
+
+        // A second call is left mid-dispatch, so the run stops around a
+        // boundary a provider has already crossed.
+        REQUIRE(
+            prepared.store.persistToolCallPosition(*root, *inFlight).has_value()
+        );
+        auto const inFlightAdmitted = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *root,
+                .call       = *inFlight,
+            }
+        );
+        REQUIRE_MESSAGE(
+            inFlightAdmitted.has_value(),
+            inFlightAdmitted.error().message()
+        );
+        auto const inFlightDispatch =
+            prepared.store.beginToolCallDispatch(*inFlightAdmitted);
+        REQUIRE_MESSAGE(
+            inFlightDispatch.has_value(),
+            inFlightDispatch.error().message()
+        );
+
+        auto const diverged =
+            prepared.store.persistToolCallPosition(*root, *changed);
+        REQUIRE_FALSE(diverged.has_value());
+        CHECK(diverged.error().message().contains(
+            "diverged from durable history: tool_name changed"
+        ));
+        CHECK(diverged.error().message().contains(
+            "ordinal 1 under parent coordinate " + root->identity().hex()
+        ));
+
+        auto const divergenceReason =
+            std::string{diverged.error().message()};
+
+        // What terminated does NOT touch. Rule 1 stands: a call matching a
+        // terminal durable row still receives its recorded result, and the
+        // coordinate it sits at still rejoins rather than being refused as new.
+        auto const replayed = prepared.store.replayToolCall(*root, *recorded);
+        REQUIRE_MESSAGE(replayed.has_value(), replayed.error().message());
+        CHECK(replayed->state == ToolCallState::Confirmed);
+        REQUIRE(replayed->payload.has_value());
+        CHECK(replayed->payload->bytes() == result->bytes());
+        auto const rejoined =
+            prepared.store.persistToolCallPosition(*root, *recorded);
+        REQUIRE_MESSAGE(rejoined.has_value(), rejoined.error().message());
+        CHECK(rejoined->lookup == ToolIdentityLookup::Existing);
+
+        // And a dispatch already across its boundary still records what it did,
+        // because refusing that would drop the record of an effect rather than
+        // prevent one.
+        auto const late = CanonicalJson::parseExact(
+            R"({"snapshot_ref":"mid-flight"})"
+        );
+        REQUIRE(late.has_value());
+        auto const completedLate = prepared.store.completeToolCallDispatch(
+            *inFlightDispatch,
+            ToolCallCompletion::confirmed(*late)
+        );
+        REQUIRE_MESSAGE(completedLate.has_value(), completedLate.error().message());
+
+        // What terminated does close: every door that starts new work.
+        auto const refusedPosition =
+            prepared.store.persistToolCallPosition(*root, *beyond);
+        REQUIRE_FALSE(refusedPosition.has_value());
+        CHECK(refusedPosition.error().message().contains(
+            "was stopped by deterministic-replay divergence"
+        ));
+        auto const refusedAdmission = prepared.store.admitToolCall(
+            ToolAdmissionRequest{
+                .controller = prepared.controller,
+                .lease      = prepared.lease,
+                .root       = *root,
+                .call       = *recorded,
+            }
+        );
+        REQUIRE_FALSE(refusedAdmission.has_value());
+        CHECK(refusedAdmission.error().message().contains(
+            "was stopped by deterministic-replay divergence"
+        ));
+        auto const refusedReentry = prepared.store.reenterToolCallDispatch(
+            prepared.controller,
+            prepared.lease,
+            *root,
+            *recorded
+        );
+        REQUIRE_FALSE(refusedReentry.has_value());
+        CHECK(refusedReentry.error().message().contains(
+            "was stopped by deterministic-replay divergence"
+        ));
+
+        // The coordinate-miss read, both arms, on a run of its own because the
+        // second arm stops it.
+        auto otherPreimage = CanonicalJson::parseExact(
+            R"({"objective":"coordinate-miss"})"
+        );
+        REQUIRE(otherPreimage.has_value());
+        auto other = ToolRootRequestIdentity::create(
+            "controller-1",
+            "coordinate-miss-request",
+            std::move(*otherPreimage)
+        );
+        REQUIRE(other.has_value());
+        auto firstAtOther = toolCallAt(*other, nullptr, 1U, execution, *observe);
+        REQUIRE(firstAtOther.has_value());
+        auto secondAtOther =
+            toolCallAt(*other, nullptr, 2U, execution, *observe);
+        REQUIRE(secondAtOther.has_value());
+        REQUIRE(prepared.store.persistToolRootRequest(*other).has_value());
+        REQUIRE(
+            prepared.store.persistToolCallPosition(*other, *firstAtOther)
+                .has_value()
+        );
+
+        // A miss whose parent the record DOES have is an ordinal past that
+        // context's frontier. It is not a divergence and leaves the run live.
+        auto const absentOrdinal =
+            prepared.store.replayToolCall(*other, *secondAtOther);
+        REQUIRE_FALSE(absentOrdinal.has_value());
+        CHECK(absentOrdinal.error().message().contains(
+            "Tool replay has no recorded call at ordinal 2 under parent "
+            "coordinate " + other->identity().hex()
+        ));
+        REQUIRE(
+            prepared.store.persistToolCallPosition(*other, *secondAtOther)
+                .has_value()
+        );
+
+        // A miss whose parent the record does NOT have is a call that arrived
+        // under a different parent, and it is reported as one rather than as an
+        // absent position.
+        auto unrecordedParent =
+            toolCallAt(*other, nullptr, 3U, execution, *observe);
+        REQUIRE(unrecordedParent.has_value());
+        auto orphan =
+            toolCallAt(*other, &*unrecordedParent, 1U, execution, *observe);
+        REQUIRE(orphan.has_value());
+        auto const changedParent =
+            prepared.store.replayToolCall(*other, *orphan);
+        REQUIRE_FALSE(changedParent.has_value());
+        CHECK(changedParent.error().message().contains(
+            "arrived under a different parent"
+        ));
+        CHECK(changedParent.error().message().contains(
+            "ordinal 1 under parent coordinate "
+            + unrecordedParent->identity().hex()
+        ));
+
+        // Both runs say so durably, and the first says which divergence stopped
+        // it. The store is released first because one connection holds the
+        // database.
+        auto const databasePath = prepared.store.databasePath();
+        {
+            auto released = std::move(prepared.store);
+        }
+        auto database = test_support::OperatorDatabaseProbe{databasePath};
+        CHECK(
+            database.readRows(
+                "SELECT state, termination_reason FROM tool_root_requests "
+                "WHERE root_identity='" + root->identity().hex() + "'"
+            )
+            == std::vector<std::vector<std::string>>{
+                {"terminated", divergenceReason},
+            }
+        );
+        CHECK(
+            database.readRows(
+                "SELECT state FROM tool_root_requests "
+                "WHERE root_identity='" + other->identity().hex() + "'"
+            )
+            == std::vector<std::vector<std::string>>{{"terminated"}}
+        );
+    }
+
     TEST_CASE("Tool identity replay refuses stored canonical-byte tampering")
     {
         auto temporary        = TemporaryDirectory{};
@@ -3322,6 +3641,17 @@ namespace uf::operator_runtime
             auto refused = reopened->persistToolCallPosition(*root, *call);
             REQUIRE_FALSE(refused.has_value());
             CHECK(refused.error().message().contains(
+                "diverged from durable history: canonical_args changed"
+            ));
+
+            // The same field-by-field comparison on the READ path, which a
+            // reconciliation reaches without persisting first. It is the same
+            // diagnosis rather than an absent-row one, and it stays available
+            // after the run is stopped because reading a durable outcome is not
+            // new work.
+            auto replayRefused = reopened->replayToolCall(*root, *call);
+            REQUIRE_FALSE(replayRefused.has_value());
+            CHECK(replayRefused.error().message().contains(
                 "diverged from durable history: canonical_args changed"
             ));
         }
@@ -3423,6 +3753,7 @@ namespace uf::operator_runtime
         auto auditRows      = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             auditRows = prior.readRows(
                 "SELECT operation_id, client_request_id, tool_name, state "
@@ -3445,7 +3776,7 @@ namespace uf::operator_runtime
         auto const targetIdentity = exactSchemaIdentity(target);
         CHECK(
             targetIdentity
-            == "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07882e0481946f73f41d2df"
+            == "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d"
         );
         CHECK(
             target.readRows(
@@ -4821,6 +5152,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             oldRows = prior.readRows(
                 "SELECT call_identity, attempt_number, root_identity, "
@@ -4842,7 +5174,7 @@ namespace uf::operator_runtime
         auto target = test_support::OperatorDatabaseProbe{databasePath};
         CHECK(
             exactSchemaIdentity(target)
-            == "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07882e0481946f73f41d2df"
+            == "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d"
         );
         CHECK(
             target.readRows(
@@ -4865,7 +5197,7 @@ namespace uf::operator_runtime
             ) == std::vector<std::vector<std::string>>{
                 {
                     sourceIdentity,
-                    "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07882e0481946f73f41d2df",
+                    "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d",
                 },
             }
         );
@@ -5020,6 +5352,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior   = test_support::OperatorDatabaseProbe{databasePath};
+            restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             positionRows = prior.readRows(
                 "SELECT call_identity, root_identity, call_sequence, "
@@ -5146,6 +5479,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             authorityRows = prior.readRows(
                 "SELECT call_identity, attempt_number, effect_envelope, "
@@ -5240,6 +5574,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             identityRows = prior.readRows(
                 "SELECT call_identity, root_identity, call_sequence, "
@@ -5271,7 +5606,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07882e0481946f73f41d2df"
+                == "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d"
             );
             CHECK(
                 target.readRows(
@@ -5300,8 +5635,8 @@ namespace uf::operator_runtime
                 ) == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07"
-                        "882e0481946f73f41d2df",
+                        "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e"
+                        "73960daefa1be60c3c62d",
                     },
                 }
             );
@@ -5317,6 +5652,149 @@ namespace uf::operator_runtime
         auto replay = migrated->replayToolCall(*root, *call);
         REQUIRE(replay.has_value());
         CHECK(replay->state == ToolCallState::Proposed);
+    }
+
+    // The pair that gave a run its own durable state and retired the `rejected`
+    // Tool call state. It is the newest generation, so its source identity is
+    // the schema the immediately prior generation created, and the fixture
+    // winds a fresh database back by rebuilding exactly the two tables that
+    // moved. Both halves are proved: the wind-back must reproduce that
+    // identity, and the recorded run must read back across the upgrade with
+    // `running` written onto it.
+    TEST_CASE("a run's state and the retired rejected state migrate under their exact pair")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        auto rootIdentity = std::string{};
+        auto callIdentity = std::string{};
+        {
+            auto prepared = prepareStore(temporary.path());
+            auto preimage = CanonicalJson::parseExact(
+                R"({"objective":"run-state-migration"})"
+            );
+            REQUIRE(preimage.has_value());
+            auto root = ToolRootRequestIdentity::create(
+                "controller-1",
+                "run-state-migration-request",
+                std::move(*preimage)
+            );
+            REQUIRE(root.has_value());
+            auto catalog   = FrameworkToolCatalogOwner::create();
+            auto arguments = CanonicalJson::parseExact("{}");
+            REQUIRE(catalog.has_value());
+            REQUIRE(arguments.has_value());
+            auto invocation = catalog->validate(
+                "framework.screen.observe",
+                std::move(*arguments)
+            );
+            REQUIRE(invocation.has_value());
+            auto call = toolCallAt(
+                *root,
+                nullptr,
+                1U,
+                ToolExecutionIdentity{
+                    .runIdentity              = hashOf("run-state-run"),
+                    .frameworkReleaseIdentity = hashOf("run-state-framework"),
+                    .toolRuntimeProtocolIdentity =
+                        hashOf("run-state-protocol"),
+                    .environmentIdentity = hashOf("run-state-environment"),
+                },
+                *invocation
+            );
+            REQUIRE(call.has_value());
+            rootIdentity = root->identity().hex();
+            callIdentity = call->identity().hex();
+            REQUIRE(prepared.store.persistToolRootRequest(*root).has_value());
+            REQUIRE(
+                prepared.store.persistToolCallPosition(*root, *call).has_value()
+            );
+        }
+
+        auto sourceIdentity = std::string{};
+        auto rootRows       = std::vector<std::vector<std::string>>{};
+        auto historyRows    = std::vector<std::vector<std::string>>{};
+        {
+            auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restorePriorToolRunSchema(prior);
+            rootRows = prior.readRows(
+                "SELECT root_identity, caller_namespace, request_key, "
+                "request_preimage_hash FROM tool_root_requests"
+            );
+            historyRows = prior.readRows(
+                "SELECT call_identity, mutating, state, revision "
+                "FROM tool_call_history"
+            );
+            sourceIdentity = exactSchemaIdentity(prior);
+        }
+        REQUIRE(rootRows.size() == 1U);
+        REQUIRE(historyRows.size() == 1U);
+        CHECK_MESSAGE(
+            sourceIdentity
+                == "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07882e0481946f73f41d2df",
+            "the fixture must reproduce the exact identity this pair migrates from"
+        );
+
+        {
+            auto migrated = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(migrated.has_value(), migrated.error().message());
+        }
+        {
+            auto target = test_support::OperatorDatabaseProbe{databasePath};
+            CHECK(
+                exactSchemaIdentity(target)
+                == "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d"
+            );
+
+            // The run came across, and it came across running: nothing in a
+            // database written before the column existed could have terminated
+            // a run, because nothing could write a termination.
+            CHECK(
+                target.readRows(
+                    "SELECT root_identity, caller_namespace, request_key, "
+                    "request_preimage_hash FROM tool_root_requests"
+                ) == rootRows
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT state, coalesce(termination_reason, '') "
+                    "FROM tool_root_requests WHERE root_identity='"
+                    + rootIdentity + "'"
+                )
+                == std::vector<std::vector<std::string>>{{"running", ""}}
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT call_identity, mutating, state, revision "
+                    "FROM tool_call_history"
+                ) == historyRows
+            );
+
+            // `rejected` is gone from the vocabulary the row may carry, so the
+            // rebuilt CHECK is what refuses it rather than a comment.
+            CHECK(
+                target.readRows(
+                    "SELECT count(*) FROM sqlite_schema WHERE type='table' "
+                    "AND name='tool_call_history' AND sql LIKE '%rejected%'"
+                )
+                == std::vector<std::vector<std::string>>{{"0"}}
+            );
+            CHECK(
+                target.readRows(
+                    "SELECT source_identity, target_identity FROM "
+                    "schema_identity_transitions WHERE source_identity='"
+                    + sourceIdentity + "'"
+                )
+                == std::vector<std::vector<std::string>>{
+                    {
+                        sourceIdentity,
+                        "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e"
+                        "73960daefa1be60c3c62d",
+                    },
+                }
+            );
+            CHECK(callIdentity == historyRows.front().front());
+        }
     }
 
     // The pair that deleted the Operation dispatch spine. Its five tables had
@@ -5344,6 +5822,7 @@ namespace uf::operator_runtime
         auto eventRows      = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             auditRows = prior.readRows(
                 "SELECT operation_id, client_request_id, tool_name, state "
@@ -5371,7 +5850,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07882e0481946f73f41d2df"
+                == "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d"
             );
 
             // The five tables are gone rather than emptied.
@@ -5405,8 +5884,8 @@ namespace uf::operator_runtime
                 == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07"
-                        "882e0481946f73f41d2df",
+                        "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e"
+                        "73960daefa1be60c3c62d",
                     },
                 }
             );
@@ -5432,6 +5911,7 @@ namespace uf::operator_runtime
         auto journalRows    = std::vector<std::vector<std::string>>{};
         {
             auto prior  = test_support::OperatorDatabaseProbe{databasePath};
+            restorePriorToolRunSchema(prior);
             journalRows = prior.readRows(
                 "SELECT event_id, namespaced_event_type, opaque_project_payload "
                 "FROM journal_events ORDER BY sequence"
@@ -5454,7 +5934,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07882e0481946f73f41d2df"
+                == "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d"
             );
             CHECK(
                 target.readRows(
@@ -5484,8 +5964,8 @@ namespace uf::operator_runtime
                 == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07"
-                        "882e0481946f73f41d2df",
+                        "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e"
+                        "73960daefa1be60c3c62d",
                     },
                 }
             );
@@ -5537,6 +6017,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             identityRows = prior.readRows(
                 "SELECT call_identity, root_identity, canonical_args "
@@ -5559,7 +6040,7 @@ namespace uf::operator_runtime
             auto target = test_support::OperatorDatabaseProbe{databasePath};
             CHECK(
                 exactSchemaIdentity(target)
-                == "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07882e0481946f73f41d2df"
+                == "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d"
             );
             CHECK(
                 target.readRows(
@@ -5579,7 +6060,7 @@ namespace uf::operator_runtime
                 == std::vector<std::vector<std::string>>{
                     {
                         sourceIdentity,
-                        "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07882e0481946f73f41d2df",
+                        "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d",
                     },
                 }
             );
@@ -5605,6 +6086,7 @@ namespace uf::operator_runtime
         auto historicalRows = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             restoreFormat2RegistrationIdentity(prior);
             dropJournalProposalTables(prior);
@@ -5786,6 +6268,7 @@ namespace uf::operator_runtime
         auto sessionRows    = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             restoreFormat2RegistrationIdentity(prior);
             removeSessionWorldScopeColumns(prior);
@@ -5891,6 +6374,7 @@ namespace uf::operator_runtime
         auto bindingRows    = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             restoreFormat2RegistrationIdentity(prior);
             removeObservedInstanceBindingLocalRefColumn(prior);
@@ -5979,6 +6463,7 @@ namespace uf::operator_runtime
         auto registrationRows = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             restoreFormat2RegistrationIdentity(prior);
             restorePriorRegistrationStateSchemaHash(prior);
@@ -6042,6 +6527,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restorePriorToolRunSchema(prior);
             restoreOperationDispatchSchema(prior);
             restoreFormat2RegistrationIdentity(prior);
             removeReleaseUpgradeEvidenceTables(prior);

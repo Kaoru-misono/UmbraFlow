@@ -1967,6 +1967,77 @@ return {
             CHECK(refused.error().message().contains("must report possible"));
         }
 
+        SUBCASE("a mutating composed call fails terminally and sets no barrier")
+        {
+            // The mirror of the two leaf subcases above, and the whole of what
+            // keying completion on the composition rather than on mutability
+            // buys. This handler fails CLEANLY: its answer is refused by its
+            // own result schema, no child is unaccounted for, and its declared
+            // mutability is Mutating. Classifying that `possible` would set a
+            // target-wide mutation barrier only an Operator reconciliation can
+            // lift, over an effect that was never the frame's -- its whole
+            // effect surface is children, and children carry their own
+            // classification.
+            log->refuseResults = true;
+            auto const failingRoot =
+                rootFor("dispatch-composed-clean-failure");
+            auto const failing = projectRootCall(
+                program,
+                failingRoot,
+                k_mutatingHandlerTool,
+                R"({"children":[]})"
+            );
+            auto const authority = prepared.policyAuthority;
+            auto const effects   = std::vector{projectEffect(k_targetId)};
+            auto const answered  = dispatcher->dispatch(
+                program,
+                ToolAdmissionRequest{
+                    .controller = prepared.controller,
+                    .lease      = prepared.lease,
+                    .root       = failingRoot,
+                    .call       = failing,
+                    .mutation   = ToolAdmissionRequest::Mutation{
+                        .policyAuthority = authority,
+                        .effects         = effects,
+                    },
+                },
+                std::stop_token{}
+            );
+            REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
+            CHECK(answered->state == ToolCallState::TerminalFailure);
+            CHECK(payloadOf(*answered).contains(
+                "is not the shape its result schema declares"
+            ));
+
+            // The target is still free. A `possible` row would refuse this
+            // admission until reconciliation lifted it, so this is the
+            // over-refusal itself rather than a proxy for it.
+            log->refuseResults = false;
+            auto const nextRoot = rootFor("dispatch-composed-after-failure");
+            auto const nextCall = projectRootCall(
+                program,
+                nextRoot,
+                k_mutatingHandlerTool,
+                R"({"children":[]})"
+            );
+            REQUIRE(
+                prepared.store.persistToolRootRequest(nextRoot).has_value()
+            );
+            auto const readmitted = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller = prepared.controller,
+                    .lease      = prepared.lease,
+                    .root       = nextRoot,
+                    .call       = nextCall,
+                    .mutation   = ToolAdmissionRequest::Mutation{
+                        .policyAuthority = authority,
+                        .effects         = effects,
+                    },
+                }
+            );
+            REQUIRE_MESSAGE(readmitted.has_value(), failureText(readmitted));
+        }
+
         SUBCASE("a mutating Framework leaf's provider failure is recorded uncertain")
         {
             // The executor's half, keyed on the same conjunction. A failing

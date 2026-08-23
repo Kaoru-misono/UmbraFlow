@@ -45,9 +45,9 @@ local k_completedMember = "completed"
 -- The empty JSON object, which a Luau table literal cannot spell.
 local emptyObject = canon.emptyObject
 
--- The three-way partition of the nine delivery classifications. Every
+-- The three-way partition of the eight delivery classifications. Every
 -- classification is in exactly one of them, so a script that branches on all
--- three has branched on all nine.
+-- three has branched on all eight.
 local k_pendingStates = table.freeze({
     proposed = true,
     admitted = true,
@@ -56,7 +56,6 @@ local k_pendingStates = table.freeze({
 local k_settledStates = table.freeze({
     confirmed = true,
     proven_absent = true,
-    rejected = true,
     terminal_failure = true,
 })
 local k_uncertainStates = table.freeze({
@@ -149,8 +148,7 @@ function workflow.absent(answer: any): boolean
 end
 
 function workflow.refused(answer: any): boolean
-    local state = tools.state(answer)
-    return state == "rejected" or state == "terminal_failure"
+    return tools.state(answer) == "terminal_failure"
 end
 
 -- Compose a child flow: call a Tool whose own handler may issue Tool calls, so

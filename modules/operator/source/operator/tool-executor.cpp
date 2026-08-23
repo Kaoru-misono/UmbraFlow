@@ -87,7 +87,6 @@ namespace uf::operator_runtime
         case ToolCallState::Confirmed:
         case ToolCallState::ProvenAbsent:
         case ToolCallState::Possible:
-        case ToolCallState::Rejected:
         case ToolCallState::TerminalFailure:
         case ToolCallState::TerminallyUnresolved:
             return replay;

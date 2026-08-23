@@ -607,17 +607,152 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
-        auto toolCallDivergence(
+        auto toolCallDivergenceMessage(
             ToolCallPositionIdentity const& call,
             std::string_view field
-        ) -> std::unexpected<Error>
+        ) -> std::string
         {
+            return std::format(
+                "Tool call at {} diverged from durable history: {} changed",
+                toolCallCoordinateName(call),
+                field
+            );
+        }
+
+        [[nodiscard]]
+        auto toolCallChangedParentMessage(ToolCallPositionIdentity const& call)
+            -> std::string
+        {
+            return std::format(
+                "Tool call at {} arrived under a different parent: this run "
+                "recorded no position at that parent coordinate",
+                toolCallCoordinateName(call)
+            );
+        }
+
+        // Which of the two causes a coordinate miss has, decided from a second
+        // source rather than from the miss alone.
+        //
+        // R4 gives a parent coordinate exactly two shapes -- the root request
+        // the run's own context is anchored on, and the durable position a
+        // handler's context is anchored on -- and admits no third and no absent
+        // one. So a miss whose parent IS one of those is an ordinal past that
+        // context's recorded frontier, which is a position genuinely absent; a
+        // miss whose parent is NEITHER is a call that arrived under a parent
+        // this run never had, which section 5.3 calls a divergence. Reporting
+        // the second as an absent position sends the reader to the ordinal,
+        // which is the one part of the coordinate that did not move.
+        [[nodiscard]]
+        auto toolCallParentIsRecorded(
+            sqlite3* database,
+            ToolRootRequestIdentity const& root,
+            ToolCallPositionIdentity const& call
+        ) -> Result<bool>
+        {
+            if (call.parentIdentity() == root.identity())
+            {
+                return true;
+            }
+            UF_TRY_VALUE(
+                query,
+                prepare(
+                    database,
+                    "SELECT 1 FROM tool_call_positions WHERE root_identity=?1 "
+                    "AND call_identity=?2"
+                )
+            );
+            UF_TRY(bindText(database, query.get(), 1, root.identity().hex()));
+            UF_TRY(bindText(
+                database,
+                query.get(),
+                2,
+                call.parentIdentity().hex()
+            ));
+            auto const step = sqlite3_step(query.get());
+            if (step == SQLITE_ROW)
+            {
+                return true;
+            }
+            if (step == SQLITE_DONE)
+            {
+                return false;
+            }
+            return databaseFailure(database, "could not read Tool call parent");
+        }
+
+        // Section 5.3 item 3: a deterministic-replay divergence terminates the
+        // RUN, not only the call that noticed it. The mark is the run's own
+        // state on its root request row, and the reason is the exact diagnostic
+        // the refusal carries, so the row says which divergence stopped it.
+        //
+        // The first divergence wins. A later one is a consequence of the run
+        // already being over rather than a second independent fact, and
+        // overwriting the reason would replace the diagnosis a reader needs
+        // with the one it caused.
+        //
+        // Nothing here reads the row back afterwards. Every caller has already
+        // matched this root request row or read a durable position that holds a
+        // foreign key into it, so the row exists; zero changed rows means the
+        // run was already terminated, which is the outcome this asks for.
+        [[nodiscard]]
+        auto terminateToolRun(
+            sqlite3* database,
+            std::string_view rootIdentityHex,
+            std::string_view reason
+        ) -> Status
+        {
+            UF_TRY_VALUE(
+                update,
+                prepare(
+                    database,
+                    "UPDATE tool_root_requests SET state='terminated', "
+                    "termination_reason=?2 WHERE root_identity=?1 AND "
+                    "state='running'"
+                )
+            );
+            UF_TRY(bindText(database, update.get(), 1, rootIdentityHex));
+            UF_TRY(bindText(database, update.get(), 2, reason));
+            return expectDone(database, update.get());
+        }
+
+        // The gate a terminated run closes. See k_toolRootRequestsDdl for what
+        // "terminated" covers and what it deliberately leaves open.
+        [[nodiscard]]
+        auto requireLiveToolRun(
+            sqlite3* database,
+            std::string_view rootIdentityHex
+        ) -> Status
+        {
+            UF_TRY_VALUE(
+                query,
+                prepare(
+                    database,
+                    "SELECT state, termination_reason FROM tool_root_requests "
+                    "WHERE root_identity=?1"
+                )
+            );
+            UF_TRY(bindText(database, query.get(), 1, rootIdentityHex));
+            if (sqlite3_step(query.get()) != SQLITE_ROW)
+            {
+                // A missing row is not a case to classify. Every caller has
+                // already matched this root request, and every durable position
+                // holds a foreign key into it, so the row is there or the
+                // database is damaged.
+                return databaseFailure(
+                    database,
+                    "could not read the Tool run state"
+                );
+            }
+            if (columnText(query.get(), 0) == "running")
+            {
+                return ok();
+            }
             return fail(
                 AutomationErrorKind::ActionRejected,
                 std::format(
-                    "Tool call at {} diverged from durable history: {} changed",
-                    toolCallCoordinateName(call),
-                    field
+                    "Tool run {} was stopped by deterministic-replay divergence: {}",
+                    rootIdentityHex,
+                    columnText(query.get(), 1)
                 )
             );
         }
@@ -940,7 +1075,6 @@ namespace uf::operator_runtime
             case ToolCallState::Confirmed:
             case ToolCallState::ProvenAbsent:
             case ToolCallState::Possible:
-            case ToolCallState::Rejected:
             case ToolCallState::TerminalFailure:
             case ToolCallState::TerminallyUnresolved:
                 return true;
@@ -1212,7 +1346,7 @@ namespace uf::operator_runtime
         // "Delete-on-open has a deadline" section owns
         // the exact-pair migration policy.
         constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
-            "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07882e0481946f73f41d2df"
+            "sha256:bd087692cab06397a98d74e60c7f8e792e7f8f7195e73960daefa1be60c3c62d"
         };
 
         // A transition row records the applied exact pair; neither the row nor
@@ -1280,6 +1414,24 @@ namespace uf::operator_runtime
             ") STRICT"
         };
 
+        // The run's own state lives here rather than on tool_runs, and the
+        // reason is which row exists when a divergence is detected. A root
+        // request row is written by persistToolRootRequest before any position
+        // can name it, and every durable position holds a foreign key into it;
+        // a tool_runs row appears only at the first SUCCESSFUL admission. A
+        // divergence at a coordinate whose call was never admitted therefore
+        // has a root request to terminate and no run record to terminate, so
+        // putting the state on tool_runs would need a branch for "no run row
+        // yet" and would leave that divergence marking nothing.
+        //
+        // `terminated` is section 5.3's "terminates the run": the root is
+        // closed to new work. No position may be created under it, no call may
+        // be admitted at it, and no crashed dispatch may be re-entered at it.
+        // Reading durable outcomes is untouched -- replayToolCall still answers
+        // and an already-recorded coordinate still rejoins -- and a dispatch
+        // that already crossed its boundary may still record what it did,
+        // because refusing that would drop the record of an effect the world
+        // may already carry.
         constexpr auto k_toolRootRequestsDdl = std::string_view{
             "CREATE TABLE tool_root_requests("
             "root_identity TEXT PRIMARY KEY CHECK(length(root_identity)=64 AND "
@@ -1292,6 +1444,11 @@ namespace uf::operator_runtime
             "length(CAST(request_preimage AS BLOB)) > 0),"
             "request_preimage_hash TEXT NOT NULL CHECK(length(request_preimage_hash)=64 "
             "AND request_preimage_hash NOT GLOB '*[^0-9a-f]*'),"
+            "state TEXT NOT NULL CHECK(state IN ('running','terminated')),"
+            "termination_reason TEXT,"
+            "CHECK((state='running' AND termination_reason IS NULL) OR "
+            "(state='terminated' AND termination_reason IS NOT NULL AND "
+            "length(CAST(termination_reason AS BLOB)) BETWEEN 1 AND 1024)),"
             "UNIQUE(caller_namespace, request_key)"
             ") STRICT"
         };
@@ -1351,7 +1508,7 @@ namespace uf::operator_runtime
             "tool_call_positions(call_identity),"
             "mutating INTEGER NOT NULL CHECK(mutating IN (0,1)),"
             "state TEXT NOT NULL CHECK(state IN ('proposed','admitted','dispatching',"
-            "'confirmed','proven_absent','possible','rejected','terminal_failure',"
+            "'confirmed','proven_absent','possible','terminal_failure',"
             "'terminally_unresolved')),"
             "revision INTEGER NOT NULL CHECK(revision > 0),"
             "active_admission_attempt INTEGER NOT NULL "
@@ -1370,7 +1527,7 @@ namespace uf::operator_runtime
             "(state IN ('admitted','dispatching') AND active_admission_attempt>0 "
             "AND outcome_payload IS NULL AND outcome_payload_hash IS NULL "
             "AND evidence IS NULL AND evidence_hash IS NULL) OR "
-            "(state IN ('confirmed','proven_absent','possible','rejected',"
+            "(state IN ('confirmed','proven_absent','possible',"
             "'terminal_failure','terminally_unresolved') "
             "AND active_admission_attempt>0 AND outcome_payload IS NOT NULL "
             "AND outcome_payload_hash IS NOT NULL "
@@ -1948,6 +2105,103 @@ namespace uf::operator_runtime
             return execute(database, k_journalProposalEffectsDdl);
         }
 
+        // The generation in which a run carries its own state, so that section
+        // 5.3's "a divergence terminates the run" is a durable fact rather than
+        // a refusal one caller saw.
+        //
+        // The table is rebuilt rather than altered because tool_call_positions
+        // and tool_runs reference it: SQLite can neither ADD COLUMN with the
+        // NOT NULL CHECK this schema's identity is taken from, nor rename the
+        // table without rewriting those references.
+        //
+        // Every carried row becomes `running`. A database written before this
+        // column existed recorded no termination because nothing could write
+        // one, so `running` is what those rows always said rather than a
+        // sentinel standing in for an unknown value; a run that did diverge in
+        // such a database diverges again at the same coordinate, and that is
+        // what marks it.
+        [[nodiscard]]
+        auto addToolRunTerminationState(sqlite3* database) -> Status
+        {
+            UF_TRY(execute(database, "PRAGMA defer_foreign_keys=ON"));
+            UF_TRY(execute(
+                database,
+                "CREATE TABLE prior_tool_root_requests("
+                "root_identity TEXT PRIMARY KEY,"
+                "caller_namespace TEXT NOT NULL,"
+                "request_key TEXT NOT NULL,"
+                "request_preimage TEXT NOT NULL,"
+                "request_preimage_hash TEXT NOT NULL"
+                ") STRICT"
+            ));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO prior_tool_root_requests SELECT root_identity, "
+                "caller_namespace, request_key, request_preimage, "
+                "request_preimage_hash FROM tool_root_requests"
+            ));
+            UF_TRY(execute(database, "DROP TABLE tool_root_requests"));
+            UF_TRY(execute(database, k_toolRootRequestsDdl));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO tool_root_requests(root_identity, caller_namespace, "
+                "request_key, request_preimage, request_preimage_hash, state, "
+                "termination_reason) SELECT root_identity, caller_namespace, "
+                "request_key, request_preimage, request_preimage_hash, "
+                "'running', NULL FROM prior_tool_root_requests"
+            ));
+            return execute(database, "DROP TABLE prior_tool_root_requests");
+        }
+
+        // The generation in which `rejected` left the durable Tool call
+        // vocabulary. Every admission refusal returns before the state UPDATE
+        // and no completion or reconciliation kind maps to it, so no row can
+        // carry it -- and the rebuilt table's own CHECK is what would refuse
+        // one that somehow did, rather than a guard beside this copy that
+        // nothing could trigger.
+        //
+        // It is rebuilt rather than altered for the reason above: several
+        // tables hold a foreign key into it, and a CHECK constraint is part of
+        // the stored DDL this schema's identity is taken from.
+        [[nodiscard]]
+        auto dropRejectedToolCallState(sqlite3* database) -> Status
+        {
+            UF_TRY(execute(database, "PRAGMA defer_foreign_keys=ON"));
+            UF_TRY(execute(
+                database,
+                "CREATE TABLE prior_tool_call_history("
+                "call_identity TEXT PRIMARY KEY,"
+                "mutating INTEGER NOT NULL,"
+                "state TEXT NOT NULL,"
+                "revision INTEGER NOT NULL,"
+                "active_admission_attempt INTEGER NOT NULL,"
+                "outcome_payload TEXT,"
+                "outcome_payload_hash TEXT,"
+                "evidence TEXT,"
+                "evidence_hash TEXT"
+                ") STRICT"
+            ));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO prior_tool_call_history SELECT call_identity, "
+                "mutating, state, revision, active_admission_attempt, "
+                "outcome_payload, outcome_payload_hash, evidence, evidence_hash "
+                "FROM tool_call_history"
+            ));
+            UF_TRY(execute(database, "DROP TABLE tool_call_history"));
+            UF_TRY(execute(database, k_toolCallHistoryDdl));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO tool_call_history(call_identity, mutating, state, "
+                "revision, active_admission_attempt, outcome_payload, "
+                "outcome_payload_hash, evidence, evidence_hash) SELECT "
+                "call_identity, mutating, state, revision, "
+                "active_admission_attempt, outcome_payload, outcome_payload_hash, "
+                "evidence, evidence_hash FROM prior_tool_call_history"
+            ));
+            return execute(database, "DROP TABLE prior_tool_call_history");
+        }
+
         // Rebuilds tool_call_positions into the exact current DDL, carrying
         // every row through a prior table.
         //
@@ -2378,6 +2632,8 @@ namespace uf::operator_runtime
             UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(addJournalProposals(database));
+            UF_TRY(addToolRunTerminationState(database));
+            UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2419,6 +2675,8 @@ namespace uf::operator_runtime
             UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(addJournalProposals(database));
+            UF_TRY(addToolRunTerminationState(database));
+            UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
 
             // No migration commits under an identity other than the exact
@@ -2444,6 +2702,8 @@ namespace uf::operator_runtime
             UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(addJournalProposals(database));
+            UF_TRY(addToolRunTerminationState(database));
+            UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2464,6 +2724,8 @@ namespace uf::operator_runtime
             UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(addJournalProposals(database));
+            UF_TRY(addToolRunTerminationState(database));
+            UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2483,6 +2745,8 @@ namespace uf::operator_runtime
             UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(addJournalProposals(database));
+            UF_TRY(addToolRunTerminationState(database));
+            UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2500,6 +2764,8 @@ namespace uf::operator_runtime
             UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(addJournalProposals(database));
+            UF_TRY(addToolRunTerminationState(database));
+            UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2516,6 +2782,8 @@ namespace uf::operator_runtime
             UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(addJournalProposals(database));
+            UF_TRY(addToolRunTerminationState(database));
+            UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2531,6 +2799,8 @@ namespace uf::operator_runtime
             UF_TRY(addToolIdentityPersistence(database));
             UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(addJournalProposals(database));
+            UF_TRY(addToolRunTerminationState(database));
+            UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2547,6 +2817,8 @@ namespace uf::operator_runtime
             UF_TRY(addToolRuntimePersistence(database));
             UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(addJournalProposals(database));
+            UF_TRY(addToolRunTerminationState(database));
+            UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2587,6 +2859,8 @@ namespace uf::operator_runtime
             UF_TRY(execute(database, k_toolApprovalsDdl));
             UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(addJournalProposals(database));
+            UF_TRY(addToolRunTerminationState(database));
+            UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2656,6 +2930,8 @@ namespace uf::operator_runtime
             UF_TRY(execute(database, k_toolApprovalsDdl));
             UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(addJournalProposals(database));
+            UF_TRY(addToolRunTerminationState(database));
+            UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2672,6 +2948,8 @@ namespace uf::operator_runtime
             UF_TRY(addToolAdmissionDelegationColumn(database));
             UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(addJournalProposals(database));
+            UF_TRY(addToolRunTerminationState(database));
+            UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2697,6 +2975,8 @@ namespace uf::operator_runtime
             ));
             UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(addJournalProposals(database));
+            UF_TRY(addToolRunTerminationState(database));
+            UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2715,6 +2995,8 @@ namespace uf::operator_runtime
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(addJournalProposals(database));
+            UF_TRY(addToolRunTerminationState(database));
+            UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2733,6 +3015,27 @@ namespace uf::operator_runtime
         {
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(addJournalProposals(database));
+            UF_TRY(addToolRunTerminationState(database));
+            UF_TRY(dropRejectedToolCallState(database));
+            UF_TRY(recordSchemaIdentityTransition(database, migration));
+            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
+            return transaction.commit();
+        }
+
+        // The generation that gave a run its own durable state and retired the
+        // `rejected` Tool call state, and the one whose source identity is the
+        // schema the immediately prior generation created. It carries no step
+        // of its own beyond those two, because nothing else about the schema
+        // moved with them.
+        [[nodiscard]]
+        auto migrateToolRunTermination(
+            sqlite3* database,
+            SchemaMigration const& migration
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY(addToolRunTerminationState(database));
+            UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2744,6 +3047,12 @@ namespace uf::operator_runtime
         // a guard nothing can reach is the mirror of a guard production does
         // not reach.
         constexpr auto k_schemaMigrations = std::array{
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:f34626677a80bbf2436bd7bb476385e5f5d142c8b07882e0481946f73f41d2df",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = migrateToolRunTermination,
+            },
             SchemaMigration{
                 .sourceIdentity =
                     "sha256:d6b81490eb210f8f271bd72523a4475b1eca878235fa0a077598f8016fb11c02",
@@ -9466,8 +9775,8 @@ namespace uf::operator_runtime
             prepare(
                 database,
                 "INSERT INTO tool_root_requests(root_identity, caller_namespace, "
-                "request_key, request_preimage, request_preimage_hash) "
-                "VALUES(?1, ?2, ?3, ?4, ?5)"
+                "request_key, request_preimage, request_preimage_hash, state) "
+                "VALUES(?1, ?2, ?3, ?4, ?5, 'running')"
             )
         );
         UF_TRY(bindText(database, insert.get(), 1, root.identity().hex()));
@@ -9560,7 +9869,22 @@ namespace uf::operator_runtime
                     call
                 ))
             {
-                return toolCallDivergence(call, *diverged);
+                // The run stops here, and the mark has to outlive the refusal.
+                // This transaction is otherwise read-only, so its rollback
+                // would discard the only record that the run was stopped --
+                // hence the write and the commit before the failure rather
+                // than after it.
+                auto message = toolCallDivergenceMessage(call, *diverged);
+                UF_TRY(terminateToolRun(
+                    database,
+                    root.identity().hex(),
+                    message
+                ));
+                UF_TRY(transaction.commit());
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    std::move(message)
+                );
             }
             UF_TRY(ensureToolCallHistory(database, call));
             UF_TRY(transaction.commit());
@@ -9574,34 +9898,33 @@ namespace uf::operator_runtime
             return databaseFailure(database, "could not read Tool call position");
         }
 
+        // A NEW position is new work, and a terminated run takes none. The
+        // matched-coordinate branch above deliberately returns before this, so
+        // a call the run already recorded still rejoins and still replays.
+        UF_TRY(requireLiveToolRun(database, root.identity().hex()));
+
         // The parent coordinate must already be durable. A call the run's own
         // context issued names the root request, whose row was read and
         // matched above; anything else names a parent position, which is
         // looked up here. There is no third case and no absent case.
-        if (parentIdentity != root.identity().hex())
+        //
+        // This is the alternation foreign key SQLite cannot state, and it is
+        // deliberately NOT the changed-parent divergence replayToolCall reports
+        // on the same condition. The two ask different questions of it: a
+        // WRITER is hanging a new position off a coordinate that does not
+        // exist, which is an ordering mistake inside a live run, while a READER
+        // is asking the record for a call under a parent the record never had,
+        // which is a call arriving under a different parent.
+        UF_TRY_VALUE(
+            parentRecorded,
+            toolCallParentIsRecorded(database, root, call)
+        );
+        if (!parentRecorded)
         {
-            UF_TRY_VALUE(
-                parentQuery,
-                prepare(
-                    database,
-                    "SELECT 1 FROM tool_call_positions WHERE root_identity=?1 "
-                    "AND call_identity=?2"
-                )
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool call position requires its parent call to be persisted first"
             );
-            UF_TRY(bindText(database, parentQuery.get(), 1, root.identity().hex()));
-            UF_TRY(bindText(database, parentQuery.get(), 2, parentIdentity));
-            auto const parentResult = sqlite3_step(parentQuery.get());
-            if (parentResult != SQLITE_ROW)
-            {
-                if (parentResult != SQLITE_DONE)
-                {
-                    return databaseFailure(database, "could not read Tool call parent");
-                }
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "Tool call position requires its parent call to be persisted first"
-                );
-            }
         }
 
         UF_TRY_VALUE(
@@ -9735,6 +10058,12 @@ namespace uf::operator_runtime
 
         auto* const database = m_impl->database.get();
         UF_TRY_VALUE(transaction, Transaction::begin(database));
+
+        // A terminated run admits nothing, and the position persisted above is
+        // deliberately not enough on its own: section 5.3's `proposed` recovery
+        // says an unadmitted call repeats its admission, so a run that stopped
+        // between the two has to be refused here rather than at the coordinate.
+        UF_TRY(requireLiveToolRun(database, root.identity().hex()));
         UF_TRY(requireLiveBinding(database, controller));
         UF_TRY(requireLiveLease(
             database,
@@ -10186,7 +10515,6 @@ namespace uf::operator_runtime
             auto const predecessorFinished =
                 predecessorState == ToolCallState::Confirmed
                 || predecessorState == ToolCallState::ProvenAbsent
-                || predecessorState == ToolCallState::Rejected
                 || predecessorState == ToolCallState::TerminalFailure;
             if (!predecessorFinished)
             {
@@ -10990,15 +11318,14 @@ namespace uf::operator_runtime
         auto const unconsumed = static_cast<uint64>(
             sqlite3_column_int64(query.get(), 0)
         );
-        return fail(
-            AutomationErrorKind::ActionRejected,
-            std::format(
-                "Tool issuing context terminated after {} calls, leaving the "
-                "recorded call at ordinal {} unconsumed",
-                context.issuedChildren(),
-                unconsumed
-            )
+        auto message = std::format(
+            "Tool issuing context terminated after {} calls, leaving the "
+            "recorded call at ordinal {} unconsumed",
+            context.issuedChildren(),
+            unconsumed
         );
+        UF_TRY(terminateToolRun(database, root.identity().hex(), message));
+        return fail(AutomationErrorKind::ActionRejected, std::move(message));
     }
 
     auto OperatorCoordinator::issueToolApproval(
@@ -11530,6 +11857,12 @@ namespace uf::operator_runtime
 
         auto* const database = m_impl->database.get();
         UF_TRY_VALUE(transaction, Transaction::begin(database));
+
+        // Re-entry restarts a handler, which is new execution however much of
+        // it is replay, so a terminated run refuses it. The coordinate rejoin
+        // above cannot say this: it is what keeps an already-recorded call
+        // readable after the run stopped.
+        UF_TRY(requireLiveToolRun(database, root.identity().hex()));
         UF_TRY(requireLiveBinding(database, controller));
         UF_TRY(requireLiveLease(
             database,
@@ -12025,14 +12358,36 @@ namespace uf::operator_runtime
         UF_TRY_VALUE(callQuery, prepareToolCallCoordinateQuery(database, call));
         if (sqlite3_step(callQuery.get()) != SQLITE_ROW)
         {
+            UF_TRY_VALUE(
+                parentRecorded,
+                toolCallParentIsRecorded(database, root, call)
+            );
+            if (!parentRecorded)
+            {
+                auto message = toolCallChangedParentMessage(call);
+                UF_TRY(terminateToolRun(
+                    database,
+                    root.identity().hex(),
+                    message
+                ));
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    std::move(message)
+                );
+            }
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "Tool replay call position is not durable"
+                std::format(
+                    "Tool replay has no recorded call at {}",
+                    toolCallCoordinateName(call)
+                )
             );
         }
         if (auto const diverged = divergedToolCallField(callQuery.get(), call))
         {
-            return toolCallDivergence(call, *diverged);
+            auto message = toolCallDivergenceMessage(call, *diverged);
+            UF_TRY(terminateToolRun(database, root.identity().hex(), message));
+            return fail(AutomationErrorKind::ActionRejected, std::move(message));
         }
 
         UF_TRY_VALUE(

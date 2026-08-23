@@ -1457,6 +1457,29 @@ namespace uf::operator_runtime
             "unconsumed"
         ));
 
+        // Section 5.3: that divergence stopped the RUN. What the record already
+        // holds still rejoins, and the first position beyond it is refused --
+        // which is the whole difference between stopping one call and stopping
+        // the run it was in.
+        auto recordedSecond = restarted.issue(
+            projectCall(*readCatalog, k_readOnlyChildTool)
+        );
+        REQUIRE(recordedSecond.has_value());
+        auto rejoined =
+            prepared.store.persistToolCallPosition(root, *recordedSecond);
+        REQUIRE_MESSAGE(rejoined.has_value(), failureText(rejoined));
+        CHECK(rejoined->lookup == ToolIdentityLookup::Existing);
+        auto beyondHistory = restarted.issue(
+            projectCall(*readCatalog, k_readOnlyChildTool)
+        );
+        REQUIRE(beyondHistory.has_value());
+        auto stopped =
+            prepared.store.persistToolCallPosition(root, *beyondHistory);
+        REQUIRE_FALSE(stopped.has_value());
+        CHECK(stopped.error().message().contains(
+            "was stopped by deterministic-replay divergence"
+        ));
+
         // A context can only be sealed against the root it numbers under.
         auto const elsewhere = rootFor("nested-unconsumed-other-root");
         auto foreign = prepared.store.sealToolCallContext(elsewhere, restarted);

@@ -24,7 +24,6 @@ namespace uf::operator_runtime
             ToolCallStateName{ToolCallState::Confirmed, "confirmed"},
             ToolCallStateName{ToolCallState::ProvenAbsent, "proven_absent"},
             ToolCallStateName{ToolCallState::Possible, "possible"},
-            ToolCallStateName{ToolCallState::Rejected, "rejected"},
             ToolCallStateName{ToolCallState::TerminalFailure, "terminal_failure"},
             ToolCallStateName{
                 ToolCallState::TerminallyUnresolved,

@@ -622,7 +622,7 @@ return {
         CHECK(
             bytes.find(
                 R"("states":["proposed","admitted","dispatching","confirmed",)"
-                R"("proven_absent","possible","rejected","terminal_failure",)"
+                R"("proven_absent","possible","terminal_failure",)"
                 R"("terminally_unresolved"])"
             )
             != std::string::npos
