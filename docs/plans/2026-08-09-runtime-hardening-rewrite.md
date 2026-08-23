@@ -26,21 +26,22 @@ consumer's, and a copy of it in this repository can only be kept true by hand �
 see
 [2026-08-19 — a document holds no fact that something else verifies](../decisions/2026-08-19-documents-hold-no-foreign-facts.md).
 
-What is checked mechanically is the part code consumes, not the prose. The
-consumer's interface lock carries its own manifest pinning every schema and
-vector by byte size and SHA-256, verified by the consumer's own suite. The
-bundle's design documents are read by people.
+Nothing in this repository watches the consumer for a break.
 
 - This repository states no exact-byte pin on that bundle:
   [2026-08-16](../decisions/2026-08-16-no-exact-byte-consumer-bundle-pin.md).
-- Parity between our producer schemas and the frozen lock is a registered gate
-  that takes the lock by path:
-  [2026-08-17](../decisions/2026-08-17-interface-lock-parity-gate.md).
+- Cross-repository parity apparatus is ruled out as a category:
+  [2026-08-23](../decisions/2026-08-23-no-cross-repository-parity-apparatus.md).
+  The parity gate it deletes never executed once, and its own registering
+  decision recorded that contract-version disagreement — the break that later
+  happened — lay outside what its vectors covered.
 - The execution schedule is deliberately outside the bundle: pinning a status
   column is pinning progress.
 
-If the contract version disagrees, implementation stops; if an interface-lock
-vector's bytes disagree, the consumer's own gate stops it. Umbraflow does not
+What stops a break reaching the consumer silently is not a watcher. It is a
+release note stating what broke and what it was before, `project upgrade`
+reporting the whole adaptation list from the newly installed binary's own
+schema, and one shape authority every reader compiles. Umbraflow does not
 modify that consumer repository.
 
 ## Executable specification resolutions

@@ -1750,67 +1750,6 @@ set_tests_properties(
     LABELS "CI"
 )
 
-# The consumer's frozen interface lock, by absolute path, declared by whoever
-# configured this build:
-#
-#   cmake --preset x64-debug \
-#     -DUF_CONSUMER_INTERFACE_LOCK=<uf-chaos>/conformance/interface-lock/v1.18
-#
-# A cache entry and not an environment variable, for the reason CONTEXT.md gives
-# for `project --frames-root`: nothing in this repository reads the environment,
-# and a run whose outcome depends on ambient state has no record of what
-# produced it. CMakeCache.txt holds this one, so a red parity gate can be traced
-# to the checkout that reddened it. It is empty by default, and no default may
-# ever be added -- a path guessed here is the absolute-path dependency the
-# ruling above removed.
-set(UF_CONSUMER_INTERFACE_LOCK "" CACHE PATH
-    "Consumer interface-lock directory the parity gate reads; empty skips it"
-)
-
-# check-, not contract-: a script over two trees, owning no requirement id, the
-# sibling of check-modules above.
-#
-# Registered in both states rather than only when the lock is declared. An
-# unregistered gate is a name `ctest -N` never prints, and this capability sat
-# unregistered and therefore unrun from the day it was written until 2026-08-17.
-# Skipped is a third status beside passed and failed: a machine with no consumer
-# checkout reports the gate by name as not run, and never as agreement.
-#
-# Declared, it carries the CI label deliberately. What it compares is this
-# repository's producer schemas against the bytes the consumer froze, and the
-# rewrite authority's own rule is that implementation stops when the contract
-# disagrees -- a divergence report nobody is required to read is the defect a
-# missing registration already was. Declaring the lock is therefore opting in to
-# being stopped by it.
-if(UF_CONSUMER_INTERFACE_LOCK STREQUAL "")
-    add_test(
-        NAME check-interface-lock-parity
-        COMMAND ${CMAKE_COMMAND} -E echo
-            "SKIPPED check-interface-lock-parity: no consumer interface lock declared; configure with -DUF_CONSUMER_INTERFACE_LOCK=<checkout>/conformance/interface-lock/<version>"
-    )
-    set_tests_properties(check-interface-lock-parity PROPERTIES
-        SKIP_REGULAR_EXPRESSION "^SKIPPED check-interface-lock-parity"
-    )
-else()
-    # Declared and absent is a failure, never a skip: the reason to skip is that
-    # nobody named a lock, and a named lock that is not there is a wrong name.
-    if(NOT IS_DIRECTORY "${UF_CONSUMER_INTERFACE_LOCK}/vectors")
-        message(FATAL_ERROR
-            "UF_CONSUMER_INTERFACE_LOCK does not name an interface lock: "
-            "${UF_CONSUMER_INTERFACE_LOCK}/vectors does not exist"
-        )
-    endif()
-    add_test(
-        NAME check-interface-lock-parity
-        COMMAND ${Python3_EXECUTABLE}
-            "${CMAKE_CURRENT_SOURCE_DIR}/contracts/test_interface_lock_parity.py"
-            --lock-root "${UF_CONSUMER_INTERFACE_LOCK}"
-    )
-endif()
-set_tests_properties(check-interface-lock-parity PROPERTIES
-    TIMEOUT 60
-    LABELS "CI;PARITY"
-)
 
 # The authoring authority's only coverage. It ran in no gate at all until
 # 2026-08-10, so every property it proves -- capability minting, publication
