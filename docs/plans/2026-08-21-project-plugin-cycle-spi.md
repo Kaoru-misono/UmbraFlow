@@ -1204,17 +1204,14 @@ carries an explicit `ControllerKind` with no default, so every construction site
 states whose call it is, and the controller id is composed from the kind's own
 wire name so the two cannot disagree.
 
+Closed since: the wider protocol cut this section flagged as undecided has
+happened. `schema/umbraflow-operator-v1.schema.json` no longer publishes
+`Operation`, `DispatchRecord`, `AuthorityDecision`, `ApprovalToken`,
+`ReconcileProposal`, `MutationChain` or `PlanVersion`; `submitCommand`,
+`transitionOperation` and the `operations` table are deleted with them.
+
 What is still standing:
 
-- **`schema/umbraflow-operator-v1.schema.json` still publishes an
-  Operation-shaped surface.** `EffectivePlan`, `PlanVersion.effective_plan` and
-  three `DeliveryAuthority` members went with the spine, but `Operation`,
-  `DispatchRecord`, `AuthorityDecision`, `ApprovalToken`, `ReconcileProposal` and
-  `MutationChain` remain, and their only consumers are the contract tests that
-  assert on the published bytes. `submitCommand` and `transitionOperation` are
-  still test-reachable and the `operations` table still backs Tool admission's
-  target-wide mutation barrier, so this is a wider protocol cut to decide
-  deliberately, not dead text to delete on sight.
 - **No Framework input provider resolves an observation reference through
   `SnapshotObservationAuthority`.** Section 6's eleven-way refusal matrix is
   built; its input-authority sentences stay requirements on whatever resolves

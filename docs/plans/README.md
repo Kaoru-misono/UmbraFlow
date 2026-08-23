@@ -15,6 +15,7 @@ rulings, consumer status or facts copied from code. Rulings live under
 - [Build and release inside the source tree](2026-08-20-build-directory-inside-source.md)
 - [Project Luau modules, resources, locked packages, and explicit capabilities](2026-08-20-project-luau-module-vfs-capabilities.md)
 - [Unified Tool Runtime, Framework Luau SDK, and replayable Project automation](2026-08-21-project-plugin-cycle-spi.md)
+- [C++ debt ledger](cpp-debt-ledger.md)
 
 The two JSON manifests beside the migration report are its machine-readable
 baseline and disposition data.

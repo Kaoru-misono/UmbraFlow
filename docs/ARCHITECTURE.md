@@ -56,7 +56,7 @@ its home.
 | VM sandbox and language boundary | `script` |
 | trusted RuntimeModel parser, evidence and two-stage resolution | `task/runtime` |
 | confined RuntimeArtifact verification and Host generation binding | `task` C++ boundary |
-| lease/fence, snapshots, plans, policy, approvals, Operation and reconciliation | `operator` |
+| lease/fence, snapshots, plans, policy | `operator` |
 | the Tool Runtime: one admission path, the actor adapters that translate into it, the durable call ledger, dispatch and replay | `operator` |
 | production lifecycle composition from a project directory through Operator and Host | `service` |
 | ProjectPlugin protocol envelope schemas in the `operator/` identity namespace | `deployment`, as framework-owned protocol |

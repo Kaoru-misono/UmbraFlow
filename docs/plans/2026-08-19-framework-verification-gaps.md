@@ -34,13 +34,6 @@ Prefer extending an existing repository check or contract test over adding a
 standalone gate script. Prove the check can fail by introducing one temporary
 public mutator with no production caller, then remove the mutation.
 
-## G-03 - Remove the duplicate observed-instance resolution spelling
-
-`submitCommand` and `resolveObservedInstance` contain two spellings of the same
-binding lookup and scope/freshness refusal sequence. Completion means both paths
-call one canonical implementation, preserve error ordering and messages, and
-retain the existing cross-scope and stale-observation negative coverage.
-
 ## G-04 - Close the remaining terminology-layer inconsistencies
 
 The framework has two terminology debts identified by
