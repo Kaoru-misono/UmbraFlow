@@ -10,7 +10,7 @@
 --
 -- The chunk argument is the private capability table ScopedToolProgram builds
 -- for one run and then drops. It carries exactly one primitive,
--- `invoke(toolName, argumentsValue)`, which runs the Tool to completion and
+-- `invoke(toolName, argumentsValue, body)`, which runs the Tool to completion and
 -- answers one frozen decoded JSON value. Two facts about it shape everything
 -- below. It is synchronous, so nothing here yields, polls in the background, or
 -- takes a completion callback. And a REFUSAL from it is terminal: the run is
@@ -154,6 +154,26 @@ local function loadedCatalog(): ({ [string]: any }, { string }, string)
         if type(name) ~= "string" or name == "" then
             refuseLoad("catalog descriptor must name its tool")
         end
+        local body = rawget(entry, "body")
+        if type(body) == "table" then
+            local tag = rawget(body, "tag")
+            local arms = rawget(body, "arms")
+            if type(tag) ~= "string" or tag == "" or type(arms) ~= "table" then
+                refuseLoad("catalog tagged body declaration must name a tag and arms")
+            end
+            local armCount = 0
+            for arm, takesBody in pairs(arms :: any) do
+                if type(arm) ~= "string" or arm == "" or type(takesBody) ~= "boolean" then
+                    refuseLoad("catalog body arms must map names to booleans")
+                end
+                armCount += 1
+            end
+            if armCount == 0 then
+                refuseLoad("catalog tagged body declaration must carry arms")
+            end
+        elseif type(body) ~= "boolean" then
+            refuseLoad("catalog descriptor must declare body as a boolean or tagged arms")
+        end
         -- Strictly increasing, which refuses an unsorted catalog and a
         -- duplicated tool in one comparison. The catalog owner renders the
         -- array in UTF-8 order of the names, so a catalog that arrives out of
@@ -226,11 +246,12 @@ end
 -- budget is spent on it. It is not an authority check: the Operator judges the
 -- name, the arguments, the policy and the grants again, and only its verdict
 -- decides anything.
-function tools.call(name: any, arguments: any): any
+function tools.call(name: any, arguments: any, body: any?): any
     if type(name) ~= "string" then
         reject("call needs a tool name string")
     end
-    if descriptorByName[name] == nil then
+    local descriptor = descriptorByName[name]
+    if descriptor == nil then
         reject(
             "call names a tool outside the closure this session pinned: "
                 .. name
@@ -241,7 +262,29 @@ function tools.call(name: any, arguments: any): any
     if type(arguments) ~= "table" then
         reject("call needs an object value for arguments")
     end
-    return checkedAnswer(invoke(name, arguments))
+    if body ~= nil and type(body) ~= "function" then
+        reject("call body must be a function when present")
+    end
+    local bodyDeclaration = rawget(descriptor, "body")
+    local takesBody = false
+    if type(bodyDeclaration) == "boolean" then
+        takesBody = bodyDeclaration :: boolean
+    else
+        local tag = rawget(bodyDeclaration, "tag")
+        local selectedArm = rawget(arguments, tag)
+        if type(selectedArm) ~= "string" then
+            reject("call arguments must select the tagged body arm " .. tag)
+        end
+        local selected = rawget(rawget(bodyDeclaration, "arms"), selectedArm)
+        if type(selected) ~= "boolean" then
+            reject("call arguments select an undeclared body arm " .. selectedArm)
+        end
+        takesBody = selected :: boolean
+    end
+    if body ~= nil and not takesBody then
+        reject("call body is not declared for this Tool arm")
+    end
+    return checkedAnswer(invoke(name, arguments, body))
 end
 
 function tools.tool_name(answer: any): string

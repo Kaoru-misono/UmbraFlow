@@ -336,7 +336,7 @@ namespace uf::operator_runtime
                 }
             );
 
-            auto ran = body();
+            auto ran = body(call.identity());
 
             // One close path for every meaning a Tool gives its body scope.
             // The close leaves the run before it is attempted, so a refused
@@ -608,6 +608,10 @@ namespace uf::operator_runtime
                     arguments,
                     script::ScopedRunRequest{
                         .parentPosition = call.identity(),
+                        .budgetOwner    = std::string{call.toolName()},
+                        .maximumElapsedMillis = call.descriptor()
+                                                    .timeout
+                                                    .maximumElapsedMillis,
                         .cancellation   = cancellation,
                     }
                 )
@@ -656,7 +660,8 @@ namespace uf::operator_runtime
         )};
     }
 
-    auto ProjectToolDispatcher::toolRuntimeSeam() const -> script::ToolRuntimeInvoke
+    auto ProjectToolDispatcher::toolRuntimeDispatch() const
+        -> script::ToolRuntimeDispatch
     {
         // Owns a share of the state and captures nothing else: the seam a
         // program is compiled with must survive every run that program starts,
@@ -665,7 +670,8 @@ namespace uf::operator_runtime
                    std::string_view toolName,
                    json::Value const& arguments,
                    script::ToolCallCoordinate const& coordinate,
-                   std::stop_token cancellation
+                   std::stop_token cancellation,
+                   script::ToolCallBody body
                ) -> Result<json::Value>
         {
             return state->issueChild(
@@ -673,7 +679,7 @@ namespace uf::operator_runtime
                 arguments,
                 coordinate,
                 cancellation,
-                {}
+                std::move(body)
             );
         };
     }
@@ -731,23 +737,6 @@ namespace uf::operator_runtime
             call,
             std::move(body),
             std::move(postcondition)
-        );
-    }
-
-    auto ProjectToolDispatcher::issueBodyChild(
-        std::string_view toolName,
-        json::Value const& arguments,
-        script::ToolCallCoordinate const& coordinate,
-        std::stop_token cancellation,
-        ToolBodyRun body
-    ) -> Result<json::Value>
-    {
-        return m_state->issueChild(
-            toolName,
-            arguments,
-            coordinate,
-            cancellation,
-            std::move(body)
         );
     }
 

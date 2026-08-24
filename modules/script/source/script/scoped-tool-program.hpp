@@ -1,6 +1,7 @@
 #pragma once
 
 #include <script/pure-data-program.hpp>
+#include <script/tool-runtime.hpp>
 
 #include <json/value.hpp>
 
@@ -10,7 +11,6 @@
 #include <domain/content-hash.hpp>
 
 #include <cstddef>
-#include <functional>
 #include <memory>
 #include <span>
 #include <stop_token>
@@ -20,65 +20,6 @@
 
 namespace uf::script
 {
-    // Where one scoped Tool call sits in the recorded call tree. Both halves are
-    // assigned by the C++ seam and neither is reachable from script: a script
-    // that could name its own ordinal could alias another call's position and
-    // inherit its recorded outcome.
-    //
-    // No in-class initializer for the parent: ContentHash has no default state,
-    // and that is the point. A coordinate names a durable row or it does not
-    // exist.
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
-    struct ToolCallCoordinate final
-    {
-        // The durable parent position this run's calls are numbered under, by
-        // the identity the Operator recorded that row under. It is never
-        // absent and never a run-local number: a root run is itself a
-        // positioned call, and a handler run is numbered under the position of
-        // the call it implements. One Tool Runtime is shared by every run of a
-        // registration, so this is what tells it WHICH run a call belongs to,
-        // and nothing else it receives could.
-        //
-        // The Operator owns what the value means; this module only carries it
-        // through, because a script module that could name a root request
-        // identity would be a script module that could mint one.
-        ContentHash parentPosition;
-
-        // The issuing context's own monotone child index, starting at 1.
-        // Per issuing context and never global: a replayed child costs its
-        // parent exactly one increment however large the subtree it replaced,
-        // so a context's numbering depends only on that context's behaviour.
-        uint64 childIndex{0};
-    };
-
-    // The one native seam a ScopedToolProgram reaches: canonical JSON in,
-    // canonical JSON out, at a coordinate the seam assigned. This module owns
-    // the type and links no Operator, so the implementation that drives
-    // ToolRuntimeExecutor is injected by whoever composes the two.
-    //
-    // Synchronous and blocking by contract: it runs to completion and returns a
-    // decoded result. There is no yield, no coroutine suspension and no callback
-    // back into the VM, because deterministic restart-replay is the only
-    // suspension mechanism this architecture has.
-    //
-    // A returned FAILURE is terminal for the run. It records the failure and
-    // destroys the VM without resuming the script, so no pcall can swallow it
-    // and a divergence cannot be converted into ordinary control flow. A Tool
-    // that ran and failed is therefore not a failure here: its classification
-    // travels inside the JSON value it answers with.
-    //
-    // Lifetime contract: a ScopedToolProgram copies and owns this callable for
-    // as long as any run it started is alive, so the callable must own
-    // everything it reaches and must not capture a reference or a bare `this`.
-    using ToolRuntimeInvoke = std::function<
-        Result<json::Value>(
-            std::string_view toolName,
-            json::Value const& arguments,
-            ToolCallCoordinate const& coordinate,
-            std::stop_token cancellation
-        )
-    >;
-
     // What one scoped run is started under.
     //
     // No in-class initializer for the parent, for ToolCallCoordinate's reason:
@@ -97,6 +38,14 @@ namespace uf::script
         // root-positioned call the run implements, exactly as it hands a
         // handler run the position of its own call.
         ContentHash parentPosition;
+
+        // The outer Project Tool whose fresh VM owns every allocation and
+        // elapsed millisecond in this run, including structured body re-entry.
+        std::string budgetOwner{};
+
+        // The wall-clock ceiling that Tool's registration declared. Zero is
+        // invalid rather than a spelling of an unlimited or default budget.
+        uint64 maximumElapsedMillis{};
 
         // Hard cancellation. Armed on the Luau interrupt as well as handed to
         // every Tool call, because a script can spin in pure computation without
@@ -173,7 +122,7 @@ namespace uf::script
             std::vector<PureDataProgram::Resource> resources,
             std::span<FrameworkModule const> frameworkModules,
             std::vector<PureDataProgram::Resource> frameworkResources,
-            ToolRuntimeInvoke invokeTool
+            ToolRuntimeDispatch dispatchTool
         ) -> Result<ScopedToolProgram>;
 
         // One run in one fresh VM. Every Tool call it issues is numbered from 1

@@ -39,13 +39,14 @@ namespace uf::cli
         // program wearing the wrong type. It is one value this seam always
         // answers with, never a branch on anything.
         [[nodiscard]]
-        auto inertToolRuntime() -> script::ToolRuntimeInvoke
+        auto inertToolRuntime() -> script::ToolRuntimeDispatch
         {
             return [](
                        std::string_view,
                        json::Value const&,
                        script::ToolCallCoordinate const&,
-                       std::stop_token
+                       std::stop_token,
+                       script::ToolCallBody
                    ) -> Result<json::Value>
             {
                 return fail(

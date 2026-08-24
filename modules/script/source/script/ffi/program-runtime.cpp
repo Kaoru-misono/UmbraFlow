@@ -821,6 +821,13 @@ namespace uf::script::detail
                 && p_quota->ceilingRefused
             )
             {
+                if (p_environment->terminalKind.has_value())
+                {
+                    return fail(
+                        *p_environment->terminalKind,
+                        p_environment->terminalMessage
+                    );
+                }
                 p_environment->terminalKind = AutomationErrorKind::InvalidResource;
                 p_environment->terminalMessage =
                     "pure data VM exhausted its fixed memory quota";
@@ -830,6 +837,13 @@ namespace uf::script::detail
             {
                 if (p_environment != nullptr)
                 {
+                    if (p_environment->terminalKind.has_value())
+                    {
+                        return fail(
+                            *p_environment->terminalKind,
+                            p_environment->terminalMessage
+                        );
+                    }
                     p_environment->terminalKind = AutomationErrorKind::InvalidResource;
                     p_environment->terminalMessage =
                         "pure data VM exhausted its fixed memory quota";
@@ -2169,7 +2183,10 @@ namespace uf::script::detail
     // to, the frozen tables published beside the whitelist, and the whitelist
     // itself. Members are in JCS order, so the object is canonical as written
     // and a program type's own members continue it in the same order.
-    auto sharedEnvironmentMaterial(MonotonicInstant::Duration runtimeCeiling) -> std::string
+    auto sharedEnvironmentMaterial(
+        MonotonicInstant::Duration runtimeCeiling,
+        std::string_view runtimeCeilingSource
+    ) -> std::string
     {
         auto const resourceReadBytesName =
             std::string{k_resourceTable} + '.' + std::string{k_resourceReadBytes};
@@ -2331,10 +2348,20 @@ namespace uf::script::detail
         output += ',';
         appendLimit("vm_memory_bytes", PureDataProgram::k_memoryQuotaBytes);
         output += ',';
-        appendLimit(
-            "wall_time_milliseconds",
-            std::chrono::duration_cast<std::chrono::milliseconds>(runtimeCeiling).count()
-        );
+        if (runtimeCeilingSource.empty())
+        {
+            appendLimit(
+                "wall_time_milliseconds",
+                std::chrono::duration_cast<std::chrono::milliseconds>(runtimeCeiling)
+                    .count()
+            );
+        }
+        else
+        {
+            appendJsonString(output, "wall_time_source");
+            output += ':';
+            appendJsonString(output, runtimeCeilingSource);
+        }
 
         output += "},\"luau_implementation\":";
         appendJsonString(output, k_luauImplementation);

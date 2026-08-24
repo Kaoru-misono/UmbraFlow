@@ -40,8 +40,8 @@ namespace uf::script
 local native = ...
 local invoke = native.invoke
 return {
-    call = function(name, arguments)
-        return invoke(name, arguments)
+    call = function(name, arguments, body)
+        return invoke(name, arguments, body)
     end,
     raw = function(...)
         return invoke(...)
@@ -52,8 +52,8 @@ return {
         constexpr auto k_screenFacade = std::string_view{R"LUAU(
 local native = ...
 return {
-    observe = function(request)
-        return native.invoke("framework.screen.observe", request)
+    observe = function(request, body)
+        return native.invoke("framework.screen.observe", request, body)
     end,
 }
 )LUAU"};
@@ -62,7 +62,7 @@ return {
 local native = ...
 return {
     wait = function(request)
-        return native.invoke("framework.workflow.wait", request)
+        return native.invoke("framework.workflow.wait", request, nil)
     end,
 }
 )LUAU"};
@@ -71,7 +71,7 @@ return {
 local native = ...
 return {
     record = function(record)
-        return native.invoke("framework.audit.record", record)
+        return native.invoke("framework.audit.record", record, nil)
     end,
 }
 )LUAU"};
@@ -117,6 +117,21 @@ return {
         }
 
         [[nodiscard]]
+        auto runRequest(
+            ContentHash parent = rootRunPosition(),
+            std::stop_token cancellation = {},
+            uint64 maximumElapsedMillis = 5'000U
+        ) -> ScopedRunRequest
+        {
+            return ScopedRunRequest{
+                .parentPosition       = std::move(parent),
+                .budgetOwner          = "fixture.scoped",
+                .maximumElapsedMillis = maximumElapsedMillis,
+                .cancellation         = cancellation,
+            };
+        }
+
+        [[nodiscard]]
         auto jsonResource(std::string name, std::string bytes)
             -> PureDataProgram::Resource
         {
@@ -158,13 +173,14 @@ return {
         [[nodiscard]]
         auto recordingRuntime(
             std::shared_ptr<std::vector<ToolCallRecord>> log
-        ) -> ToolRuntimeInvoke
+        ) -> ToolRuntimeDispatch
         {
             return [log = std::move(log)](
                        std::string_view toolName,
                        json::Value const& arguments,
                        ToolCallCoordinate const& coordinate,
-                       std::stop_token
+                       std::stop_token,
+                       ToolCallBody body
                    ) -> Result<json::Value> {
                 log->emplace_back(ToolCallRecord{
                     .toolName       = std::string{toolName},
@@ -172,6 +188,14 @@ return {
                     .parentPosition = coordinate.parentPosition.hex(),
                     .childIndex     = coordinate.childIndex,
                 });
+                if (body)
+                {
+                    UF_TRY(body(positionOf(
+                        coordinate.parentPosition.hex()
+                            + ":"
+                            + std::to_string(coordinate.childIndex)
+                    )));
+                }
                 return json::Value::ofObject({
                     json::Member{"arguments", arguments},
                     json::Member{
@@ -186,13 +210,14 @@ return {
         // Refuses once the issuing context reaches `refuseAt`, which is how a
         // replay divergence or a spent budget reaches a run.
         [[nodiscard]]
-        auto runtimeRefusingAt(uint64 refuseAt) -> ToolRuntimeInvoke
+        auto runtimeRefusingAt(uint64 refuseAt) -> ToolRuntimeDispatch
         {
             return [refuseAt](
                        std::string_view,
                        json::Value const&,
                        ToolCallCoordinate const& coordinate,
-                       std::stop_token
+                       std::stop_token,
+                       ToolCallBody
                    ) -> Result<json::Value> {
                 if (coordinate.childIndex >= refuseAt)
                 {
@@ -209,7 +234,7 @@ return {
         auto compileScoped(
             std::string_view pluginId,
             std::string_view source,
-            ToolRuntimeInvoke invokeTool,
+            ToolRuntimeDispatch dispatchTool,
             std::vector<FrameworkModule> const& frameworkModules,
             std::vector<PureDataProgram::Resource> resources          = {},
             std::vector<PureDataProgram::Resource> frameworkResources = {}
@@ -226,7 +251,7 @@ return {
                 std::move(resources),
                 frameworkModules,
                 std::move(frameworkResources),
-                std::move(invokeTool)
+                std::move(dispatchTool)
             );
         }
 
@@ -234,11 +259,11 @@ return {
         auto scopedProgram(
             std::string_view pluginId,
             std::string_view source,
-            ToolRuntimeInvoke invokeTool
+            ToolRuntimeDispatch dispatchTool
         ) -> ScopedToolProgram
         {
             auto const modules = scopedFrameworkModules();
-            auto program = compileScoped(pluginId, source, std::move(invokeTool), modules);
+            auto program = compileScoped(pluginId, source, std::move(dispatchTool), modules);
             REQUIRE(program.has_value());
             return *std::move(program);
         }
@@ -261,7 +286,7 @@ return {
         auto const answer = program.invoke(
             "derive",
             parsed(R"({"note":"kept"})"),
-            ScopedRunRequest{.parentPosition = rootRunPosition()}
+            runRequest()
         );
         REQUIRE(answer.has_value());
         CHECK(
@@ -279,7 +304,7 @@ return {
             program.invoke(
             "reduce",
             json::Value{},
-            ScopedRunRequest{.parentPosition = rootRunPosition()}
+            runRequest()
         );
         REQUIRE_FALSE(unregistered.has_value());
         CHECK(
@@ -309,7 +334,7 @@ return {
         auto const root = program.invoke(
             "derive",
             json::Value{},
-            ScopedRunRequest{.parentPosition = rootRunPosition()}
+            runRequest()
         );
         REQUIRE(root.has_value());
 
@@ -318,7 +343,7 @@ return {
         auto const child = program.invoke(
             "derive",
             json::Value{},
-            ScopedRunRequest{.parentPosition = positionOf("second-run-position")}
+            runRequest(positionOf("second-run-position"))
         );
         REQUIRE(child.has_value());
 
@@ -363,7 +388,7 @@ return {
         auto const answer = program.invoke(
             "derive",
             json::Value{},
-            ScopedRunRequest{.parentPosition = rootRunPosition()}
+            runRequest()
         );
         REQUIRE_FALSE(answer.has_value());
         CHECK(
@@ -467,7 +492,12 @@ return {
 
         auto const complete = scopedFrameworkModules();
         auto const seamless =
-            compileScoped("fixture.scoped.catalog", source, ToolRuntimeInvoke{}, complete);
+            compileScoped(
+                "fixture.scoped.catalog",
+                source,
+                ToolRuntimeDispatch{},
+                complete
+            );
         REQUIRE_FALSE(seamless.has_value());
         CHECK(
             std::string{seamless.error().message()}.find("requires a Tool Runtime")
@@ -496,7 +526,7 @@ return {
         auto const answer = program.invoke(
             "derive",
             json::Value{},
-            ScopedRunRequest{.parentPosition = rootRunPosition()}
+            runRequest()
         );
         REQUIRE(answer.has_value());
         CHECK(json::canonicalBytes(*answer) == R"({"chunkArguments":0,"frozen":true})");
@@ -558,12 +588,15 @@ return {
         auto const answer = program.invoke(
             "derive",
             json::Value{},
-            ScopedRunRequest{.parentPosition = rootRunPosition()}
+            runRequest()
         );
         REQUIRE(answer.has_value());
         auto const bytes = json::canonicalBytes(*answer);
         CHECK(bytes.find(R"("arity":false)") != std::string::npos);
-        CHECK(bytes.find("takes a tool name and one argument value") != std::string::npos);
+        CHECK(
+            bytes.find("takes a tool name, one argument value and an optional")
+            != std::string::npos
+        );
         CHECK(bytes.find(R"("named":false)") != std::string::npos);
         CHECK(bytes.find("rejected a non-canonical tool name") != std::string::npos);
         CHECK(bytes.find(R"("shaped":false)") != std::string::npos);
@@ -594,7 +627,8 @@ return {
                 std::string_view,
                 json::Value const&,
                 ToolCallCoordinate const&,
-                std::stop_token
+                std::stop_token,
+                ToolCallBody
             ) -> Result<json::Value> {
                 stopSource->request_stop();
                 return json::Value::ofBoolean(true);
@@ -604,10 +638,7 @@ return {
         auto const answer = program.invoke(
             "derive",
             json::Value{},
-            ScopedRunRequest{
-                .parentPosition = rootRunPosition(),
-                .cancellation   = stopSource->get_token(),
-            }
+            runRequest(rootRunPosition(), stopSource->get_token())
         );
         REQUIRE_FALSE(answer.has_value());
         CHECK(automationErrorKind(answer.error()) == AutomationErrorKind::Cancelled);
@@ -639,7 +670,7 @@ return {
         auto const answer = program.invoke(
             "derive",
             json::Value{},
-            ScopedRunRequest{.parentPosition = rootRunPosition()}
+            runRequest()
         );
         REQUIRE_FALSE(answer.has_value());
         CHECK(
@@ -688,10 +719,108 @@ return {
         auto const answer = supplied->invoke(
             "derive",
             parsed("{}"),
-            ScopedRunRequest{.parentPosition = rootRunPosition()}
+            runRequest()
         );
         REQUIRE(answer.has_value());
         CHECK(json::canonicalBytes(*answer) == R"({"pinned":"framework"})");
+    }
+
+    TEST_CASE("a yield inside a structured Tool body is refused by name")
+    {
+        auto const log = std::make_shared<std::vector<ToolCallRecord>>();
+        auto const program = scopedProgram(
+            "fixture.scoped.body-yield",
+            pluginSource(
+                "fixture.scoped.body-yield",
+                "",
+                "        local screen = require(\"@umbraflow/screen\")\n"
+                "        return screen.observe({}, function()\n"
+                "            coroutine.yield()\n"
+                "        end)"
+            ),
+            recordingRuntime(log)
+        );
+
+        auto const answer = program.invoke("derive", parsed("{}"), runRequest());
+        REQUIRE_FALSE(answer.has_value());
+        CHECK(
+            std::string{answer.error().message()}.contains(
+                "a Tool body may not yield or suspend a coroutine; only framework "
+                "structured child dispatch may re-enter the VM"
+            )
+        );
+    }
+
+    TEST_CASE("a nested Tool body reports the owning registration memory budget")
+    {
+        auto const log = std::make_shared<std::vector<ToolCallRecord>>();
+        auto const program = scopedProgram(
+            "fixture.scoped.body-memory",
+            pluginSource(
+                "fixture.scoped.body-memory",
+                "",
+                "        local screen = require(\"@umbraflow/screen\")\n"
+                "        return screen.observe({}, function()\n"
+                "            local retained = {}\n"
+                "            for index = 1, 30000 do\n"
+                "                retained[index] = string.rep(tostring(index), 1024)\n"
+                "            end\n"
+                "        end)"
+            ),
+            recordingRuntime(log)
+        );
+        auto const owner = std::string{"fixture.project.memory-owner"};
+        auto const position = positionOf("memory-budget-owner-position");
+        auto const answer = program.invoke(
+            "derive",
+            parsed("{}"),
+            ScopedRunRequest{
+                .parentPosition = position,
+                .budgetOwner    = owner,
+                .maximumElapsedMillis   = 5'000U,
+            }
+        );
+        REQUIRE_FALSE(answer.has_value());
+        auto const message = std::string{answer.error().message()};
+        INFO(message);
+        CHECK(message.contains("Luau memory ceiling"));
+        CHECK(message.contains(std::to_string(PureDataProgram::k_memoryQuotaBytes)));
+        CHECK(message.contains(owner));
+        CHECK(message.contains(position.hex()));
+    }
+
+    TEST_CASE("a nested Tool body reports the owning registration duration budget")
+    {
+        auto const log = std::make_shared<std::vector<ToolCallRecord>>();
+        auto const program = scopedProgram(
+            "fixture.scoped.body-duration",
+            pluginSource(
+                "fixture.scoped.body-duration",
+                "",
+                "        local screen = require(\"@umbraflow/screen\")\n"
+                "        return screen.observe({}, function()\n"
+                "            while true do end\n"
+                "        end)"
+            ),
+            recordingRuntime(log)
+        );
+        auto const owner = std::string{"fixture.project.duration-owner"};
+        auto const position = positionOf("duration-budget-owner-position");
+        auto const answer = program.invoke(
+            "derive",
+            parsed("{}"),
+            ScopedRunRequest{
+                .parentPosition       = position,
+                .budgetOwner          = owner,
+                .maximumElapsedMillis = 10U,
+            }
+        );
+        REQUIRE_FALSE(answer.has_value());
+        auto const message = std::string{answer.error().message()};
+        INFO(message);
+        CHECK(message.contains("maximum_elapsed_ms=10"));
+        CHECK(message.contains(owner));
+        CHECK(message.contains(position.hex()));
     }
 
     TEST_CASE("the scoped environment has its own pinned identity")
@@ -705,6 +834,10 @@ return {
         CHECK(json::canonicalBytes(parsed(material)) == material);
         CHECK(scoped->hex() != pure->hex());
         CHECK(scoped->hex() == digestOf(material));
+        CHECK(
+            scoped->hex()
+            == "e15fe8ed81a8edf041ccd45e14f953670f8337d420ea2f7e6fd9f99ccaecfc77"
+        );
 
         // What the digest covers, named. A preimage over the catalog alone would
         // leave a build that changed what invoke ANSWERS WITH unmoved.
@@ -721,7 +854,13 @@ return {
             )
             != std::string::npos
         );
-        CHECK(material.find(R"("invoke_arity":2)") != std::string::npos);
+        CHECK(material.find(R"("invoke_arity":3)") != std::string::npos);
+        CHECK(
+            material.find(
+                R"("wall_time_source":"outer_project_tool_registration.timeout.maximum_elapsed_ms")"
+            )
+            != std::string::npos
+        );
         CHECK(
             material.find(R"("tool_calls_per_context":1024)") != std::string::npos
         );

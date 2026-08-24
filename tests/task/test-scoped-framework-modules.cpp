@@ -52,7 +52,7 @@ namespace uf::task
 
         // The pinned Tool catalog the resource carries. It is the exact
         // projection ProjectGenerationRegistrar bakes into the scoped resource
-        // -- argument_contract, child_effects, name and tool_version on every
+        // -- argument_contract, body, child_effects, name and tool_version on every
         // entry, in JCS member order, sorted by name -- rather than a subset
         // shaped to what these cases happen to read. The projection has an
         // owner now, so a fixture that carried a different shape would be
@@ -63,18 +63,23 @@ namespace uf::task
         // again on every call.
         constexpr auto k_catalogTools = std::string_view{
             R"([{"argument_contract":{"maximum_duration_ms":5000})"
+            R"(,"body":false)"
             R"(,"child_effects":{"maximum_child_calls":0})"
             R"(,"name":"framework.audit.record","tool_version":"1"})"
             R"(,{"argument_contract":{"maximum_duration_ms":5000})"
+            R"(,"body":true)"
             R"(,"child_effects":{"maximum_child_calls":0})"
             R"(,"name":"framework.screen.observe","tool_version":"1"})"
             R"(,{"argument_contract":{"maximum_duration_ms":5000})"
+            R"(,"body":false)"
             R"(,"child_effects":{"maximum_child_calls":0})"
             R"(,"name":"framework.workflow.status","tool_version":"1"})"
             R"(,{"argument_contract":{"maximum_duration_ms":60000})"
+            R"(,"body":false)"
             R"(,"child_effects":{"maximum_child_calls":0})"
             R"(,"name":"framework.workflow.wait","tool_version":"1"})"
             R"(,{"argument_contract":{"maximum_duration_ms":30000})"
+            R"(,"body":false)"
             R"(,"child_effects":{"maximum_child_calls":4})"
             R"(,"name":"project.flow.run","tool_version":"2"}])"
         };
@@ -132,6 +137,16 @@ namespace uf::task
             return *hash;
         }
 
+        [[nodiscard]]
+        auto scopedRequest(std::string_view position) -> script::ScopedRunRequest
+        {
+            return script::ScopedRunRequest{
+                .parentPosition = positionOf(position),
+                .budgetOwner    = "fixture.scoped.framework",
+                .maximumElapsedMillis   = 5'000U,
+            };
+        }
+
         // A Tool Runtime that answers in the exact shape the scoped facades
         // read: the tool the seam ran, the recorded position, the delivery
         // classification, and the Tool's own result when it has one. Every
@@ -139,13 +154,14 @@ namespace uf::task
         // that returns one has proved what the seam handed the runtime.
         [[nodiscard]]
         auto scriptedRuntime(std::shared_ptr<std::vector<ScopedCall>> log)
-            -> script::ToolRuntimeInvoke
+            -> script::ToolRuntimeDispatch
         {
             return [log = std::move(log)](
                        std::string_view toolName,
                        json::Value const& arguments,
                        script::ToolCallCoordinate const& coordinate,
-                       std::stop_token
+                       std::stop_token,
+                       script::ToolCallBody body
                    ) -> Result<json::Value> {
                 log->emplace_back(ScopedCall{
                     .toolName       = std::string{toolName},
@@ -153,6 +169,14 @@ namespace uf::task
                     .parentPosition = coordinate.parentPosition.hex(),
                     .childIndex     = coordinate.childIndex,
                 });
+                if (body)
+                {
+                    UF_TRY(body(positionOf(
+                        coordinate.parentPosition.hex()
+                            + ":"
+                            + std::to_string(coordinate.childIndex)
+                    )));
+                }
 
                 auto const identity = digestOf(
                     std::string{toolName} + "#" + std::to_string(coordinate.childIndex)
@@ -220,7 +244,7 @@ namespace uf::task
         auto scopedProgram(
             std::string_view pluginId,
             std::string source,
-            script::ToolRuntimeInvoke invokeTool
+            script::ToolRuntimeDispatch dispatchTool
         ) -> Result<script::ScopedToolProgram>
         {
             auto framework = scopedFrameworkScriptModules();
@@ -239,7 +263,7 @@ namespace uf::task
                 {},
                 *framework,
                 catalogResources(),
-                std::move(invokeTool)
+                std::move(dispatchTool)
             );
         }
     } // namespace
@@ -548,7 +572,7 @@ return {
         auto const answer = program->invoke(
             "derive",
             parsed("{}"),
-            script::ScopedRunRequest{.parentPosition = positionOf("root-run")}
+            scopedRequest("root-run")
         );
         REQUIRE(answer.has_value());
         auto const bytes = json::canonicalBytes(*answer);
@@ -676,7 +700,7 @@ return {
         auto const answer = program->invoke(
             "derive",
             parsed("{}"),
-            script::ScopedRunRequest{.parentPosition = positionOf("handler-run")}
+            scopedRequest("handler-run")
         );
         REQUIRE(answer.has_value());
         CHECK(json::canonicalBytes(*answer) == R"({"recorded":true})");
@@ -710,7 +734,8 @@ return {
             [](std::string_view,
                json::Value const&,
                script::ToolCallCoordinate const&,
-               std::stop_token) -> Result<json::Value> {
+               std::stop_token,
+               script::ToolCallBody) -> Result<json::Value> {
                 return fail(
                     AutomationErrorKind::InvalidResource,
                     "the recorded call at this coordinate names another tool"
@@ -722,7 +747,7 @@ return {
             refusing->invoke(
                 "derive",
                 parsed("{}"),
-                script::ScopedRunRequest{.parentPosition = positionOf("torn-run")}
+                scopedRequest("torn-run")
             );
         REQUIRE_FALSE(torn.has_value());
         CHECK(

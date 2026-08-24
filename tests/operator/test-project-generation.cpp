@@ -497,13 +497,14 @@ return {
         // anything. It is required all the same: a scoped program with no Tool
         // Runtime is not a scoped program at all.
         [[nodiscard]]
-        auto acceptingRuntime() -> script::ToolRuntimeInvoke
+        auto acceptingRuntime() -> script::ToolRuntimeDispatch
         {
             return [](
                        std::string_view toolName,
                        json::Value const& arguments,
                        script::ToolCallCoordinate const&,
-                       std::stop_token
+                       std::stop_token,
+                       script::ToolCallBody
                    ) -> Result<json::Value>
             {
                 return json::Value::ofObject({
@@ -687,7 +688,11 @@ return {
                 json::Value::ofObject({
                     {"note", json::Value::ofString("kept")},
                 }),
-                script::ScopedRunRequest{.parentPosition = runPosition()}
+                script::ScopedRunRequest{
+                    .parentPosition = runPosition(),
+                    .budgetOwner    = std::string{k_dismissTool},
+                    .maximumElapsedMillis   = 5'000U,
+                }
             );
             REQUIRE(dismissed.has_value());
             CHECK(
@@ -701,7 +706,11 @@ return {
             auto const swept = loaded->invokeBoundTool(
                 k_sweepTool,
                 json::Value::ofObject({}),
-                script::ScopedRunRequest{.parentPosition = runPosition()}
+                script::ScopedRunRequest{
+                    .parentPosition = runPosition(),
+                    .budgetOwner    = std::string{k_sweepTool},
+                    .maximumElapsedMillis   = 5'000U,
+                }
             );
             REQUIRE(swept.has_value());
             CHECK(memberOf(*swept, "knows_sibling").boolean());
@@ -723,7 +732,11 @@ return {
             auto const unknown = loaded->invokeBoundTool(
                 "chaos.project.unknown",
                 json::Value::ofObject({}),
-                script::ScopedRunRequest{.parentPosition = runPosition()}
+                script::ScopedRunRequest{
+                    .parentPosition = runPosition(),
+                    .budgetOwner    = "chaos.project.unknown",
+                    .maximumElapsedMillis   = 5'000U,
+                }
             );
             REQUIRE_FALSE(unknown.has_value());
             CHECK(unknown.error().message().contains("binds no Tool named"));
@@ -793,7 +806,11 @@ return {
             auto const refused = loaded->invokeBoundTool(
                 k_dismissTool,
                 json::Value::ofObject({}),
-                script::ScopedRunRequest{.parentPosition = runPosition()}
+                script::ScopedRunRequest{
+                    .parentPosition = runPosition(),
+                    .budgetOwner    = std::string{k_dismissTool},
+                    .maximumElapsedMillis   = 5'000U,
+                }
             );
             REQUIRE_FALSE(refused.has_value());
             CHECK(refused.error().message().contains("binds no Tool named"));
@@ -1120,7 +1137,7 @@ return {
                 catalogOver(generation, bothTools()),
                 closureModules(k_toolSource),
                 {},
-                script::ToolRuntimeInvoke{}
+                script::ToolRuntimeDispatch{}
             );
             REQUIRE_FALSE(unrunnable.has_value());
             CHECK(

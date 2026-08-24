@@ -31,7 +31,7 @@ namespace uf::task
     //
     // IT IS NOT A SECOND ENVIRONMENT, and there is no trust split here. A chunk
     // running in this VM has no private verbs: `explore` is Luau sugar over one
-    // seam, `ExplorationToolInvoke`, and every act it can perform on the screen,
+    // `script::ToolRuntimeInvoke`, and every act it can perform on the screen,
     // the target or the project is a call of a Tool from the same framework
     // catalog every production session holds, recorded in the same ledger under
     // this session's own identity and admitted or refused by the same Operator
@@ -82,7 +82,7 @@ namespace uf::task
         // The Tool Runtime this session's chunks call through, owned here
         // because the VM's one native primitive holds its address for the whole
         // life of the VM. Declared before m_vm for that reason.
-        ExplorationToolInvoke m_toolRuntime;
+        script::ToolRuntimeInvoke m_toolRuntime;
 
         // Empty until create() boots it, and destroyed before m_context and
         // m_toolRuntime because members die in reverse declaration order --
@@ -98,7 +98,6 @@ namespace uf::task
             std::unique_ptr<trace::TraceRecorder> recorder,
             engine::EngineSession session,
             TaskContextConfig contextConfig,
-            ExplorationToolInvoke toolRuntime,
             std::filesystem::path tracePath
         ) noexcept;
 

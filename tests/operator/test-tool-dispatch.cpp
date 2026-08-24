@@ -90,6 +90,10 @@ namespace uf::operator_runtime
         constexpr auto k_refusingHandlerTool =
             std::string_view{"dispatch.project.refuse"};
         constexpr auto k_auditTool   = std::string_view{"framework.audit.record"};
+        constexpr auto k_observeTool = std::string_view{"framework.screen.observe"};
+        constexpr auto k_readLinesTool =
+            std::string_view{"framework.screen.read_lines"};
+        constexpr auto k_probeTool = std::string_view{"framework.screen.probe"};
 
         // The mutating LEAF: a Framework Tool answered by provider code that
         // reaches the world directly. It is the one shape a crash mid-dispatch
@@ -149,6 +153,20 @@ return {
 
     handle = function(input)
         local tools = require("@umbraflow/tools")
+        if input.observe_body == true then
+            local screen = require("@umbraflow/screen")
+            local observed = screen.observe(function()
+                tools.call("framework.screen.read_lines", {
+                    x = 0, y = 0, width = 1, height = 1,
+                })
+                tools.call("framework.screen.probe", {
+                    x = 0, y = 0, width = 1, height = 1,
+                    colour_red = 0, colour_green = 0, colour_blue = 0,
+                    tolerance = 0, removes = false,
+                })
+            end)
+            return { state = tools.state(observed) }
+        end
         local states = {}
         for index = 1, #input.children do
             local name = input.children[index]
@@ -276,6 +294,7 @@ return {
                     std::string{k_mutatingTool},
                     std::string{k_leafTool},
                     std::string{k_auditTool},
+                    std::string{k_observeTool},
                 },
                 .maximumChildSurface    = ToolSurface::Semantic,
                 .maximumChildMutability = ToolMutability::Mutating,
@@ -399,13 +418,14 @@ return {
         // lease, controller or observation authority for a call to be admitted
         // under. It is one value, never a branch on anything.
         [[nodiscard]]
-        auto refusingToolRuntime() -> script::ToolRuntimeInvoke
+        auto refusingToolRuntime() -> script::ToolRuntimeDispatch
         {
             return [](
                        std::string_view,
                        json::Value const&,
                        script::ToolCallCoordinate const&,
-                       std::stop_token
+                       std::stop_token,
+                       script::ToolCallBody
                    ) -> Result<json::Value>
             {
                 return fail(
@@ -577,6 +597,8 @@ return {
         {
             uint32      opened{0};
             uint32      closed{0};
+            uint32      measurements{0};
+            uint32      measuredWhileOpen{0};
             bool        refuseClose{false};
             std::string holder{};
             std::string refusal{};
@@ -607,7 +629,9 @@ return {
                 auto ran = (*seam)->runChildToolBody(
                     call,
                     [seam, log, &call, &answered,
-                     body = std::move(body)]() mutable -> Status
+                     body = std::move(body)](
+                        ContentHash const& owningCall
+                    ) mutable -> Status
                     {
                         auto engaged = (*seam)->engageObservationFrame(
                             call.identity(),
@@ -637,7 +661,7 @@ return {
                         log->holder = call.identity().hex();
                         if (body)
                         {
-                            UF_TRY(body());
+                            UF_TRY(body(owningCall));
                         }
                         UF_TRY_VALUE(
                             recorded,
@@ -653,6 +677,85 @@ return {
                             ToolCallCompletion::confirmed(
                                 std::move(recorded)
                             )
+                        );
+                        return ok();
+                    }
+                );
+                if (!ran)
+                {
+                    return std::unexpected{std::move(ran).error()};
+                }
+                REQUIRE(answered.has_value());
+                return std::move(*answered);
+            };
+        }
+
+        // The real structured shape used by a scoped Project handler: observe
+        // owns one frame and runs its Luau body under the observe call's
+        // durable position; measuring Tools are then grandchildren in the
+        // ledger and see exactly that frame open.
+        [[nodiscard]]
+        auto structuredObservationProvider(
+            std::shared_ptr<std::optional<ProjectToolDispatcher>> seam,
+            std::shared_ptr<ObservationFrameLog> log
+        ) -> ToolBodyProvider
+        {
+            return [seam = std::move(seam), log = std::move(log)](
+                       ToolCallPositionIdentity const& call,
+                       ToolBodyRun body
+                   ) -> Result<ToolCallCompletion>
+            {
+                if (call.toolName() != k_observeTool)
+                {
+                    auto const measuringTool = call.toolName() == k_readLinesTool
+                        || call.toolName() == k_probeTool;
+                    REQUIRE(measuringTool);
+                    REQUIRE_FALSE(body);
+                    ++log->measurements;
+                    auto const held = (*seam)->heldObservationFrame();
+                    if (
+                        held.has_value()
+                        && *held == call.parentIdentity()
+                    )
+                    {
+                        ++log->measuredWhileOpen;
+                    }
+                    UF_TRY_VALUE(
+                        recorded,
+                        CanonicalJson::parseExact(R"({"measured":true})")
+                    );
+                    return ToolCallCompletion::confirmed(std::move(recorded));
+                }
+
+                auto answered = std::optional<ToolCallCompletion>{};
+                auto ran = (*seam)->runChildToolBody(
+                    call,
+                    [seam, log, &call, &answered,
+                     body = std::move(body)](
+                        ContentHash const& owningCall
+                    ) mutable -> Status
+                    {
+                        CHECK(owningCall == call.identity());
+                        UF_TRY((*seam)->engageObservationFrame(
+                            call.identity(),
+                            [log]() -> Status
+                            {
+                                ++log->closed;
+                                return ok();
+                            }
+                        ));
+                        ++log->opened;
+                        log->holder = call.identity().hex();
+                        if (body)
+                        {
+                            UF_TRY(body(owningCall));
+                        }
+                        UF_TRY_VALUE(
+                            recorded,
+                            CanonicalJson::parseExact(R"({"observed":true})")
+                        );
+                        answered.emplace(
+                            ToolCallCompletion::confirmed(std::move(recorded))
                         );
                         return ok();
                     }
@@ -968,7 +1071,7 @@ return {
                     .modules     = toolModules(),
                 },
                 {},
-                dispatcher.toolRuntimeSeam()
+                dispatcher.toolRuntimeDispatch()
             );
             REQUIRE_MESSAGE(loaded.has_value(), failureText(loaded));
             return *std::move(loaded);
@@ -1171,6 +1274,83 @@ return {
         CHECK(
             prepared.store.sealToolCallContext(root, context).has_value()
         );
+    }
+
+    TEST_CASE(
+        "a scoped Project handler uses the same structured observation body and ledger shape"
+    )
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const registration = verifiedGeneration();
+        auto prepared = firstIncarnation(temporary.path(), registration);
+
+        auto const frames = std::make_shared<ObservationFrameLog>();
+        auto const seam =
+            std::make_shared<std::optional<ProjectToolDispatcher>>();
+        auto dispatcher = ProjectToolDispatcher::create(
+            prepared.store,
+            prepared.observations,
+            prepared.policyAuthority,
+            structuredObservationProvider(seam, frames)
+        );
+        REQUIRE_MESSAGE(dispatcher.has_value(), failureText(dispatcher));
+        *seam = *dispatcher;
+
+        auto registrar = ProjectGenerationRegistrar{};
+        auto const program = loadProgram(registration, registrar, *dispatcher);
+        auto const root = rootFor("dispatch-scoped-observation-body");
+        auto const call = rootCall(program, root, R"({"observe_body":true})");
+        auto const answered = dispatcher->dispatch(
+            program,
+            ToolAdmissionRequest{
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = root,
+                .call            = call,
+                .policyAuthority = prepared.policyAuthority,
+            },
+            std::stop_token{}
+        );
+        REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
+        CHECK(answered->state == ToolCallState::Confirmed);
+
+        CHECK(frames->opened == 1U);
+        CHECK(frames->closed == 1U);
+        CHECK(frames->measurements == 2U);
+        CHECK(frames->measuredWhileOpen == 2U);
+        CHECK_FALSE(dispatcher->heldObservationFrame().has_value());
+
+        auto handlerContext = ToolCallIssuingContext::forHandler(call);
+        auto observe        = handlerContext.issue(frameworkInvocation(k_observeTool, "{}"));
+        REQUIRE_MESSAGE(observe.has_value(), failureText(observe));
+        CHECK(observe->parentIdentity() == call.identity());
+        CHECK(observe->sequence() == 1U);
+        auto const observeReplay = prepared.store.replayToolCall(root, *observe);
+        REQUIRE_MESSAGE(observeReplay.has_value(), failureText(observeReplay));
+        CHECK(observeReplay->state == ToolCallState::Confirmed);
+
+        auto bodyContext = ToolCallIssuingContext::forHandler(*observe);
+        auto read = bodyContext.issue(frameworkInvocation(
+            k_readLinesTool,
+            R"({"height":1,"width":1,"x":0,"y":0})"
+        ));
+        REQUIRE_MESSAGE(read.has_value(), failureText(read));
+        auto probe = bodyContext.issue(frameworkInvocation(
+            k_probeTool,
+            R"({"colour_blue":0,"colour_green":0,"colour_red":0,"height":1,"removes":false,"tolerance":0,"width":1,"x":0,"y":0})"
+        ));
+        REQUIRE_MESSAGE(probe.has_value(), failureText(probe));
+        CHECK(read->parentIdentity() == observe->identity());
+        CHECK(probe->parentIdentity() == observe->identity());
+        CHECK(read->sequence() == 1U);
+        CHECK(probe->sequence() == 2U);
+
+        auto const readReplay = prepared.store.replayToolCall(root, *read);
+        auto const probeReplay = prepared.store.replayToolCall(root, *probe);
+        REQUIRE_MESSAGE(readReplay.has_value(), failureText(readReplay));
+        REQUIRE_MESSAGE(probeReplay.has_value(), failureText(probeReplay));
+        CHECK(readReplay->state == ToolCallState::Confirmed);
+        CHECK(probeReplay->state == ToolCallState::Confirmed);
     }
 
     TEST_CASE(
@@ -2372,7 +2552,9 @@ return {
                 }),
                 script::ScopedRunRequest{
                     .parentPosition = hashOf("not-a-live-position"),
-                    .cancellation   = std::stop_token{},
+                    .budgetOwner    = "project.dispatch.parent",
+                    .maximumElapsedMillis   = 5'000U,
+                    .cancellation           = std::stop_token{},
                 }
             );
             REQUIRE_FALSE(torn.has_value());

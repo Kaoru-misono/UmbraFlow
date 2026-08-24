@@ -545,13 +545,15 @@ Luau can reach. What makes it private is that it has no name in either
 environment: the host builds it, `installSandbox`
 (`modules/script/source/script/ffi/sandbox.cpp`) hands it to the framework bundle
 as its chunk argument, then drops its own reference, so the only way to reach it
-afterwards is a closure it was handed to. There are two of them and neither key
+afterwards is a closure it was handed to. There are three of them and no key
 set is guessable:
 - exploration, `buildExplorationSurface` — `invoke`, plus the one non-capability
   field `error_tag` carrying `"uf.error"`. `invoke(toolName, arguments, body?)`
-  issues one Tool call through the `task::ExplorationToolInvoke` seam the
-  session's ledgered caller supplied, and `body` is the one structured closure
-  a descriptor-declared Tool scope runs. Today `framework.screen.observe`
+  issues one Tool call through `script::ToolRuntimeInvoke`, the same VM-facing
+  protocol a scoped Project VM receives. The session composition binds that
+  protocol to its own `TaskContext` once; no caller selects an exploration
+  variant. `body` is the one structured closure a descriptor-declared Tool
+  scope runs. Today `framework.screen.observe`
   declares it per Tool and `framework.input.deliver` declares it per tagged arm,
   with only `hold` accepting one.
   An empty pointer-hold is refused as the `click` arm's second spelling. The
@@ -559,11 +561,21 @@ set is guessable:
   contracts define `hold`/`click` over pointer coordinates and `key` over a
   keyboard key name; the implementation follows the typed contract rather than
   crossing those two arms.
+- scoped Project code, `ScopedToolProgram` — `invoke` with the same name,
+  argument and body shape. Its coordinate/cancellation-bearing
+  `ToolRuntimeDispatch` is a host adapter, not a script-visible second seam.
+  A body re-enters synchronously only through framework structured child
+  dispatch: its children are parented under the body-taking call, while yield,
+  suspension and an escaping callback remain refused. One fresh Project Tool
+  VM owns all memory and elapsed time spent by its handler and nested body
+  re-entry; the memory ceiling is registration-pinned and the duration is the
+  outer Project Tool registration's `timeout.maximum_elapsed_ms`. Nested child
+  Tools still receive their own descriptor timeout enforcement.
 - trusted runtime, `RuntimeNativeState::install` — `runtime_model_bytes`,
   `runtime_semantic_hash`, `runtime_model_finalize`, `runtime_asset`,
   `runtime_cycle_open`, `runtime_cycle_current`, `runtime_match`, `runtime_read`,
   `runtime_receipt`, `runtime_cycle_close`.
-Both are deep-frozen at the end of the build. **Neither carries a click, a key
+All three are deep-frozen at the end of the build. **None carries a click, a key
 press or any other input primitive**, and `math.random`/`math.randomseed` are
 nilled outright by `installSandbox` rather than offered here.
 

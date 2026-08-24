@@ -125,9 +125,9 @@ namespace uf::operator_runtime
 
     public:
         // `catalog` must be the owner built over the exact Tool declaration
-        // bytes this generation pinned, and `invokeTool` is the one native seam
-        // the compiled tool closure reaches the Tool Runtime through. The seam
-        // is bound once, at compile time, and must therefore carry no run
+        // bytes this generation pinned, and `dispatchTool` is the native host
+        // adapter the compiled tool closure reaches the Tool Runtime through.
+        // It is bound once, at compile time, and must therefore carry no run
         // state: every run-scoped value travels in the ScopedRunRequest of the
         // invoke that is executing.
         //
@@ -142,7 +142,7 @@ namespace uf::operator_runtime
             ProjectToolCatalogSchemaOwner catalog,
             ClosureModules toolClosure,
             std::vector<ProjectResourceBlob> exactResources,
-            script::ToolRuntimeInvoke invokeTool
+            script::ToolRuntimeDispatch dispatchTool
         ) -> Result<ProjectGenerationHandle>;
 
         [[nodiscard]]

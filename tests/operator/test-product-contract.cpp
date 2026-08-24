@@ -300,6 +300,8 @@ namespace uf::operator_runtime
                 json::Value::ofObject({}),
                 script::ScopedRunRequest{
                     .parentPosition = hashOf("product-p05-position"),
+                    .budgetOwner    = std::string{project.toolName("command-1")},
+                    .maximumElapsedMillis   = 5'000U,
                 }
             );
             REQUIRE(own.has_value());
@@ -309,6 +311,8 @@ namespace uf::operator_runtime
                 json::Value::ofObject({}),
                 script::ScopedRunRequest{
                     .parentPosition = hashOf("product-p05-position"),
+                    .budgetOwner    = std::string{foreignToolName},
+                    .maximumElapsedMillis   = 5'000U,
                 }
             );
             REQUIRE_FALSE(foreign.has_value());

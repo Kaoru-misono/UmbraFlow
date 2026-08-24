@@ -29,7 +29,7 @@ namespace uf::operator_runtime
     // The structured body run while that resource is open. The dispatcher
     // reaches no VM; it owns only the issuing context that records calls made
     // by this closure as children of the body-taking Tool call.
-    using ToolBodyRun = std::move_only_function<Status()>;
+    using ToolBodyRun = script::ToolCallBody;
 
     // A Tool-specific condition judged after the common scope has closed, with
     // the number of child calls the common issuing context recorded. Empty when
@@ -95,8 +95,8 @@ namespace uf::operator_runtime
 
     public:
         // `coordinator` and `observations` are borrows that must outlive this
-        // dispatcher and every program compiled with the seam it hands out,
-        // because the seam reaches both on every child call.
+        // dispatcher and every program compiled with the host adapter it hands
+        // out, because that adapter reaches both on every child call.
         // `frameworkTools` answers the Framework Tools a scoped run reaches. In
         // production it is ProductLifecycle's own provider surface, bound to
         // the same run these three borrows name.
@@ -115,7 +115,7 @@ namespace uf::operator_runtime
         // catalog declared rather than granting any.
         //
         // Single-threaded by contract. One scoped run is synchronous on the
-        // thread that dispatched it, and the seam is only ever re-entered from
+        // thread that dispatched it, and the adapter is only ever re-entered from
         // inside that same call, so the live-run table is mutated by one thread
         // and never observed by another.
         [[nodiscard]]
@@ -134,16 +134,18 @@ namespace uf::operator_runtime
             -> ProjectToolDispatcher& = default;
         ~ProjectToolDispatcher() = default;
 
-        // The one native seam every program this dispatcher drives is compiled
-        // with. It is bound once, at compile time, and therefore carries ZERO
+        // The coordinate-bearing host adapter every scoped program this
+        // dispatcher drives is compiled with. It is not another VM protocol:
+        // script sees only script::ToolRuntimeInvoke. The adapter is bound once
+        // at compile time and therefore carries ZERO
         // run state: one program serves every run of its registration, so the
-        // seam resolves WHICH run a call belongs to from the coordinate's
+        // adapter resolves WHICH run a call belongs to from the coordinate's
         // durable parent position and from nothing else. That is what makes a
         // single compilation per registration sound.
         //
         // The callable owns everything it reaches, so it is safe to store for
         // as long as the program lives.
-        [[nodiscard]] auto toolRuntimeSeam() const -> script::ToolRuntimeInvoke;
+        [[nodiscard]] auto toolRuntimeDispatch() const -> script::ToolRuntimeDispatch;
 
         // Hands the body run anchored on `holdingCall` the one close operation
         // its Tool opened. Observe and hold both use this function; only their
@@ -219,15 +221,6 @@ namespace uf::operator_runtime
             ToolBodyRun body,
             ToolBodyPostcondition postcondition = {}
         ) -> Status;
-
-        [[nodiscard]]
-        auto issueBodyChild(
-            std::string_view toolName,
-            json::Value const& arguments,
-            script::ToolCallCoordinate const& coordinate,
-            std::stop_token cancellation,
-            ToolBodyRun body
-        ) -> Result<json::Value>;
 
         // Dispatch one call of one Tool this program binds.
         //

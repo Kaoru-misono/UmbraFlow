@@ -123,17 +123,17 @@ namespace uf::operator_runtime::conformance
     // with toolRuntimeOver below dispatch real Tool calls through the
     // dispatcher's own seam.
     [[nodiscard]]
-    auto provisioningToolRuntime() -> script::ToolRuntimeInvoke;
+    auto provisioningToolRuntime() -> script::ToolRuntimeDispatch;
 
-    // `invokeTool` is the seam the compiled tool closure reaches the Tool
-    // Runtime through, and it is a parameter rather than a default because the
+    // `dispatchTool` is the host adapter the compiled tool closure reaches the
+    // Tool Runtime through, and it is a parameter rather than a default because the
     // two callers want opposite things: provisioning wants the refusal above,
     // and a run wants its own dispatcher's seam.
     [[nodiscard]]
     auto loadGeneration(
         deployment::ConformanceProject const& project,
         ProjectRole role,
-        script::ToolRuntimeInvoke invokeTool
+        script::ToolRuntimeDispatch dispatchTool
     ) -> ProjectGenerationHandle;
 
     // The PolicyArtifact bytes a run pins, built from the effect types this

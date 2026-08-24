@@ -140,13 +140,14 @@ namespace uf::operator_runtime::conformance
         }
     }
 
-    auto provisioningToolRuntime() -> script::ToolRuntimeInvoke
+    auto provisioningToolRuntime() -> script::ToolRuntimeDispatch
     {
         return [](
                    std::string_view,
                    json::Value const&,
                    script::ToolCallCoordinate const&,
-                   std::stop_token
+                   std::stop_token,
+                   script::ToolCallBody
                ) -> Result<json::Value>
         {
             return fail(
@@ -270,7 +271,7 @@ namespace uf::operator_runtime::conformance
     auto loadGeneration(
         deployment::ConformanceProject const& project,
         ProjectRole role,
-        script::ToolRuntimeInvoke invokeTool
+        script::ToolRuntimeDispatch dispatchTool
     ) -> ProjectGenerationHandle
     {
         auto const& one = deploymentFor(project, role);
@@ -283,7 +284,7 @@ namespace uf::operator_runtime::conformance
                 .modules     = one.toolClosure.modules,
             },
             one.projectResources,
-            std::move(invokeTool)
+            std::move(dispatchTool)
         );
         REQUIRE(result.has_value());
         return *result;
@@ -600,7 +601,7 @@ namespace uf::operator_runtime::conformance
         auto program = loadGeneration(
             prepared.project,
             ProjectRole::UnderTest,
-            dispatcher->toolRuntimeSeam()
+            dispatcher->toolRuntimeDispatch()
         );
         auto catalog = ToolStartCatalog::create(
             deploymentFor(prepared.project, ProjectRole::UnderTest)

@@ -342,13 +342,14 @@ return {
 
         [[nodiscard]]
         auto recordingRuntime(std::shared_ptr<std::vector<RecordedCall>> p_calls)
-            -> script::ToolRuntimeInvoke
+            -> script::ToolRuntimeDispatch
         {
             return [p_calls = std::move(p_calls)](
                        std::string_view toolName,
                        json::Value const&,
                        script::ToolCallCoordinate const& coordinate,
-                       std::stop_token
+                       std::stop_token,
+                       script::ToolCallBody
                    ) -> Result<json::Value>
             {
                 p_calls->emplace_back(RecordedCall{
@@ -468,7 +469,9 @@ return {
         // k_exportedEntryPoints the source did not honour cannot survive this.
         auto const request = script::ScopedRunRequest{
             .parentPosition = runPosition(),
-            .cancellation   = {},
+            .budgetOwner    = "fixture.project-tool",
+            .maximumElapsedMillis   = 5'000U,
+            .cancellation           = {},
         };
         auto const swept = loaded->invokeBoundTool(
             k_sweepTool,

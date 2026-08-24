@@ -43,6 +43,6 @@ namespace uf::task
     [[nodiscard]]
     auto explorationToolCapabilities(
         TaskContext& context,
-        ExplorationToolInvoke& runtime
+        script::ToolRuntimeInvoke& runtime
     ) -> script::PrivateCapabilityInstaller;
 }

@@ -110,12 +110,10 @@ namespace uf::task
         std::unique_ptr<trace::TraceRecorder> recorder,
         engine::EngineSession session,
         TaskContextConfig contextConfig,
-        ExplorationToolInvoke toolRuntime,
         std::filesystem::path tracePath
     ) noexcept
         : m_recorder{std::move(recorder)}
         , m_context{std::move(session), *m_recorder, std::move(contextConfig)}
-        , m_toolRuntime{std::move(toolRuntime)}
         , m_tracePath{std::move(tracePath)}
     {
     }
@@ -134,7 +132,7 @@ namespace uf::task
                 "caller opened; it mints none of its own"
             );
         }
-        if (!spec.toolRuntime)
+        if (!spec.bindToolRuntime)
         {
             return fail(
                 AutomationErrorKind::InternalInvariant,
@@ -150,12 +148,6 @@ namespace uf::task
         // can fail in principle and is taken before anything is written.
         UF_TRY_VALUE(frameworkBundleDigest, frameworkBundleHash());
 
-        UF_TRY(
-            recorder->emit(
-                explorationRunStartedEvent(spec.projectId, frameworkBundleDigest)
-            )
-        );
-
         // No run.resources_validated line. That event records the closure of uf
         // references a task SOURCE was validated against before its VM existed;
         // an agent's chunks arrive one at a time after the VM is up, so an empty
@@ -170,8 +162,21 @@ namespace uf::task
                 .maximumReadsPerCycle = spec.maximumReadsPerCycle,
                 .maximumCropsPerCycle = spec.maximumCropsPerCycle,
             },
-            std::move(spec.toolRuntime),
             std::move(spec.tracePath)
+        );
+
+        owned->m_toolRuntime = spec.bindToolRuntime(owned->m_context);
+        if (!owned->m_toolRuntime)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "an exploration session's Tool Runtime binder returned no runtime"
+            );
+        }
+        UF_TRY(
+            owned->m_recorder->emit(
+                explorationRunStartedEvent(spec.projectId, frameworkBundleDigest)
+            )
         );
 
         // The VM is built AFTER the session owns its context and its seam,

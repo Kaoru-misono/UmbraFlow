@@ -593,26 +593,34 @@ identity = ["screen.anchor"]
         // the Host.
         [[nodiscard]]
         auto recordingToolRuntime(std::shared_ptr<std::vector<std::string>> issued)
-            -> ExplorationToolInvoke
+            -> ToolRuntimeBinder
         {
-            return [issued = std::move(issued)](
-                       TaskContext&,
-                       std::string_view toolName,
-                       json::Value const&,
-                       ExplorationCallBody body
-                   ) -> Result<json::Value>
+            return [issued = std::move(issued)](TaskContext&)
+                -> script::ToolRuntimeInvoke
             {
-                issued->emplace_back(toolName);
-                if (body)
+                return [issued](
+                           std::string_view toolName,
+                           json::Value const&,
+                           script::ToolCallBody body
+                       ) -> Result<json::Value>
                 {
-                    UF_TRY(body());
-                }
-                return json::Value::ofObject({
-                    {"call_identity", json::Value::ofString(std::string(64U, '0'))},
-                    {"result", json::Value::ofObject({})},
-                    {"state", json::Value::ofString("confirmed")},
-                    {"tool", json::Value::ofString(std::string{toolName})},
-                });
+                    issued->emplace_back(toolName);
+                    if (body)
+                    {
+                        UF_TRY_VALUE(
+                            owningCall,
+                            sha256(std::as_bytes(std::span{toolName}))
+                        );
+                        UF_TRY(body(owningCall));
+                    }
+                    return json::Value::ofObject({
+                        {"call_identity",
+                         json::Value::ofString(std::string(64U, '0'))},
+                        {"result", json::Value::ofObject({})},
+                        {"state", json::Value::ofString("confirmed")},
+                        {"tool", json::Value::ofString(std::string{toolName})},
+                    });
+                };
             };
         }
 
@@ -668,10 +676,10 @@ identity = ["screen.anchor"]
                 std::move(recorder),
                 *std::move(session),
                 ExplorationSessionSpec{
-                    .projectId   = "exploration-fixture",
-                    .projectRoot = projectRoot,
-                    .tracePath   = std::move(tracePath),
-                    .toolRuntime = recordingToolRuntime(std::move(issued)),
+                    .projectId       = "exploration-fixture",
+                    .projectRoot     = projectRoot,
+                    .tracePath       = std::move(tracePath),
+                    .bindToolRuntime = recordingToolRuntime(std::move(issued)),
                 }
             );
         }

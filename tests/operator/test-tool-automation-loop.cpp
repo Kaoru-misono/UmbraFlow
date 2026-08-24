@@ -404,13 +404,14 @@ return {
         // call: setup holds no lease, controller or observation authority for
         // a call to be admitted under. One value, never a branch.
         [[nodiscard]]
-        auto refusingToolRuntime() -> script::ToolRuntimeInvoke
+        auto refusingToolRuntime() -> script::ToolRuntimeDispatch
         {
             return [](
                        std::string_view,
                        json::Value const&,
                        script::ToolCallCoordinate const&,
-                       std::stop_token
+                       std::stop_token,
+                       script::ToolCallBody
                    ) -> Result<json::Value>
             {
                 return fail(
@@ -887,7 +888,7 @@ return {
                     .modules     = toolModules(),
                 },
                 {},
-                dispatcher.toolRuntimeSeam()
+                dispatcher.toolRuntimeDispatch()
             );
             REQUIRE_MESSAGE(loaded.has_value(), failureText(loaded));
             return *std::move(loaded);

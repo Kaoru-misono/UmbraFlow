@@ -494,5 +494,8 @@ return {
     // waiting, and a scoped run blocks in a Tool for as long as that Tool's own
     // validated duration allows.
     [[nodiscard]]
-    auto sharedEnvironmentMaterial(MonotonicInstant::Duration runtimeCeiling) -> std::string;
+    auto sharedEnvironmentMaterial(
+        MonotonicInstant::Duration runtimeCeiling,
+        std::string_view runtimeCeilingSource = {}
+    ) -> std::string;
 }

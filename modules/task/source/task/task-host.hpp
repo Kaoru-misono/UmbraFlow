@@ -22,6 +22,7 @@
 #include <ocr/engine.hpp>
 
 #include <script/engine.hpp>
+#include <script/tool-runtime.hpp>
 
 #include <trace/recorder.hpp>
 
@@ -94,37 +95,12 @@ namespace uf::task
         std::filesystem::path      tracePath{};
     };
 
-    // The body an exploration chunk writes inside an observation. It is run by
-    // the Tool call that opened the frame, so it can be neither forgotten nor
-    // written twice, and every Tool call it makes is recorded as a child of
-    // that observation
-    // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
-    using ExplorationCallBody = std::move_only_function<Status()>;
-
-    // The Tool Runtime an exploration chunk issues its calls through.
-    //
-    // AN EXPLORATION CHUNK HAS NO PRIVATE VERBS. Everything it can do to the
-    // screen, to the target and to the project is a call of a catalogued Tool
-    // through this seam, recorded in the Operator's ledger against this
-    // session's own identity and admitted or refused by the Operator's policy
-    // (docs/decisions/2026-08-24-there-is-no-annotation-phase.md).
-    //
-    // `context` is the borrow the call is driven against and is the session's
-    // own; the implementation states nothing about which one, because a session
-    // that could name another's would be observing one screen and recording
-    // another. `body` is empty for every call that is not an observation
-    // written with one -- an empty callable is the whole statement "this call
-    // has no body", and there is deliberately no second spelling of it.
-    //
-    // Move-only, because a body is consumed exactly once.
-    using ExplorationToolInvoke = std::move_only_function<
-        Result<json::Value>(
-            TaskContext& context,
-            std::string_view toolName,
-            json::Value const& arguments,
-            ExplorationCallBody body
-        )
-    >;
+    // Composition binds the one VM-facing Tool Runtime to this session's own
+    // context exactly once. This factory is not a dispatch seam: callers never
+    // choose between protocols, and both exploration and scoped Project VMs
+    // receive script::ToolRuntimeInvoke.
+    using ToolRuntimeBinder =
+        std::move_only_function<script::ToolRuntimeInvoke(TaskContext&)>;
 
     // What one exploration session needs that is a property neither of the
     // desktop nor of the ledgered session it runs inside: the Tool Runtime its
@@ -138,11 +114,11 @@ namespace uf::task
     // confined to the PROJECT directory it is editing; taking the generation's
     // root would point authoring writes at the CAS.
     //
-    // `toolRuntime` is the other. A session that could not reach a Tool Runtime
+    // `bindToolRuntime` is the other. A session that could not reach a Tool Runtime
     // could do nothing at all, so it is required rather than optional, and it
-    // is supplied by the ledgered caller that admitted the run rather than
-    // built here -- for the same reason the recorder and the engine session
-    // are.
+    // is bound by the ledgered caller that admitted the run after this session's
+    // own context exists -- for the same reason the recorder and the engine
+    // session are.
     //
     // `cancellation` is the caller's process-level stop token rather than the
     // generation's, because the process that opened the session is the one a
@@ -153,7 +129,7 @@ namespace uf::task
         std::filesystem::path projectRoot{};
         std::filesystem::path tracePath{};
 
-        ExplorationToolInvoke toolRuntime{};
+        ToolRuntimeBinder bindToolRuntime{};
 
         std::stop_token cancellation{};
 

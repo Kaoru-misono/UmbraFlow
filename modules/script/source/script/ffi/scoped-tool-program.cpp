@@ -9,13 +9,17 @@
 #include <core/text/json-text.hpp>
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
+#include <core/utility/scope-exit.hpp>
 
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
+#include <format>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -66,12 +70,12 @@ namespace uf::script
         // this one closure, so there is exactly one native primitive to reason
         // about and exactly one path an effect can take.
         constexpr auto k_capabilityInvokeField = std::string_view{"invoke"};
-        constexpr auto k_toolInvokeArity       = 2;
+        constexpr auto k_toolInvokeArity       = 3;
 
         // Observable contracts. These move the scoped environment identity
         // whenever a script can distinguish the old runtime from the new one.
         constexpr auto k_toolArgumentContract = std::string_view{
-            "tool_name_string_plus_one_decoded_json_value_v1"
+            "tool_name_string_plus_one_decoded_json_value_plus_optional_structured_body_v2"
         };
         constexpr auto k_toolResultContract = std::string_view{
             "one_frozen_decoded_json_value_no_userdata_no_metatable_v1"
@@ -81,6 +85,16 @@ namespace uf::script
         };
         constexpr auto k_capabilityTableContract = std::string_view{
             "single_invoke_closure_chunk_argument_to_catalog_modules_dropped_v1"
+        };
+        constexpr auto k_toolBodyContract = std::string_view{
+            "synchronous_framework_owned_child_dispatch_no_yield_no_suspension_no_unstructured_callback_v1"
+        };
+        constexpr auto k_runtimeCeilingSource = std::string_view{
+            "outer_project_tool_registration.timeout.maximum_elapsed_ms"
+        };
+        constexpr auto k_bodyYieldRefusal = std::string_view{
+            "a Tool body may not yield or suspend a coroutine; only framework "
+            "structured child dispatch may re-enter the VM"
         };
 
         [[nodiscard]]
@@ -102,13 +116,16 @@ namespace uf::script
         // and every member the invoke primitive reaches through its
         // light-userdata upvalue strictly outlives the VM that can reach them.
         // Member order, not discipline, is what enforces it. The borrowed
-        // ToolRuntimeInvoke belongs to the ScopedToolProgram that started this
+        // ToolRuntimeDispatch belongs to the ScopedToolProgram that started this
         // run and outlives the run by construction.
         class ScopedToolRun final
         {
-            ToolRuntimeInvoke const& m_invokeTool;
+            ToolRuntimeDispatch const& m_dispatchTool;
 
             ContentHash     m_parentPosition;
+            ContentHash     m_budgetPosition;
+            std::string     m_budgetOwner;
+            uint64          m_maximumElapsedMillis;
             std::stop_token m_cancellation;
             uint64          m_childIndex{0};
 
@@ -116,12 +133,15 @@ namespace uf::script
 
         public:
             ScopedToolRun(
-                ToolRuntimeInvoke const& invokeTool,
+                ToolRuntimeDispatch const& dispatchTool,
                 ScopedRunRequest const& request,
                 MonotonicInstant::Duration runtimeCeiling
             )
-                : m_invokeTool{invokeTool}
+                : m_dispatchTool{dispatchTool}
                 , m_parentPosition{request.parentPosition}
+                , m_budgetPosition{request.parentPosition}
+                , m_budgetOwner{request.budgetOwner}
+                , m_maximumElapsedMillis{request.maximumElapsedMillis}
                 , m_cancellation{request.cancellation}
                 , m_vm{runtimeCeiling, request.cancellation}
             {
@@ -139,7 +159,8 @@ namespace uf::script
             [[nodiscard]]
             auto callTool(
                 std::string_view toolName,
-                json::Value const& arguments
+                json::Value const& arguments,
+                ToolCallBody body
             ) -> Result<json::Value>
             {
                 if (m_childIndex == ScopedToolProgram::k_maximumToolCallsPerContext)
@@ -153,20 +174,133 @@ namespace uf::script
                     .parentPosition = m_parentPosition,
                     .childIndex     = m_childIndex,
                 };
-                return m_invokeTool(toolName, arguments, coordinate, m_cancellation);
+                return m_dispatchTool(
+                    toolName,
+                    arguments,
+                    coordinate,
+                    m_cancellation,
+                    std::move(body)
+                );
+            }
+
+            [[nodiscard]] auto budgetOwner() const -> std::string_view
+            {
+                return m_budgetOwner;
+            }
+
+            [[nodiscard]] auto budgetPosition() const -> ContentHash const&
+            {
+                return m_budgetPosition;
+            }
+
+            [[nodiscard]] auto maximumElapsedMillis() const -> uint64
+            {
+                return m_maximumElapsedMillis;
+            }
+
+            // Structured re-entry changes the VM adapter's issuing context to
+            // the body-taking call. The same VM, allocator, deadline and host
+            // stack remain in force; only ledger parentage and its per-context
+            // ordinal change, and both are restored for nested bodies.
+            auto runBodyAt(ContentHash const& owningCall, ToolCallBody body) -> Status
+            {
+                auto outerParent = std::exchange(m_parentPosition, owningCall);
+                auto outerIndex  = std::exchange(m_childIndex, uint64{0});
+                auto const restore = scopeExit(
+                    [this, outerParent = std::move(outerParent), outerIndex]() mutable
+                        noexcept
+                    {
+                        m_parentPosition = std::move(outerParent);
+                        m_childIndex     = outerIndex;
+                    }
+                );
+                return body(owningCall);
             }
         };
+
+        [[nodiscard]]
+        auto bodyFailure(
+            ScopedToolRun& run,
+            int status,
+            std::string_view raised
+        ) -> Status
+        {
+            if (status == LUA_ERRMEM)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "a nested Tool body exhausted the registration-pinned "
+                        "Luau memory ceiling of {} bytes owned by Project Tool "
+                        "{} at {}",
+                        PureDataProgram::k_memoryQuotaBytes,
+                        run.budgetOwner(),
+                        run.budgetPosition().hex()
+                    )
+                );
+            }
+            auto const& control = run.vm().control();
+            if (control.broken())
+            {
+                switch (control.cause)
+                {
+                case InterruptState::BreakCause::Deadline:
+                    return fail(
+                        AutomationErrorKind::Cancelled,
+                        std::format(
+                            "a nested Tool body exceeded registration-declared "
+                            "maximum_elapsed_ms={} owned by Project Tool {} at {}",
+                            run.maximumElapsedMillis(),
+                            run.budgetOwner(),
+                            run.budgetPosition().hex()
+                        )
+                    );
+                case InterruptState::BreakCause::InstructionBudget:
+                    return fail(
+                        AutomationErrorKind::Cancelled,
+                        std::format(
+                            "a nested Tool body exhausted the registration-pinned "
+                            "instruction budget owned by Project Tool {} at {} [{}]",
+                            run.budgetOwner(),
+                            run.budgetPosition().hex(),
+                            describeBreak(control)
+                        )
+                    );
+                case InterruptState::BreakCause::StopToken:
+                    return fail(
+                        AutomationErrorKind::Cancelled,
+                        "a nested Tool body was cancelled [" + describeBreak(control)
+                            + "]"
+                    );
+                case InterruptState::BreakCause::None: break;
+                }
+            }
+            if (status == LUA_YIELD || raised.contains("yield"))
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    std::string{k_bodyYieldRefusal}
+                );
+            }
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                raised.empty() ? "a Tool body failed"
+                               : "a Tool body failed: " + std::string{raised}
+            );
+        }
 
         auto invokeToolPrimitive(lua_State* state) -> int
         {
             if (
                 lua_gettop(state) != k_toolInvokeArity
                 || lua_type(state, 1) != LUA_TSTRING
+                || (!lua_isnil(state, 3) && lua_type(state, 3) != LUA_TFUNCTION)
             )
             {
                 luaL_error(
                     state,
-                    "the Tool Runtime primitive takes a tool name and one argument value"
+                    "the Tool Runtime primitive takes a tool name, one argument "
+                    "value and an optional structured body"
                 );
             }
 
@@ -211,7 +345,46 @@ namespace uf::script
                 }
                 else
                 {
-                    auto answered = p_run->callTool(toolName, *arguments);
+                    auto body = ToolCallBody{};
+                    if (lua_type(state, 3) == LUA_TFUNCTION)
+                    {
+                        auto const bodyIndex = lua_absindex(state, 3);
+                        body = [state, bodyIndex, p_run](
+                                   ContentHash const& owningCall
+                               ) -> Status
+                        {
+                            auto runScriptBody = ToolCallBody{
+                                [state, bodyIndex, p_run](ContentHash const&) -> Status
+                                {
+                                    lua_pushvalue(state, bodyIndex);
+                                    auto const status = lua_pcall(state, 0, 0, 0);
+                                    if (status == LUA_OK)
+                                    {
+                                        return ok();
+                                    }
+                                    auto raised = std::string{};
+                                    if (lua_type(state, -1) == LUA_TSTRING)
+                                    {
+                                        std::size_t size{};
+                                        char const* const text =
+                                            lua_tolstring(state, -1, &size);
+                                        if (text != nullptr)
+                                        {
+                                            raised.assign(text, size);
+                                        }
+                                    }
+                                    lua_pop(state, 1);
+                                    return bodyFailure(*p_run, status, raised);
+                                }
+                            };
+                            return p_run->runBodyAt(
+                                owningCall,
+                                std::move(runScriptBody)
+                            );
+                        };
+                    }
+                    auto answered =
+                        p_run->callTool(toolName, *arguments, std::move(body));
                     if (!answered.has_value())
                     {
                         detail::recordTerminalFailure(*p_environment, answered.error());
@@ -383,7 +556,7 @@ namespace uf::script
     {
     public:
         detail::ProgramClosure closure{};
-        ToolRuntimeInvoke      invokeTool{};
+        ToolRuntimeDispatch    dispatchTool{};
     };
 
     ScopedToolProgram::ScopedToolProgram(std::shared_ptr<State const> p_state) noexcept
@@ -404,10 +577,10 @@ namespace uf::script
         std::vector<PureDataProgram::Resource> resources,
         std::span<FrameworkModule const> frameworkModules,
         std::vector<PureDataProgram::Resource> frameworkResources,
-        ToolRuntimeInvoke invokeTool
+        ToolRuntimeDispatch dispatchTool
     ) -> Result<ScopedToolProgram>
     {
-        if (!invokeTool)
+        if (!dispatchTool)
         {
             return detail::refuse("scoped tool program requires a Tool Runtime");
         }
@@ -443,8 +616,8 @@ namespace uf::script
         );
 
         auto state = std::make_shared<State>(State{
-            .closure    = std::move(closure),
-            .invokeTool = std::move(invokeTool),
+            .closure      = std::move(closure),
+            .dispatchTool = std::move(dispatchTool),
         });
         return ScopedToolProgram{std::shared_ptr<State const>{std::move(state)}};
     }
@@ -460,7 +633,26 @@ namespace uf::script
             return detail::refuse("scoped tool entry point is not registered");
         }
 
-        auto run = ScopedToolRun{m_state->invokeTool, request, k_defaultMaxRuntime};
+        if (request.budgetOwner.empty())
+        {
+            return detail::refuse("a scoped run must name its outer budget owner");
+        }
+        if (
+            request.maximumElapsedMillis == 0U
+            || request.maximumElapsedMillis
+                > static_cast<uint64>(std::numeric_limits<int64>::max())
+        )
+        {
+            return detail::refuse(
+                "a scoped run must carry a positive representable "
+                "registration-declared maximum_elapsed_ms"
+            );
+        }
+
+        auto const runtimeCeiling = std::chrono::milliseconds{
+            static_cast<int64>(request.maximumElapsedMillis)
+        };
+        auto run = ScopedToolRun{m_state->dispatchTool, request, runtimeCeiling};
         return detail::invokeClosure(
             run.vm(),
             m_state->closure,
@@ -477,7 +669,10 @@ namespace uf::script
     // unmoved, which is the upgrade this pin exists to catch.
     auto scopedToolEnvironmentMaterial() -> std::string
     {
-        auto output = detail::sharedEnvironmentMaterial(k_defaultMaxRuntime);
+        auto output = detail::sharedEnvironmentMaterial(
+            MonotonicInstant::Duration{},
+            k_runtimeCeilingSource
+        );
 
         output += ",\"scoped_limits\":{\"tool_calls_per_context\":";
         output += std::to_string(ScopedToolProgram::k_maximumToolCallsPerContext);
@@ -502,6 +697,8 @@ namespace uf::script
 
         output += "],\"tool_runtime\":{\"argument_shape\":";
         appendJsonString(output, k_toolArgumentContract);
+        output += ",\"body\":";
+        appendJsonString(output, k_toolBodyContract);
         output += ",\"capability_field\":";
         appendJsonString(output, k_capabilityInvokeField);
         output += ",\"capability_table\":";

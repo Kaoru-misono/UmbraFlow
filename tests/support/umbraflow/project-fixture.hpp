@@ -577,13 +577,14 @@ namespace uf::operator_runtime::test_support
     // lease, controller or observation authority for a call to be admitted
     // under. It is one value and never a branch on anything.
     [[nodiscard]]
-    inline auto refusingToolRuntime() -> script::ToolRuntimeInvoke
+    inline auto refusingToolRuntime() -> script::ToolRuntimeDispatch
     {
         return [](
                    std::string_view,
                    json::Value const&,
                    script::ToolCallCoordinate const&,
-                   std::stop_token
+                   std::stop_token,
+                   script::ToolCallBody
                ) -> Result<json::Value>
         {
             return fail(

@@ -84,8 +84,11 @@ end
 
 -- Read one frame. Read-only: it persists a durable observation reference but
 -- performs no external-world effect, so it needs no plan authority.
-function screen.observe(): any
-    return tools.call(k_observeTool, emptyObject)
+function screen.observe(body: any?): any
+    if body ~= nil and type(body) ~= "function" then
+        reject("observe body must be a function when present")
+    end
+    return tools.call(k_observeTool, emptyObject, body)
 end
 
 -- The handle a completed observation carries, as a `@umbraflow/result`

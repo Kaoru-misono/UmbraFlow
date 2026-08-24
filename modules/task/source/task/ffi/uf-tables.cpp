@@ -711,9 +711,9 @@ namespace uf::task
         // a Luau C function is a plain function pointer, and both objects are
         // owned by the ExplorationSession that outlives the VM.
         [[nodiscard]]
-        auto boundToolRuntime(lua_State* state) -> ExplorationToolInvoke*
+        auto boundToolRuntime(lua_State* state) -> script::ToolRuntimeInvoke*
         {
-            return static_cast<ExplorationToolInvoke*>(
+            return static_cast<script::ToolRuntimeInvoke*>(
                 lua_tolightuserdata(state, lua_upvalueindex(2))
             );
         }
@@ -745,7 +745,7 @@ namespace uf::task
             auto budget    = ToolValueBudget{};
             auto arguments = readToolValue(state, 2, 0U, budget);
 
-            auto body = ExplorationCallBody{};
+            auto body = script::ToolCallBody{};
             if (!lua_isnoneornil(state, 3))
             {
                 if (lua_type(state, 3) != LUA_TFUNCTION)
@@ -753,11 +753,11 @@ namespace uf::task
                     raiseTierB(
                         state,
                         AutomationErrorKind::InvalidResource,
-                        "an observation's body must be a function"
+                        "a Tool body must be a function"
                     );
                 }
                 auto const bodyIndex = lua_absindex(state, 3);
-                body = [state, bodyIndex]() -> Status
+                body = [state, bodyIndex](ContentHash const&) -> Status
                 {
                     lua_pushvalue(state, bodyIndex);
                     if (lua_pcall(state, 0, 0, 0) == LUA_OK)
@@ -768,7 +768,7 @@ namespace uf::task
                     // carrier is decoded rather than stringified, because its
                     // __tostring is the carrier's type name and a reader of
                     // that cannot tell one refusal from another.
-                    auto message = std::string{"the observation's body failed"};
+                    auto message = std::string{"the Tool body failed"};
                     auto kind    = AutomationErrorKind::ActionRejected;
                     if (auto const decoded = decodeTierB(state, -1))
                     {
@@ -786,12 +786,8 @@ namespace uf::task
                 };
             }
 
-            auto answered = (*p_runtime)(
-                *context,
-                toolName,
-                arguments,
-                std::move(body)
-            );
+            auto answered =
+                (*p_runtime)(toolName, arguments, std::move(body));
             if (!answered)
             {
                 raiseFromError(state, context, answered.error());
@@ -813,7 +809,7 @@ namespace uf::task
         auto buildExplorationSurface(
             lua_State* state,
             TaskContext* context,
-            ExplorationToolInvoke* p_runtime
+            script::ToolRuntimeInvoke* p_runtime
         ) -> Status
         {
             lua_createtable(state, 0, 2);
@@ -2033,11 +2029,11 @@ namespace uf::task
 
     auto explorationToolCapabilities(
         TaskContext& context,
-        ExplorationToolInvoke& runtime
+        script::ToolRuntimeInvoke& runtime
     ) -> script::PrivateCapabilityInstaller
     {
         TaskContext* const           p_context = &context;
-        ExplorationToolInvoke* const p_runtime = &runtime;
+        script::ToolRuntimeInvoke* const p_runtime = &runtime;
         return [p_context, p_runtime](lua_State* state) -> Status
         {
             // Engine::create invokes this installer synchronously and the table

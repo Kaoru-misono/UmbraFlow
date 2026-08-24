@@ -360,13 +360,14 @@ namespace uf::service
         // a value this seam always answers with and never a branch on which
         // generation is running.
         [[nodiscard]]
-        auto quiescentToolRuntime() -> script::ToolRuntimeInvoke
+        auto quiescentToolRuntime() -> script::ToolRuntimeDispatch
         {
             return [](
                        std::string_view,
                        json::Value const&,
                        script::ToolCallCoordinate const&,
-                       std::stop_token
+                       std::stop_token,
+                       script::ToolCallBody
                    ) -> Result<json::Value>
             {
                 return fail(
@@ -941,7 +942,8 @@ namespace uf::service
         //
         // Two routes and one rule deciding between them: a call written inside
         // a Tool body is a CHILD of that body-taking call and goes through
-        // the dispatcher's own child seam, and every other call is issued at the
+        // the dispatcher's coordinate-bearing host adapter, and every other call
+        // is issued at the
         // top of this session's run. Neither is chosen by the chunk -- the chunk
         // names a Tool and an argument value, and where the call lands is
         // decided by whether a body is open.
@@ -950,7 +952,7 @@ namespace uf::service
             task::TaskContext& context,
             std::string_view toolName,
             json::Value const& arguments,
-            task::ExplorationCallBody body
+            script::ToolCallBody body
         ) -> Result<json::Value>;
 
         // The innermost Tool whose body is running, and how many children that
@@ -1179,7 +1181,7 @@ namespace uf::service
                     .modules     = deployed.toolClosure.modules,
                 },
                 deployed.projectResources,
-                implementation->dispatcher().toolRuntimeSeam()
+                implementation->dispatcher().toolRuntimeDispatch()
             )
         );
         implementation->loadedGeneration.emplace(std::move(loadedGeneration));
@@ -1310,20 +1312,23 @@ namespace uf::service
         // states, because the TaskContext it hands back is bound to the same
         // object.
         auto* const p_implementation = m_impl.get();
-        auto toolRuntime = task::ExplorationToolInvoke{
-            [p_implementation](
-                task::TaskContext& callContext,
-                std::string_view toolName,
-                json::Value const& arguments,
-                task::ExplorationCallBody body
-            ) -> Result<json::Value>
+        auto bindToolRuntime = task::ToolRuntimeBinder{
+            [p_implementation](task::TaskContext& callContext)
+                -> script::ToolRuntimeInvoke
             {
-                return p_implementation->issueExplorationCall(
-                    callContext,
-                    toolName,
-                    arguments,
-                    std::move(body)
-                );
+                return [p_implementation, p_context = &callContext](
+                           std::string_view toolName,
+                           json::Value const& arguments,
+                           script::ToolCallBody body
+                       ) -> Result<json::Value>
+                {
+                    return p_implementation->issueExplorationCall(
+                        *p_context,
+                        toolName,
+                        arguments,
+                        std::move(body)
+                    );
+                };
             }
         };
 
@@ -1342,7 +1347,7 @@ namespace uf::service
                 .projectId            = pinned.deployment,
                 .projectRoot          = pinned.projectDirectory,
                 .tracePath            = std::move(config.tracePath),
-                .toolRuntime          = std::move(toolRuntime),
+                .bindToolRuntime      = std::move(bindToolRuntime),
                 .cancellation         = std::move(cancellation),
                 .maximumReadsPerCycle = config.maximumReadsPerCycle,
                 .maximumCropsPerCycle = config.maximumCropsPerCycle,
@@ -1408,7 +1413,7 @@ namespace uf::service
         auto* const p_self = this;
         auto scope = operator_runtime::ToolBodyRun{
             [p_self, p_context, &call, &answered,
-             inner = std::move(inner)]() mutable -> Status
+             inner = std::move(inner)](ContentHash const& owningCall) mutable -> Status
             {
                 UF_TRY(p_self->dispatcher().engageObservationFrame(
                     call.identity(),
@@ -1430,18 +1435,7 @@ namespace uf::service
                         : std::unexpected{std::move(*answered).error()};
                 }
 
-                auto const outerCall = std::exchange(
-                    p_self->explorationBodyCall,
-                    std::optional{call.identity()}
-                );
-                auto const outerChildren = std::exchange(
-                    p_self->explorationBodyChildren,
-                    uint64{0}
-                );
-                auto ran = inner();
-                p_self->explorationBodyCall     = outerCall;
-                p_self->explorationBodyChildren = outerChildren;
-                return ran;
+                return inner(owningCall);
             }
         };
 
@@ -2294,7 +2288,9 @@ namespace uf::service
             >{};
             auto scope = operator_runtime::ToolBodyRun{
                 [this, &call, &answered,
-                 inner = std::move(p_bodyContext->body)]() mutable -> Status
+                 inner = std::move(p_bodyContext->body)](
+                    ContentHash const& owningCall
+                ) mutable -> Status
                 {
                     answered.emplace(answerDeliverInputTool(call));
                     if (!answered->has_value())
@@ -2311,18 +2307,7 @@ namespace uf::service
                         return ok();
                     }
 
-                    auto const outerCall = std::exchange(
-                        explorationBodyCall,
-                        std::optional{call.identity()}
-                    );
-                    auto const outerChildren = std::exchange(
-                        explorationBodyChildren,
-                        uint64{0}
-                    );
-                    auto ran                = inner();
-                    explorationBodyCall     = outerCall;
-                    explorationBodyChildren = outerChildren;
-                    return ran;
+                    return inner(owningCall);
                 }
             };
             auto nonemptyWhenEngaged = operator_runtime::ToolBodyPostcondition{
@@ -2602,7 +2587,7 @@ namespace uf::service
         task::TaskContext& context,
         std::string_view toolName,
         json::Value const& arguments,
-        task::ExplorationCallBody body
+        script::ToolCallBody body
     ) -> Result<json::Value>
     {
         UF_TRY_VALUE(
@@ -2612,15 +2597,42 @@ namespace uf::service
             )
         );
 
+        if (body)
+        {
+            body = script::ToolCallBody{
+                [this, inner = std::move(body)](
+                    ContentHash const& owningCall
+                ) mutable -> Status
+                {
+                    auto const outerCall = std::exchange(
+                        explorationBodyCall,
+                        std::optional{owningCall}
+                    );
+                    auto const outerChildren = std::exchange(
+                        explorationBodyChildren,
+                        uint64{0}
+                    );
+                    auto const restore = scopeExit(
+                        [this, outerCall, outerChildren]() noexcept
+                        {
+                            explorationBodyCall     = outerCall;
+                            explorationBodyChildren = outerChildren;
+                        }
+                    );
+                    return inner(owningCall);
+                }
+            };
+        }
+
         // INSIDE AN OBSERVATION'S BODY. The call is a child of that observation
-        // and goes through the dispatcher's own child seam, which mints the
+        // and goes through the dispatcher's shared host adapter, which mints the
         // delegation grant from the observation's still-dispatching row, judges
         // the child against what that observation declared it may delegate, and
         // records the call under it.
         if (explorationBodyCall.has_value())
         {
             ++explorationBodyChildren;
-            return dispatcher().issueBodyChild(
+            return dispatcher().toolRuntimeDispatch()(
                 toolName,
                 arguments,
                 script::ToolCallCoordinate{
