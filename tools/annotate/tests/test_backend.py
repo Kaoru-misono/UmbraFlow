@@ -595,7 +595,13 @@ class SchemaAndJcsTests(unittest.TestCase):
                     "search_rect": [100, 100, 600, 200],
                     "reader": "options-reader",
                     "order": "left_to_right",
-                    "slots": {"origin": 300, "pitch": 200, "extent": 400, "tolerance": 2},
+                    "slots": {
+                        "origin": 300,
+                        "pitch": 200,
+                        "extent": 400,
+                        "tolerance": 2,
+                        "maximum_slots": 4,
+                    },
                 },
                 "actions": [
                     {
@@ -1420,7 +1426,13 @@ class PublicationBoundaryTests(WorkspaceTestCase):
                     "search_rect": [100, 100, 600, 200],
                     "reader": "options-reader",
                     "order": "left_to_right",
-                    "slots": {"origin": 300, "pitch": 200, "extent": 400, "tolerance": 2},
+                    "slots": {
+                        "origin": 300,
+                        "pitch": 200,
+                        "extent": 400,
+                        "tolerance": 2,
+                        "maximum_slots": 4,
+                    },
                 },
                 "actions": [],
                 "reads": [

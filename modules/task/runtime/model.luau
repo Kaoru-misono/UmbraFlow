@@ -536,11 +536,13 @@ local function collectionBuilder(bounds: { number }): (string, any) -> any
         end
         local slotsWhat = what .. ".placement.slots"
         local sourceSlots = object(slotsWhat, placement.slots)
-        only(
-            slotsWhat,
-            sourceSlots,
-            { origin = true, pitch = true, extent = true, tolerance = true }
-        )
+        only(slotsWhat, sourceSlots, {
+            origin = true,
+            pitch = true,
+            extent = true,
+            tolerance = true,
+            maximum_slots = true,
+        })
         local slotOrigin = integer(slotsWhat .. ".origin", sourceSlots.origin)
         -- pitch carries no parity constraint: a layout spans
         -- min(pitch * (n - 1), extent) and each slot is rounded half up, so
@@ -552,6 +554,13 @@ local function collectionBuilder(bounds: { number }): (string, any) -> any
         local slotExtent = positiveInteger(slotsWhat .. ".extent", sourceSlots.extent)
         local slotTolerance = integer(slotsWhat .. ".tolerance", sourceSlots.tolerance)
         if slotTolerance < 0 then fail(slotsWhat .. ".tolerance", "must not be negative") end
+        -- The bound on the fitted-layout search, and it is DECLARED rather than
+        -- derived. origin, pitch, extent and tolerance are all pixels; a slot
+        -- count computed from them would be arithmetic this framework invented
+        -- over a declaration that never spoke about cardinality. A Project knows
+        -- its own collection and states how many slots it can hold.
+        local slotMaximum =
+            positiveInteger(slotsWhat .. ".maximum_slots", sourceSlots.maximum_slots)
         local searchRect = rect(
             what .. ".placement.search_rect",
             placement.search_rect,
@@ -606,6 +615,7 @@ local function collectionBuilder(bounds: { number }): (string, any) -> any
                     pitch = slotPitch,
                     extent = slotExtent,
                     tolerance = slotTolerance,
+                    maximum_slots = slotMaximum,
                 }),
             }),
             actions = actions,

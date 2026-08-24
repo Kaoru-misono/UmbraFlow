@@ -541,9 +541,27 @@ local function fittedCollection(collection: any, ordered: { any }): (any?, strin
     -- Two adjacent slots closer together than this cannot be told apart by a
     -- measurement the declaration allows to sit `tolerance` from either.
     local assignable = 2 * slots.tolerance + 1
-    for layoutCount = measuredCount, math.huge do
+    -- The search walks upward looking for a larger layout with missing slots,
+    -- and `maximum_slots` is what stops it. The bound is the declaration's own:
+    -- origin, pitch, extent and tolerance are pixels, so any slot count derived
+    -- from them is arithmetic this framework invented over a declaration that
+    -- said nothing about cardinality. Ruled in
+    -- docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md.
+    --
+    -- `stoppedAtBound` records WHY the walk ended, because only one of the three
+    -- endings is the declaration disagreeing with the frame. A walk cut short by
+    -- the search rectangle or by the ambiguity floor reached a layout it could
+    -- judge and rejected it, which is the `unknown` this function has always
+    -- reported; a walk that ran out of cardinalities never reached the layout
+    -- that would have fitted, and says so by name.
+    local maximumSlots = slots.maximum_slots
+    local stoppedAtBound = true
+    for layoutCount = measuredCount, maximumSlots do
         local layout = layoutSlots(slots, layoutCount)
-        if layout[1] < searchStart or layout[layoutCount] >= searchEnd then break end
+        if layout[1] < searchStart or layout[layoutCount] >= searchEnd then
+            stoppedAtBound = false
+            break
+        end
         local gap = smallestSlotGap(layout)
         if gap ~= nil and gap < assignable then
             -- A larger layout only packs its slots tighter, so this is the last
@@ -560,6 +578,7 @@ local function fittedCollection(collection: any, ordered: { any }): (any?, strin
                     slots.tolerance
                 )
             end
+            stoppedAtBound = false
             break
         end
         local items = {}
@@ -588,6 +607,14 @@ local function fittedCollection(collection: any, ordered: { any }): (any?, strin
                 items = items,
             }), nil
         end
+    end
+    if stoppedAtBound then
+        return nil, string.format(
+            "bounded_slots: %d measured items fit no layout of at most %d "
+                .. "slots, which is the maximum_slots this collection declares",
+            measuredCount,
+            maximumSlots
+        )
     end
     return table.freeze({ completeness = "unknown", count = measuredCount }), nil
 end

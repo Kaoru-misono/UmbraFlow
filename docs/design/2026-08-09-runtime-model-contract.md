@@ -124,7 +124,7 @@ Collection {
   placement = {
     kind = "detected", search_rect, reader,
     order = "left_to_right" | "top_to_bottom",
-    slots = { origin, pitch, extent, tolerance }
+    slots = { origin, pitch, extent, tolerance, maximum_slots }
   },
   actions = [ ... ],
   reads = [ { reader, offset = [dx, dy], size = [width, height] }, ... ]
@@ -148,11 +148,23 @@ exactly one of them is a property of that cardinality, so the resolver refuses a
 detected cardinality whose smallest adjacent slot gap is below
 `2 * tolerance + 1`, naming that cardinality, the gap and the tolerance.
 
+`maximum_slots` is the largest number of slots the collection can hold, and it
+is where the search for a larger layout with missing slots stops. It is required
+and is declared rather than derived: `origin`, `pitch`, `extent` and `tolerance`
+are all pixels, so a slot count computed from them would be a cardinality bound
+the framework invented over a declaration that never mentioned cardinality. A
+detected item set the search cannot place at any cardinality up to the bound is
+refused by name, reporting the measured count and the declared maximum, instead
+of resolving as a partial of some far larger layout.
+
 The detected count and item rectangles are runtime results, not authored item
 geometry. A resolved Collection reports `completeness` as `complete`, `partial`,
 or `unknown` and always reports `count`. `complete` and `partial` carry items;
 `partial` may have gaps in slot indices. `unknown` carries no items. An absent
-detector read is a complete collection of count zero.
+detector read is a complete collection of count zero. A search that instead ran
+out of cardinalities at `maximum_slots` resolves no Collection at all: the
+declaration and the frame disagree about how large this collection can get, and
+that is a named refusal rather than an unknown fit.
 
 Collection `reads` are reporting-only. Each read rectangle is derived from one
 measured item origin by adding the signed `offset` and then applying the

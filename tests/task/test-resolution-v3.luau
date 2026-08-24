@@ -464,7 +464,7 @@ local reading = model.compile({
                 search_rect = { 100, 80, 1080, 160 },
                 reader = "flavour.reader",
                 order = "left_to_right",
-                slots = { origin = 631, pitch = 316, extent = 1080, tolerance = 2 },
+                slots = { origin = 631, pitch = 316, extent = 1080, tolerance = 2, maximum_slots = 8 },
             },
             actions = {
                 {
@@ -490,7 +490,7 @@ local reading = model.compile({
                 search_rect = { 100, 80, 1080, 160 },
                 reader = "flavour.reader",
                 order = "left_to_right",
-                slots = { origin = 631, pitch = 316, extent = 1080, tolerance = 2 },
+                slots = { origin = 631, pitch = 316, extent = 1080, tolerance = 2, maximum_slots = 8 },
             },
             actions = {},
             reads = { { reader = "name.reader", offset = { 0, 50 }, size = { 240, 60 } } },
@@ -509,7 +509,36 @@ local reading = model.compile({
                 search_rect = { 0, 80, 1280, 160 },
                 reader = "flavour.reader",
                 order = "left_to_right",
-                slots = { origin = 629, pitch = 418, extent = 836, tolerance = 0 },
+                slots = {
+                    origin = 629,
+                    pitch = 418,
+                    extent = 836,
+                    tolerance = 0,
+                    maximum_slots = 4,
+                },
+            },
+            actions = {},
+            reads = {},
+        },
+        -- The event collection's geometry to the pixel, declared to hold twice
+        -- as many slots. It exists so that a refusal below is attributable to
+        -- the DECLARED BOUND and to nothing about the layout: the same measured
+        -- items reach a five-slot layout here and are refused there.
+        {
+            id = "events.wide",
+            surface = "scene",
+            placement = {
+                kind = "detected",
+                search_rect = { 0, 80, 1280, 160 },
+                reader = "flavour.reader",
+                order = "left_to_right",
+                slots = {
+                    origin = 629,
+                    pitch = 418,
+                    extent = 836,
+                    tolerance = 0,
+                    maximum_slots = 8,
+                },
             },
             actions = {},
             reads = {},
@@ -525,7 +554,7 @@ local reading = model.compile({
                 search_rect = { 500, 80, 300, 160 },
                 reader = "flavour.reader",
                 order = "left_to_right",
-                slots = { origin = 600, pitch = 8, extent = 8, tolerance = 4 },
+                slots = { origin = 600, pitch = 8, extent = 8, tolerance = 4, maximum_slots = 4 },
             },
             actions = {},
             reads = {},
@@ -990,6 +1019,67 @@ do
             )
         end
     end
+end
+
+-- The fitted-layout search stops at the slot count the declaration states, and
+-- a layout that is consistent only past that bound is refused BY NAME rather
+-- than reported as an unfitted `unknown`. Ruled in
+-- docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md:
+-- everything else in `slots` is pixels, so any cardinality bound derived from
+-- them is arithmetic the framework invented over a declaration that never
+-- mentioned a slot count.
+--
+-- The three measured items are the first three slots of the event fan's
+-- FIVE-item layout. `events` declares four and refuses them; `events.wide`
+-- declares eight, reaches the five-slot layout and resolves them as a partial.
+-- One geometry, two bounds, two outcomes -- so the refusal is the bound's and
+-- not the layout's.
+--
+-- Raising `events`'s maximum_slots to 5 reds the first assertion; lowering
+-- `events.wide`'s to 4 reds the second.
+do
+    local function resolvedBounded(id: string, origins: { number }): (any?, string?)
+        local cycle = evidence.begin_cycle()
+        local records = readingRecords(cycle, "present", "absent", "present")
+        local state = resolution.resolve_state(reading, cycle, records)
+        local lines = {}
+        for position, origin in origins do
+            lines[position] = { "item" .. tostring(position), { origin, 100, 8, 40 } }
+        end
+        local result, reason = resolution.resolve_collection(
+            reading,
+            cycle,
+            state,
+            id,
+            { [model.collection_reading_key(id, "flavour.reader")] = readBlock(lines) }
+        )
+        evidence.end_cycle(cycle)
+        return result, reason
+    end
+
+    local partOfFive = { 211, 420, 629 }
+
+    local bounded, boundedReason = resolvedBounded("events", partOfFive)
+    assert(
+        bounded == nil
+            and boundedReason
+                == "bounded_slots: 3 measured items fit no layout of at most 4 "
+                    .. "slots, which is the maximum_slots this collection declares",
+        "a layout consistent only past the declared bound must be refused by name"
+    )
+
+    local wide, wideReason = resolvedBounded("events.wide", partOfFive)
+    assert(
+        wideReason == nil and wide ~= nil and wide.completeness == "partial",
+        "the same items must resolve where the declaration admits the larger layout"
+    )
+    assert(
+        #wide.items == 3
+            and wide.items[1].index == 0
+            and wide.items[2].index == 1
+            and wide.items[3].index == 2,
+        "a partial of the five-slot layout must carry the three slots it measured"
+    )
 end
 
 -- Whether a layout can be assigned at all is a property of its cardinality,
