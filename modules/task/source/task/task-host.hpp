@@ -358,28 +358,27 @@ namespace uf::task
             TaskContext& context
         ) -> Result<HostDeliveryReport>;
 
-        // Captures a frame, resolves `uiTarget` on it, authorizes `action` on
-        // the Binding that resolved, and delivers the Receipt that mint
-        // produced under `authority`.
+        // Resolves `uiTarget` ON THE FRAME `context` IS HOLDING, authorizes
+        // `action` on the Binding that resolved, and delivers the Receipt that
+        // mint produced under `authority`. It opens no frame of its own and is
+        // refused by name -- "no open observation frame" -- when the caller
+        // holds none.
         //
-        // The four steps are ONE operation because the observation cycle is
+        // The three steps are ONE operation because the observation frame is
         // what joins them. A Receipt is measured on the frame its cycle holds
         // and the input is posted into that same frame, so anything able to run
         // between the mint and the delivery would be able to aim at one frame
-        // and post into another. This is also why the capture is here and not
-        // the caller's: observe() sweeps its own cycle, so a frame a caller had
-        // already observed is released before this call, and re-using its
-        // coordinates would be aiming at a frame nobody still holds.
+        // and post into another.
         //
-        // What ties the delivered input back to the frame the caller observed
-        // is therefore NOT the frame identity, which cannot survive the sweep.
-        // It is the (runtime generation, ui target, action) triple: the caller's
-        // authority names it, `authority.uiTarget` carries it to the Host, and
-        // deliver() refuses a Receipt whose intent names another target. The
-        // Binding is then re-resolved on the frame the input is actually posted
-        // into, so a world that moved between the two frames resolves a
-        // different placement or fails to resolve at all rather than delivering
-        // stale coordinates.
+        // Binding to the caller's frame is what makes the delivered input
+        // attributable to the frame the caller measured on: it IS that frame,
+        // by frame identity, rather than a second capture tied back to the
+        // first by the (runtime generation, ui target, action) triple alone. The
+        // triple still holds -- `authority.uiTarget` carries it to the Host and
+        // deliver() refuses a Receipt whose intent names another target -- but
+        // it is now a second agreement about one frame instead of the only
+        // thread between two
+        // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
         //
         // Err means nothing was posted, exactly as for deliver(): everything
         // ahead of the engine call refuses without consuming, and every failure
@@ -465,9 +464,19 @@ namespace uf::task
         auto runtimeModelBinding(GenerationId generation)
             -> Result<RuntimeModelBinding>;
 
-        // Runs one observation cycle on a finalized generation and returns what
-        // the trusted resolver concluded. A generation with no binding is
-        // refused, which is every unsealed one.
+        // Opens an observation frame on a finalized generation: it captures one
+        // frame, resolves the state on it, and RETURNS WITH THE CYCLE STILL
+        // OPEN. A generation with no binding is refused, which is every
+        // unsealed one.
+        //
+        // WHOEVER OPENS A FRAME OWNS CLOSING IT, on every exit path, by calling
+        // disengageObservationFrame below. The frame is left open because every
+        // measurement taken inside it must read THE SAME frame; a verb that
+        // captured its own would measure a moving screen across several
+        // captures, which silently changes what those verbs mean
+        // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
+        // An engage that FAILS leaves nothing open, so only a successful one
+        // creates the obligation.
         //
         // The context is supplied rather than remembered, for deliver()'s
         // reason: a Host that stored a TaskContext* would be holding a borrow of
@@ -481,8 +490,15 @@ namespace uf::task
         // whose target generation the caller named would certify a world the
         // Host never saw.
         [[nodiscard]]
-        auto observe(GenerationId generation, TaskContext& context)
+        auto engageObservationFrame(GenerationId generation, TaskContext& context)
             -> Result<UiObservationSnapshot>;
+
+        // Closes the observation frame `context` holds and reports whether there
+        // was one. Idempotent, and the only close there is: a frame closed twice
+        // and a frame that was never opened are the same no-op, because the
+        // caller that runs this unconditionally on every exit path cannot know
+        // which of the two it is looking at.
+        auto disengageObservationFrame(TaskContext& context) noexcept -> bool;
 
         [[nodiscard]]
         auto startExplorationSession(

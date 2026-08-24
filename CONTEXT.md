@@ -553,8 +553,8 @@ set is guessable:
   `error_tag` carrying `"uf.error"`.
 - trusted runtime, `RuntimeNativeState::install` — `runtime_model_bytes`,
   `runtime_semantic_hash`, `runtime_model_finalize`, `runtime_asset`,
-  `runtime_cycle_open`, `runtime_match`, `runtime_read`, `runtime_receipt`,
-  `runtime_cycle_close`.
+  `runtime_cycle_open`, `runtime_cycle_current`, `runtime_match`, `runtime_read`,
+  `runtime_receipt`, `runtime_cycle_close`.
 Both are deep-frozen at the end of the build. **Neither carries a click, a key
 press or any other input primitive**, and `math.random`/`math.randomseed` are
 nilled outright by `installSandbox` rather than offered here.

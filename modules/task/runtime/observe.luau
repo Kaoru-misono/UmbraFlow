@@ -184,15 +184,15 @@ local function requireCycle(cycle: any): any
     return state
 end
 
-function observe.open(runtimeModel: any): any
-    if not model.is_runtime_model(runtimeModel) then error("observe.open needs RuntimeModel v3", 2) end
-    local hostBinding = project.host_binding(runtimeModel)
-    if hostBinding == nil then error("observe.open only accepts project.load_project() output", 2) end
-    local ticket = requireNative("runtime_cycle_open")(hostBinding)
-    if ticket == nil then error("Host refused observation cycle", 2) end
-
+local function overTicket(
+    runtimeModel: any,
+    hostBinding: any,
+    ticket: any,
+    ownsFrame: boolean
+): any
     local state: any = {
         live = true,
+        owns_frame = ownsFrame,
         receipt_requested = false,
         model = runtimeModel,
         host_binding = hostBinding,
@@ -385,15 +385,60 @@ function observe.open(runtimeModel: any): any
         return receipt, nil
     end
 
+    -- Ends this cycle's evidence, and releases the frame only when this cycle
+    -- OPENED it. A cycle bound to a frame someone else is holding measures on it
+    -- and never ends it: the frame's one owner is the call that opened it, and a
+    -- borrower that released it would close a frame its owner still expects to
+    -- be able to measure on.
     function cycle:close()
         local current = cycles[self]
         if current == nil or not current.live then return end
         current.live = false
         evidence.end_cycle(current.evidence_cycle)
-        requireNative("runtime_cycle_close")(current.ticket)
+        if current.owns_frame then
+            requireNative("runtime_cycle_close")(current.ticket)
+        end
     end
 
     return table.freeze(cycle)
+end
+
+local function requireModel(runtimeModel: any, verb: string): any
+    if not model.is_runtime_model(runtimeModel) then error(verb .. " needs RuntimeModel v3", 3) end
+    local hostBinding = project.host_binding(runtimeModel)
+    if hostBinding == nil then error(verb .. " only accepts project.load_project() output", 3) end
+    return hostBinding
+end
+
+-- ENGAGE: opens a new observation frame and hands back the cycle over it.
+--
+-- Only a Host chunk that owns the close reaches this. It is not a verb in any
+-- Project's vocabulary and must not become one: a frame opened by a call that
+-- can be forgotten, written twice or put in the wrong place is a frame nothing
+-- structurally closes
+-- (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
+function observe.open(runtimeModel: any): any
+    local hostBinding = requireModel(runtimeModel, "observe.open")
+    local ticket = requireNative("runtime_cycle_open")(hostBinding)
+    if ticket == nil then error("Host refused observation cycle", 2) end
+    return overTicket(runtimeModel, hostBinding, ticket, true)
+end
+
+-- The cycle over the frame the generation is ALREADY holding.
+--
+-- A verb that measures or acts on what its caller observed binds here and never
+-- to observe.open: a second capture would put the measurement and the act on two
+-- frames of a screen that moved between them while the answer names one. There
+-- is no frame handle to pass in and none to store -- the frame is named by
+-- asking the Host, so it cannot be spent after it closed.
+--
+-- Called with no frame open it refuses BY NAME, because the alternative is the
+-- silent self-capture this whole mechanism exists to delete.
+function observe.current(runtimeModel: any): any
+    local hostBinding = requireModel(runtimeModel, "observe.current")
+    local ticket = requireNative("runtime_cycle_current")(hostBinding)
+    if ticket == nil then error("no open observation frame", 2) end
+    return overTicket(runtimeModel, hostBinding, ticket, false)
 end
 
 return table.freeze(observe)

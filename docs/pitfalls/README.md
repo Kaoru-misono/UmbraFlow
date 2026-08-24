@@ -16,6 +16,10 @@ Each entry should contain the symptom, root cause, fix, and a regression check. 
 - [Operator schema identity is the STORED DDL text](operator-schema-identity-and-stored-ddl.md)
   — two schemas with identical columns hash differently because SQLite stored
   the trailing whitespace one of them was executed with.
+- [The observation frame and the ledger's call tree](observation-frame-and-ledger-children.md)
+  — why a body's calls cannot be recorded as children of the observe node
+  without moving that Tool's descriptor, and why a frame whose extent is the
+  enclosing run refuses the second observe of an ordinary polling loop.
 - [Concurrent agent builds in one worktree](concurrent-agent-builds.md)
 - [Running the repository's own tooling](repository-tooling-invocation.md) — a
   repo-wide formatter rewrites files another agent owns, the documented MSVC

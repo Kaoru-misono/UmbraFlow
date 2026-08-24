@@ -29,6 +29,7 @@
 #include <core/error/result.hpp>
 #include <core/numeric/checked-cast.hpp>
 #include <core/safety/annotations.hpp>
+#include <core/utility/scope-exit.hpp>
 
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
@@ -693,6 +694,11 @@ namespace uf::service
         // answers, all reached from one dispatch below, and every one of them
         // handed nothing but the immutable call position the Coordinator
         // already crossed the durable dispatch boundary for.
+
+        // Opens an observation frame and resolves the state on it, RETURNING
+        // WITH THE FRAME STILL OPEN so everything measured or acted on next
+        // reads the one frame. Both callers own the close: the Tool answer hands
+        // it to the dispatcher, and the direct entry below closes it itself.
         [[nodiscard]]
         auto observe(task::TaskContext& context) -> Result<ProductObservation>;
 
@@ -704,6 +710,16 @@ namespace uf::service
         [[nodiscard]]
         auto answerObserveTool(
             operator_runtime::ToolCallPositionIdentity const& call
+        ) -> Result<operator_runtime::ToolCallCompletion>;
+
+        // Everything answerObserveTool does INSIDE the frame it opened. It is a
+        // separate function so the frame's close is one unconditional line after
+        // it rather than a line every early return has to remember, which is the
+        // same reason the dispatcher's held-input release is not a scope guard.
+        [[nodiscard]]
+        auto observedToolResult(
+            operator_runtime::ToolCallPositionIdentity const& call,
+            task::TaskContext& context
         ) -> Result<operator_runtime::ToolCallCompletion>;
 
         [[nodiscard]]
@@ -723,13 +739,17 @@ namespace uf::service
             operator_runtime::ToolCallPositionIdentity const& call
         ) -> Result<operator_runtime::ToolCallCompletion>;
 
-        // The same delivery, aimed in machine terms. It opens an observation of
-        // its own and posts into THAT frame, so the point the caller named is
-        // judged against the surface the input lands on rather than against one
-        // captured earlier: the engine's coordinate gate -- live fingerprint,
-        // lease validity, target-instance revalidation, and the target-surface
-        // bound this run's registration declared -- runs on the frame that is
-        // showing.
+        // The same delivery, aimed in machine terms. It posts into THE FRAME
+        // ITS CALLER IS HOLDING and opens none of its own, so the point the
+        // caller named is judged against the very frame it was measured on: the
+        // engine's coordinate gate -- live fingerprint, lease validity,
+        // target-instance revalidation, and the target-surface bound this run's
+        // registration declared -- runs on that frame. A call outside every
+        // frame IS its own frame and opens the one it posts into; what it never
+        // does is capture a SECOND frame over one that is open, because aiming
+        // at what one frame showed and posting into another is the drift an
+        // observation frame exists to delete
+        // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
         //
         // It mints no observation reference and consumes none. A reference is
         // the authority to act on a target THE FRAMEWORK RESOLVED, and nothing
@@ -1010,6 +1030,18 @@ namespace uf::service
     auto ProductLifecycle::observe(task::TaskContext& context)
         -> Result<ProductObservation>
     {
+        // The direct entry: one observation, taken and finished here. It is a
+        // frame with an empty body -- open, resolve, close in one call -- which
+        // is the degenerate case of the one rule rather than a second one, and
+        // the close is a scope exit for the reason every other close is.
+        auto const release = scopeExit(
+            [this, &context]() noexcept
+            {
+                static_cast<void>(
+                    m_impl->operatorHost.host().disengageObservationFrame(context)
+                );
+            }
+        );
         return m_impl->observe(context);
     }
 
@@ -1018,7 +1050,7 @@ namespace uf::service
     {
         UF_TRY_VALUE(
             observation,
-            operatorHost.host().observe(generation, context)
+            operatorHost.host().engageObservationFrame(generation, context)
         );
         UF_TRY_VALUE(
             snapshot,
@@ -1040,7 +1072,68 @@ namespace uf::service
         operator_runtime::ToolCallPositionIdentity const& call
     ) -> Result<operator_runtime::ToolCallCompletion>
     {
-        UF_TRY_VALUE(observed, observe(activeContext()));
+        // AN OBSERVE WITH NO BODY IS A FRAME WITH AN EMPTY BODY: open, resolve,
+        // close inside this one call
+        // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
+        // Every observe is bodyless until the measuring verbs become Tools that
+        // can be written inside one, so this call IS the scope the frame belongs
+        // to, and the close below is that scope exiting. Nothing about the
+        // ownership moves when a body arrives -- only which scope's exit runs
+        // the close.
+        //
+        // The frame is asked for BEFORE it is taken, so a second concurrent one
+        // costs no capture and earns a refusal that names what it refused,
+        // rather than arriving as the Host's one-cycle invariant. Opening first
+        // and asking afterwards would leave a frame nothing owns every time the
+        // answer is no, which is attachHeldInput's reason exactly.
+        auto* const p_context = &activeContext();
+        UF_TRY(dispatcher().engageObservationFrame(
+            call.identity(),
+            // The close borrows the context, and the backing owner is the
+            // admitted request this call runs inside: runAdmitted holds the
+            // TaskContext for the whole dispatch, every scope this frame can
+            // reach exits inside that dispatch, and the Tool Runtime is
+            // single-threaded by contract. Nothing here outlives that.
+            [p_host = &operatorHost.host(), p_context]() -> Status
+            {
+                static_cast<void>(p_host->disengageObservationFrame(*p_context));
+                return ok();
+            }
+        ));
+
+        auto answered = observedToolResult(call, *p_context);
+
+        // Unconditional, and before the answer is looked at. The engage above
+        // refused if anything was already open, so what closes here can only be
+        // this call's own frame -- including on the path where the observation
+        // itself failed and the frame it would have owned never opened.
+        auto closed = dispatcher().closeObservationFrameOpenedInside(std::nullopt);
+        if (!answered)
+        {
+            auto error = std::move(answered).error();
+            if (!closed)
+            {
+                error.addContext(
+                    "closing the observation frame this call opened also "
+                    "failed: "
+                        + std::string{closed.error().message()}
+                );
+            }
+            return std::unexpected{std::move(error)};
+        }
+        if (!closed)
+        {
+            return std::unexpected{std::move(closed).error()};
+        }
+        return answered;
+    }
+
+    auto ProductLifecycle::Impl::observedToolResult(
+        operator_runtime::ToolCallPositionIdentity const& call,
+        task::TaskContext& context
+    ) -> Result<operator_runtime::ToolCallCompletion>
+    {
+        UF_TRY_VALUE(observed, observe(context));
         UF_TRY_VALUE(
             stateResolution,
             operator_runtime::CanonicalJson::parseExact(
@@ -1183,6 +1276,29 @@ namespace uf::service
         }
         UF_TRY_VALUE(resolved, observations.resolve(consumption));
 
+        // The frame this delivery resolves and posts on, under the rule
+        // answerDeliverInputTool states in full: the innermost open one, or one
+        // this call opens and closes because its caller was holding none. The
+        // Host seam below resolves the Binding on the frame it finds and opens
+        // none of its own, so the frame has to exist before it is reached -- and
+        // when the caller IS holding one, the reference being spent names
+        // exactly that frame rather than a second capture of it.
+        auto& context = activeContext();
+        auto const inheritedFrame = context.openObservationFrame();
+        if (!inheritedFrame.has_value())
+        {
+            UF_TRY(context.openCycle());
+        }
+        auto const closeOwnFrame = scopeExit(
+            [&context, owned = !inheritedFrame.has_value()]() noexcept
+            {
+                if (owned)
+                {
+                    static_cast<void>(context.sweepOpenCycle());
+                }
+            }
+        );
+
         // The Host delivery seam. Nothing about what to deliver is stated
         // here: the target and the action are the ones the authority resolved,
         // the lease and the generation are this run's own, and the call is the
@@ -1195,7 +1311,7 @@ namespace uf::service
                 .uiTarget = resolved.localSemanticTarget(),
                 .uiAction = resolved.uiAction(),
             },
-            activeContext()
+            context
         );
 
         // An Err from the seam is a refusal that posted nothing, and that is a
@@ -1367,9 +1483,44 @@ namespace uf::service
             }
         }
 
-        // From here the frame is captured and the cycle is spent, so nothing
-        // below can be reported as proven absence.
-        UF_TRY_VALUE(ticket, context.openCycle());
+        // THE FRAME THIS ACT LANDS ON IS THE INNERMOST OPEN ONE.
+        //
+        // A verb inside an observe's body posts into the frame that body is
+        // holding and NEVER captures a second one over it: the point it aims at
+        // was measured on that frame, so posting into another capture of a
+        // screen that moved between them silently changes what the act means.
+        // It is also the one sequence a Project could write that would reach the
+        // Host's one-cycle invariant, which from now on only a framework bug may
+        // reach.
+        //
+        // A call outside every frame IS its own frame: it opens the one it acts
+        // in and closes it inside this same call -- word for word what an
+        // observe with no body does, and the same degenerate case rather than a
+        // second rule
+        // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
+        auto const inheritedFrame = context.openObservationFrame();
+        if (!inheritedFrame.has_value())
+        {
+            UF_TRY(context.openCycle());
+        }
+        // A frame this call opened is a frame this call closes, on every exit
+        // path -- including the ones below where the act fails and the frame was
+        // never spent.
+        auto const closeOwnFrame = scopeExit(
+            [&context, owned = !inheritedFrame.has_value()]() noexcept
+            {
+                if (owned)
+                {
+                    static_cast<void>(context.sweepOpenCycle());
+                }
+            }
+        );
+        auto const acting = context.openObservationFrame();
+        UF_CHECK(acting.has_value());
+        auto const ticket = *acting;
+
+        // From here the cycle is spent, so nothing below can be reported as
+        // proven absence.
 
         auto delivered = [&]() -> Status
         {
@@ -1546,6 +1697,17 @@ namespace uf::service
     {
         auto const active = ActiveContext{*this, context};
 
+        // The outermost scope an observation frame can live inside, and
+        // therefore the one that closes a frame no inner scope did.
+        //
+        // For a ROOT observe this is not a backstop but the whole of the rule:
+        // a root call has no body, so its frame is a frame with an empty body --
+        // open, resolve, close in one call, which is exactly what an observe
+        // with no measurements has always been. Root and nested are one shape
+        // because the frame is anchored on the observe call's own position
+        // either way; only which scope exits around it differs
+        // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
+        auto const inheritedFrame = dispatcher().heldObservationFrame();
         // Which code answers a call is decided by the name's owner and by
         // nothing else. A Tool this generation bound runs on its own scoped
         // program through the dispatcher; every other admitted name belongs to
@@ -1554,30 +1716,57 @@ namespace uf::service
         // one job: no value here decides which generation a project is, and the
         // binding table cannot claim a `framework` name because the reader
         // refuses a registrant whose plugin_id falls inside that namespace.
-        if (
-            generationHandle()
-                .bindingTable()
-                .entryPointFor(request.call.toolName())
-                .has_value()
-        )
+        auto replay = [&]() -> Result<operator_runtime::ToolCallReplay>
         {
-            return dispatcher().dispatch(
-                generationHandle(),
-                request,
-                context.cancellation()
-            );
-        }
+            if (
+                generationHandle()
+                    .bindingTable()
+                    .entryPointFor(request.call.toolName())
+                    .has_value()
+            )
+            {
+                return dispatcher().dispatch(
+                    generationHandle(),
+                    request,
+                    context.cancellation()
+                );
+            }
 
-        auto executor = operator_runtime::ToolRuntimeExecutor{
-            operatorHost.coordinator(),
-        };
-        auto* const p_self = this;
-        auto provider = [p_self](
-                            operator_runtime::ToolCallPositionIdentity const&
-                                admittedCall
-                        ) -> Result<operator_runtime::ToolCallCompletion>
-        { return p_self->answerFrameworkTool(admittedCall); };
-        return executor.invoke(request, provider);
+            auto executor = operator_runtime::ToolRuntimeExecutor{
+                operatorHost.coordinator(),
+            };
+            auto* const p_self = this;
+            auto provider = [p_self](
+                                operator_runtime::ToolCallPositionIdentity const&
+                                    admittedCall
+                            ) -> Result<operator_runtime::ToolCallCompletion>
+            { return p_self->answerFrameworkTool(admittedCall); };
+            return executor.invoke(request, provider);
+        }();
+
+        // Unconditional, and before the answer is looked at. Not a scope guard,
+        // for the reason the dispatcher's own close is not one: a guard would
+        // have to swallow the close's own failure, and a Host that will not
+        // release a frame is exactly what an operator has to be told about.
+        auto closed = dispatcher().closeObservationFrameOpenedInside(inheritedFrame);
+        if (!replay)
+        {
+            auto error = std::move(replay).error();
+            if (!closed)
+            {
+                error.addContext(
+                    "closing the observation frame this Tool call left open "
+                    "also failed: "
+                        + std::string{closed.error().message()}
+                );
+            }
+            return std::unexpected{std::move(error)};
+        }
+        if (!closed)
+        {
+            return std::unexpected{std::move(closed).error()};
+        }
+        return replay;
     }
 
     auto ProductLifecycle::invokeFrameworkTool(

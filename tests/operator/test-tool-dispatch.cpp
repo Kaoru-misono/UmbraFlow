@@ -608,6 +608,72 @@ return {
             };
         }
 
+        // What a fake observation frame records: how many were opened, how many
+        // were closed, whether the Host refuses the close, which call is holding
+        // the one that is open, and the words a refused second one earned.
+        struct ObservationFrameLog final
+        {
+            uint32      opened{0};
+            uint32      closed{0};
+            bool        refuseClose{false};
+            std::string holder{};
+            std::string refusal{};
+        };
+
+        // A Framework provider that OPENS AN OBSERVATION FRAME and answers with
+        // it still open, which is the shape a holding observe has: everything
+        // the handler does next measures on that one frame.
+        //
+        // The frame is anchored on the observe call's OWN position rather than
+        // on its parent's, which is the whole difference from an engaged input:
+        // a held input spills outward onto sibling calls and needs an outer
+        // owner, while a frame acts only inward on its own body and is therefore
+        // already its own owner -- so it opens at a root position too
+        // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
+        [[nodiscard]]
+        auto observingFrameworkProvider(
+            std::shared_ptr<std::optional<ProjectToolDispatcher>> seam,
+            std::shared_ptr<ObservationFrameLog> log
+        ) -> ToolProvider
+        {
+            return [seam = std::move(seam), log = std::move(log)](
+                       ToolCallPositionIdentity const& call
+                   ) -> Result<ToolCallCompletion>
+            {
+                auto engaged = (*seam)->engageObservationFrame(
+                    call.identity(),
+                    [log]() -> Status
+                    {
+                        ++log->closed;
+                        if (log->refuseClose)
+                        {
+                            return fail(
+                                AutomationErrorKind::IoFailure,
+                                "the Host would not release the frame"
+                            );
+                        }
+                        return ok();
+                    }
+                );
+                if (!engaged)
+                {
+                    log->refusal = std::string{engaged.error().message()};
+                    return std::unexpected{std::move(engaged).error()};
+                }
+                ++log->opened;
+                log->holder = call.identity().hex();
+                UF_TRY_VALUE(
+                    recorded,
+                    CanonicalJson::parseExact(json::canonicalBytes(
+                        json::Value::ofObject({
+                            {"observed", json::Value::ofString(call.toolName())},
+                        })
+                    ))
+                );
+                return ToolCallCompletion::confirmed(std::move(recorded));
+            };
+        }
+
         [[nodiscard]]
         auto toolCatalogOwner(
             VerifiedProjectGeneration const& registration
@@ -1272,6 +1338,215 @@ return {
             REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
             CHECK(held->engaged == 2U);
             CHECK(held->lifted == 1U);
+        }
+    }
+
+    TEST_CASE(
+        "an observation frame closes when the scope that opened it exits, and a "
+        "second concurrent frame is refused by name"
+    )
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const registration = verifiedGeneration();
+        auto prepared = firstIncarnation(temporary.path(), registration);
+
+        auto const frames = std::make_shared<ObservationFrameLog>();
+        auto const seam =
+            std::make_shared<std::optional<ProjectToolDispatcher>>();
+
+        auto dispatcher = ProjectToolDispatcher::create(
+            prepared.store,
+            prepared.observations,
+            prepared.policyAuthority,
+            observingFrameworkProvider(seam, frames)
+        );
+        REQUIRE_MESSAGE(dispatcher.has_value(), failureText(dispatcher));
+        *seam = *dispatcher;
+
+        auto registrar = ProjectGenerationRegistrar{};
+        auto const program =
+            loadProgram(registration, registrar, *dispatcher);
+
+        SUBCASE("a handler that finished closes the frame it opened")
+        {
+            auto const root = rootFor("dispatch-frame-finished");
+            auto const call = rootCall(
+                program,
+                root,
+                R"({"children":["framework.audit.record"]})"
+            );
+            auto const answered = dispatcher->dispatch(
+                program,
+                ToolAdmissionRequest{
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = call,
+                    .policyAuthority = prepared.policyAuthority,
+                },
+                std::stop_token{}
+            );
+            REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
+            CHECK(answered->state == ToolCallState::Confirmed);
+
+            CHECK(frames->opened == 1U);
+            CHECK(frames->closed == 1U);
+            CHECK_FALSE(dispatcher->heldObservationFrame().has_value());
+        }
+
+        SUBCASE("a frame open when the body raises is still closed")
+        {
+            // The second child names a Tool outside the pinned closure, so the
+            // handler raises AFTER the frame was opened. This is the exit path
+            // no verb in anyone's vocabulary could cover: nothing in the observe
+            // call runs again, and no line the body was going to reach runs at
+            // all.
+            auto const root = rootFor("dispatch-frame-aborted");
+            auto const call = rootCall(
+                program,
+                root,
+                R"({"children":["framework.audit.record","dispatch.project.absent"]})"
+            );
+            auto const answered = dispatcher->dispatch(
+                program,
+                ToolAdmissionRequest{
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = call,
+                    .policyAuthority = prepared.policyAuthority,
+                },
+                std::stop_token{}
+            );
+            REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
+            CHECK(answered->state == ToolCallState::TerminalFailure);
+
+            CHECK(frames->opened == 1U);
+            CHECK(frames->closed == 1U);
+            CHECK_FALSE(dispatcher->heldObservationFrame().has_value());
+        }
+
+        SUBCASE("a second concurrent frame is refused by name")
+        {
+            // Two observes in one body. The second is refused BEFORE the Host is
+            // asked for a capture, and the refusal names the holding call, the
+            // limit and what exceeded it -- which is what keeps the Host's own
+            // one-cycle rule an internal invariant only a framework bug can
+            // reach.
+            auto const root = rootFor("dispatch-frame-twice");
+            auto const call = rootCall(
+                program,
+                root,
+                R"({"children":["framework.audit.record","framework.audit.record"]})"
+            );
+            auto const answered = dispatcher->dispatch(
+                program,
+                ToolAdmissionRequest{
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = call,
+                    .policyAuthority = prepared.policyAuthority,
+                },
+                std::stop_token{}
+            );
+            REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
+            // The refusal is the SECOND OBSERVE'S own outcome and not the
+            // handler's: a Tool that ran and refused is a value the body may go
+            // on from, exactly as every other refused Framework call is.
+            CHECK(answered->state == ToolCallState::Confirmed);
+
+            CHECK(frames->opened == 1U);
+            CHECK(frames->refusal.contains(
+                "at most one concurrent observation frame may be open"
+            ));
+            CHECK(frames->refusal.contains(frames->holder));
+            CHECK(frames->refusal.contains("opening a second exceeded it"));
+
+            // What must NOT fire. The Host's ledger says this when a second
+            // cycle is opened over an open one, and after this change no
+            // sequence a Project can write reaches it.
+            CHECK_FALSE(
+                frames->refusal.contains("an observation cycle is already open")
+            );
+
+            // The frame the first observe opened still closed on the way out.
+            CHECK(frames->closed == 1U);
+            CHECK_FALSE(dispatcher->heldObservationFrame().has_value());
+        }
+
+        SUBCASE("a close the Host refuses is reported rather than swallowed")
+        {
+            frames->refuseClose = true;
+
+            auto const root = rootFor("dispatch-frame-close-refused");
+            auto const call = rootCall(
+                program,
+                root,
+                R"({"children":["framework.audit.record"]})"
+            );
+            auto const answered = dispatcher->dispatch(
+                program,
+                ToolAdmissionRequest{
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = call,
+                    .policyAuthority = prepared.policyAuthority,
+                },
+                std::stop_token{}
+            );
+            REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
+            CHECK(answered->state == ToolCallState::TerminalFailure);
+            CHECK(payloadOf(*answered).contains(
+                "would not release the frame"
+            ));
+            CHECK(frames->closed == 1U);
+        }
+
+        SUBCASE("a frame opens at a root position, where a held input refuses")
+        {
+            // The contrast the ruling turns on, in one place. A held input is
+            // attached to the call's PARENT, and a root position has no live run
+            // anchored there, so it refuses. A frame is anchored on the call's
+            // OWN position, which a root call has like any other -- so root and
+            // nested are one shape and a root observe needs no migration.
+            auto const root = rootFor("dispatch-frame-root");
+            auto const call = rootCall(
+                program,
+                root,
+                R"({"children":[]})"
+            );
+
+            auto const heldAtRoot = dispatcher->attachHeldInput(
+                call.parentIdentity(),
+                []() -> Status { return ok(); }
+            );
+            REQUIRE_FALSE(heldAtRoot.has_value());
+            CHECK(heldAtRoot.error().message().contains(
+                "no live issuing context is anchored on the durable position"
+            ));
+
+            auto closes = uint32{0};
+            auto const frameAtRoot = dispatcher->engageObservationFrame(
+                call.identity(),
+                [&closes]() -> Status
+                {
+                    ++closes;
+                    return ok();
+                }
+            );
+            REQUIRE_MESSAGE(frameAtRoot.has_value(), failureText(frameAtRoot));
+            CHECK(dispatcher->heldObservationFrame() == call.identity());
+
+            // And the scope that opened it closes it: an empty body is still a
+            // body, so this is open and close in one breath.
+            REQUIRE(
+                dispatcher->closeObservationFrameOpenedInside(std::nullopt)
+                    .has_value()
+            );
+            CHECK(closes == 1U);
+            CHECK_FALSE(dispatcher->heldObservationFrame().has_value());
         }
     }
 

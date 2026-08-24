@@ -235,6 +235,16 @@ namespace uf::task
         trace::TraceRecorder& m_recorder;
 
         CycleLedger      m_cycles{};
+
+        // The ticket the open cycle was minted under, kept so a verb that acts
+        // on THE HELD FRAME can name it instead of taking a second capture of a
+        // screen that has moved. It leaves this object only through
+        // openObservationFrame(), which answers nothing unless the ledger still
+        // holds a cycle open -- so a spent or closed cycle can never hand its
+        // ticket out again, and a fresh openCycle() overwrites it before any
+        // reader can see the old one.
+        CycleTicket      m_openTicket{};
+
         CycleAnswers     m_answers{};
         TemplateStore    m_templates{};
         ProjectFileStore m_projectFiles;
@@ -329,8 +339,28 @@ namespace uf::task
         // over it, returning the ticket that names it. A cycle that is already
         // open fails InternalInvariant BEFORE the capture runs, so a framework
         // bug never costs a whole screenshot.
+        //
+        // AFTER 2026-08-24 IT IS A FRAMEWORK BUG AND NOT A PROJECT ERROR. Every
+        // verb that acts on a frame binds to the one openObservationFrame()
+        // reports and refuses by name when there is none, so no sequence a
+        // Project can write reaches a second open; see
+        // docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md.
         [[nodiscard]]
         auto openCycle() -> Result<CycleTicket>;
+
+        // The ticket naming the observation frame this context holds open, or
+        // nothing when it holds none.
+        //
+        // THIS IS HOW A MEASURING OR ACTING VERB BINDS TO THE HELD FRAME. It
+        // takes no handle from its caller: a handle could be stored, passed on
+        // and spent against a frame that has since closed, while a frame that
+        // can only be named by asking the context cannot outlive the context's
+        // own answer. A caller that finds nothing here must refuse by name
+        // rather than capture a frame of its own, because measuring across
+        // several captures of a moving screen silently changes what these verbs
+        // mean.
+        [[nodiscard]]
+        auto openObservationFrame() const noexcept -> std::optional<CycleTicket>;
 
         // Releases the frame the cycle `ticket` names retains and reports whether
         // there was one. Idempotent: closing twice, closing a ticket a click

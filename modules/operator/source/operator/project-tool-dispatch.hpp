@@ -15,6 +15,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <stop_token>
 
 namespace uf::operator_runtime
@@ -27,6 +28,14 @@ namespace uf::operator_runtime
     // lift back and the frame that owns the press holds it until that frame
     // closes.
     using HeldInputRelease = std::move_only_function<Status()>;
+
+    // The close of an observation frame a Tool call opened.
+    //
+    // A callable for HeldInputRelease's reason: the dispatcher reaches no Host
+    // and must not learn to. The call that opened the frame is the only thing
+    // that knows how to close it, so it leaves the close here and the dispatcher
+    // runs it when that call's scope exits.
+    using ObservationFrameClose = std::move_only_function<Status()>;
 
     // The dispatch executor: everything between an admitted call and the
     // terminal durable row that answers it.
@@ -156,6 +165,55 @@ namespace uf::operator_runtime
             ContentHash const& holdingCall,
             HeldInputRelease release
         ) -> Status;
+
+        // Opens the observation frame the Tool call at `frameCall` owns.
+        //
+        // AN OBSERVATION FRAME IS THE SCOPE OF THE CALL THAT OPENED IT
+        // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
+        // The frame is anchored on the observe call's OWN durable position,
+        // which is why root and nested are one shape: a held input is a leaf
+        // whose effect spills outward onto sibling calls and therefore needs an
+        // outer owner, while a frame's effect acts only inward on the calls
+        // inside its own scope, so it is already its own owner and a root
+        // position lacks nothing.
+        //
+        // AT MOST ONE FRAME IS OPEN AT A TIME, and a second is REFUSED BY NAME
+        // rather than superseding the first. Supersession would dress the
+        // single-slot implementation up as a method and let a distant call
+        // decide whether a local measurement succeeds; the refusal instead names
+        // the holding call, the limit, and what exceeded it. It is also what
+        // keeps the Host's own one-cycle invariant a framework bug rather than
+        // something a Project can write.
+        [[nodiscard]]
+        auto engageObservationFrame(
+            ContentHash const& frameCall,
+            ObservationFrameClose close
+        ) -> Status;
+
+        // Closes the observation frame this dispatcher holds, unless the frame
+        // it holds is `inherited` -- the one that was already open when the
+        // scope now exiting was entered.
+        //
+        // Answers ok() when nothing is held, and when what is held is the
+        // inherited frame, so a scope can run this unconditionally on every exit
+        // path without ever closing a frame belonging to a scope outside it.
+        // That is the whole of "the frame closes on ANY exit path": the caller
+        // does not have to know which path it is on.
+        //
+        // Not a scope guard, for the reason attachHeldInput's release is not:
+        // one would have to swallow the close's own failure, and a Host that
+        // will not release a frame is exactly what an operator has to be told
+        // about.
+        [[nodiscard]]
+        auto closeObservationFrameOpenedInside(
+            std::optional<ContentHash> const& inherited
+        ) -> Status;
+
+        // The durable position of the Tool call whose observation frame is open,
+        // or nothing when none is. It is what a scope reads on entry so it can
+        // tell an inherited frame from one opened inside it.
+        [[nodiscard]]
+        auto heldObservationFrame() const -> std::optional<ContentHash>;
 
         // Dispatch one call of one Tool this program binds.
         //

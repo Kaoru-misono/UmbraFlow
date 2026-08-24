@@ -1705,6 +1705,44 @@ namespace uf::task
             return 1;
         }
 
+        // The frame the generation is already holding, or nil when it holds
+        // none. It captures NOTHING: a verb that needs the frame its caller
+        // measured on must bind to that frame, and a verb that quietly took a
+        // capture of its own would be measuring a moving screen across two
+        // frames while reporting one
+        // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
+        //
+        // nil rather than a raise, so the trusted layer that asked can refuse in
+        // its own words -- it is the layer that knows which verb was reaching
+        // for a frame there was none of.
+        static auto currentCycle(lua_State* state) -> int
+        {
+            auto& self = bound(state);
+            self.requireArity(state, 1, "runtime_cycle_current");
+            auto* const p_binding = boxAt<BindingToken>(
+                state,
+                1,
+                k_bindingType,
+                "a RuntimeModel binding"
+            );
+            if (p_binding->generation != self.m_generation)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "RuntimeModel binding belongs to another generation"
+                );
+            }
+            auto const held = self.context(state).openObservationFrame();
+            if (!held.has_value())
+            {
+                lua_pushnil(state);
+                return 1;
+            }
+            pushBox(state, *held, k_cycleType);
+            return 1;
+        }
+
         static auto closeCycle(lua_State* state) -> int
         {
             auto& self = bound(state);
@@ -2201,6 +2239,13 @@ namespace uf::task
                 capability,
                 "runtime_cycle_open",
                 &openCycle
+            );
+            installFunction(
+                state,
+                surface,
+                capability,
+                "runtime_cycle_current",
+                &currentCycle
             );
             installFunction(state, surface, capability, "runtime_match", &match);
             installFunction(state, surface, capability, "runtime_read", &read);

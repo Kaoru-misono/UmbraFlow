@@ -68,6 +68,25 @@ namespace uf::task
     inline constexpr auto k_anchorGray = uint8{2};
     inline constexpr auto k_actionGray = uint8{5};
 
+    // One observation, taken and finished: a frame with an empty body -- open,
+    // resolve, close in one call.
+    //
+    // Written once here rather than at every call site, because whoever opens a
+    // frame owns closing it on EVERY exit path, and a case that returned early
+    // between the two would leave the generation holding a frame nothing named
+    // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
+    [[nodiscard]]
+    inline auto observeOnce(
+        TaskHost& host,
+        GenerationId generation,
+        TaskContext& context
+    ) -> Result<UiObservationSnapshot>
+    {
+        auto observed = host.engageObservationFrame(generation, context);
+        static_cast<void>(host.disengageObservationFrame(context));
+        return observed;
+    }
+
     // The one UI action runtimeModel() below offers, named once so the chunk
     // that mints a Receipt and the check that reads one cannot drift apart.
     inline auto const k_runtimeUiAction = UiActionUnderTest{

@@ -395,7 +395,18 @@ namespace uf::task
         // produce an error.
         UF_TRY(m_cycles.requireClosed());
         UF_TRY_VALUE(observation, m_session.observe());
-        return m_cycles.open(std::move(observation));
+        m_openTicket = m_cycles.open(std::move(observation));
+        return m_openTicket;
+    }
+
+    auto TaskContext::openObservationFrame() const noexcept
+        -> std::optional<CycleTicket>
+    {
+        if (!m_cycles.isOpen())
+        {
+            return std::nullopt;
+        }
+        return m_openTicket;
     }
 
     auto TaskContext::closeCycle(CycleTicket ticket) noexcept -> bool

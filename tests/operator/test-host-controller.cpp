@@ -114,8 +114,8 @@ namespace uf::operator_runtime
     // The Tool-call-native delivery seam, end to end and without an Operation.
     // What it proves is that the two things a Tool call could not reach exist
     // and are joined: the ledger mints Host delivery authority over a
-    // dispatching Tool call, and the Host captures its own frame, resolves the
-    // named target on it and posts the input the Receipt that mint produced
+    // dispatching Tool call, and the Host resolves the named target on the frame
+    // its caller is holding and posts the input the Receipt that mint produced
     // authorizes.
     TEST_CASE(
         "the Tool call input seam delivers over a dispatching call and refuses "
@@ -160,6 +160,20 @@ namespace uf::operator_runtime
             test_support::umbraflowProbeFrame(),
             fingerprint,
             FrameId{902}
+        };
+
+        // A DELIVERY RUNS INSIDE THE FRAME ITS CALLER IS HOLDING and opens none
+        // of its own, so every call below is made the way production reaches the
+        // seam: with a frame already open. A delivery that lands spends it, so
+        // the next call opens the next one
+        // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
+        auto const holdFrame = [&runtime]()
+        {
+            if (runtime.context().openObservationFrame().has_value())
+            {
+                return;
+            }
+            REQUIRE(runtime.context().openCycle().has_value());
         };
 
         auto preimage = CanonicalJson::parseExact(
@@ -354,6 +368,30 @@ namespace uf::operator_runtime
         CHECK(reserved->authority.frozenPlanHash == call->identity());
 
 
+        // A DELIVERY WITH NO OPEN FRAME IS REFUSED BY NAME, and never quietly
+        // takes a capture of its own. That silent self-capture is the drift the
+        // observation frame exists to delete: the coordinates the caller
+        // measured and the Binding this resolves would otherwise come from two
+        // captures of a screen that moved between them, while the answer names
+        // one.
+        // Nothing above it left a frame open either: a delivery that refused
+        // opened nothing to leave behind, which is what "this verb captures
+        // none of its own" buys on the refusal paths as well.
+        CHECK_FALSE(runtime.context().openObservationFrame().has_value());
+        auto const frameless = owner->deliverToolCallInput(
+            *call,
+            lease,
+            generation,
+            intent,
+            runtime.context()
+        );
+        REQUIRE_FALSE(frameless.has_value());
+        CHECK(
+            frameless.error().message().contains("no open observation frame")
+        );
+        CHECK_FALSE(runtime.context().hasOpenCycle());
+
+        holdFrame();
         auto const delivered = owner->deliverToolCallInput(
             *call,
             lease,
@@ -366,6 +404,22 @@ namespace uf::operator_runtime
             : std::string{delivered.error().message()};
         REQUIRE_MESSAGE(delivered.has_value(), deliveredWhy);
         CHECK(delivered->outcome() == task::DeliveryOutcome::Delivered);
+
+        // What the Host says when a second cycle is opened over an open one, and
+        // the reason binding to the held frame matters: this is an
+        // InternalInvariant -- a framework bug -- and after this change no
+        // sequence a Project can write reaches it, because every verb that acts
+        // on a frame takes the one that is open instead of capturing a second.
+        holdFrame();
+        auto const secondCapture = runtime.context().openCycle();
+        REQUIRE_FALSE(secondCapture.has_value());
+        CHECK(
+            automationErrorKind(secondCapture.error())
+            == AutomationErrorKind::InternalInvariant
+        );
+        CHECK(secondCapture.error().message().contains(
+            "an observation cycle is already open"
+        ));
         // The engine receipt the Host acted under. It is minted by TaskHost and
         // by nothing else, so a report carrying one is proof a real delivery
         // path ran.
@@ -384,6 +438,7 @@ namespace uf::operator_runtime
         // say whether the input arrived. Uncertainty is what the ledger records
         // for that, and never absence: only NotDelivered proves absence.
         runtime.actions().refuseClicks();
+        holdFrame();
         auto const uncertain = owner->deliverToolCallInput(
             *call,
             lease,
@@ -403,6 +458,7 @@ namespace uf::operator_runtime
             "tool call input seam takeover"
         );
         REQUIRE(displaced.has_value());
+        holdFrame();
         auto const stale = owner->deliverToolCallInput(
             *call,
             lease,

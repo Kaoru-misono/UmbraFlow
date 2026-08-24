@@ -577,13 +577,19 @@ namespace uf::operator_runtime::conformance
         };
     }
 
+    // One observation, taken and finished here: a frame with an empty body --
+    // open, resolve, close in one call. Whoever opens a frame owns its close on
+    // every exit path, and for a fixture that measures once the exit path is the
+    // return below.
     [[nodiscard]]
     inline auto observeOnce(ObservationHost& observation) -> task::UiObservationSnapshot
     {
-        auto result = observation.host->observe(
+        auto& context = observation.runtime->context();
+        auto  result  = observation.host->engageObservationFrame(
             observation.generation,
-            observation.runtime->context()
+            context
         );
+        static_cast<void>(observation.host->disengageObservationFrame(context));
         REQUIRE(result.has_value());
         return *std::move(result);
     }

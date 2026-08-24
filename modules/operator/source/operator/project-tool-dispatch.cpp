@@ -10,6 +10,7 @@
 #include <format>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -112,6 +113,20 @@ namespace uf::operator_runtime
             }
         };
 
+        // The one observation frame this dispatcher holds open, and the call
+        // that owns it.
+        //
+        // It is dispatcher state rather than a member of the run that issued the
+        // observe, because the frame's owner is the OBSERVE CALL'S own durable
+        // position and nothing else: that is what makes a root observe and a
+        // nested one one shape instead of two. Which scope closes it is a
+        // separate question, answered by closeObservationFrameOpenedInside.
+        struct ObservationFrame final
+        {
+            ContentHash           call;
+            ObservationFrameClose close;
+        };
+
     private:
         OperatorCoordinator& m_coordinator;
 
@@ -124,6 +139,8 @@ namespace uf::operator_runtime
         FrameworkToolCatalogOwner m_frameworkCatalog;
 
         std::map<ContentHash, std::reference_wrapper<ActiveRun>> m_runs{};
+
+        std::optional<ObservationFrame> m_frame{};
 
     public:
         State(
@@ -201,6 +218,70 @@ namespace uf::operator_runtime
             }
             run.heldInput = std::move(release);
             return ok();
+        }
+
+        [[nodiscard]]
+        auto engageObservationFrame(
+            ContentHash const& frameCall,
+            ObservationFrameClose close
+        ) -> Status
+        {
+            if (!close)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "an observation frame must be opened together with the "
+                    "close that ends it"
+                );
+            }
+            if (m_frame.has_value())
+            {
+                // The refusal names all three of the things W1 requires: which
+                // call is holding, what the limit is, and what exceeded it. It
+                // arrives BEFORE the Host is asked for a second capture, which
+                // is what keeps the Host's one-cycle rule an internal invariant
+                // no Project-writable sequence can reach.
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "the Tool call at " + m_frame->call.hex()
+                        + " is holding this run's observation frame, and at "
+                          "most one concurrent observation frame may be open, "
+                          "so the call at "
+                        + frameCall.hex() + " opening a second exceeded it"
+                );
+            }
+            m_frame = ObservationFrame{
+                .call  = frameCall,
+                .close = std::move(close),
+            };
+            return ok();
+        }
+
+        [[nodiscard]]
+        auto closeObservationFrameOpenedInside(
+            std::optional<ContentHash> const& inherited
+        ) -> Status
+        {
+            if (!m_frame.has_value() || m_frame->call == inherited)
+            {
+                return ok();
+            }
+            // The frame leaves this dispatcher BEFORE it is closed, for the
+            // reason a held input's release does: a close the Host refused is
+            // reported once rather than retried by whatever exits next, over a
+            // frame nothing here can still see the state of.
+            auto frame = *std::exchange(m_frame, std::nullopt);
+            return frame.close();
+        }
+
+        [[nodiscard]]
+        auto heldObservationFrame() const -> std::optional<ContentHash>
+        {
+            if (!m_frame.has_value())
+            {
+                return std::nullopt;
+            }
+            return m_frame->call;
         }
 
         // One child call, arriving from inside a running handler's VM.
@@ -372,6 +453,13 @@ namespace uf::operator_runtime
                 }
             );
 
+            // Whatever frame was already open when this run was entered. It is
+            // read here so the close below can tell a frame this run's handler
+            // opened from one belonging to a scope outside it: a nested handler
+            // that closed its caller's frame would end it at a moment its owner
+            // never named.
+            auto const inheritedFrame = heldObservationFrame();
+
             auto answer = program.invokeBoundTool(
                 call.toolName(),
                 arguments,
@@ -394,6 +482,15 @@ namespace uf::operator_runtime
             // line can engage anything, so a single explicit call covers every
             // path that could have left something held.
             auto lifted = run.releaseHeldInput();
+
+            // The frame's close, on the same terms and for the same reason: an
+            // observation frame opened inside this handler ends when this
+            // handler's scope ends, whichever way it ended -- a normal return, a
+            // raise the body did not catch, or the VM being torn down under it.
+            // A scope exit cannot be forgotten, written twice or put in the
+            // wrong place, which is exactly why the close is triggered by it
+            // rather than by a verb in anyone's vocabulary.
+            auto closed = closeObservationFrameOpenedInside(inheritedFrame);
             if (!answer)
             {
                 auto error = std::move(answer).error();
@@ -405,11 +502,23 @@ namespace uf::operator_runtime
                             + std::string{lifted.error().message()}
                     );
                 }
+                if (!closed)
+                {
+                    error.addContext(
+                        "closing the observation frame this Tool call left open "
+                        "also failed: "
+                            + std::string{closed.error().message()}
+                    );
+                }
                 return std::unexpected{std::move(error)};
             }
             if (!lifted)
             {
                 return std::unexpected{std::move(lifted).error()};
+            }
+            if (!closed)
+            {
+                return std::unexpected{std::move(closed).error()};
             }
 
             UF_TRY_VALUE(
@@ -482,6 +591,27 @@ namespace uf::operator_runtime
     ) -> Status
     {
         return m_state->attachHeldInput(holdingCall, std::move(release));
+    }
+
+    auto ProjectToolDispatcher::engageObservationFrame(
+        ContentHash const& frameCall,
+        ObservationFrameClose close
+    ) -> Status
+    {
+        return m_state->engageObservationFrame(frameCall, std::move(close));
+    }
+
+    auto ProjectToolDispatcher::closeObservationFrameOpenedInside(
+        std::optional<ContentHash> const& inherited
+    ) -> Status
+    {
+        return m_state->closeObservationFrameOpenedInside(inherited);
+    }
+
+    auto ProjectToolDispatcher::heldObservationFrame() const
+        -> std::optional<ContentHash>
+    {
+        return m_state->heldObservationFrame();
     }
 
     auto ProjectToolDispatcher::dispatch(

@@ -815,7 +815,7 @@ identity = ["screen.anchor"]
             1'000
         };
 
-        auto const observed = host.observe(generation, runtime.context());
+        auto const observed = observeOnce(host, generation, runtime.context());
         REQUIRE(observed.has_value());
         CHECK_MESSAGE(
             observed->canonicalJcs()
@@ -1736,9 +1736,9 @@ identity = ["screen.anchor"]
         );
         CHECK(std::is_copy_constructible_v<UiObservationSnapshot>);
 
-        auto const first = host.observe(*generation, runtime.context());
+        auto const first = observeOnce(host, *generation, runtime.context());
         REQUIRE(first.has_value());
-        auto const second = host.observe(*generation, runtime.context());
+        auto const second = observeOnce(host, *generation, runtime.context());
         REQUIRE(second.has_value());
 
         CHECK(first->canonicalJcs() == second->canonicalJcs());
@@ -1774,7 +1774,7 @@ identity = ["screen.anchor"]
             frame({std::byte{0}, std::byte{k_actionGray}, std::byte{0}}, FrameId{22}),
             1'000
         };
-        auto const unresolved = host.observe(generation, runtime.context());
+        auto const unresolved = observeOnce(host, generation, runtime.context());
         REQUIRE(unresolved.has_value());
         CHECK(
             unresolved->canonicalJcs()
@@ -1790,8 +1790,7 @@ identity = ["screen.anchor"]
             frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{23}),
             1'000
         };
-        auto const resolved = resolvedHost.observe(
-            resolvedGeneration,
+        auto const resolved = observeOnce(resolvedHost, resolvedGeneration,
             resolvedRuntime.context()
         );
         REQUIRE(resolved.has_value());
@@ -1821,7 +1820,7 @@ identity = ["screen.anchor"]
             frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{24}),
             1'000
         };
-        auto const ambiguous = host.observe(*generation, runtime.context());
+        auto const ambiguous = observeOnce(host, *generation, runtime.context());
         REQUIRE(ambiguous.has_value());
         CHECK(
             ambiguous->canonicalJcs()
@@ -1856,7 +1855,7 @@ identity = ["screen.anchor"]
             1'000,
             std::move(reader)
         };
-        auto const observed = host.observe(*generation, runtime.context());
+        auto const observed = observeOnce(host, *generation, runtime.context());
         REQUIRE(observed.has_value());
         auto const& canonical = observed->canonicalJcs();
 
@@ -1903,7 +1902,7 @@ identity = ["screen.anchor"]
         // Two captures of one unchanged screen are one decision. A score or a
         // capture identity inside the reading would break this even though the
         // world did not move.
-        auto const again = host.observe(*generation, runtime.context());
+        auto const again = observeOnce(host, *generation, runtime.context());
         REQUIRE(again.has_value());
         CHECK(again->canonicalJcs() == observed->canonicalJcs());
         CHECK(again->stateResolutionHash() == observed->stateResolutionHash());
@@ -1954,7 +1953,7 @@ identity = ["screen.anchor"]
             1'000,
             std::move(reader)
         };
-        auto const observed = host.observe(*generation, runtime.context());
+        auto const observed = observeOnce(host, *generation, runtime.context());
         REQUIRE(observed.has_value());
 
         // The model's declared layout is what the Host ran, not a default the
@@ -2177,7 +2176,7 @@ identity = ["screen.anchor"]
                 }
             )
         };
-        auto const observed = host.observe(*generation, runtime.context());
+        auto const observed = observeOnce(host, *generation, runtime.context());
         REQUIRE(observed.has_value());
         auto const& canonical = observed->canonicalJcs();
 
@@ -2220,7 +2219,7 @@ identity = ["screen.anchor"]
             1'000,
             std::move(reader)
         };
-        auto const observed = host.observe(*generation, runtime.context());
+        auto const observed = observeOnce(host, *generation, runtime.context());
         REQUIRE(observed.has_value());
 
         CHECK_MESSAGE(
@@ -2262,7 +2261,7 @@ identity = ["screen.anchor"]
             1'000,
             std::make_unique<ScriptedReader>("Wandering Merchant", 9'100)
         };
-        auto const first = host.observe(*generation, firstRuntime.context());
+        auto const first = observeOnce(host, *generation, firstRuntime.context());
         REQUIRE(first.has_value());
 
         // A second Host, because observe.luau caches template handles per
@@ -2286,8 +2285,7 @@ identity = ["screen.anchor"]
             1'000,
             std::make_unique<ScriptedReader>("Abandoned Shrine", 9'100)
         };
-        auto const second = secondHost.observe(
-            *secondGeneration,
+        auto const second = observeOnce(secondHost, *secondGeneration,
             secondRuntime.context()
         );
         REQUIRE(second.has_value());
@@ -2443,7 +2441,7 @@ identity = ["screen.anchor"]
                 1'000,
                 std::move(reader)
             };
-            auto const observed = host.observe(*generation, runtime.context());
+            auto const observed = observeOnce(host, *generation, runtime.context());
             REQUIRE(observed.has_value());
 
             // The Surface resolves whatever the Reader reported: the identity
@@ -2525,7 +2523,7 @@ identity = ["screen.anchor"]
             1'000,
             std::make_unique<ScriptedReader>("Wandering Merchant", 1'000)
         };
-        auto const observed = host.observe(*generation, runtime.context());
+        auto const observed = observeOnce(host, *generation, runtime.context());
         REQUIRE(observed.has_value());
         CHECK(
             observed->canonicalJcs()
@@ -2554,7 +2552,7 @@ identity = ["screen.anchor"]
         // Two captures of one unchanged screen stay one decision even when the
         // reading failed, which is the property a score inside the reason would
         // have broken.
-        auto const again = host.observe(*generation, runtime.context());
+        auto const again = observeOnce(host, *generation, runtime.context());
         REQUIRE(again.has_value());
         CHECK(again->stateResolutionHash() == observed->stateResolutionHash());
     }
@@ -2588,7 +2586,7 @@ identity = ["screen.anchor"]
             1'000,
             std::move(reader)
         };
-        auto const observed = host.observe(*generation, runtime.context());
+        auto const observed = observeOnce(host, *generation, runtime.context());
         REQUIRE(observed.has_value());
         CHECK(p_reader->calls() == 1U);
         CHECK(
@@ -2639,7 +2637,7 @@ identity = ["screen.anchor"]
             std::move(reader),
             1
         };
-        auto const observed = host.observe(*generation, runtime.context());
+        auto const observed = observeOnce(host, *generation, runtime.context());
         REQUIRE(observed.has_value());
         CHECK(
             observed->canonicalJcs()
@@ -2706,7 +2704,7 @@ identity = ["screen.anchor"]
             std::move(reader),
             2
         };
-        auto const observed = host.observe(*generation, runtime.context());
+        auto const observed = observeOnce(host, *generation, runtime.context());
         REQUIRE(observed.has_value());
         CHECK(
             observed->canonicalJcs()
@@ -2749,7 +2747,7 @@ identity = ["screen.anchor"]
             1'000,
             std::move(reader)
         };
-        auto const observed = host.observe(*generation, runtime.context());
+        auto const observed = observeOnce(host, *generation, runtime.context());
         REQUIRE(observed.has_value());
         CHECK(
             observed->canonicalJcs()

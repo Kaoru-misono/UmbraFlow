@@ -99,12 +99,20 @@ namespace uf::task
         )lua"};
 
         // The whole of TaskHost::deliverUiAction that runs inside the VM. It
-        // captures a frame, resolves the state on it, resolves the named ui
-        // target's Binding and asks the resolver to authorize the named action
-        // on it; the Receipt that mint produces is Host-private storage the
-        // chunk never sees, and the cycle is deliberately left OPEN so the
-        // delivery that follows posts into the frame the placement was measured
-        // on.
+        // BINDS TO THE FRAME ITS CALLER IS HOLDING, resolves the state on it,
+        // resolves the named ui target's Binding and asks the resolver to
+        // authorize the named action on it; the Receipt that mint produces is
+        // Host-private storage the chunk never sees, and the frame is left open
+        // so the delivery that follows posts into the frame the placement was
+        // measured on.
+        //
+        // It used to open a frame of its own, and that was the drift this
+        // binding deletes: the caller's coordinates and this measurement then
+        // came from two captures of a screen that moves between them, while the
+        // answer named one. With no frame open it refuses BY NAME -- observe.current
+        // raises "no open observation frame" -- rather than quietly taking a
+        // capture nobody asked for
+        // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
         //
         // The two names are interpolated rather than passed as arguments
         // because a trusted chunk has no argument channel, and that is safe
@@ -120,7 +128,7 @@ namespace uf::task
         {
             return std::format(
                 R"lua(
-            local cycle = observe.open(project.load_project())
+            local cycle = observe.current(project.load_project())
             local state = cycle:resolve_state()
             local binding = cycle:resolve_binding(state, "{}")
             local receipt, reason = cycle:authorize(binding, "{}")
@@ -1019,18 +1027,12 @@ namespace uf::task
             );
         }
 
-        // The chunk leaves its cycle open on every path, including a raise, and
-        // a successful delivery spends it. The sweep is therefore unconditional
-        // and outranks both results: without it a refused delivery would leave
-        // the generation holding a frame no ticket names, and the next capture
-        // would be refused by the one-cycle rule.
+        // NO SWEEP HERE. This function opens no frame any more -- it binds to
+        // the one its caller is holding -- so releasing one would release a
+        // frame it does not own, at a moment its owner never named. A successful
+        // delivery spends the frame, and a refused one leaves it exactly as it
+        // found it, for the call that opened it to close on its own exit.
         auto const generation = authority.runtimeGeneration;
-        auto sweep = scopeExit(
-            [&context]() noexcept
-            {
-                static_cast<void>(context.sweepOpenCycle());
-            }
-        );
         UF_TRY(runTrustedRuntime(
             generation,
             context,
@@ -1218,7 +1220,7 @@ namespace uf::task
         return *binding;
     }
 
-    auto TaskHost::observe(
+    auto TaskHost::engageObservationFrame(
         GenerationId generation,
         TaskContext& context
     ) -> Result<UiObservationSnapshot>
@@ -1241,7 +1243,10 @@ namespace uf::task
         }
 
         // k_observeSource leaves its cycle open on every path, including a
-        // raise, so the sweep is unconditional and outranks the chunk's result.
+        // raise. A FAILED engage must leave nothing open -- the caller has no
+        // frame to own and would have nothing to close -- so this sweeps every
+        // path out of this function except the one that hands the open frame
+        // over, which releases it below.
         auto sweep = scopeExit(
             [&context]() noexcept
             {
@@ -1276,6 +1281,8 @@ namespace uf::task
             m_nextObservationOrdinal
         );
         ++m_nextObservationOrdinal;
+        // The frame is handed over, so it stops being this function's to close.
+        sweep.release();
         return UiObservationSnapshot{
             std::move(observationId),
             generation,
@@ -1284,6 +1291,11 @@ namespace uf::task
             binding->semanticHash(),
             *p_document,
         };
+    }
+
+    auto TaskHost::disengageObservationFrame(TaskContext& context) noexcept -> bool
+    {
+        return context.sweepOpenCycle();
     }
 
     auto TaskHost::startExplorationSession(
