@@ -399,7 +399,8 @@ identity = ["panel.anchor"]
         std::optional<Point<ClientSpace>>         m_lastDragEnd{};
         std::optional<MonotonicInstant::Duration> m_lastDragTravel{};
         std::optional<Point<ClientSpace>>         m_lastHoldPoint{};
-        std::optional<MonotonicInstant::Duration> m_lastHoldDuration{};
+        std::optional<MonotonicInstant>           m_engagedAt{};
+        std::optional<MonotonicInstant::Duration> m_lastHeldFor{};
         std::optional<int32>                      m_lastNotches{};
         std::optional<Point<ClientSpace>>         m_lastMovePoint{};
 
@@ -457,19 +458,18 @@ identity = ["panel.anchor"]
             return ok();
         }
 
-        // Point and duration both, because both are separately droppable: a
-        // case asserting only that a press happened would pass against a chain
-        // that threw the declared hold away.
+        // The point, and the INSTANT the button went down. There is no declared
+        // duration to record here any more: the port is told none, so the only
+        // way this fixture can say the declared hold survived the chain is to
+        // measure how long the button was actually down -- which is also the
+        // only claim a real target could make.
         [[nodiscard]]
-        auto hold(
-            Point<ClientSpace> point,
-            MonotonicInstant::Duration duration,
-            ObservationLease const&
-        ) -> Status override
+        auto engageHold(Point<ClientSpace> point, ObservationLease const&)
+            -> Status override
         {
             ++m_holds;
-            m_lastHoldPoint    = point;
-            m_lastHoldDuration = duration;
+            m_lastHoldPoint = point;
+            m_engagedAt     = MonotonicInstant::now();
             return ok();
         }
 
@@ -499,11 +499,21 @@ identity = ["panel.anchor"]
             return ok();
         }
 
-        // No verb here presses anything -- hold above records and returns
-        // rather than holding a button down -- so there is never anything to
-        // release. The invariant this serves is exercised where a sink can hold
-        // a button down, in tests/engine/test-session.cpp.
-        [[nodiscard]] auto releaseHeldInputs() -> Status override { return ok(); }
+        // The disengage. engageHold above is the one verb here that leaves
+        // something down, so this is where a hold ENDS and therefore the only
+        // place its real duration can be read. Whether the release is total on
+        // every exit path is exercised where a sink can refuse mid-press, in
+        // tests/engine/test-session.cpp.
+        [[nodiscard]] auto releaseHeldInputs() -> Status override
+        {
+            if (m_engagedAt.has_value())
+            {
+                m_lastHeldFor =
+                    MonotonicInstant::now().saturatingDurationSince(*m_engagedAt);
+                m_engagedAt.reset();
+            }
+            return ok();
+        }
 
         [[nodiscard]] auto clicks() const noexcept -> uint32 { return m_clicks; }
 
@@ -548,11 +558,13 @@ identity = ["panel.anchor"]
             return m_lastHoldPoint;
         }
 
+        // How long the button was actually down, measured between the engage
+        // and the release.
         [[nodiscard]]
-        auto lastHoldDuration() const noexcept
+        auto lastHeldFor() const noexcept
             -> std::optional<MonotonicInstant::Duration>
         {
-            return m_lastHoldDuration;
+            return m_lastHeldFor;
         }
 
         [[nodiscard]]

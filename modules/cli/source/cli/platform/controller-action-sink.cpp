@@ -114,34 +114,17 @@ namespace uf::cli::platform
         return uf::scroll(m_target, lease, centre, delta, m_held, m_audit);
     }
 
-    auto ControllerActionSink::hold(
+    auto ControllerActionSink::engageHold(
         Point<ClientSpace> point,
-        MonotonicInstant::Duration duration,
         ObservationLease const& lease
     ) -> Status
     {
-        // controller::hold asks for the delivery target again after the hold and
-        // refuses to post the release if its identity moved. This composition holds a
-        // snapshot and re-resolves nothing, so that comparison is a no-op here until
-        // a composition root re-resolves a target mid-run -- the seam the callback
-        // exists for. What it does do here is FAIL: the live enumeration is re-read
-        // across the hold, so a window gone by the time the button should come up is
-        // reported rather than posted to.
-        auto refreshTarget = refreshTargetCallback("hold");
-
-        // A hold can leave a button that WENT down and did not come up,
-        // since the refresh across the hold can refuse the release. Putting it
-        // back up is releaseHeldInputs's, which the engine calls after this
-        // returns however it returned.
-        return uf::hold(
-            m_target,
-            lease,
-            point,
-            duration,
-            m_held,
-            m_audit,
-            std::move(refreshTarget)
-        );
+        // No refresh-target callback, and its absence is the split rather than a
+        // dropped check: the blocking verb re-read the desktop across its own
+        // sleep because it owned both ends of the press. This owns only the
+        // press. Whether the window is still there when the button comes up is
+        // asked at the release, which is releaseHeldInputs below.
+        return uf::pointerDown(m_target, lease, point, m_held, m_audit);
     }
 
     auto ControllerActionSink::movePointer(

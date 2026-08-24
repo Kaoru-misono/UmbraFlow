@@ -328,6 +328,17 @@ namespace uf
         AuditLog& audit
     ) -> Status;
 
+    // Presses at `point` and LEAVES THE BUTTON DOWN. It is the engaging half of
+    // a hold: the press begins here and ends wherever the frame that engaged it
+    // ends, which is the only shape in which anything can look at the screen
+    // while the button is held.
+    //
+    // The release is not this function's and not its caller's discipline
+    // either: `held` records the press, and releaseHeld below is what lifts it.
+    // See engine::IActionSink::releaseHeldInputs for whose guarantee that is.
+    // There is deliberately no `pointerUp` beside this: one release lifts
+    // everything held, and a second spelling of the lift would be a second
+    // answer to who owns it.
     [[nodiscard]]
     auto pointerDown(
         DeliveryTarget const& target,
@@ -335,26 +346,6 @@ namespace uf
         Point<ClientSpace> point,
         HeldInputs& held,
         AuditLog& audit
-    ) -> Status;
-
-    [[nodiscard]]
-    auto pointerUp(
-        DeliveryTarget const& target,
-        ObservationLease lease,
-        Point<ClientSpace> point,
-        HeldInputs& held,
-        AuditLog& audit
-    ) -> Status;
-
-    [[nodiscard]]
-    auto hold(
-        DeliveryTarget const& target,
-        ObservationLease lease,
-        Point<ClientSpace> point,
-        MonotonicInstant::Duration duration,
-        HeldInputs& held,
-        AuditLog& audit,
-        std::move_only_function<Result<DeliveryTarget>()> refreshTarget
     ) -> Status;
 
     // Presses at `start`, travels to `end` over `travel` with the button held,

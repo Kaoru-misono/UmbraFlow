@@ -29,8 +29,8 @@ namespace uf::cli::platform
         // The refresh-target callback the controller verbs that span time require:
         // it re-reads the live desktop and reports the bound window as gone if it
         // no longer enumerates. `what` names the verb so the refusal says which
-        // one was mid-flight. Shared by hold and drag because the question
-        // they ask across their pause is the same question.
+        // one was mid-flight. Only drag spans time here now: engageHold returns
+        // as soon as the button is down and holds nothing across a pause.
         [[nodiscard]]
         auto refreshTargetCallback(std::string_view what)
             -> std::move_only_function<Result<DeliveryTarget>()>;
@@ -74,15 +74,13 @@ namespace uf::cli::platform
             ObservationLease const& lease
         ) -> Status override;
 
-        // Posts the press, holds it, re-reads the bound window, and posts the
-        // release through controller::hold -- the same route click() takes,
-        // with the same lease forwarded. It supplies the refresh-target callback
-        // controller::hold requires; see the definition for what that callback
-        // can honestly re-read here.
+        // Posts the press through controller::pointerDown -- the same route
+        // click() takes, with the same lease forwarded -- and returns with the
+        // button down. m_held records it, so releaseHeldInputs below is what
+        // lifts it whenever the frame that engaged it ends.
         [[nodiscard]]
-        auto hold(
+        auto engageHold(
             Point<ClientSpace> point,
-            MonotonicInstant::Duration duration,
             ObservationLease const& lease
         ) -> Status override;
 

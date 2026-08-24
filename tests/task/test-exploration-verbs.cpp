@@ -183,19 +183,15 @@ namespace uf::task
                 return ok();
             }
 
+            // No duration to record: the port carries none, because how long
+            // the press lasts is the frame that engaged it decides. What the
+            // chunk declared is on the annotation.hold_delivered line instead,
+            // which is the only place it was ever the chunk's own number.
             [[nodiscard]]
-            auto hold(
-                Point<ClientSpace>,
-                MonotonicInstant::Duration hold,
-                ObservationLease const&
-            ) -> Status override
+            auto engageHold(Point<ClientSpace>, ObservationLease const&)
+                -> Status override
             {
-                m_acts.emplace_back(
-                    DeliveredAct{
-                        .verb       = "hold",
-                        .holdMillis = millis(hold),
-                    }
-                );
+                m_acts.emplace_back(DeliveredAct{.verb = "hold"});
                 return ok();
             }
 
@@ -515,7 +511,6 @@ namespace uf::task
                 "key",
             }
         );
-        CHECK(world.acts()[1].holdMillis == 40U);
         CHECK(world.acts()[2].holdMillis == 25U);
         CHECK(world.acts()[4].notches == -3);
     }
@@ -610,6 +605,13 @@ namespace uf::task
         CHECK(numberField(*drag, "pixel_x") == std::optional<uint64>{0});
         CHECK(numberField(*drag, "end_pixel_x") == std::optional<uint64>{2});
         CHECK(numberField(*drag, "travel_millis") == std::optional<uint64>{25});
+
+        // The hold's declared duration is on its own line and nowhere else:
+        // the sink is told no duration now, so this line is what carries the
+        // chunk's number all the way to a reader.
+        auto const hold = lineNamed(world, "annotation.hold_delivered");
+        REQUIRE(hold.has_value());
+        CHECK(numberField(*hold, "hold_millis") == std::optional<uint64>{40});
     }
 
     // A refused act writes no delivered line: an auditor must never find one for

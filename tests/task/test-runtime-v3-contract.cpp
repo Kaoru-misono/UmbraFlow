@@ -1058,14 +1058,20 @@ identity = ["screen.anchor"]
             CHECK(runtime.actions().holds() == 1U);
             CHECK(runtime.actions().clicks() == 0U);
             REQUIRE(runtime.actions().lastHoldPoint().has_value());
-            REQUIRE(runtime.actions().lastHoldDuration().has_value());
+            REQUIRE(runtime.actions().lastHeldFor().has_value());
             // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
             CHECK(runtime.actions().lastHoldPoint()->x() == doctest::Approx(1.0));
+
+            // The declared 350 ms is proved by how long the BUTTON WAS DOWN,
+            // not by a number handed to the sink: nothing tells the sink a
+            // duration any more, so a chain that dropped the declaration would
+            // press and release with nothing in between. Delete the settle in
+            // task::TaskContext::holdFor and this goes red.
             CHECK(
                 std::chrono::duration_cast<std::chrono::milliseconds>(
-                    *runtime.actions().lastHoldDuration()
+                    *runtime.actions().lastHeldFor()
                 ).count()
-                == 350
+                >= 350
             );
         }
 

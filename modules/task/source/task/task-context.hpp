@@ -268,6 +268,27 @@ namespace uf::task
             MonotonicInstant::Duration travel
         ) -> Result<engine::DragReceipt>;
 
+        // Presses at `point`, keeps the button down for `duration`, and lifts
+        // it -- whichever way everything in between went.
+        //
+        // THE FRAME THE PRESS BELONGS TO IS THIS ONE. engine::EngineSession
+        // engages and disengages and does neither on its own, because a hold
+        // that blocked for its own duration could let nothing look at the
+        // screen while it lasted. So the wait lives here, and so does the
+        // obligation the wait creates: every exit path from this function lifts
+        // the button, which is where the input invariant at
+        // engine::IActionSink::releaseHeldInputs is kept for this verb.
+        //
+        // Both callers below route through it rather than bracketing the pair
+        // themselves. A second bracket is a second place the release can be
+        // forgotten.
+        [[nodiscard]]
+        auto holdFor(
+            engine::Observation observation,
+            PixelPoint point,
+            MonotonicInstant::Duration duration
+        ) -> Result<engine::HoldReceipt>;
+
         // The remaining three of the six the declared vocabulary grants. Each
         // is deliverReceiptClick's sibling on its own engine verb, and the
         // ceilings are NOT re-stated here: a declared hold was already bounded

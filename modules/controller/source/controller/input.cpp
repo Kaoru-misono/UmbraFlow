@@ -300,51 +300,6 @@ namespace uf
         return deliverPointerDown(target, pixel, held, audit);
     }
 
-    auto pointerUp(
-        DeliveryTarget const& target,
-        ObservationLease lease,
-        Point<ClientSpace> point,
-        HeldInputs& held,
-        AuditLog& audit
-    ) -> Status
-    {
-        UF_TRY_VALUE(pixel, pointerPixel(target, lease, point));
-        return deliverPointerUp(target, pixel, held, audit);
-    }
-
-    auto hold(
-        DeliveryTarget const& target,
-        ObservationLease lease,
-        Point<ClientSpace> point,
-        MonotonicInstant::Duration duration,
-        HeldInputs& held,
-        AuditLog& audit,
-        std::move_only_function<Result<DeliveryTarget>()> refreshTarget
-    ) -> Status
-    {
-        if (!refreshTarget)
-        {
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "hold requires a refresh-target callback"
-            );
-        }
-        if (duration < MonotonicInstant::Duration::zero())
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "hold duration must be non-negative"
-            );
-        }
-
-        UF_TRY_VALUE(pixel, pointerPixel(target, lease, point));
-        UF_TRY(deliverPointerDown(target, pixel, held, audit));
-        std::this_thread::sleep_for(duration);
-        UF_TRY_VALUE(refreshed, refreshTarget());
-        UF_TRY(controller_detail::ensureSameDeliveryIdentity(target, refreshed));
-        return deliverPointerUp(refreshed, pixel, held, audit);
-    }
-
     auto drag(
         DeliveryTarget const& target,
         ObservationLease lease,

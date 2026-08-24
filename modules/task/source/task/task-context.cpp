@@ -758,6 +758,57 @@ namespace uf::task
         return m_session.drag(std::move(observation), start, end, travel);
     }
 
+    auto TaskContext::holdFor(
+        engine::Observation observation,
+        PixelPoint point,
+        MonotonicInstant::Duration duration
+    ) -> Result<engine::HoldReceipt>
+    {
+        auto engaged = m_session.engageHold(std::move(observation), point);
+        if (engaged)
+        {
+            // The wait no sink call performs any more. It belongs to this frame
+            // because this frame is what keeps the engagement alive, and it is
+            // the cancellable settle for settle()'s own reason: a run that has
+            // been asked to stop must not spend the rest of a declared hold
+            // pressing a button into a target nobody is watching.
+            settle(duration);
+        }
+
+        // Asked of the SESSION and not of `engaged`, and asked unconditionally:
+        // a refused engage can still have left the button down, because the
+        // press lands before the trace lines that record it. This is the exit
+        // path the input invariant is stated over.
+        if (!m_session.holdEngaged())
+        {
+            UF_CHECK(!engaged.has_value());
+            return std::unexpected{std::move(engaged).error()};
+        }
+
+        auto disengaged = m_session.disengageHold();
+        if (engaged)
+        {
+            return disengaged;
+        }
+
+        // The engage's own failure is what a caller is looking at, so a release
+        // that also failed is context on it rather than a second error that
+        // replaces the first -- EngineSession::endDelivery's rule, kept here
+        // because this is the other place the two outcomes meet.
+        auto error = std::move(engaged).error();
+        if (!disengaged)
+        {
+            error.addContext(
+                std::format(
+                    "lifting the button the refused hold left down also failed: "
+                    "{}",
+                    disengaged.error().message()
+                )
+            );
+        }
+        return std::unexpected{std::move(error)};
+    }
+
     auto TaskContext::deliverReceiptHold(
         CycleTicket ticket,
         PixelPoint point,
@@ -765,7 +816,7 @@ namespace uf::task
     ) -> Result<engine::HoldReceipt>
     {
         UF_TRY_VALUE(observation, m_cycles.spend(ticket));
-        return m_session.hold(std::move(observation), point, duration);
+        return holdFor(std::move(observation), point, duration);
     }
 
     auto TaskContext::deliverReceiptScroll(
@@ -835,7 +886,7 @@ namespace uf::task
         UF_TRY_VALUE(observation, m_cycles.spend(ticket));
         UF_TRY_VALUE(
             receipt,
-            m_session.hold(std::move(observation), point, duration)
+            holdFor(std::move(observation), point, duration)
         );
         auto fields = pointFields(point);
         fields.emplace_back(

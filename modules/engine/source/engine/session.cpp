@@ -1260,72 +1260,76 @@ namespace uf::engine
         };
     }
 
-    auto EngineSession::hold(
+    auto EngineSession::engageHold(
         Observation&& observation,
-        PixelPoint point,
-        MonotonicInstant::Duration duration
-    ) -> Result<HoldReceipt>
+        PixelPoint point
+    ) -> Result<HoldEngagement>
     {
-        UF_TRY(
-            beginDelivery(
-                observation,
-                "hold",
-                "cancelled before hold delivery"
-            )
-        );
-
-        // Not the ceiling -- that is the host surface's -- but the one thing about
-        // a hold this layer cannot pass on: a negative duration is a receipt and a
-        // trace line describing an act nobody performed. Refused before the
-        // observation is spent, so a caller with a sign error keeps its frame.
-        if (duration < MonotonicInstant::Duration::zero())
+        // Ahead of every other refusal, because it is the only one that is about
+        // this session rather than about this observation: a caller holding an
+        // engagement it forgot must be told that, not handed a frame refusal.
+        if (m_engagedHold.has_value())
         {
             return fail(
-                AutomationErrorKind::ActionRejected,
-                "a hold cannot run backwards"
+                AutomationErrorKind::InternalInvariant,
+                "this session already holds an input engaged; one release lifts "
+                "every held input, so a second engagement would share the first "
+                "one's release"
             );
         }
 
+        UF_TRY(
+            beginDelivery(
+                observation,
+                "engageHold",
+                "cancelled before the hold was engaged"
+            )
+        );
         UF_TRY_VALUE(clientPoint, authorizeCoordinate(observation, point));
 
         auto const identity = observation.m_frameIdentity;
 
-        auto delivered = endDelivery(
-            m_actionSink->hold(clientPoint, duration, observation.m_lease)
-        );
-        if (!delivered)
+        auto engaged = m_actionSink->engageHold(clientPoint, observation.m_lease);
+        if (!engaged)
         {
-            UF_TRY(rejectAction(identity, delivered.error(), std::nullopt));
-            return std::unexpected{std::move(delivered).error()};
+            // A refused engage runs the ordinary delivery teardown, because the
+            // press may have landed before whatever refused: the sink is the
+            // only thing that knows, and releaseHeldInputs is how it answers.
+            auto released = endDelivery(std::move(engaged));
+            UF_TRY(rejectAction(identity, released.error(), std::nullopt));
+            return std::unexpected{std::move(released).error()};
         }
 
-        // The press has landed and been released; the handle dies for
-        // clickPoint's reason.
+        // The press has landed and is STILL DOWN. Both of the next two lines are
+        // written before any fallible emit, and in this order: the handle dies
+        // for clickPoint's reason, and the engagement is recorded so that a
+        // failed trace line leaves a button the frame can still find and lift.
         observation.m_invalidated = true;
 
-        auto pressEvent = engineEvent(
-            "engine.hold_delivered",
-            identity,
-            {
-                trace::TraceField{
-                    .name  = "client_x",
-                    .value = std::format("{}", clientPoint.x()),
-                },
-                trace::TraceField{
-                    .name  = "client_y",
-                    .value = std::format("{}", clientPoint.y()),
-                },
-                trace::TraceField{
-                    .name  = "hold_millis",
-                    .value = static_cast<uint64>(
-                        std::chrono::duration_cast<std::chrono::milliseconds>(
-                            duration
-                        ).count()
-                    ),
-                },
-            }
+        m_engagedHold = EngagedHold{
+            .identity   = identity,
+            .pressPoint = clientPoint,
+            .engagedAt  = MonotonicInstant::now(),
+        };
+
+        UF_TRY(
+            emit(
+                engineEvent(
+                    "engine.hold_engaged",
+                    identity,
+                    {
+                        trace::TraceField{
+                            .name  = "client_x",
+                            .value = std::format("{}", clientPoint.x()),
+                        },
+                        trace::TraceField{
+                            .name  = "client_y",
+                            .value = std::format("{}", clientPoint.y()),
+                        },
+                    }
+                )
+            )
         );
-        UF_TRY(emit(pressEvent));
 
         UF_TRY(
             emit(
@@ -1333,10 +1337,82 @@ namespace uf::engine
             )
         );
 
-        return HoldReceipt{
+        return HoldEngagement{
             .frameId    = identity.frameId(),
             .pressPoint = clientPoint,
-            .hold       = duration,
+        };
+    }
+
+    auto EngineSession::holdEngaged() const noexcept -> bool
+    {
+        return m_engagedHold.has_value();
+    }
+
+    auto EngineSession::disengageHold() -> Result<HoldReceipt>
+    {
+        if (!m_engagedHold.has_value())
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "this session has no engaged hold to disengage"
+            );
+        }
+
+        // The engagement leaves the session BEFORE the release is attempted. A
+        // release the target refused has still ended this engagement, and the
+        // alternative -- leaving it engaged so a caller may try again -- would
+        // post a second release at a button whose state this layer can no longer
+        // see.
+        auto const engaged = *std::exchange(m_engagedHold, std::nullopt);
+
+        auto const held = MonotonicInstant::now().saturatingDurationSince(
+            engaged.engagedAt
+        );
+
+        // The session's one release site, handed no delivery to fold: for this
+        // verb the teardown IS the delivery.
+        auto released = endDelivery(ok());
+        if (!released)
+        {
+            // The rejection line rather than a delivered one, and it says what
+            // it means: the press happened and this hold ended in a refusal, so
+            // a reader that stops at engine.hold_engaged is not left believing
+            // the button came up cleanly.
+            UF_TRY(rejectAction(engaged.identity, released.error(), std::nullopt));
+            return std::unexpected{std::move(released).error()};
+        }
+
+        UF_TRY(
+            emit(
+                engineEvent(
+                    "engine.hold_delivered",
+                    engaged.identity,
+                    {
+                        trace::TraceField{
+                            .name  = "client_x",
+                            .value = std::format("{}", engaged.pressPoint.x()),
+                        },
+                        trace::TraceField{
+                            .name  = "client_y",
+                            .value = std::format("{}", engaged.pressPoint.y()),
+                        },
+                        trace::TraceField{
+                            .name  = "hold_millis",
+                            .value = static_cast<uint64>(
+                                std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    held
+                                ).count()
+                            ),
+                        },
+                    }
+                )
+            )
+        );
+
+        return HoldReceipt{
+            .frameId    = engaged.identity.frameId(),
+            .pressPoint = engaged.pressPoint,
+            .hold       = held,
         };
     }
 

@@ -130,11 +130,8 @@ namespace uf::cli
             }
 
             [[nodiscard]]
-            auto hold(
-                Point<ClientSpace>,
-                MonotonicInstant::Duration,
-                ObservationLease const&
-            ) -> Status override
+            auto engageHold(Point<ClientSpace>, ObservationLease const&)
+                -> Status override
             {
                 ++*m_delivered;
                 return ok();

@@ -351,10 +351,9 @@ namespace uf::engine
             std::optional<int32>            m_lastNotches{};
             std::optional<ObservationLease> m_lastScrollLease{};
 
-            uint32                                    m_holdCount{0};
-            std::optional<Point<ClientSpace>>         m_lastHoldPoint{};
-            std::optional<MonotonicInstant::Duration> m_lastHoldDuration{};
-            std::optional<ObservationLease>           m_lastHoldLease{};
+            uint32                            m_holdCount{0};
+            std::optional<Point<ClientSpace>> m_lastHoldPoint{};
+            std::optional<ObservationLease>   m_lastHoldLease{};
 
             uint32                                    m_dragCount{0};
             std::optional<Point<ClientSpace>>         m_lastDragStart{};
@@ -448,25 +447,25 @@ namespace uf::engine
                 return ok();
             }
 
-            // Coordinate, hold and lease are all recorded because all three are
-            // separately droppable: a case asserting only that a press happened
-            // would pass against a sink handed a hold it threw away.
+            // Coordinate and lease are both recorded because both are
+            // separately droppable. There is no duration to record: the port no
+            // longer carries one, because how long the button stays down is
+            // decided by the frame that engaged rather than stated to the sink.
             [[nodiscard]]
-            auto hold(
+            auto engageHold(
                 Point<ClientSpace> point,
-                MonotonicInstant::Duration duration,
                 ObservationLease const& lease
             ) -> Status override
             {
                 ++m_holdCount;
-                m_lastHoldPoint    = point;
-                m_lastHoldDuration = duration;
-                m_lastHoldLease    = lease;
+                m_lastHoldPoint = point;
+                m_lastHoldLease = lease;
 
-                // The press first, exactly as controller::hold does it, so an
-                // abort below leaves the button down rather than merely
-                // reporting one. A hold keeps a button down for its whole
-                // duration, so every failure after the press has this shape.
+                // The press first, exactly as controller::pointerDown does it,
+                // so an abort below leaves the button down rather than merely
+                // reporting one. This sink then RETURNS with it down, which is
+                // the whole of the split: everything a caller does next happens
+                // while the button is held.
                 m_pointerHeld = true;
                 if (m_abortHoldWhileDown)
                 {
@@ -475,7 +474,6 @@ namespace uf::engine
                         "the hold target went away while the button was down"
                     );
                 }
-                m_pointerHeld = false;
                 return ok();
             }
 
@@ -541,9 +539,8 @@ namespace uf::engine
             }
 
             // The hold's own version of it: fail while the button is down,
-            // which is the shape every failure past controller::hold's press
-            // has -- including the refresh across the hold refusing the
-            // release.
+            // which is the shape every failure past controller::pointerDown's
+            // press has.
             void abortHoldWhileDown() noexcept
             {
                 m_abortHoldWhileDown = true;
@@ -643,13 +640,6 @@ namespace uf::engine
                 -> std::optional<Point<ClientSpace>>
             {
                 return m_lastHoldPoint;
-            }
-
-            [[nodiscard]]
-            auto lastHoldDuration() const noexcept
-                -> std::optional<MonotonicInstant::Duration>
-            {
-                return m_lastHoldDuration;
             }
 
             [[nodiscard]]
@@ -1869,6 +1859,116 @@ namespace uf::engine
         }
     }
 
+    // THE CAPABILITY hold-with-children exists for, and the one thing a
+    // blocking hold could not do: the button goes down, the screen is looked at
+    // WHILE it is down, and only then does it come up. Every assertion in the
+    // three marked blocks below goes red against a hold that pressed and
+    // released inside one call.
+    TEST_CASE("engine session observes a fresh frame while a hold is engaged")
+    {
+        auto const fingerprint = fingerprintOf(3, 1, 96);
+
+        // Two frames with different identities, because "a FRESH frame" is what
+        // is being proved: a source replaying one frame could not tell a second
+        // capture from the first.
+        auto frames = std::vector<Frame>{};
+        frames.emplace_back(
+            grayFrame(
+                fingerprint,
+                matchingPixels(),
+                FrameId{17},
+                MonotonicInstant::now()
+            )
+        );
+        frames.emplace_back(
+            grayFrame(
+                fingerprint,
+                matchingPixels(),
+                FrameId{23},
+                MonotonicInstant::now()
+            )
+        );
+        auto under = makeSession(std::move(frames), baseConfig(fingerprint));
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
+
+        auto observation = session.observe();
+        REQUIRE(observation.has_value());
+        auto const engagement = session.engageHold(
+            *std::move(observation),
+            PixelPoint{1, 0}
+        );
+        REQUIRE(engagement.has_value());
+        CHECK(engagement->frameId == FrameId{17});
+        CHECK(under.clicks->holdCount() == 1);
+
+        // (1) The engage RETURNED with the button still down. Give this verb
+        // the endDelivery teardown back and releaseCount is one here.
+        CHECK(under.clicks->pointerHeld());
+        CHECK(under.clicks->releaseCount() == 0U);
+        CHECK(session.holdEngaged());
+
+        // (2) An ordinary, un-nested observation, taken while that press is
+        // still down, and it sees a DIFFERENT frame than the one that
+        // authorized the press. Nothing was re-entered to get it: engageHold
+        // returned before this line ran.
+        auto child = session.observe();
+        REQUIRE(child.has_value());
+        CHECK(child->frameIdentity().frameId() == FrameId{23});
+        CHECK(under.clicks->pointerHeld());
+        CHECK(under.clicks->releaseCount() == 0U);
+
+        // A second engagement is refused while one is open: one release lifts
+        // everything the sink holds, so two engagements would share one act.
+        auto second = session.observe();
+        REQUIRE(second.has_value());
+        auto const refused = session.engageHold(
+            *std::move(second),
+            PixelPoint{2, 0}
+        );
+        REQUIRE_FALSE(refused.has_value());
+        requireErrorKind(refused.error(), AutomationErrorKind::InternalInvariant);
+        CHECK(under.clicks->holdCount() == 1);
+
+        auto const receipt = session.disengageHold();
+        REQUIRE(receipt.has_value());
+        CHECK(receipt->frameId == FrameId{17});
+        CHECK(receipt->pressPoint.x() == doctest::Approx(1.0));
+        CHECK(under.clicks->releaseCount() == 1U);
+        CHECK_FALSE(under.clicks->pointerHeld());
+        CHECK_FALSE(session.holdEngaged());
+
+        // Nothing is engaged any more, so completing a hold a second time is a
+        // frame with a bug rather than a caller with a choice.
+        auto const repeated = session.disengageHold();
+        REQUIRE_FALSE(repeated.has_value());
+        requireErrorKind(repeated.error(), AutomationErrorKind::InternalInvariant);
+        CHECK(under.clicks->releaseCount() == 1U);
+
+        // (3) The engine saw a FLAT sequence: engage, observe, observe,
+        // disengage. Its trace is the only place that can say so, and both
+        // observations sit BETWEEN the press and the release.
+        auto const eventTypes = eventTypesOf(under.traces->events());
+        auto const engagedAt  = std::ranges::find(
+            eventTypes,
+            std::string{"engine.hold_engaged"}
+        );
+        auto const deliveredAt = std::ranges::find(
+            eventTypes,
+            std::string{"engine.hold_delivered"}
+        );
+        REQUIRE(engagedAt != eventTypes.end());
+        REQUIRE(deliveredAt != eventTypes.end());
+        CHECK(engagedAt < deliveredAt);
+        CHECK(
+            std::ranges::count(
+                std::ranges::subrange{engagedAt, deliveredAt},
+                std::string{"engine.observed"}
+            )
+            == 2
+        );
+    }
+
     TEST_CASE("engine session delivers a hold and spends the observation")
     {
         auto const fingerprint = fingerprintOf(3, 1, 96);
@@ -1879,20 +1979,18 @@ namespace uf::engine
         auto observation = session.observe();
         REQUIRE(observation.has_value());
 
-        auto const hold = MonotonicInstant::Duration{std::chrono::milliseconds{350}};
-        auto handle        = *std::move(observation);
-        auto const receipt = session.hold(std::move(handle), PixelPoint{1, 0}, hold);
-        REQUIRE(receipt.has_value());
+        auto handle           = *std::move(observation);
+        auto const engagement = session.engageHold(
+            std::move(handle),
+            PixelPoint{1, 0}
+        );
+        REQUIRE(engagement.has_value());
         CHECK(under.clicks->holdCount() == 1);
-        CHECK(receipt->frameId == FrameId{17});
-        CHECK(receipt->hold == hold);
+        CHECK(engagement->frameId == FrameId{17});
 
-        // The hold the caller named reached the PORT: every other assertion here
-        // would still hold if the duration were dropped between session and sink.
-        // Replace `hold` with a constant in the sink call and only this goes red.
-        REQUIRE(under.clicks->lastHoldDuration().has_value());
-        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
-        CHECK(*under.clicks->lastHoldDuration() == hold);
+        // The point the caller named reached the PORT: every other assertion
+        // here would still hold if the coordinate were dropped between session
+        // and sink.
         REQUIRE(under.clicks->lastHoldPoint().has_value());
         // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(under.clicks->lastHoldPoint()->x() == doctest::Approx(1.0));
@@ -1904,13 +2002,20 @@ namespace uf::engine
         CHECK(under.clicks->lastHoldLease()->frameId() == FrameId{17});
 
         // The press changed the screen, so the observation is spent. Remove the
-        // invalidation in EngineSession::hold and one frame delivers two
+        // invalidation in EngineSession::engageHold and one frame delivers two
         // presses, so this goes red.
         // NOLINTNEXTLINE(bugprone-use-after-move): the spent handle must fail closed.
-        auto const retry = session.hold(std::move(handle), PixelPoint{1, 0}, hold);
+        auto const retry = session.engageHold(std::move(handle), PixelPoint{1, 0});
         REQUIRE_FALSE(retry.has_value());
-        requireErrorKind(retry.error(), AutomationErrorKind::StaleObservation);
         CHECK(under.clicks->holdCount() == 1);
+
+        auto const receipt = session.disengageHold();
+        REQUIRE(receipt.has_value());
+        CHECK(receipt->frameId == FrameId{17});
+
+        // MEASURED, not restated. The engine was never told a duration, so a
+        // receipt carrying one would report a number nobody supplied.
+        CHECK(receipt->hold >= MonotonicInstant::Duration::zero());
 
         auto const eventTypes = eventTypesOf(under.traces->events());
         CHECK(
@@ -1936,21 +2041,17 @@ namespace uf::engine
             "engine.hold_delivered"
         );
         REQUIRE(p_press != nullptr);
-        auto const* p_hold = fieldAs<uint64>(*p_press, "hold_millis");
-        REQUIRE(p_hold != nullptr);
-        CHECK(*p_hold == uint64{350});
+        CHECK(fieldAs<uint64>(*p_press, "hold_millis") != nullptr);
         CHECK(fieldAs<std::string>(*p_press, "client_x") != nullptr);
 
-        // The teardown ran on the delivery that SUCCEEDED as well, for the
-        // reason it runs on the drag that succeeded: unconditional or it is not
-        // a guarantee.
         CHECK(under.clicks->releaseCount() == 1);
         CHECK_FALSE(under.clicks->pointerHeld());
 
         // A HOLD ABORTED WHILE THE BUTTON IS DOWN, which is what makes the
-        // invariant falsifiable for this verb: the sink presses, fails before
-        // the release, and returns with the button down. Take the endDelivery
-        // call out of EngineSession::hold and pointerHeld() below stays true.
+        // invariant falsifiable for this verb: the sink presses, fails before it
+        // can report the press, and returns with the button down. Take the
+        // endDelivery call out of EngineSession::engageHold's failure arm and
+        // pointerHeld() below stays true.
         //
         // This is the verb the invariant was landed for. A hold that means
         // anything holds the button while something else looks at the screen,
@@ -1959,18 +2060,19 @@ namespace uf::engine
         under.clicks->abortHoldWhileDown();
         auto again = session.observe();
         REQUIRE(again.has_value());
-        auto const aborted = session.hold(
+        auto const aborted = session.engageHold(
             *std::move(again),
-            PixelPoint{1, 0},
-            hold
+            PixelPoint{1, 0}
         );
         REQUIRE_FALSE(aborted.has_value());
         requireErrorKind(aborted.error(), AutomationErrorKind::TargetUnavailable);
         CHECK(under.clicks->holdCount() == 2);
 
-        // No input state survived the end of the call that pressed it.
+        // No input state survived the refusal that pressed it, and nothing was
+        // left engaged for a frame to find.
         CHECK_FALSE(under.clicks->pointerHeld());
         CHECK(under.clicks->releaseCount() == 2);
+        CHECK_FALSE(session.holdEngaged());
     }
 
     TEST_CASE("engine session delivers a drag and spends the observation")
@@ -2145,17 +2247,20 @@ namespace uf::engine
 
     TEST_CASE("engine session fences a hold exactly as it fences a click")
     {
-        // The pairing is the point: a hold names a coordinate, so the
-        // failure guarded against is a SECOND and laxer path to the same window
-        // beside the click's. The first four subcases each have an exact twin
-        // among the click cases -- expired lease, mismatched fingerprint and
-        // replaced target instance above, cancelled run just below -- and
-        // removing the matching check from EngineSession::hold leaves the
-        // twin green while this goes red. The fifth has no twin and cannot:
-        // clickPoint names no hold, so the backwards hold is this verb's own
-        // argument check rather than a shared gate.
+        // The pairing is the point: a hold names a coordinate, so the failure
+        // guarded against is a SECOND and laxer path to the same window beside
+        // the click's. Each subcase has an exact twin among the click cases --
+        // expired lease, mismatched fingerprint and replaced target instance
+        // above, cancelled run just below -- and removing the matching check
+        // from EngineSession::engageHold leaves the twin green while this goes
+        // red.
+        //
+        // The backwards-duration subcase that used to close this case is gone
+        // with the argument it checked: engageHold is told no duration, so how
+        // long a press may last is bounded where it is now decided, at
+        // task::TaskContext::cycleHold, whose refusal can name what the chunk
+        // wrote.
         auto const fingerprint = fingerprintOf(3, 1, 96);
-        auto const hold = MonotonicInstant::Duration{std::chrono::milliseconds{200}};
 
         SUBCASE("an expired lease refuses the press")
         {
@@ -2166,14 +2271,17 @@ namespace uf::engine
 
             auto observation = under.session->observe();
             REQUIRE(observation.has_value());
-            auto const receipt = under.session->hold(
+            auto const engagement = under.session->engageHold(
                 std::move(*observation),
-                PixelPoint{1, 0},
-                hold
+                PixelPoint{1, 0}
             );
-            REQUIRE_FALSE(receipt.has_value());
-            requireErrorKind(receipt.error(), AutomationErrorKind::StaleObservation);
+            REQUIRE_FALSE(engagement.has_value());
+            requireErrorKind(
+                engagement.error(),
+                AutomationErrorKind::StaleObservation
+            );
             CHECK(under.clicks->holdCount() == 0);
+            CHECK_FALSE(under.session->holdEngaged());
         }
 
         SUBCASE("a mismatched fingerprint refuses the press")
@@ -2185,17 +2293,17 @@ namespace uf::engine
 
             auto observation = under.session->observe();
             REQUIRE(observation.has_value());
-            auto const receipt = under.session->hold(
+            auto const engagement = under.session->engageHold(
                 std::move(*observation),
-                PixelPoint{1, 0},
-                hold
+                PixelPoint{1, 0}
             );
-            REQUIRE_FALSE(receipt.has_value());
+            REQUIRE_FALSE(engagement.has_value());
             requireErrorKind(
-                receipt.error(),
+                engagement.error(),
                 AutomationErrorKind::TargetCompatibilityUnverified
             );
             CHECK(under.clicks->holdCount() == 0);
+            CHECK_FALSE(under.session->holdEngaged());
         }
 
         SUBCASE("a replaced target instance refuses the press")
@@ -2207,14 +2315,17 @@ namespace uf::engine
             REQUIRE(observation.has_value());
             under.source->invalidateTargetInstance();
 
-            auto const receipt = under.session->hold(
+            auto const engagement = under.session->engageHold(
                 std::move(*observation),
-                PixelPoint{1, 0},
-                hold
+                PixelPoint{1, 0}
             );
-            REQUIRE_FALSE(receipt.has_value());
-            requireErrorKind(receipt.error(), AutomationErrorKind::TargetUnavailable);
+            REQUIRE_FALSE(engagement.has_value());
+            requireErrorKind(
+                engagement.error(),
+                AutomationErrorKind::TargetUnavailable
+            );
             CHECK(under.clicks->holdCount() == 0);
+            CHECK_FALSE(under.session->holdEngaged());
         }
 
         SUBCASE("a cancelled run refuses the press before any sink call")
@@ -2229,31 +2340,14 @@ namespace uf::engine
             REQUIRE(observation.has_value());
             REQUIRE(cancellation.request_stop());
 
-            auto const receipt = under.session->hold(
+            auto const engagement = under.session->engageHold(
                 std::move(*observation),
-                PixelPoint{1, 0},
-                hold
+                PixelPoint{1, 0}
             );
-            REQUIRE_FALSE(receipt.has_value());
-            requireErrorKind(receipt.error(), AutomationErrorKind::Cancelled);
+            REQUIRE_FALSE(engagement.has_value());
+            requireErrorKind(engagement.error(), AutomationErrorKind::Cancelled);
             CHECK(under.clicks->holdCount() == 0);
-        }
-
-        SUBCASE("a hold that runs backwards refuses the press and keeps the frame")
-        {
-            auto under = matchingSession(fingerprint, baseConfig(fingerprint));
-            REQUIRE(under.session.has_value());
-
-            auto observation = under.session->observe();
-            REQUIRE(observation.has_value());
-            auto const receipt = under.session->hold(
-                std::move(*observation),
-                PixelPoint{1, 0},
-                MonotonicInstant::Duration{-1}
-            );
-            REQUIRE_FALSE(receipt.has_value());
-            requireErrorKind(receipt.error(), AutomationErrorKind::ActionRejected);
-            CHECK(under.clicks->holdCount() == 0);
+            CHECK_FALSE(under.session->holdEngaged());
         }
     }
 

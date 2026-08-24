@@ -150,26 +150,30 @@ namespace uf::engine
             ObservationLease const& lease
         ) -> Status = 0;
 
-        // Delivers one hold at `point`: the button goes down, stays down
-        // for `duration`, and comes back up before this returns.
+        // Engages a hold at `point`: the button goes down and STAYS DOWN when
+        // this returns. releaseHeldInputs is the only thing that lifts it.
         //
-        // The port exposes this and not pointerDown/pointerUp: press, hold and
-        // release begin and end inside this call, so nothing above ever holds a
-        // half-pressed target.
+        // This is the half of a hold that a press-and-wait-and-release call
+        // could not express. A hold that means anything holds the button while
+        // something else looks at the screen, and a call that blocks for the
+        // duration cannot let anything look: the engine would have to re-enter
+        // observe() inside it. Split in two, what the engine sees is a flat
+        // sequence -- engage, observe, observe, disengage -- with no nesting to
+        // reason about (docs/decisions/2026-08-24-an-authoring-session-is-a-first-class-tool-session.md).
         //
-        // The hold is the CALLER'S with no default here or above: how long a
-        // target needs a button held is a fact about that target, and a duration
-        // the caller cannot see is one it never chose.
+        // How long the button stays down is therefore NOT this port's and not
+        // any caller-supplied duration reaching it: it is however long the frame
+        // that engaged keeps the engagement, and only the disengage can say what
+        // it was.
         //
         // It takes a lease for click()'s reason and not for scroll()'s -- this
         // verb names a coordinate measured off a frame, so the lease is
-        // authorization and not merely delivery material. A failure between the
-        // press and the release leaves the button down, and putting it back up
-        // is releaseHeldInputs's job rather than this verb's.
+        // authorization and not merely delivery material. A failure after the
+        // press leaves the button down, and putting it back up is
+        // releaseHeldInputs's job rather than this verb's.
         [[nodiscard]]
-        virtual auto hold(
+        virtual auto engageHold(
             Point<ClientSpace> point,
-            MonotonicInstant::Duration duration,
             ObservationLease const& lease
         ) -> Status = 0;
 
@@ -247,7 +251,7 @@ namespace uf::engine
         // Posts the release of every key and button this sink still holds down,
         // and holds nothing when it returns.
         //
-        // INVARIANT: NO INPUT STATE MAY SURVIVE THE END OF ITS TOOL CALL. On
+        // INVARIANT: NO INPUT STATE MAY SURVIVE THE FRAME THAT OWNS IT. On
         // timeout, on error, on abort, every input still held is released. This
         // is a guarantee and not a tidy-up: a hung call that is still holding a
         // mouse button down is a worse failure than a hung call, and it is the
@@ -255,11 +259,17 @@ namespace uf::engine
         // actor -- it is not deciding what the Project should do next, it is
         // refusing to leave the machine in a state nobody asked for.
         //
-        // EngineSession::endDelivery calls this after every delivery it makes,
-        // whichever way that delivery went, which is what makes the guarantee
-        // the framework's rather than each adapter's memory. Doing so is the
-        // whole of the compensation owed: an implementation that holds nothing
-        // answers ok().
+        // THE FRAME, not the call, is the unit, and that is what engageHold
+        // changed. A hold's whole point is to outlive the call that engaged it,
+        // so measuring the invariant per leaf call would either forbid the verb
+        // or lie about it. The frame that engaged is the one that must release,
+        // and it is the Tool call whose ActiveRun the engagement was handed to.
+        //
+        // Every other delivery still ends here: EngineSession::endDelivery
+        // calls this after each one, whichever way it went, which is what makes
+        // the guarantee the framework's rather than each adapter's memory.
+        // Doing so is the whole of the compensation owed: an implementation
+        // that holds nothing answers ok().
         //
         // A failed release is reported rather than swallowed, because a target
         // that would not take the release is exactly the case an operator has to

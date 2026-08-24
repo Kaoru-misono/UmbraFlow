@@ -240,10 +240,33 @@ namespace uf::engine
         int32   notches{};
     };
 
-    // The record of one delivered hold: the frame it was authorized
+    // The record of one ENGAGED hold: the frame it was authorized against and
+    // the client-space point the button went down at, with the button still
+    // down when this is handed back.
+    //
+    // It carries no duration, and that absence is the point rather than an
+    // omission: nothing has elapsed yet, and how long the press lasts is
+    // decided by the frame that engaged it rather than stated up front.
+    //
+    // No in-class initializers for the frame or the point: FrameId and Point
+    // have no default state, so every construction site supplies both.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+    struct HoldEngagement final
+    {
+        FrameId            frameId;
+        Point<ClientSpace> pressPoint;
+    };
+
+    // The record of one completed hold: the frame it was authorized
     // against, the client-space point the button went down at, and how long it
-    // stayed down. The hold is the only thing separating this receipt from an
-    // ActReceipt for the same coordinate.
+    // actually stayed down. The hold is the only thing separating this receipt
+    // from an ActReceipt for the same coordinate.
+    //
+    // `hold` is MEASURED between the engage and the disengage, never the figure
+    // a caller asked for. Under the split there is no longer a duration the
+    // engine could have been told: a hold lasts as long as its frame keeps it,
+    // and a receipt restating a request rather than reporting the press would be
+    // a claim about time that nobody checked.
     //
     // No in-class initializers for the frame or the point: FrameId and Point
     // have no default state, so every construction site supplies both.
@@ -295,6 +318,22 @@ namespace uf::engine
     {
         friend class Observation;
 
+        // What an engaged hold left behind: which frame authorized the press,
+        // where it landed, and when. The instant is stored because it is the
+        // only thing that can answer how long the button was down -- the engage
+        // was told no duration and there is none to restate.
+        //
+        // No in-class initializers: FrameIdentity, Point and MonotonicInstant
+        // have no default state, and the optional below is how "nothing is
+        // engaged" is spelled.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+        struct EngagedHold final
+        {
+            FrameIdentity      identity;
+            Point<ClientSpace> pressPoint;
+            MonotonicInstant   engagedAt;
+        };
+
         std::shared_ptr<detail::EngineSessionIdentity const> m_identity;
         std::unique_ptr<IFrameSource>                        m_frameSource;
         std::unique_ptr<IActionSink>                         m_actionSink;
@@ -307,6 +346,12 @@ namespace uf::engine
 
         trace::TraceRecorder& m_recorder;
         EngineSessionConfig   m_config;
+
+        // The hold this session has engaged, if any. AT MOST ONE, because
+        // releaseHeldInputs lifts everything the sink holds in one act: a second
+        // engagement would share one release with the first, and neither frame
+        // could say which of them ended.
+        std::optional<EngagedHold> m_engagedHold{};
 
         EngineSession(
             std::shared_ptr<detail::EngineSessionIdentity const> identity,
@@ -590,7 +635,8 @@ namespace uf::engine
             int32 notches
         ) -> Result<ScrollReceipt>;
 
-        // Delivers one hold at `point` for `duration`, spending `observation`.
+        // Engages a hold at `point`, spending `observation`. The button is DOWN
+        // when this returns and stays down until disengageHold.
         //
         // Its authorization contract is clickPoint's clause for clause, because a
         // hold names a coordinate the caller measured off this frame:
@@ -600,19 +646,44 @@ namespace uf::engine
         // click -- a second and laxer path to the same window is the hole this
         // closes.
         //
-        // It spends the observation deliberately: a delivered hold changes
-        // the screen, so reading the result costs a fresh observation rather than
-        // reusing the frame that authorized the press.
+        // It spends the observation deliberately: a press changes the screen, so
+        // reading the result costs a fresh observation rather than reusing the
+        // frame that authorized it. Taking that fresh observation while this
+        // hold is engaged is the whole capability -- observe() is an ordinary
+        // un-nested call here, not a re-entry, because the press already landed
+        // and returned.
         //
-        // `duration` is the caller's with no default at this layer or above; see
-        // IActionSink::hold. Bounding it belongs to the host surface a
-        // script reaches, where a refusal can name what the author wrote.
+        // ONE ENGAGEMENT PER SESSION: a second engage while one is open is
+        // refused, for the reason m_engagedHold states.
+        //
+        // WHOEVER CALLS THIS OWNS THE RELEASE. A failure can still leave the
+        // button down -- the press lands before the trace lines that record it,
+        // so a refused engage is not proof of an unpressed button. The frame
+        // therefore disengages on every exit path and asks holdEngaged() rather
+        // than reading the outcome.
         [[nodiscard]]
-        auto hold(
+        auto engageHold(
             Observation&& observation,
-            PixelPoint point,
-            MonotonicInstant::Duration duration
-        ) -> Result<HoldReceipt>;
+            PixelPoint point
+        ) -> Result<HoldEngagement>;
+
+        // Whether a hold is engaged right now. It is what lets a frame's
+        // teardown be unconditional without also being a blind second release.
+        [[nodiscard]] auto holdEngaged() const noexcept -> bool;
+
+        // Disengages the engaged hold, releasing every input the sink still
+        // holds, and reports how long the button was actually down.
+        //
+        // Refuses when nothing is engaged: this is the verb that completes a
+        // hold, not a general-purpose sweep, and a frame that cannot say whether
+        // it engaged is a frame with a bug rather than a caller with a choice.
+        // Ask holdEngaged() first; that pair is the teardown.
+        //
+        // The engagement ends here whether or not the release posted. A release
+        // the target would not take is reported, and it is reported once: a
+        // second disengage posting a second release would be a retry nobody
+        // asked for, over a button whose state this layer can no longer see.
+        [[nodiscard]] auto disengageHold() -> Result<HoldReceipt>;
 
         // Moves the pointer to `point`, pressing nothing, and spends
         // `observation`.
@@ -639,7 +710,7 @@ namespace uf::engine
         // Delivers one drag from `start` to `end` over `travel`, spending
         // `observation`.
         //
-        // Its authorization contract is hold's clause for clause: requested
+        // Its authorization contract is engageHold's clause for clause: requested
         // stop, foreign handle, consumed handle, live fingerprint, lease validity
         // at delivery, target-instance revalidation before the post, and the
         // spent observation. Every one of those is a fact about the FRAME, so it
@@ -652,7 +723,7 @@ namespace uf::engine
         // fails. Its client-area bound is checked at the layer that knows the
         // live client size, before the button goes down; see IActionSink::drag.
         //
-        // It spends the observation for hold's reason, and more plainly: a
+        // It spends the observation for engageHold's reason, and more plainly: a
         // drag is what moves the thing being looked at, so the frame that
         // authorized it describes a screen that no longer exists.
         //

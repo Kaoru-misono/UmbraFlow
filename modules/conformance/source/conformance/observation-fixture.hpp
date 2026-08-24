@@ -383,9 +383,8 @@ namespace uf::operator_runtime::conformance
         }
 
         [[nodiscard]]
-        auto hold(
+        auto engageHold(
             Point<ClientSpace>,
-            MonotonicInstant::Duration,
             ObservationLease const&
         ) -> Status override
         {
