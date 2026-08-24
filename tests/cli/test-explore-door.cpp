@@ -122,6 +122,14 @@ namespace uf::cli
             std::string canonicalArgs{};
         };
 
+        struct HeldInputLog final
+        {
+            uint32 engaged{};
+            uint32 released{};
+            bool   held{};
+            bool   observedWhileHeld{};
+        };
+
         struct SqliteClose final
         {
             auto operator()(sqlite3* p_database) const noexcept -> void
@@ -237,16 +245,19 @@ namespace uf::cli
         // at (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
         class CountingFrameSource final : public engine::IFrameSource
         {
-            Frame                   m_frame;
-            std::shared_ptr<uint32> m_captures;
+            Frame                         m_frame;
+            std::shared_ptr<uint32>       m_captures;
+            std::shared_ptr<HeldInputLog> m_held;
 
         public:
             CountingFrameSource(
                 Frame frame,
-                std::shared_ptr<uint32> captures
+                std::shared_ptr<uint32> captures,
+                std::shared_ptr<HeldInputLog> held
             ) noexcept
                 : m_frame{std::move(frame)}
                 , m_captures{std::move(captures)}
+                , m_held{std::move(held)}
             {
             }
 
@@ -254,6 +265,10 @@ namespace uf::cli
             auto capture(CaptureBudget const&) -> Result<Frame> override
             {
                 ++*m_captures;
+                if (m_held->held)
+                {
+                    m_held->observedWhileHeld = true;
+                }
                 return m_frame;
             }
 
@@ -274,11 +289,16 @@ namespace uf::cli
         // where the assertion needs it.
         class CountingActionSink final : public engine::IActionSink
         {
-            std::shared_ptr<uint32> m_delivered;
+            std::shared_ptr<uint32>       m_delivered;
+            std::shared_ptr<HeldInputLog> m_held;
 
         public:
-            explicit CountingActionSink(std::shared_ptr<uint32> delivered) noexcept
+            CountingActionSink(
+                std::shared_ptr<uint32> delivered,
+                std::shared_ptr<HeldInputLog> held
+            ) noexcept
                 : m_delivered{std::move(delivered)}
+                , m_held{std::move(held)}
             {
             }
 
@@ -306,6 +326,8 @@ namespace uf::cli
                 -> Status override
             {
                 ++*m_delivered;
+                ++m_held->engaged;
+                m_held->held = true;
                 return ok();
             }
 
@@ -333,6 +355,8 @@ namespace uf::cli
 
             [[nodiscard]] auto releaseHeldInputs() -> Status override
             {
+                ++m_held->released;
+                m_held->held = false;
                 return ok();
             }
 
@@ -465,7 +489,9 @@ namespace uf::cli
             auto ports(
                 std::shared_ptr<uint32> delivered,
                 std::string_view trace,
-                std::shared_ptr<uint32> captures = std::make_shared<uint32>()
+                std::shared_ptr<uint32> captures = std::make_shared<uint32>(),
+                std::shared_ptr<HeldInputLog> held =
+                    std::make_shared<HeldInputLog>()
             ) const -> task::TaskRunConfig
             {
                 auto const fingerprint = ProjectFingerprint::create(
@@ -481,10 +507,12 @@ namespace uf::cli
                             m_probe,
                             FrameId{4001}
                         ),
-                        std::move(captures)
+                        std::move(captures),
+                        held
                     ),
                     .actionSink = std::make_unique<CountingActionSink>(
-                        std::move(delivered)
+                        std::move(delivered),
+                        std::move(held)
                     ),
                     .ocrEngine               = std::make_unique<SilentReader>(),
                     .liveFingerprint         = *fingerprint,
@@ -1050,6 +1078,190 @@ namespace uf::cli
         );
         REQUIRE(strayRow != recorded.end());
         CHECK(strayRow->parentIdentity != observe->callIdentity);
+    }
+
+    TEST_CASE(
+        "a hold body observes while input is engaged and releases on every exit"
+    )
+    {
+        auto const world     = ExploreDoorWorld{};
+        auto const delivered = std::make_shared<uint32>();
+        auto const captures  = std::make_shared<uint32>();
+        auto const held      = std::make_shared<HeldInputLog>();
+        static_cast<void>(world.authorizeAnnotation());
+
+        auto const scope = operator_runtime::ObservedInstanceWorldScope::run(
+            "window-0",
+            1
+        );
+        REQUIRE(scope.has_value());
+
+        auto lifecycle = service::ProductLifecycle::start(
+            service::ProductStart{
+                .projectDirectory          = world.project(),
+                .runtimeDirectory          = world.runtime(),
+                .authenticatedControllerId = "umbra-flow-explore",
+                .controllerCapabilities = {
+                    std::string{
+                        operator_runtime::conformance::k_operateCapability
+                    },
+                },
+                .controlledTargetId = "window-0",
+                .kind               = operator_runtime::ControllerKind::Human,
+                .agentProfileJcs = std::string{
+                    operator_runtime::k_unboundedAgentProfileJcs
+                },
+                .worldScope = *scope,
+            }
+        );
+        REQUIRE(lifecycle.has_value());
+        auto session = lifecycle->startExplorationSession(
+            world.ports(delivered, "hold-body-trace.jsonl", captures, held),
+            std::stop_token{}
+        );
+        REQUIRE(session.has_value());
+
+        SUBCASE("hold observe measure is the motivating case")
+        {
+            auto const before = *captures;
+            auto const observed = (*session)->evaluate(
+            R"lua(
+                explore.hold(0, 0, function()
+                    explore.observe(function(frame)
+                        frame:read_lines(0, 0, 1, 1)
+                        frame:probe(0, 0, 1, 1, {
+                            red = 0, green = 0, blue = 0, removes = false,
+                        })
+                    end)
+                end)
+                return true
+            )lua",
+            "hold-observe-measure"
+        );
+            auto const observedWhy = observed.has_value()
+                ? std::string{}
+                : std::string{observed.error().message()};
+            REQUIRE_MESSAGE(observed.has_value(), observedWhy);
+            CHECK(held->observedWhileHeld);
+            CHECK(held->engaged == 1U);
+            CHECK(held->released == 1U);
+            CHECK_FALSE(held->held);
+            // One capture to aim the input, then exactly one for the observe
+            // whose body made two measurements. Per-measurement capture makes 4.
+            CHECK(*captures - before == 2U);
+        }
+
+        SUBCASE("a raising body still releases")
+        {
+            auto const raised = (*session)->evaluate(
+            R"lua(
+                local ok, err = pcall(function()
+                    explore.hold(0, 0, function()
+                        error("the hold body raised")
+                    end)
+                end)
+                if ok then return "hold unexpectedly confirmed" end
+                if type(err) == "userdata" then return err.message end
+                return tostring(err)
+            )lua",
+            "hold-body-raises"
+        );
+            REQUIRE(raised.has_value());
+            REQUIRE(raised->text() != nullptr);
+            CHECK(
+                std::string_view{*raised->text()}.contains("the hold body raised")
+            );
+            CHECK(held->engaged == 1U);
+            CHECK(held->released == 1U);
+            CHECK_FALSE(held->held);
+        }
+
+        SUBCASE("an empty body is refused by the click arm's exact name")
+        {
+            auto const empty = (*session)->evaluate(
+            R"lua(
+                local ok, err = pcall(function()
+                    explore.hold(0, 0, function() end)
+                end)
+                if ok then return "hold unexpectedly confirmed" end
+                if type(err) == "userdata" then return err.message end
+                return tostring(err)
+            )lua",
+            "empty-hold-body"
+        );
+            REQUIRE(empty.has_value());
+            REQUIRE(empty->text() != nullptr);
+            CHECK(
+                std::string_view{*empty->text()}.contains(
+                    "a hold body is empty; press and release is the `click` arm."
+                )
+            );
+            CHECK(held->engaged == 1U);
+            CHECK(held->released == 1U);
+            CHECK_FALSE(held->held);
+        }
+
+        SUBCASE("an input refusal is not mislabeled as an empty body")
+        {
+            auto const refused = (*session)->evaluate(
+            R"lua(
+                local ok, err = pcall(function()
+                    explore.hold(999, 999, function()
+                        explore.observe(function() end)
+                    end)
+                end)
+                if ok then return "hold unexpectedly confirmed" end
+                if type(err) == "userdata" then return err.message end
+                return tostring(err)
+            )lua",
+            "refused-hold-body"
+        );
+            REQUIRE(refused.has_value());
+            REQUIRE(refused->text() != nullptr);
+            CHECK(
+                std::string_view{*refused->text()}.contains(
+                    "is outside the"
+                )
+            );
+            CHECK(
+                std::string_view{*refused->text()}.contains("target surface")
+            );
+            CHECK_FALSE(
+                std::string_view{*refused->text()}.contains("hold body is empty")
+            );
+            CHECK(held->engaged == 0U);
+            CHECK(held->released == 0U);
+            CHECK_FALSE(held->held);
+        }
+
+        SUBCASE("an observation body still refuses a mutating child")
+        {
+            auto const refused = (*session)->evaluate(
+                R"lua(
+                    local ok, err = pcall(function()
+                        explore.observe(function()
+                            explore.click(0, 0)
+                        end)
+                    end)
+                    if ok then return "input unexpectedly admitted" end
+                    if type(err) == "userdata" then return err.message end
+                    return tostring(err)
+                )lua",
+                "observe-mutating-child"
+            );
+            REQUIRE(refused.has_value());
+            REQUIRE(refused->text() != nullptr);
+            CHECK(
+                std::string_view{*refused->text()}.contains(
+                    "Parent Tool framework.screen.observe declares no child "
+                    "effect for framework.input.deliver"
+                )
+            );
+            CHECK(*delivered == 0U);
+        }
+
+        session->reset();
+        CHECK(lifecycle->shutdown().has_value());
     }
 
     // The authoring-write line, both ways round. It is the second thing an

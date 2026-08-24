@@ -149,6 +149,7 @@ namespace uf::operator_runtime::conformance::expedition
                 : ToolIdempotency::DeliverySafe;
             tools.emplace_back(json::Value::ofObject({
                 {"argument_schema", parsedJson(k_toolArgumentSchema)},
+                {"body", json::Value::ofBoolean(false)},
                 {"child_effects", json::Value::ofObject({
                      {"child_tool_names", json::Value::ofArray({})},
                      {"maximum_child_calls", json::Value::ofNumber(0)},

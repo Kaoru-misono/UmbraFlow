@@ -409,6 +409,7 @@ namespace uf::operator_runtime::test_support
             }
             tools.emplace_back(json::Value::ofObject({
                 {"argument_schema", parsedJson(argumentSchema)},
+                {"body", json::Value::ofBoolean(false)},
                 {"child_effects", json::Value::ofObject({
                      {"child_tool_names", json::Value::ofArray({})},
                      {"maximum_child_calls", json::Value::ofNumber(0)},

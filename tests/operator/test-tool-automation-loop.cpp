@@ -588,12 +588,14 @@ return {
         // observation the script is presenting.
         [[nodiscard]]
         auto frameworkProvider(std::shared_ptr<AutomationWorld> world)
-            -> ToolProvider
+            -> ToolBodyProvider
         {
             return [world = std::move(world)](
-                       ToolCallPositionIdentity const& call
+                       ToolCallPositionIdentity const& call,
+                       ToolBodyRun body
                    ) -> Result<ToolCallCompletion>
             {
+                REQUIRE_FALSE(body);
                 if (call.toolName() == k_observeTool)
                 {
                     auto const frame = world->framesObserved;

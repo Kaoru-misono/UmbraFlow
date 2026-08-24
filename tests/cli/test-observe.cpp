@@ -1329,18 +1329,10 @@ namespace uf::cli
                     unminted.error().message()
                 );
 
-                // A `hold` presses and returns with the button DOWN, so it
-                // needs a frame to lift it, and that frame is the Tool call it
-                // was issued from. THIS one is issued from the root: the
-                // dispatcher anchors no live issuing context on a root
-                // position, so there is nothing to hand the release to.
-                //
-                // NOTHING IS PRESSED. The lift is handed over before the press,
-                // so a hold with no owner is refused ahead of the capture --
-                // proven absence, naming the position it looked for, and the
-                // sink counter below is what says the target never moved. A
-                // press first and a question afterwards would have delivered an
-                // unasked-for click every time the answer was no.
+                // A hold without its required body is the forbidden second
+                // spelling of press-and-release. It is refused by the exact
+                // sentence naming the `key` arm, before anything reaches the
+                // sink.
                 auto const orphanHold = issued(
                     "input-root",
                     "framework.input.deliver",
@@ -1348,12 +1340,12 @@ namespace uf::cli
                 );
                 CHECK(
                     orphanHold.state
-                    == operator_runtime::ToolCallState::ProvenAbsent
+                    == operator_runtime::ToolCallState::Possible
                 );
-                CHECK(inputVerdict(orphanHold.payload) == "input_refused");
                 CHECK(
-                    inputReason(orphanHold.payload)
-                        .find("no live issuing context is anchored")
+                    orphanHold.payload.find(
+                        "a hold body is empty; press and release is the `click` arm."
+                    )
                     != std::string::npos
                 );
             }
@@ -1363,9 +1355,8 @@ namespace uf::cli
         // click on the declared surface, and the one presented call entitled to
         // the authority it named. Every other row above claims proven absence,
         // and this is the sink saying the same thing about all of them -- the
-        // aim that was outside the target surface and the hold that had no Tool
-        // call to lift it are recorded as absent precisely because neither ever
-        // got here.
+        // aim that was outside the target surface and the bodyless hold both
+        // leave the sink untouched.
         CHECK(*delivered == 2U);
     }
 

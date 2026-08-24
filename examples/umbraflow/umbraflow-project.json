@@ -118,6 +118,7 @@
               }
             }
           },
+          "body": false,
           "child_effects": {
             "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
             "child_tool_names": [],
@@ -172,6 +173,7 @@
               }
             }
           },
+          "body": false,
           "child_effects": {
             "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
             "child_tool_names": [],
@@ -226,6 +228,7 @@
               }
             }
           },
+          "body": false,
           "child_effects": {
             "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
             "child_tool_names": [],
@@ -280,6 +283,7 @@
               }
             }
           },
+          "body": false,
           "child_effects": {
             "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
             "child_tool_names": [],
@@ -334,6 +338,7 @@
               }
             }
           },
+          "body": false,
           "child_effects": {
             "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
             "child_tool_names": [],
@@ -388,6 +393,7 @@
               }
             }
           },
+          "body": false,
           "child_effects": {
             "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
             "child_tool_names": [],
@@ -442,6 +448,7 @@
               }
             }
           },
+          "body": false,
           "child_effects": {
             "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
             "child_tool_names": [],
@@ -496,6 +503,7 @@
               }
             }
           },
+          "body": false,
           "child_effects": {
             "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
             "child_tool_names": [],
@@ -550,6 +558,7 @@
               }
             }
           },
+          "body": false,
           "child_effects": {
             "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
             "child_tool_names": [],
@@ -604,6 +613,7 @@
               }
             }
           },
+          "body": false,
           "child_effects": {
             "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
             "child_tool_names": [],
@@ -757,6 +767,7 @@
               }
             }
           },
+          "body": false,
           "child_effects": {
             "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
             "child_tool_names": [],
@@ -811,6 +822,7 @@
               }
             }
           },
+          "body": false,
           "child_effects": {
             "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
             "child_tool_names": [],
@@ -865,6 +877,7 @@
               }
             }
           },
+          "body": false,
           "child_effects": {
             "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
             "child_tool_names": [],
@@ -919,6 +932,7 @@
               }
             }
           },
+          "body": false,
           "child_effects": {
             "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
             "child_tool_names": [],
@@ -973,6 +987,7 @@
               }
             }
           },
+          "body": false,
           "child_effects": {
             "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
             "child_tool_names": [],
@@ -1027,6 +1042,7 @@
               }
             }
           },
+          "body": false,
           "child_effects": {
             "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
             "child_tool_names": [],
@@ -1081,6 +1097,7 @@
               }
             }
           },
+          "body": false,
           "child_effects": {
             "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
             "child_tool_names": [],
@@ -1135,6 +1152,7 @@
               }
             }
           },
+          "body": false,
           "child_effects": {
             "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
             "child_tool_names": [],
@@ -1189,6 +1207,7 @@
               }
             }
           },
+          "body": false,
           "child_effects": {
             "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
             "child_tool_names": [],
@@ -1243,6 +1262,7 @@
               }
             }
           },
+          "body": false,
           "child_effects": {
             "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
             "child_tool_names": [],

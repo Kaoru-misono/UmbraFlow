@@ -74,9 +74,8 @@ namespace uf::operator_runtime
         // One live handler invocation. The five reference members are borrows
         // owned by the dispatch frame that built it, and that frame strictly
         // outlives the run: the run executes synchronously inside it, and the
-        // table entry is erased before it returns. The issuing context and the
-        // held input below are the run's OWN, because both outlive the
-        // individual child call that produced them.
+        // table entry is erased before it returns. The issuing context and
+        // body-scope close are the run's own.
         struct ActiveRun final
         {
             ProjectGenerationHandle const& program;
@@ -85,46 +84,43 @@ namespace uf::operator_runtime
             ToolRootRequestIdentity const&  root;
             ToolCallPositionIdentity const& handlerCall;
 
+            // True only for the run one descriptor-declared body owns. A
+            // bound Project handler is an issuing context, not a second place
+            // a Framework child may leave its scope open.
+            bool acceptsBodyScope{};
+
             // Fresh on every entry, first dispatch and re-entry alike, and
             // numbering from 1. Nothing persists it and nothing resumes it.
             ToolCallIssuingContext context;
 
-            // The release of an input a child call engaged and handed over, and
-            // empty on every run that engaged none -- which is every run until
-            // one does. Owned by the run because the run is the frame the press
-            // outlives its own leaf call inside.
-            HeldInputRelease heldInput{};
+            // The one resource close a body-taking Tool handed over. Its
+            // meaning belongs to the Tool; close-on-every-exit belongs here.
+            ToolBodyScopeClose scopeClose{};
 
-            // Lifts what this run holds, once, and answers ok() when it holds
+            // Closes what this run holds, once, and answers ok() when it holds
             // nothing.
             //
-            // The release leaves the run BEFORE it is attempted, so a release
-            // the target refused is reported once rather than retried by
-            // whatever closes the run next, over a button nothing here can still
-            // see the state of.
-            [[nodiscard]] auto releaseHeldInput() -> Status
+            // The close leaves the run BEFORE it is attempted, so a refusal is
+            // reported once rather than retried over state no longer visible.
+            [[nodiscard]] auto closeBodyScope() -> Status
             {
-                auto release = std::exchange(heldInput, HeldInputRelease{});
-                if (!release)
+                auto close = std::exchange(scopeClose, ToolBodyScopeClose{});
+                if (!close)
                 {
                     return ok();
                 }
-                return release();
+                return close();
             }
         };
 
         // The one observation frame this dispatcher holds open, and the call
         // that owns it.
         //
-        // It is dispatcher state rather than a member of the run that issued the
-        // observe, because the frame's owner is the OBSERVE CALL'S own durable
-        // position and nothing else: that is what makes a root observe and a
-        // nested one one shape instead of two. Which scope closes it is a
-        // separate question, answered by closeObservationFrameOpenedInside.
+        // Its identity remains dispatcher state so measuring calls can bind to
+        // it. Its close is attached to the same body run as every other scope.
         struct ObservationFrame final
         {
-            ContentHash           call;
-            ObservationFrameClose close;
+            ContentHash call;
         };
 
     private:
@@ -135,7 +131,7 @@ namespace uf::operator_runtime
         SnapshotObservationAuthority& m_observations;
 
         OperatorPolicyAuthority   m_policyAuthority;
-        ToolProvider              m_frameworkTools;
+        ToolBodyProvider          m_frameworkTools;
         FrameworkToolCatalogOwner m_frameworkCatalog;
 
         std::map<ContentHash, std::reference_wrapper<ActiveRun>> m_runs{};
@@ -147,7 +143,7 @@ namespace uf::operator_runtime
             OperatorCoordinator& coordinator,
             SnapshotObservationAuthority& observations,
             OperatorPolicyAuthority policyAuthority,
-            ToolProvider frameworkTools,
+            ToolBodyProvider frameworkTools,
             FrameworkToolCatalogOwner frameworkCatalog
         )
             : m_coordinator{coordinator}
@@ -185,17 +181,17 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
-        auto attachHeldInput(
+        auto attachToolBodyScope(
             ContentHash const& holdingCall,
-            HeldInputRelease release
+            ToolBodyScopeClose close
         ) -> Status
         {
-            if (!release)
+            if (!close)
             {
                 return fail(
                     AutomationErrorKind::InternalInvariant,
-                    "an engaged input must be handed over together with the "
-                    "release that lifts it"
+                    "a Tool body scope must be handed over together with the "
+                    "close that ends it"
                 );
             }
             auto const found = m_runs.find(holdingCall);
@@ -208,22 +204,30 @@ namespace uf::operator_runtime
                 );
             }
             auto& run = found->second.get();
-            if (run.heldInput)
+            if (!run.acceptsBodyScope)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "the Tool call at " + holdingCall.hex()
+                        + " is an issuing context, not a descriptor-declared body scope"
+                );
+            }
+            if (run.scopeClose)
             {
                 return fail(
                     AutomationErrorKind::InternalInvariant,
                     "the Tool call at " + holdingCall.hex()
-                        + " already holds an engaged input"
+                        + " already owns a body scope close"
                 );
             }
-            run.heldInput = std::move(release);
+            run.scopeClose = std::move(close);
             return ok();
         }
 
         [[nodiscard]]
         auto engageObservationFrame(
             ContentHash const& frameCall,
-            ObservationFrameClose close
+            ToolBodyScopeClose close
         ) -> Status
         {
             if (!close)
@@ -250,28 +254,23 @@ namespace uf::operator_runtime
                         + frameCall.hex() + " opening a second exceeded it"
                 );
             }
-            m_frame = ObservationFrame{
-                .call  = frameCall,
-                .close = std::move(close),
-            };
-            return ok();
-        }
-
-        [[nodiscard]]
-        auto closeObservationFrameOpenedInside(
-            std::optional<ContentHash> const& inherited
-        ) -> Status
-        {
-            if (!m_frame.has_value() || m_frame->call == inherited)
+            m_frame = ObservationFrame{.call = frameCall};
+            auto attached = attachToolBodyScope(
+                frameCall,
+                [this, frameCall, close = std::move(close)]() mutable -> Status
+                {
+                    if (m_frame.has_value() && m_frame->call == frameCall)
+                    {
+                        m_frame.reset();
+                    }
+                    return close();
+                }
+            );
+            if (!attached)
             {
-                return ok();
+                m_frame.reset();
             }
-            // The frame leaves this dispatcher BEFORE it is closed, for the
-            // reason a held input's release does: a close the Host refused is
-            // reported once rather than retried by whatever exits next, over a
-            // frame nothing here can still see the state of.
-            auto frame = *std::exchange(m_frame, std::nullopt);
-            return frame.close();
+            return attached;
         }
 
         [[nodiscard]]
@@ -284,42 +283,41 @@ namespace uf::operator_runtime
             return m_frame->call;
         }
 
-        // One observation's body, run with an issuing context anchored on the
-        // observe call's own durable position.
+        // One structured Tool body, run with an issuing context anchored on the
+        // body-taking call's own durable position.
         //
         // It is runBoundEntry's registration and nothing else: the run is keyed
         // on the position of the call it belongs to, the context numbers from
-        // 1, the held-input release is lifted unconditionally, and the context
+        // 1, the Tool-provided scope close runs unconditionally, and the context
         // is sealed so a body that left recorded calls unconsumed is divergence
-        // rather than a detail. What it does NOT do is open or close the frame
-        // -- the observe provider owns that on both sides of this call -- and it
-        // runs no VM of its own, because the body is a closure inside the VM
-        // that issued the observe.
+        // rather than a detail. It opens no Tool-specific resource and runs no
+        // VM of its own; those meanings belong to the provider and body.
         [[nodiscard]]
-        auto runObservationBody(
+        auto runToolBody(
             ProjectGenerationHandle const& program,
             ControllerBinding const& controller,
             ControlLease const& lease,
             ToolRootRequestIdentity const& root,
             ToolCallPositionIdentity const& call,
-            ObservationBodyRun body
+            ToolBodyRun body,
+            ToolBodyPostcondition postcondition
         ) -> Status
         {
             if (!body)
             {
                 return fail(
                     AutomationErrorKind::InternalInvariant,
-                    "an observation body must be run together with the closure "
-                    "that is its body"
+                    "a Tool body must be run together with its structured closure"
                 );
             }
             auto run = ActiveRun{
-                .program     = program,
-                .controller  = controller,
-                .lease       = lease,
-                .root        = root,
-                .handlerCall = call,
-                .context     = ToolCallIssuingContext::forHandler(call),
+                .program          = program,
+                .controller       = controller,
+                .lease            = lease,
+                .root             = root,
+                .handlerCall      = call,
+                .acceptsBodyScope = true,
+                .context          = ToolCallIssuingContext::forHandler(call),
             };
             auto const registered =
                 m_runs.emplace(call.identity(), std::ref(run)).second;
@@ -340,25 +338,56 @@ namespace uf::operator_runtime
 
             auto ran = body();
 
-            // Unconditional and before the answer is looked at, on
-            // runBoundEntry's terms: a body that engaged an input owns lifting
-            // it whichever way it went.
-            auto lifted = run.releaseHeldInput();
+            // One close path for every meaning a Tool gives its body scope.
+            // The close leaves the run before it is attempted, so a refused
+            // close is reported once and never retried over unknown state.
+            auto closed = run.closeBodyScope();
             if (!ran)
             {
                 auto error = std::move(ran).error();
-                if (!lifted)
+                if (!closed)
                 {
                     error.addContext(
-                        "lifting the input this observation body left held also "
-                        "failed: "
-                            + std::string{lifted.error().message()}
+                        "closing this Tool body scope also failed: "
+                            + std::string{closed.error().message()}
                     );
                 }
                 return std::unexpected{std::move(error)};
             }
-            UF_TRY(std::move(lifted));
+            UF_TRY(std::move(closed));
+            if (postcondition)
+            {
+                UF_TRY(postcondition(run.context.issuedChildren()));
+            }
             return m_coordinator.sealToolCallContext(root, run.context);
+        }
+
+        [[nodiscard]]
+        auto runChildToolBody(
+            ToolCallPositionIdentity const& call,
+            ToolBodyRun body,
+            ToolBodyPostcondition postcondition
+        ) -> Status
+        {
+            auto const found = m_runs.find(call.parentIdentity());
+            if (found == m_runs.end())
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "no live issuing context is anchored on the durable position "
+                        + call.parentIdentity().hex()
+                );
+            }
+            auto& parent = found->second.get();
+            return runToolBody(
+                parent.program,
+                parent.controller,
+                parent.lease,
+                parent.root,
+                call,
+                std::move(body),
+                std::move(postcondition)
+            );
         }
 
         // One child call, arriving from inside a running handler's VM.
@@ -367,7 +396,8 @@ namespace uf::operator_runtime
             std::string_view toolName,
             json::Value const& arguments,
             script::ToolCallCoordinate const& coordinate,
-            std::stop_token const& cancellation
+            std::stop_token const& cancellation,
+            ToolBodyRun body
         ) -> Result<json::Value>
         {
             auto const found = m_runs.find(coordinate.parentPosition);
@@ -415,6 +445,33 @@ namespace uf::operator_runtime
                       std::move(canonicalArguments)
                   );
             UF_TRY_VALUE(invocation, std::move(validated));
+
+            auto selectedArmStorage = std::string{};
+            auto selectedArm        = std::optional<std::string_view>{};
+            if (!invocation.descriptor().body.taggedBy.empty())
+            {
+                auto const* const p_tag = invocation.canonicalArgs()
+                                                .value()
+                                                .find(
+                                                    invocation.descriptor()
+                                                        .body.taggedBy
+                                                );
+                UF_CHECK(p_tag != nullptr);
+                selectedArmStorage = p_tag->string();
+                selectedArm        = selectedArmStorage;
+            }
+            UF_TRY_VALUE(
+                takesBody,
+                toolTakesBody(invocation.descriptor().body, selectedArm)
+            );
+            if (body && !takesBody)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Tool " + std::string{toolName}
+                        + " does not declare a body for this call"
+                );
+            }
 
             // The observation this child spends, if it spends one. The script
             // handed the seam an ordinary JSON value it received from an
@@ -471,6 +528,13 @@ namespace uf::operator_runtime
             };
             if (bound.has_value())
             {
+                if (body)
+                {
+                    return fail(
+                        AutomationErrorKind::ActionRejected,
+                        "a bound Project Tool does not declare framework scope semantics"
+                    );
+                }
                 UF_TRY_VALUE(
                     replay,
                     dispatchCall(run.program, childRequest, cancellation)
@@ -481,7 +545,14 @@ namespace uf::operator_runtime
                 replay,
                 ToolRuntimeExecutor{m_coordinator}.invoke(
                     childRequest,
-                    m_frameworkTools
+                    [this, p_body = std::make_shared<ToolBodyRun>(
+                         std::move(body)
+                     )](
+                        ToolCallPositionIdentity const& admitted
+                    ) mutable -> Result<ToolCallCompletion>
+                    {
+                        return m_frameworkTools(admitted, std::move(*p_body));
+                    }
                 )
             );
             return scopedAnswer(toolName, child.identity(), replay);
@@ -530,77 +601,21 @@ namespace uf::operator_runtime
                 }
             );
 
-            // Whatever frame was already open when this run was entered. It is
-            // read here so the close below can tell a frame this run's handler
-            // opened from one belonging to a scope outside it: a nested handler
-            // that closed its caller's frame would end it at a moment its owner
-            // never named.
-            auto const inheritedFrame = heldObservationFrame();
-
-            auto answer = program.invokeBoundTool(
-                call.toolName(),
-                arguments,
-                script::ScopedRunRequest{
-                    .parentPosition = call.identity(),
-                    .cancellation   = cancellation,
-                }
+            UF_TRY_VALUE(
+                answer,
+                program.invokeBoundTool(
+                    call.toolName(),
+                    arguments,
+                    script::ScopedRunRequest{
+                        .parentPosition = call.identity(),
+                        .cancellation   = cancellation,
+                    }
+                )
             );
-
-            // Unconditional, and before the handler's answer is even looked at:
-            // a run that engaged an input owns lifting it, whichever way that
-            // handler went. This is where the invariant at
-            // engine::IActionSink::releaseHeldInputs is kept for the Tool-call
-            // frame, and it is measured per FRAME rather than per leaf call
-            // because an engaged press is meant to outlive the call that made
-            // it.
-            //
-            // Not a scope guard: one would have to swallow the release's own
-            // failure. Nothing between the run's registration above and this
-            // line can engage anything, so a single explicit call covers every
-            // path that could have left something held.
-            auto lifted = run.releaseHeldInput();
-
-            // The frame's close, on the same terms and for the same reason: an
-            // observation frame opened inside this handler ends when this
-            // handler's scope ends, whichever way it ended -- a normal return, a
-            // raise the body did not catch, or the VM being torn down under it.
-            // A scope exit cannot be forgotten, written twice or put in the
-            // wrong place, which is exactly why the close is triggered by it
-            // rather than by a verb in anyone's vocabulary.
-            auto closed = closeObservationFrameOpenedInside(inheritedFrame);
-            if (!answer)
-            {
-                auto error = std::move(answer).error();
-                if (!lifted)
-                {
-                    error.addContext(
-                        "lifting the input this Tool call left held also "
-                        "failed: "
-                            + std::string{lifted.error().message()}
-                    );
-                }
-                if (!closed)
-                {
-                    error.addContext(
-                        "closing the observation frame this Tool call left open "
-                        "also failed: "
-                            + std::string{closed.error().message()}
-                    );
-                }
-                return std::unexpected{std::move(error)};
-            }
-            if (!lifted)
-            {
-                return std::unexpected{std::move(lifted).error()};
-            }
-            if (!closed)
-            {
-                return std::unexpected{std::move(closed).error()};
-            }
 
             UF_TRY_VALUE(
                 result,
-                CanonicalJson::parseExact(json::canonicalBytes(*answer))
+                CanonicalJson::parseExact(json::canonicalBytes(answer))
             );
             // A handler that terminated leaving recorded calls unconsumed for
             // this context issued a different sequence than the one on record,
@@ -621,7 +636,7 @@ namespace uf::operator_runtime
         OperatorCoordinator& coordinator,
         SnapshotObservationAuthority& observations,
         OperatorPolicyAuthority policyAuthority,
-        ToolProvider frameworkTools
+        ToolBodyProvider frameworkTools
     ) -> Result<ProjectToolDispatcher>
     {
         if (!frameworkTools)
@@ -657,32 +672,26 @@ namespace uf::operator_runtime
                 toolName,
                 arguments,
                 coordinate,
-                cancellation
+                cancellation,
+                {}
             );
         };
     }
 
-    auto ProjectToolDispatcher::attachHeldInput(
+    auto ProjectToolDispatcher::attachToolBodyScope(
         ContentHash const& holdingCall,
-        HeldInputRelease release
+        ToolBodyScopeClose close
     ) -> Status
     {
-        return m_state->attachHeldInput(holdingCall, std::move(release));
+        return m_state->attachToolBodyScope(holdingCall, std::move(close));
     }
 
     auto ProjectToolDispatcher::engageObservationFrame(
         ContentHash const& frameCall,
-        ObservationFrameClose close
+        ToolBodyScopeClose close
     ) -> Status
     {
         return m_state->engageObservationFrame(frameCall, std::move(close));
-    }
-
-    auto ProjectToolDispatcher::closeObservationFrameOpenedInside(
-        std::optional<ContentHash> const& inherited
-    ) -> Status
-    {
-        return m_state->closeObservationFrameOpenedInside(inherited);
     }
 
     auto ProjectToolDispatcher::heldObservationFrame() const
@@ -691,21 +700,53 @@ namespace uf::operator_runtime
         return m_state->heldObservationFrame();
     }
 
-    auto ProjectToolDispatcher::runObservationBody(
+    auto ProjectToolDispatcher::runToolBody(
         ProjectGenerationHandle const& program,
         ControllerBinding const& controller,
         ControlLease const& lease,
         ToolRootRequestIdentity const& root,
         ToolCallPositionIdentity const& call,
-        ObservationBodyRun body
+        ToolBodyRun body,
+        ToolBodyPostcondition postcondition
     ) -> Status
     {
-        return m_state->runObservationBody(
+        return m_state->runToolBody(
             program,
             controller,
             lease,
             root,
             call,
+            std::move(body),
+            std::move(postcondition)
+        );
+    }
+
+    auto ProjectToolDispatcher::runChildToolBody(
+        ToolCallPositionIdentity const& call,
+        ToolBodyRun body,
+        ToolBodyPostcondition postcondition
+    ) -> Status
+    {
+        return m_state->runChildToolBody(
+            call,
+            std::move(body),
+            std::move(postcondition)
+        );
+    }
+
+    auto ProjectToolDispatcher::issueBodyChild(
+        std::string_view toolName,
+        json::Value const& arguments,
+        script::ToolCallCoordinate const& coordinate,
+        std::stop_token cancellation,
+        ToolBodyRun body
+    ) -> Result<json::Value>
+    {
+        return m_state->issueChild(
+            toolName,
+            arguments,
+            coordinate,
+            cancellation,
             std::move(body)
         );
     }

@@ -9023,6 +9023,9 @@ namespace uf::operator_runtime
                     rootEffects,
                     readAdmittedRootEffects(database, rootCallIdentity)
                 );
+                // Soundness here requires that a Tool declaring no effects
+                // really does not mutate; the catalog and Tool boundary own
+                // that guarantee, not this loop.
                 for (auto const& effect : effectEnvelope->effects)
                 {
                     UF_TRY(childEffectWithinDeclaration(

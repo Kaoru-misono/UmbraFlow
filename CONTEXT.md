@@ -550,8 +550,15 @@ set is guessable:
 - exploration, `buildExplorationSurface` — `invoke`, plus the one non-capability
   field `error_tag` carrying `"uf.error"`. `invoke(toolName, arguments, body?)`
   issues one Tool call through the `task::ExplorationToolInvoke` seam the
-  session's ledgered caller supplied, and `body` is the closure an observation
-  holds its frame for.
+  session's ledgered caller supplied, and `body` is the one structured closure
+  a descriptor-declared Tool scope runs. Today `framework.screen.observe`
+  declares it per Tool and `framework.input.deliver` declares it per tagged arm,
+  with only `hold` accepting one.
+  An empty pointer-hold is refused as the `click` arm's second spelling. The
+  frozen 2026-08-25 ruling says `key` in that one sentence, but its own closed
+  contracts define `hold`/`click` over pointer coordinates and `key` over a
+  keyboard key name; the implementation follows the typed contract rather than
+  crossing those two arms.
 - trusted runtime, `RuntimeNativeState::install` — `runtime_model_bytes`,
   `runtime_semantic_hash`, `runtime_model_finalize`, `runtime_asset`,
   `runtime_cycle_open`, `runtime_cycle_current`, `runtime_match`, `runtime_read`,

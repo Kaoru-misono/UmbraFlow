@@ -231,6 +231,23 @@ namespace uf::operator_runtime
         uint32 maximumChildCalls{};
     };
 
+    // Whether one Tool call accepts a framework-owned structured body. A Tool
+    // with an untagged argument contract states one boolean in `takesBody`. A
+    // closed tagged contract instead names its tag and states the boolean for
+    // EVERY arm, so no missing arm can acquire a meaning from a default.
+    struct ToolBodyArm final
+    {
+        std::string name{};
+        bool        takesBody{};
+    };
+
+    struct ToolBodyDeclaration final
+    {
+        bool                     takesBody{};
+        std::string              taggedBy{};
+        std::vector<ToolBodyArm> arms{};
+    };
+
     // What one Tool Catalog descriptor says about a tool. Returned by the
     // catalog owner; there is no path by which a request proposes it.
     //
@@ -259,6 +276,10 @@ namespace uf::operator_runtime
         // ChildEffectDeclaration: empty is "no child call at all".
         ChildEffectDeclaration childEffects{};
 
+        // The one declaration of whether this Tool, or each arm of its closed
+        // tagged contract, accepts a structured body.
+        ToolBodyDeclaration body{};
+
         WorkflowLimits limits{};
         TimeoutPolicy  timeout{};
 
@@ -283,6 +304,19 @@ namespace uf::operator_runtime
     [[nodiscard]]
     auto childEffectDeclarationValid(ChildEffectDeclaration const& declaration)
         -> Status;
+
+    [[nodiscard]]
+    auto toolBodyDeclarationValid(ToolBodyDeclaration const& declaration)
+        -> Status;
+
+    // The body verdict for one call. `arm` is absent only for an untagged Tool;
+    // tagged declarations require the selected arm by name and refuse a name
+    // outside their closed enumeration.
+    [[nodiscard]]
+    auto toolTakesBody(
+        ToolBodyDeclaration const& declaration,
+        std::optional<std::string_view> arm
+    ) -> Result<bool>;
 
     // Whether the parent declaration admits this child tool at all. Risk is
     // judged per proposed effect and is deliberately not folded in here: a

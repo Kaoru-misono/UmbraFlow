@@ -616,7 +616,7 @@ target_compile_definitions(test-deployment PRIVATE
 # fourth would be cut over nothing.
 uf_shard_doctest_gates(
     TARGET test-deployment
-    TOTAL_CASES 32
+    TOTAL_CASES 33
     SHARDS 3
 )
 
@@ -739,7 +739,7 @@ if(TARGET ${PROJECT_NAME}_operator)
     # beside it.
     uf_shard_doctest_gates(
         TARGET test-operator
-        TOTAL_CASES 169
+        TOTAL_CASES 168
         SHARDS 6
     )
 

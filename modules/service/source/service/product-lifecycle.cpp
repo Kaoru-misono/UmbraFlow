@@ -810,22 +810,22 @@ namespace uf::service
         // Both members are borrows of the frame that started the call and
         // nothing is retained: `request` is the admitted request runAdmitted
         // holds for the whole dispatch, and `body` is consumed exactly once.
-        struct ObservationBodyContext final
+        struct ToolBodyContext final
         {
-            operator_runtime::ToolAdmissionRequest const& request;
-            operator_runtime::ObservationBodyRun&         body;
+            operator_runtime::ToolAdmissionRequest const* pRequest{};
+            operator_runtime::ToolBodyRun&                 body;
         };
 
         [[nodiscard]]
         auto answerFrameworkTool(
             operator_runtime::ToolCallPositionIdentity const& call,
-            ObservationBodyContext* p_bodyContext
+            ToolBodyContext* p_bodyContext
         ) -> Result<operator_runtime::ToolCallCompletion>;
 
         [[nodiscard]]
         auto answerObserveTool(
             operator_runtime::ToolCallPositionIdentity const& call,
-            ObservationBodyContext* p_bodyContext
+            ToolBodyContext* p_bodyContext
         ) -> Result<operator_runtime::ToolCallCompletion>;
 
         // The three measuring Tools. Each binds BY CALL POSITION to the
@@ -924,7 +924,7 @@ namespace uf::service
         auto runAdmitted(
             operator_runtime::ToolAdmissionRequest const& request,
             task::TaskContext& context,
-            operator_runtime::ObservationBodyRun body
+            operator_runtime::ToolBodyRun body
         ) -> Result<operator_runtime::ToolCallReplay>;
 
         // One top-of-run Framework call, admitted. It is factored out of
@@ -940,7 +940,7 @@ namespace uf::service
         // One Tool call issued from an exploration chunk.
         //
         // Two routes and one rule deciding between them: a call written inside
-        // an observation's body is a CHILD of that observation and goes through
+        // a Tool body is a CHILD of that body-taking call and goes through
         // the dispatcher's own child seam, and every other call is issued at the
         // top of this session's run. Neither is chosen by the chunk -- the chunk
         // names a Tool and an argument value, and where the call lands is
@@ -953,10 +953,10 @@ namespace uf::service
             task::ExplorationCallBody body
         ) -> Result<json::Value>;
 
-        // The observation whose body is running, and how many children it has
-        // issued so far. Both are empty outside a body; the VM is
-        // single-threaded and a nested observation is refused by name, so at
-        // most one body is ever open.
+        // The innermost Tool whose body is running, and how many children that
+        // body has issued. Each nested body saves and restores the outer pair,
+        // so depth is represented only by the ledger's call tree and carries no
+        // framework depth constant.
         std::optional<ContentHash> explorationBodyCall{};
         uint64                     explorationBodyChildren{};
 
@@ -1150,10 +1150,20 @@ namespace uf::service
                 implementation->operatorHost.coordinator(),
                 implementation->observations,
                 implementation->policyAuthority,
-                [p_implementation](
-                    operator_runtime::ToolCallPositionIdentity const& call
+                operator_runtime::ToolBodyProvider{[p_implementation](
+                    operator_runtime::ToolCallPositionIdentity const& call,
+                    operator_runtime::ToolBodyRun body
                 ) -> Result<operator_runtime::ToolCallCompletion>
-                { return p_implementation->answerFrameworkTool(call, nullptr); }
+                {
+                    auto bodyContext = Impl::ToolBodyContext{
+                        .pRequest = nullptr,
+                        .body     = body,
+                    };
+                    return p_implementation->answerFrameworkTool(
+                        call,
+                        &bodyContext
+                    );
+                }}
             )
         );
         implementation->toolDispatcher.emplace(std::move(dispatcher));
@@ -1385,108 +1395,69 @@ namespace uf::service
 
     auto ProductLifecycle::Impl::answerObserveTool(
         operator_runtime::ToolCallPositionIdentity const& call,
-        ObservationBodyContext* p_bodyContext
+        ToolBodyContext* p_bodyContext
     ) -> Result<operator_runtime::ToolCallCompletion>
     {
-        // AN OBSERVE WITH NO BODY IS A FRAME WITH AN EMPTY BODY: open, resolve,
-        // close inside this one call
-        // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
-        // With a body it is open, resolve, RUN THE BODY, close -- the same call
-        // and the same scope, differing only in whether anything is written
-        // inside it. Nothing about the ownership moves either way.
-        //
-        // The frame is asked for BEFORE it is taken, so a second concurrent one
-        // costs no capture and earns a refusal that names what it refused,
-        // rather than arriving as the Host's one-cycle invariant. Opening first
-        // and asking afterwards would leave a frame nothing owns every time the
-        // answer is no, which is attachHeldInput's reason exactly.
         auto* const p_context = &activeContext();
-        UF_TRY(dispatcher().engageObservationFrame(
-            call.identity(),
-            // The close borrows the context, and the backing owner is the
-            // admitted request this call runs inside: runAdmitted holds the
-            // TaskContext for the whole dispatch, every scope this frame can
-            // reach exits inside that dispatch, and the Tool Runtime is
-            // single-threaded by contract. Nothing here outlives that.
-            [p_host = &operatorHost.host(), p_context]() -> Status
+        auto answered = std::optional<
+            Result<operator_runtime::ToolCallCompletion>
+        >{};
+        auto inner = p_bodyContext != nullptr
+            ? std::move(p_bodyContext->body)
+            : operator_runtime::ToolBodyRun{};
+        auto* const p_self = this;
+        auto scope = operator_runtime::ToolBodyRun{
+            [p_self, p_context, &call, &answered,
+             inner = std::move(inner)]() mutable -> Status
             {
-                static_cast<void>(p_host->disengageObservationFrame(*p_context));
-                return ok();
-            }
-        ));
-
-        auto answered = observedToolResult(call, *p_context);
-
-        // THE BODY, INSIDE THE FRAME AND INSIDE THIS CALL'S OWN DISPATCH. Both
-        // halves matter: the measuring calls it makes bind by position to the
-        // frame opened above, and a delegation grant can only be minted from a
-        // parent whose durable row is still dispatching -- which this one is,
-        // because a provider runs between the dispatch boundary and the
-        // terminal write.
-        //
-        // It runs only after the state resolved, so a body never measures a
-        // frame the resolution failed on.
-        if (answered.has_value() && p_bodyContext != nullptr)
-        {
-            // The two counters the exploration seam reads to decide that a call
-            // is this observation's child, saved and restored around the body
-            // rather than assigned: they are the frame's, and the frame is this
-            // call's scope. The lambda is consumed inside this same call --
-            // runObservationBody runs it synchronously and returns -- so the
-            // pointer it carries names an object that strictly outlives it.
-            auto* const p_self = this;
-            auto ran = dispatcher().runObservationBody(
-                generationHandle(),
-                p_bodyContext->request.controller,
-                p_bodyContext->request.lease,
-                p_bodyContext->request.root,
-                call,
-                [p_self, frameCall = call.identity(),
-                 inner = std::move(p_bodyContext->body)]() mutable -> Status
-                {
-                    auto const outerCall = std::exchange(
-                        p_self->explorationBodyCall,
-                        std::optional{frameCall}
-                    );
-                    auto const outerChildren = std::exchange(
-                        p_self->explorationBodyChildren,
-                        uint64{0}
-                    );
-                    auto ranBody = inner();
-                    p_self->explorationBodyCall     = outerCall;
-                    p_self->explorationBodyChildren = outerChildren;
-                    return ranBody;
-                }
-            );
-            if (!ran)
-            {
-                answered = std::unexpected{std::move(ran).error()};
-            }
-        }
-
-        // Unconditional, and before the answer is looked at. The engage above
-        // refused if anything was already open, so what closes here can only be
-        // this call's own frame -- including on the path where the observation
-        // itself failed and the frame it would have owned never opened.
-        auto closed = dispatcher().closeObservationFrameOpenedInside(std::nullopt);
-        if (!answered)
-        {
-            auto error = std::move(answered).error();
-            if (!closed)
-            {
-                error.addContext(
-                    "closing the observation frame this call opened also "
-                    "failed: "
-                        + std::string{closed.error().message()}
+                UF_TRY(p_self->dispatcher().engageObservationFrame(
+                    call.identity(),
+                    [p_host = &p_self->operatorHost.host(), p_context]() -> Status
+                    {
+                        static_cast<void>(
+                            p_host->disengageObservationFrame(*p_context)
+                        );
+                        return ok();
+                    }
+                ));
+                answered.emplace(
+                    p_self->observedToolResult(call, *p_context)
                 );
+                if (!answered->has_value() || !inner)
+                {
+                    return answered->has_value()
+                        ? ok()
+                        : std::unexpected{std::move(*answered).error()};
+                }
+
+                auto const outerCall = std::exchange(
+                    p_self->explorationBodyCall,
+                    std::optional{call.identity()}
+                );
+                auto const outerChildren = std::exchange(
+                    p_self->explorationBodyChildren,
+                    uint64{0}
+                );
+                auto ran = inner();
+                p_self->explorationBodyCall     = outerCall;
+                p_self->explorationBodyChildren = outerChildren;
+                return ran;
             }
-            return std::unexpected{std::move(error)};
-        }
-        if (!closed)
-        {
-            return std::unexpected{std::move(closed).error()};
-        }
-        return answered;
+        };
+
+        auto ran = p_bodyContext != nullptr && p_bodyContext->pRequest != nullptr
+            ? dispatcher().runToolBody(
+                  generationHandle(),
+                  p_bodyContext->pRequest->controller,
+                  p_bodyContext->pRequest->lease,
+                  p_bodyContext->pRequest->root,
+                  call,
+                  std::move(scope)
+              )
+            : dispatcher().runChildToolBody(call, std::move(scope));
+        UF_TRY(std::move(ran));
+        UF_CHECK(answered.has_value() && answered->has_value());
+        return *std::move(answered);
     }
 
     auto ProductLifecycle::Impl::observedToolResult(
@@ -2087,20 +2058,16 @@ namespace uf::service
 
         // A HOLD HANDS THE LIFT OVER BEFORE IT PRESSES ANYTHING.
         //
-        // An engaged hold returns with the button down, so the frame that lifts
-        // it is the Tool call this one was issued from, and that frame has to
-        // exist. Pressing first and asking afterwards would deliver an
+        // An engaged hold returns with the button down, so its own structured
+        // body scope owns the lift. Pressing first and asking afterwards would deliver an
         // unasked-for press-and-release -- a click to the target -- every time
         // the answer was no. Asking first costs nothing: a run that engages
         // nothing closes a release that finds nothing engaged and answers ok.
         //
-        // A top-level hold is what the answer is no for: the dispatcher anchors
-        // no live issuing context on a root position, so there is no frame, and
-        // the refusal names the position it looked for.
         if (holding)
         {
-            auto attached = dispatcher().attachHeldInput(
-                call.parentIdentity(),
+            auto attached = dispatcher().attachToolBodyScope(
+                call.identity(),
                 // The release borrows the context, and the backing owner is the
                 // admitted request this call runs inside: runAdmitted holds the
                 // TaskContext for the whole dispatch, the run this is handed to
@@ -2252,7 +2219,7 @@ namespace uf::service
 
     auto ProductLifecycle::Impl::answerFrameworkTool(
         operator_runtime::ToolCallPositionIdentity const& call,
-        ObservationBodyContext* p_bodyContext
+        ToolBodyContext* p_bodyContext
     ) -> Result<operator_runtime::ToolCallCompletion>
     {
         auto const& toolName = call.toolName();
@@ -2290,7 +2257,112 @@ namespace uf::service
         }
         if (toolName == k_deliverInputTool)
         {
-            return answerDeliverInputTool(call);
+            UF_TRY_VALUE(
+                arguments,
+                operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
+            );
+            UF_TRY_VALUE(
+                action,
+                requiredStringArgument(arguments.value(), "action")
+            );
+            if (action != "hold")
+            {
+                if (p_bodyContext != nullptr && p_bodyContext->body)
+                {
+                    return fail(
+                        AutomationErrorKind::ActionRejected,
+                        "framework.input.deliver#" + action
+                            + " does not declare a body"
+                    );
+                }
+                return answerDeliverInputTool(call);
+            }
+
+            constexpr auto k_emptyHold = std::string_view{
+                "a hold body is empty; press and release is the `click` arm."
+            };
+            if (p_bodyContext == nullptr || !p_bodyContext->body)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    std::string{k_emptyHold}
+                );
+            }
+
+            auto answered = std::optional<
+                Result<operator_runtime::ToolCallCompletion>
+            >{};
+            auto scope = operator_runtime::ToolBodyRun{
+                [this, &call, &answered,
+                 inner = std::move(p_bodyContext->body)]() mutable -> Status
+                {
+                    answered.emplace(answerDeliverInputTool(call));
+                    if (!answered->has_value())
+                    {
+                        return std::unexpected{
+                            std::move(*answered).error()
+                        };
+                    }
+                    if (
+                        (**answered).kind()
+                            != operator_runtime::ToolCallCompletionKind::Confirmed
+                    )
+                    {
+                        return ok();
+                    }
+
+                    auto const outerCall = std::exchange(
+                        explorationBodyCall,
+                        std::optional{call.identity()}
+                    );
+                    auto const outerChildren = std::exchange(
+                        explorationBodyChildren,
+                        uint64{0}
+                    );
+                    auto ran                = inner();
+                    explorationBodyCall     = outerCall;
+                    explorationBodyChildren = outerChildren;
+                    return ran;
+                }
+            };
+            auto nonemptyWhenEngaged = operator_runtime::ToolBodyPostcondition{
+                [&answered, empty = std::string{k_emptyHold}](
+                    uint64 issuedChildren
+                ) mutable -> Status
+                {
+                    if (
+                        answered.has_value() && answered->has_value()
+                        && (**answered).kind()
+                            == operator_runtime::ToolCallCompletionKind::Confirmed
+                        && issuedChildren == 0U
+                    )
+                    {
+                        return fail(
+                            AutomationErrorKind::ActionRejected,
+                            std::move(empty)
+                        );
+                    }
+                    return ok();
+                }
+            };
+            auto ran = p_bodyContext->pRequest != nullptr
+                ? dispatcher().runToolBody(
+                      generationHandle(),
+                      p_bodyContext->pRequest->controller,
+                      p_bodyContext->pRequest->lease,
+                      p_bodyContext->pRequest->root,
+                      call,
+                      std::move(scope),
+                      std::move(nonemptyWhenEngaged)
+                  )
+                : dispatcher().runChildToolBody(
+                      call,
+                      std::move(scope),
+                      std::move(nonemptyWhenEngaged)
+                  );
+            UF_TRY(std::move(ran));
+            UF_CHECK(answered.has_value() && answered->has_value());
+            return *std::move(answered);
         }
         if (toolName == k_waitTool)
         {
@@ -2355,22 +2427,47 @@ namespace uf::service
     auto ProductLifecycle::Impl::runAdmitted(
         operator_runtime::ToolAdmissionRequest const& request,
         task::TaskContext& context,
-        operator_runtime::ObservationBodyRun body
+        operator_runtime::ToolBodyRun body
     ) -> Result<operator_runtime::ToolCallReplay>
     {
         auto const active = ActiveContext{*this, context};
 
-        // The outermost scope an observation frame can live inside, and
-        // therefore the one that closes a frame no inner scope did.
-        //
-        // For a ROOT observe this is not a backstop but the whole of the rule:
-        // a root call has no body, so its frame is a frame with an empty body --
-        // open, resolve, close in one call, which is exactly what an observe
-        // with no measurements has always been. Root and nested are one shape
-        // because the frame is anchored on the observe call's own position
-        // either way; only which scope exits around it differs
-        // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
-        auto const inheritedFrame = dispatcher().heldObservationFrame();
+        if (body)
+        {
+            auto selectedArmStorage = std::string{};
+            auto selectedArm        = std::optional<std::string_view>{};
+            if (!request.call.descriptor().body.taggedBy.empty())
+            {
+                UF_TRY_VALUE(
+                    arguments,
+                    operator_runtime::CanonicalJson::parseExact(
+                        request.call.canonicalArgs()
+                    )
+                );
+                auto const* const p_tag = arguments.value().find(
+                    request.call.descriptor().body.taggedBy
+                );
+                UF_CHECK(p_tag != nullptr);
+                selectedArmStorage = p_tag->string();
+                selectedArm        = selectedArmStorage;
+            }
+            UF_TRY_VALUE(
+                takesBody,
+                operator_runtime::toolTakesBody(
+                    request.call.descriptor().body,
+                    selectedArm
+                )
+            );
+            if (!takesBody)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Tool " + request.call.toolName()
+                        + " does not declare a body for this call"
+                );
+            }
+        }
+
         // Which code answers a call is decided by the name's owner and by
         // nothing else. A Tool this generation bound runs on its own scoped
         // program through the dispatcher; every other admitted name belongs to
@@ -2388,6 +2485,13 @@ namespace uf::service
                     .has_value()
             )
             {
+                if (body)
+                {
+                    return fail(
+                        AutomationErrorKind::ActionRejected,
+                        "a bound Project Tool does not declare framework scope semantics"
+                    );
+                }
                 return dispatcher().dispatch(
                     generationHandle(),
                     request,
@@ -2399,15 +2503,11 @@ namespace uf::service
                 operatorHost.coordinator(),
             };
             auto* const p_self = this;
-            auto bodyContext = ObservationBodyContext{
-                .request = request,
-                .body    = body,
+            auto bodyContext = ToolBodyContext{
+                .pRequest = &request,
+                .body     = body,
             };
-            // The context is offered only when there IS a body: a provider that
-            // received an empty one would have to decide whether an empty body
-            // means "no body" or "a body that does nothing", which is the
-            // absent-means-something reading this repository forbids.
-            auto* const p_bodyContext = body ? &bodyContext : nullptr;
+            auto* const p_bodyContext = &bodyContext;
             auto provider = [p_self, p_bodyContext](
                                 operator_runtime::ToolCallPositionIdentity const&
                                     admittedCall
@@ -2416,28 +2516,6 @@ namespace uf::service
             return executor.invoke(request, provider);
         }();
 
-        // Unconditional, and before the answer is looked at. Not a scope guard,
-        // for the reason the dispatcher's own close is not one: a guard would
-        // have to swallow the close's own failure, and a Host that will not
-        // release a frame is exactly what an operator has to be told about.
-        auto closed = dispatcher().closeObservationFrameOpenedInside(inheritedFrame);
-        if (!replay)
-        {
-            auto error = std::move(replay).error();
-            if (!closed)
-            {
-                error.addContext(
-                    "closing the observation frame this Tool call left open "
-                    "also failed: "
-                        + std::string{closed.error().message()}
-                );
-            }
-            return std::unexpected{std::move(error)};
-        }
-        if (!closed)
-        {
-            return std::unexpected{std::move(closed).error()};
-        }
         return replay;
     }
 
@@ -2541,29 +2619,16 @@ namespace uf::service
         // records the call under it.
         if (explorationBodyCall.has_value())
         {
-            if (body)
-            {
-                // Refused here rather than left to the frame's own single-slot
-                // refusal, because a body handed to a child call would be
-                // silently dropped by the seam that carries no body at all --
-                // and a body that did not run is worse than one refused.
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "an observation may not be written inside another "
-                    "observation's body; at most one observation frame may be "
-                    "open, and the call at "
-                        + explorationBodyCall->hex() + " is holding it"
-                );
-            }
             ++explorationBodyChildren;
-            return dispatcher().toolRuntimeSeam()(
+            return dispatcher().issueBodyChild(
                 toolName,
                 arguments,
                 script::ToolCallCoordinate{
                     .parentPosition = *explorationBodyCall,
                     .childIndex     = explorationBodyChildren,
                 },
-                context.cancellation()
+                context.cancellation(),
+                std::move(body)
             );
         }
 

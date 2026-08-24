@@ -270,6 +270,7 @@ namespace uf::project
                                 },
                             }),
                         },
+                        {"body", json::Value::ofBoolean(false)},
                         {
                             // The empty declaration, written out. A scaffold
                             // tool calls nothing, and this is how a tool says

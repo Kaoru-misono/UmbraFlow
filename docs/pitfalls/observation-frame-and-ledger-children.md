@@ -40,9 +40,10 @@ the one catalog-hash move, and neither was routed around:
   `framework.screen.read_lines` — so a grant can be minted from it.
 - The body runs **inside the observe provider**, between the durable dispatch
   boundary and the terminal write, so the row is still `Dispatching` when the
-  grant is minted. `ProjectToolDispatcher::runObservationBody` anchors an
-  issuing context on the observe call's own position for the body's extent,
-  which is `runBoundEntry`'s registration and nothing else.
+  grant is minted. `ProjectToolDispatcher::runToolBody` anchors an issuing
+  context on the observe call's own position for the body's extent. The same
+  function now owns `input.deliver#hold` bodies; only the Tool-supplied close
+  differs (frame release versus input lift).
 
 **The third gate the symptom did not name, and the one that shapes the whole
 vocabulary**: admission also matches a child's proposed effect against the

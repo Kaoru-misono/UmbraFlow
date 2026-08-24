@@ -225,6 +225,89 @@ namespace uf::operator_runtime
         return ok();
     }
 
+    auto toolBodyDeclarationValid(ToolBodyDeclaration const& declaration)
+        -> Status
+    {
+        auto const tagged = !declaration.taggedBy.empty();
+        if (tagged != !declaration.arms.empty())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                tagged
+                    ? "Tool body declaration names a tag but no arms"
+                    : "Tool body declaration names arms but no tag"
+            );
+        }
+        if (!tagged)
+        {
+            return ok();
+        }
+        if (declaration.takesBody)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "a tagged Tool body declaration states bodies per arm, not per Tool"
+            );
+        }
+        auto names = std::vector<std::string>{};
+        names.reserve(declaration.arms.size());
+        for (auto const& arm : declaration.arms)
+        {
+            if (arm.name.empty())
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "Tool body declaration names an empty arm"
+                );
+            }
+            names.emplace_back(arm.name);
+        }
+        std::ranges::sort(names);
+        if (std::ranges::adjacent_find(names) != names.end())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "Tool body declaration names one arm twice"
+            );
+        }
+        return ok();
+    }
+
+    auto toolTakesBody(
+        ToolBodyDeclaration const& declaration,
+        std::optional<std::string_view> arm
+    ) -> Result<bool>
+    {
+        UF_TRY(toolBodyDeclarationValid(declaration));
+        if (declaration.taggedBy.empty())
+        {
+            if (arm.has_value())
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "an untagged Tool body declaration was asked for an arm"
+                );
+            }
+            return declaration.takesBody;
+        }
+        if (!arm.has_value())
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "a tagged Tool body declaration was asked without its selected arm"
+            );
+        }
+        auto const found = std::ranges::find(declaration.arms, *arm, &ToolBodyArm::name);
+        if (found == declaration.arms.end())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "Tool body declaration has no arm named " + std::string{*arm}
+            );
+        }
+        return found->takesBody;
+    }
+
     auto childToolWithinDeclaration(
         ChildEffectDeclaration const& declaration,
         std::string_view parentToolName,

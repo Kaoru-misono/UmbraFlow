@@ -531,81 +531,43 @@ return {
         };
 
         [[nodiscard]]
-        auto frameworkProvider(std::shared_ptr<RunLog> log) -> ToolProvider
+        auto recordFrameworkCall(
+            std::shared_ptr<RunLog> const& log,
+            ToolCallPositionIdentity const& call
+        ) -> Result<ToolCallCompletion>
+        {
+            ++log->frameworkExecutions;
+            UF_TRY_VALUE(
+                recorded,
+                CanonicalJson::parseExact(json::canonicalBytes(
+                    json::Value::ofObject({
+                        {"recorded", json::Value::ofString(call.toolName())},
+                    })
+                ))
+            );
+            return ToolCallCompletion::confirmed(std::move(recorded));
+        }
+
+        [[nodiscard]]
+        auto frameworkProvider(std::shared_ptr<RunLog> log) -> ToolBodyProvider
+        {
+            return [log = std::move(log)](
+                       ToolCallPositionIdentity const& call,
+                       ToolBodyRun body
+                   ) -> Result<ToolCallCompletion>
+            {
+                REQUIRE_FALSE(body);
+                return recordFrameworkCall(log, call);
+            };
+        }
+
+        [[nodiscard]]
+        auto leafFrameworkProvider(std::shared_ptr<RunLog> log) -> ToolProvider
         {
             return [log = std::move(log)](
                        ToolCallPositionIdentity const& call
                    ) -> Result<ToolCallCompletion>
-            {
-                ++log->frameworkExecutions;
-                UF_TRY_VALUE(
-                    recorded,
-                    CanonicalJson::parseExact(json::canonicalBytes(
-                        json::Value::ofObject({
-                            {"recorded", json::Value::ofString(call.toolName())},
-                        })
-                    ))
-                );
-                return ToolCallCompletion::confirmed(std::move(recorded));
-            };
-        }
-
-        // What a fake engaged input records: how many presses were handed to a
-        // run, how many of those were lifted, and whether the target refuses
-        // the lift.
-        struct EngagedInputLog final
-        {
-            uint32 engaged{0};
-            uint32 lifted{0};
-            bool   refuseRelease{false};
-        };
-
-        // A Framework provider that ENGAGES rather than acting and returning.
-        // It hands the run the release and answers with the input still held,
-        // which is the shape a holding Framework Tool has: everything the
-        // handler does next happens while the button is down.
-        //
-        // It needs the dispatcher it is installed in, which is why the seam is
-        // a slot filled after create -- the same knot ProductLifecycle ties,
-        // where one object owns both the provider surface and the dispatcher.
-        [[nodiscard]]
-        auto engagingFrameworkProvider(
-            std::shared_ptr<std::optional<ProjectToolDispatcher>> seam,
-            std::shared_ptr<EngagedInputLog> log
-        ) -> ToolProvider
-        {
-            return [seam = std::move(seam), log = std::move(log)](
-                       ToolCallPositionIdentity const& call
-                   ) -> Result<ToolCallCompletion>
-            {
-                ++log->engaged;
-                UF_TRY(
-                    (*seam)->attachHeldInput(
-                        call.parentIdentity(),
-                        [log]() -> Status
-                        {
-                            ++log->lifted;
-                            if (log->refuseRelease)
-                            {
-                                return fail(
-                                    AutomationErrorKind::IoFailure,
-                                    "the target would not take the release"
-                                );
-                            }
-                            return ok();
-                        }
-                    )
-                );
-                UF_TRY_VALUE(
-                    recorded,
-                    CanonicalJson::parseExact(json::canonicalBytes(
-                        json::Value::ofObject({
-                            {"engaged", json::Value::ofString(call.toolName())},
-                        })
-                    ))
-                );
-                return ToolCallCompletion::confirmed(std::move(recorded));
-            };
+            { return recordFrameworkCall(log, call); };
         }
 
         // What a fake observation frame records: how many were opened, how many
@@ -634,43 +596,73 @@ return {
         auto observingFrameworkProvider(
             std::shared_ptr<std::optional<ProjectToolDispatcher>> seam,
             std::shared_ptr<ObservationFrameLog> log
-        ) -> ToolProvider
+        ) -> ToolBodyProvider
         {
             return [seam = std::move(seam), log = std::move(log)](
-                       ToolCallPositionIdentity const& call
+                       ToolCallPositionIdentity const& call,
+                       ToolBodyRun body
                    ) -> Result<ToolCallCompletion>
             {
-                auto engaged = (*seam)->engageObservationFrame(
-                    call.identity(),
-                    [log]() -> Status
+                auto answered = std::optional<ToolCallCompletion>{};
+                auto ran = (*seam)->runChildToolBody(
+                    call,
+                    [seam, log, &call, &answered,
+                     body = std::move(body)]() mutable -> Status
                     {
-                        ++log->closed;
-                        if (log->refuseClose)
+                        auto engaged = (*seam)->engageObservationFrame(
+                            call.identity(),
+                            [log]() -> Status
+                            {
+                                ++log->closed;
+                                if (log->refuseClose)
+                                {
+                                    return fail(
+                                        AutomationErrorKind::IoFailure,
+                                        "the Host would not release the frame"
+                                    );
+                                }
+                                return ok();
+                            }
+                        );
+                        if (!engaged)
                         {
-                            return fail(
-                                AutomationErrorKind::IoFailure,
-                                "the Host would not release the frame"
-                            );
+                            log->refusal = std::string{
+                                engaged.error().message()
+                            };
+                            return std::unexpected{
+                                std::move(engaged).error()
+                            };
                         }
+                        ++log->opened;
+                        log->holder = call.identity().hex();
+                        if (body)
+                        {
+                            UF_TRY(body());
+                        }
+                        UF_TRY_VALUE(
+                            recorded,
+                            CanonicalJson::parseExact(json::canonicalBytes(
+                                json::Value::ofObject({
+                                    {"observed", json::Value::ofString(
+                                         call.toolName()
+                                     )},
+                                })
+                            ))
+                        );
+                        answered.emplace(
+                            ToolCallCompletion::confirmed(
+                                std::move(recorded)
+                            )
+                        );
                         return ok();
                     }
                 );
-                if (!engaged)
+                if (!ran)
                 {
-                    log->refusal = std::string{engaged.error().message()};
-                    return std::unexpected{std::move(engaged).error()};
+                    return std::unexpected{std::move(ran).error()};
                 }
-                ++log->opened;
-                log->holder = call.identity().hex();
-                UF_TRY_VALUE(
-                    recorded,
-                    CanonicalJson::parseExact(json::canonicalBytes(
-                        json::Value::ofObject({
-                            {"observed", json::Value::ofString(call.toolName())},
-                        })
-                    ))
-                );
-                return ToolCallCompletion::confirmed(std::move(recorded));
+                REQUIRE(answered.has_value());
+                return std::move(*answered);
             };
         }
 
@@ -1181,169 +1173,8 @@ return {
         );
     }
 
-    // The closure is what a session may call, and every call is measured
-    // against it. The refusal names the Tool AND the closure it was measured
-    // against: a message naming only the Tool leaves the caller guessing which
-    // set it was judged by, and a session's closure is the whole difference
-    // between one session and another now that there is no second kind.
-    //
-    // Rewriting @umbraflow/tools' membership test in tools.call as
-    // `if false then` reds this case.
-    // Hold-with-children's frame guarantee, at the layer that owns the frame.
-    //
-    // An input engaged by a child call is lifted when the RUN closes, not when
-    // the leaf that pressed returns -- which is the whole difference between a
-    // press something can look past and a press that ends inside its own call.
-    // The invariant it keeps is engine::IActionSink::releaseHeldInputs's,
-    // measured per frame; see
-    // docs/decisions/2026-08-24-an-authoring-session-is-a-first-class-tool-session.md.
-    //
-    // Deleting the run.releaseHeldInput() call in runBoundEntry reds every
-    // subcase here.
-    TEST_CASE("a Tool call lifts the input a child engaged, on every exit path")
-    {
-        auto temporary          = TemporaryDirectory{};
-        auto const registration = verifiedGeneration();
-        auto prepared = firstIncarnation(temporary.path(), registration);
-
-        auto const held = std::make_shared<EngagedInputLog>();
-        auto const seam =
-            std::make_shared<std::optional<ProjectToolDispatcher>>();
-
-        auto dispatcher = ProjectToolDispatcher::create(
-            prepared.store,
-            prepared.observations,
-            prepared.policyAuthority,
-            engagingFrameworkProvider(seam, held)
-        );
-        REQUIRE_MESSAGE(dispatcher.has_value(), failureText(dispatcher));
-        *seam = *dispatcher;
-
-        auto registrar = ProjectGenerationRegistrar{};
-        auto const program =
-            loadProgram(registration, registrar, *dispatcher);
-
-        SUBCASE("a handler that finished leaves nothing held")
-        {
-            auto const root = rootFor("dispatch-hold-finished");
-            auto const call = rootCall(
-                program,
-                root,
-                R"({"children":["framework.audit.record"]})"
-            );
-            auto const answered = dispatcher->dispatch(
-                program,
-                ToolAdmissionRequest{
-                    .controller      = prepared.controller,
-                    .lease           = prepared.lease,
-                    .root            = root,
-                    .call            = call,
-                    .policyAuthority = prepared.policyAuthority,
-                },
-                std::stop_token{}
-            );
-            REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
-            CHECK(answered->state == ToolCallState::Confirmed);
-
-            // The press outlived the call that made it and was lifted exactly
-            // once, by the frame that owned it.
-            CHECK(held->engaged == 1U);
-            CHECK(held->lifted == 1U);
-        }
-
-        SUBCASE("a child call that aborts mid-hold still leaves nothing held")
-        {
-            // The second child names a Tool outside the pinned closure, so the
-            // handler raises AFTER the first child engaged. This is the exit
-            // path a leaf-owned release could never cover: nothing in the
-            // engaging call runs again to clean up after it.
-            auto const root = rootFor("dispatch-hold-aborted");
-            auto const call = rootCall(
-                program,
-                root,
-                R"({"children":["framework.audit.record","dispatch.project.absent"]})"
-            );
-            auto const answered = dispatcher->dispatch(
-                program,
-                ToolAdmissionRequest{
-                    .controller      = prepared.controller,
-                    .lease           = prepared.lease,
-                    .root            = root,
-                    .call            = call,
-                    .policyAuthority = prepared.policyAuthority,
-                },
-                std::stop_token{}
-            );
-            REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
-            CHECK(answered->state == ToolCallState::TerminalFailure);
-
-            CHECK(held->engaged == 1U);
-            CHECK(held->lifted == 1U);
-        }
-
-        SUBCASE("a release the target refuses is reported rather than swallowed")
-        {
-            held->refuseRelease = true;
-
-            auto const root = rootFor("dispatch-hold-release-refused");
-            auto const call = rootCall(
-                program,
-                root,
-                R"({"children":["framework.audit.record"]})"
-            );
-            auto const answered = dispatcher->dispatch(
-                program,
-                ToolAdmissionRequest{
-                    .controller      = prepared.controller,
-                    .lease           = prepared.lease,
-                    .root            = root,
-                    .call            = call,
-                    .policyAuthority = prepared.policyAuthority,
-                },
-                std::stop_token{}
-            );
-            REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
-
-            // The handler answered fine; the release did not. A target that
-            // will not take a release is exactly what an operator has to be
-            // told about, so it becomes this call's outcome rather than a
-            // detail a scope guard dropped.
-            CHECK(answered->state == ToolCallState::TerminalFailure);
-            CHECK(payloadOf(*answered).contains("would not take the release"));
-            CHECK(held->lifted == 1U);
-        }
-
-        SUBCASE("one run holds one engagement")
-        {
-            // One release lifts every held input, so a second engagement on one
-            // run would share the first one's act and neither could say which
-            // of them ended.
-            auto const root = rootFor("dispatch-hold-twice");
-            auto const call = rootCall(
-                program,
-                root,
-                R"({"children":["framework.audit.record","framework.audit.record"]})"
-            );
-            auto const answered = dispatcher->dispatch(
-                program,
-                ToolAdmissionRequest{
-                    .controller      = prepared.controller,
-                    .lease           = prepared.lease,
-                    .root            = root,
-                    .call            = call,
-                    .policyAuthority = prepared.policyAuthority,
-                },
-                std::stop_token{}
-            );
-            REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
-            CHECK(held->engaged == 2U);
-            CHECK(held->lifted == 1U);
-        }
-    }
-
     TEST_CASE(
-        "an observation frame closes when the scope that opened it exits, and a "
-        "second concurrent frame is refused by name"
+        "an observation frame closes when the Tool body scope that opened it exits"
     )
     {
         auto temporary          = TemporaryDirectory{};
@@ -1426,13 +1257,11 @@ return {
             CHECK_FALSE(dispatcher->heldObservationFrame().has_value());
         }
 
-        SUBCASE("a second concurrent frame is refused by name")
+        SUBCASE("a sequential second frame opens after the first closes")
         {
-            // Two observes in one body. The second is refused BEFORE the Host is
-            // asked for a capture, and the refusal names the holding call, the
-            // limit and what exceeded it -- which is what keeps the Host's own
-            // one-cycle rule an internal invariant only a framework bug can
-            // reach.
+            // Two sibling calls are two sequential scopes. Treating the first
+            // frame as owned by the enclosing handler would make the second
+            // look concurrent and break every polling loop.
             auto const root = rootFor("dispatch-frame-twice");
             auto const call = rootCall(
                 program,
@@ -1451,27 +1280,11 @@ return {
                 std::stop_token{}
             );
             REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
-            // The refusal is the SECOND OBSERVE'S own outcome and not the
-            // handler's: a Tool that ran and refused is a value the body may go
-            // on from, exactly as every other refused Framework call is.
             CHECK(answered->state == ToolCallState::Confirmed);
 
-            CHECK(frames->opened == 1U);
-            CHECK(frames->refusal.contains(
-                "at most one concurrent observation frame may be open"
-            ));
-            CHECK(frames->refusal.contains(frames->holder));
-            CHECK(frames->refusal.contains("opening a second exceeded it"));
-
-            // What must NOT fire. The Host's ledger says this when a second
-            // cycle is opened over an open one, and after this change no
-            // sequence a Project can write reaches it.
-            CHECK_FALSE(
-                frames->refusal.contains("an observation cycle is already open")
-            );
-
-            // The frame the first observe opened still closed on the way out.
-            CHECK(frames->closed == 1U);
+            CHECK(frames->opened == 2U);
+            CHECK(frames->closed == 2U);
+            CHECK(frames->refusal.empty());
             CHECK_FALSE(dispatcher->heldObservationFrame().has_value());
         }
 
@@ -1497,20 +1310,28 @@ return {
                 std::stop_token{}
             );
             REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
-            CHECK(answered->state == ToolCallState::TerminalFailure);
-            CHECK(payloadOf(*answered).contains(
+            CHECK(answered->state == ToolCallState::Confirmed);
+
+            auto context = ToolCallIssuingContext::forHandler(call);
+            auto child = context.issue(frameworkInvocation(
+                k_auditTool,
+                R"({"record":{"step":1}})"
+            ));
+            REQUIRE_MESSAGE(child.has_value(), failureText(child));
+            auto childReplay = prepared.store.replayToolCall(root, *child);
+            REQUIRE_MESSAGE(
+                childReplay.has_value(),
+                failureText(childReplay)
+            );
+            CHECK(childReplay->state == ToolCallState::TerminalFailure);
+            CHECK(payloadOf(*childReplay).contains(
                 "would not release the frame"
             ));
             CHECK(frames->closed == 1U);
         }
 
-        SUBCASE("a frame opens at a root position, where a held input refuses")
+        SUBCASE("a body scope cannot attach without its live call")
         {
-            // The contrast the ruling turns on, in one place. A held input is
-            // attached to the call's PARENT, and a root position has no live run
-            // anchored there, so it refuses. A frame is anchored on the call's
-            // OWN position, which a root call has like any other -- so root and
-            // nested are one shape and a root observe needs no migration.
             auto const root = rootFor("dispatch-frame-root");
             auto const call = rootCall(
                 program,
@@ -1518,35 +1339,14 @@ return {
                 R"({"children":[]})"
             );
 
-            auto const heldAtRoot = dispatcher->attachHeldInput(
-                call.parentIdentity(),
+            auto const unattached = dispatcher->attachToolBodyScope(
+                call.identity(),
                 []() -> Status { return ok(); }
             );
-            REQUIRE_FALSE(heldAtRoot.has_value());
-            CHECK(heldAtRoot.error().message().contains(
+            REQUIRE_FALSE(unattached.has_value());
+            CHECK(unattached.error().message().contains(
                 "no live issuing context is anchored on the durable position"
             ));
-
-            auto closes = uint32{0};
-            auto const frameAtRoot = dispatcher->engageObservationFrame(
-                call.identity(),
-                [&closes]() -> Status
-                {
-                    ++closes;
-                    return ok();
-                }
-            );
-            REQUIRE_MESSAGE(frameAtRoot.has_value(), failureText(frameAtRoot));
-            CHECK(dispatcher->heldObservationFrame() == call.identity());
-
-            // And the scope that opened it closes it: an empty body is still a
-            // body, so this is open and close in one breath.
-            REQUIRE(
-                dispatcher->closeObservationFrameOpenedInside(std::nullopt)
-                    .has_value()
-            );
-            CHECK(closes == 1U);
-            CHECK_FALSE(dispatcher->heldObservationFrame().has_value());
         }
     }
 
@@ -1809,7 +1609,7 @@ return {
                     .policyAuthority = prepared.policyAuthority,
                     .delegation      = *grant,
                 },
-                frameworkProvider(log)
+                leafFrameworkProvider(log)
             );
             REQUIRE_MESSAGE(audited.has_value(), failureText(audited));
 
@@ -2530,7 +2330,7 @@ return {
             prepared.store,
             prepared.observations,
             prepared.policyAuthority,
-            ToolProvider{}
+            ToolBodyProvider{}
         );
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().message().contains(
@@ -2719,7 +2519,7 @@ return {
                     .policyAuthority = prepared.policyAuthority,
                     .delegation      = *grant,
                 },
-                frameworkProvider(log)
+                leafFrameworkProvider(log)
             );
             REQUIRE_MESSAGE(audited.has_value(), failureText(audited));
             CHECK(log->frameworkExecutions == 1U);

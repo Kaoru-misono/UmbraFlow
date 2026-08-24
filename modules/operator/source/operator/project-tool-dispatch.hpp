@@ -20,30 +20,29 @@
 
 namespace uf::operator_runtime
 {
-    // The release of an input a Tool call engaged and left held.
-    //
-    // A callable protocol rather than a handle on anything, because the
-    // dispatcher reaches no action sink and must not learn to: the child call
-    // that pressed is the only thing that knows how to lift, so it hands the
-    // lift back and the frame that owns the press holds it until that frame
-    // closes.
-    using HeldInputRelease = std::move_only_function<Status()>;
+    // The close of the resource one Tool body keeps open. The Tool supplies
+    // the meaning -- lifting an input or releasing an observation frame -- and
+    // this framework-owned body scope supplies the one close-on-every-exit
+    // mechanism shared by both.
+    using ToolBodyScopeClose = std::move_only_function<Status()>;
 
-    // The close of an observation frame a Tool call opened.
-    //
-    // A callable for HeldInputRelease's reason: the dispatcher reaches no Host
-    // and must not learn to. The call that opened the frame is the only thing
-    // that knows how to close it, so it leaves the close here and the dispatcher
-    // runs it when that call's scope exits.
-    using ObservationFrameClose = std::move_only_function<Status()>;
+    // The structured body run while that resource is open. The dispatcher
+    // reaches no VM; it owns only the issuing context that records calls made
+    // by this closure as children of the body-taking Tool call.
+    using ToolBodyRun = std::move_only_function<Status()>;
 
-    // The body of an observation, run while the frame is held.
-    //
-    // A callable for the two above's reason: the dispatcher reaches no VM and
-    // must not learn to. What it owns is the ISSUING CONTEXT the body's calls
-    // are numbered under, which is the half of "recorded as child calls of that
-    // observe node" nothing outside this module can supply.
-    using ObservationBodyRun = std::move_only_function<Status()>;
+    // A Tool-specific condition judged after the common scope has closed, with
+    // the number of child calls the common issuing context recorded. Empty when
+    // the Tool declares no such condition.
+    using ToolBodyPostcondition =
+        std::move_only_function<Status(uint64 issuedChildren)>;
+
+    using ToolBodyProvider = std::move_only_function<
+        Result<ToolCallCompletion>(
+            ToolCallPositionIdentity const& call,
+            ToolBodyRun body
+        )
+    >;
 
     // The dispatch executor: everything between an admitted call and the
     // terminal durable row that answers it.
@@ -124,7 +123,7 @@ namespace uf::operator_runtime
             OperatorCoordinator& coordinator,
             SnapshotObservationAuthority& observations,
             OperatorPolicyAuthority policyAuthority,
-            ToolProvider frameworkTools
+            ToolBodyProvider frameworkTools
         ) -> Result<ProjectToolDispatcher>;
 
         ProjectToolDispatcher(ProjectToolDispatcher const&) noexcept = default;
@@ -146,32 +145,19 @@ namespace uf::operator_runtime
         // as long as the program lives.
         [[nodiscard]] auto toolRuntimeSeam() const -> script::ToolRuntimeInvoke;
 
-        // Hands the run anchored on `holdingCall` the release of an input a
-        // child call has just engaged and left held.
+        // Hands the body run anchored on `holdingCall` the one close operation
+        // its Tool opened. Observe and hold both use this function; only their
+        // close callables differ.
         //
-        // THE FRAME THAT LIFTS A HELD INPUT IS THE TOOL CALL THAT OWNS IT, not
-        // the leaf call that pressed. A leaf that released before returning
-        // could hold nothing while anything looked at the screen, and looking at
-        // the screen while the button is down is the entire capability; see
-        // docs/decisions/2026-08-24-an-authoring-session-is-a-first-class-tool-session.md.
-        // The engaging leaf therefore returns with the button still down and
-        // leaves its release here, and the run lifts it on every exit path.
-        //
-        // The parent/child structure this rests on is the LEDGER'S CALL TREE and
-        // not the call stack: `holdingCall` is a durable position, the children
-        // that follow are ordinary un-nested calls, and nothing is re-entered. A
-        // release the target refused is reported rather than swallowed, because
-        // a target that will not take one is exactly what an operator has to be
-        // told about.
-        //
-        // Refused when no run is anchored at `holdingCall`, and when that run
-        // already holds a release: one release lifts every held input at once,
-        // so a second would share the first one's act and neither engagement
-        // could say which one ended.
+        // The structure this rests on is the LEDGER'S CALL TREE and not the
+        // native call stack: `holdingCall` is a durable position and every call
+        // made before close is recorded beneath it. A refused close is reported
+        // rather than swallowed. Refused when no run is anchored at that
+        // position or the run already owns a close.
         [[nodiscard]]
-        auto attachHeldInput(
+        auto attachToolBodyScope(
             ContentHash const& holdingCall,
-            HeldInputRelease release
+            ToolBodyScopeClose close
         ) -> Status;
 
         // Opens the observation frame the Tool call at `frameCall` owns.
@@ -179,11 +165,7 @@ namespace uf::operator_runtime
         // AN OBSERVATION FRAME IS THE SCOPE OF THE CALL THAT OPENED IT
         // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
         // The frame is anchored on the observe call's OWN durable position,
-        // which is why root and nested are one shape: a held input is a leaf
-        // whose effect spills outward onto sibling calls and therefore needs an
-        // outer owner, while a frame's effect acts only inward on the calls
-        // inside its own scope, so it is already its own owner and a root
-        // position lacks nothing.
+        // which is why root and nested observations are one shape.
         //
         // AT MOST ONE FRAME IS OPEN AT A TIME, and a second is REFUSED BY NAME
         // rather than superseding the first. Supersession would dress the
@@ -195,35 +177,15 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto engageObservationFrame(
             ContentHash const& frameCall,
-            ObservationFrameClose close
+            ToolBodyScopeClose close
         ) -> Status;
 
-        // Closes the observation frame this dispatcher holds, unless the frame
-        // it holds is `inherited` -- the one that was already open when the
-        // scope now exiting was entered.
-        //
-        // Answers ok() when nothing is held, and when what is held is the
-        // inherited frame, so a scope can run this unconditionally on every exit
-        // path without ever closing a frame belonging to a scope outside it.
-        // That is the whole of "the frame closes on ANY exit path": the caller
-        // does not have to know which path it is on.
-        //
-        // Not a scope guard, for the reason attachHeldInput's release is not:
-        // one would have to swallow the close's own failure, and a Host that
-        // will not release a frame is exactly what an operator has to be told
-        // about.
-        [[nodiscard]]
-        auto closeObservationFrameOpenedInside(
-            std::optional<ContentHash> const& inherited
-        ) -> Status;
-
-        // The durable position of the Tool call whose observation frame is open,
-        // or nothing when none is. It is what a scope reads on entry so it can
-        // tell an inherited frame from one opened inside it.
+        // The durable position of the Tool call whose observation frame is
+        // open, or nothing when none is. Measuring Tools bind to this position.
         [[nodiscard]]
         auto heldObservationFrame() const -> std::optional<ContentHash>;
 
-        // Runs one observation's body with an issuing context anchored on
+        // Runs one Tool body with an issuing context anchored on
         // `call`, so every Tool call the body makes is numbered as that call's
         // child and recorded under it.
         //
@@ -232,21 +194,40 @@ namespace uf::operator_runtime
         // executes -- a Luau closure inside an already-running VM against a
         // fresh scoped run -- and not at all in what a call issued inside them
         // is. `call` must be the call whose durable row is DISPATCHING right
-        // now, which is what lets a grant be minted from it; the observe
-        // provider is inside its own dispatch when it runs a body, so that
-        // holds by construction.
+        // now, which is what lets a grant be minted from it; a body-taking
+        // provider is inside its own dispatch when it calls this.
         //
-        // The five borrows live for the extent of the body and nothing is
+        // The borrows live for the extent of the body and nothing is
         // retained past it.
         [[nodiscard]]
-        auto runObservationBody(
+        auto runToolBody(
             ProjectGenerationHandle const& program,
             ControllerBinding const& controller,
             ControlLease const& lease,
             ToolRootRequestIdentity const& root,
             ToolCallPositionIdentity const& call,
-            ObservationBodyRun body
+            ToolBodyRun body,
+            ToolBodyPostcondition postcondition = {}
         ) -> Status;
+
+        // The same body scope for a child of the live run named by the call's
+        // durable parent. It derives controller, lease, root and program from
+        // that parent rather than accepting a second spelling of them.
+        [[nodiscard]]
+        auto runChildToolBody(
+            ToolCallPositionIdentity const& call,
+            ToolBodyRun body,
+            ToolBodyPostcondition postcondition = {}
+        ) -> Status;
+
+        [[nodiscard]]
+        auto issueBodyChild(
+            std::string_view toolName,
+            json::Value const& arguments,
+            script::ToolCallCoordinate const& coordinate,
+            std::stop_token cancellation,
+            ToolBodyRun body
+        ) -> Result<json::Value>;
 
         // Dispatch one call of one Tool this program binds.
         //

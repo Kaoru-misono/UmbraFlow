@@ -621,7 +621,7 @@ namespace uf::operator_runtime
         // hash compared against itself pins nothing.
         CHECK(
             catalog->toolCatalogHash().hex()
-            == "de2c27db4b699e85dc7aeeb42f244645bc7ed4d71fc42283c6030c4f43b0f14a"
+            == "a6fd2afbf07ceeb53bdc8dbaf4073a94f25a4f91f6e8619b3c1da59225397c8b"
         );
 
         auto material = CanonicalJson::parseExact(catalog->canonicalJcs());

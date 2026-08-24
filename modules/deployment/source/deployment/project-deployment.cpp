@@ -545,6 +545,9 @@ namespace uf::deployment
                         .childEffects   = readChildEffects(
                         member(tool, "child_effects")
                     ),
+                        .body = operator_runtime::ToolBodyDeclaration{
+                            .takesBody = member(tool, "body").boolean(),
+                        },
                         .limits = operator_runtime::WorkflowLimits{
                             .maximumSteps = static_cast<uint32>(
                             member(declaredLimits, "maximum_steps").number()

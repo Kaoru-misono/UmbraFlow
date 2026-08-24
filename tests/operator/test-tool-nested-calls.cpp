@@ -1987,18 +1987,17 @@ namespace uf::operator_runtime
         ));
     }
 
-    // Every Framework Tool but one is a leaf, and the exception is the whole
-    // of what makes an observation able to hold a frame FOR SOMETHING: a
+    // The two body-taking Framework calls declare exactly the read-only
+    // children their scopes may hold: a
     // delegation grant is minted only from a parent whose child_tool_names are
     // non-empty, so the three measuring Tools are children of
     // framework.screen.observe or they are nothing at all
     // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
-    TEST_CASE("every Framework Tool but the observation is a leaf")
+    TEST_CASE("Framework body scopes declare only their read-only children")
     {
         auto const catalog = frameworkCatalog();
         constexpr auto k_leafTools = std::array{
             std::string_view{"framework.audit.record"},
-            std::string_view{"framework.input.deliver"},
             std::string_view{"framework.input.semantic_target"},
             std::string_view{"framework.project.read"},
             std::string_view{"framework.project.write"},
@@ -2027,6 +2026,29 @@ namespace uf::operator_runtime
             }
         );
         CHECK(observe->childEffects.maximumChildCalls == 64U);
+        CHECK(observe->body.takesBody);
+
+        auto const input = catalog.describe("framework.input.deliver");
+        REQUIRE(input.has_value());
+        CHECK(
+            input->childEffects.childToolNames
+            == std::vector<std::string>{"framework.screen.observe"}
+        );
+        CHECK(input->childEffects.maximumChildCalls == 64U);
+        REQUIRE(input->body.taggedBy == "action");
+        for (auto const& arm : input->body.arms)
+        {
+            CHECK(arm.takesBody == (arm.name == "hold"));
+        }
+
+        auto const projectWrite = catalog.describe("framework.project.write");
+        REQUIRE(projectWrite.has_value());
+        REQUIRE(projectWrite->body.taggedBy == "action");
+        REQUIRE(projectWrite->body.arms.size() == 2U);
+        for (auto const& arm : projectWrite->body.arms)
+        {
+            CHECK_FALSE(arm.takesBody);
+        }
 
         // THE HELD CHILD MEASUREMENTS ARE READ-ONLY, and this is where that is
         // enforced rather than merely intended. A mutating child under a

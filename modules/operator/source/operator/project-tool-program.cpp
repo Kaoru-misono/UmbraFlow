@@ -59,8 +59,26 @@ namespace uf::operator_runtime
                      static_cast<double>(tool.descriptor.childEffects.maximumChildCalls)
                  )},
             });
+            auto body = json::Value::ofBoolean(tool.descriptor.body.takesBody);
+            if (!tool.descriptor.body.taggedBy.empty())
+            {
+                auto arms = std::vector<json::Member>{};
+                arms.reserve(tool.descriptor.body.arms.size());
+                for (auto const& arm : tool.descriptor.body.arms)
+                {
+                    arms.emplace_back(
+                        arm.name,
+                        json::Value::ofBoolean(arm.takesBody)
+                    );
+                }
+                body = json::Value::ofObject({
+                    {"arms", json::Value::ofObject(std::move(arms))},
+                    {"tag", json::Value::ofString(tool.descriptor.body.taggedBy)},
+                });
+            }
             return json::Value::ofObject({
                 {"argument_contract", argumentContract},
+                {"body", std::move(body)},
                 {"child_effects", childEffects},
                 {"name", json::Value::ofString(tool.name)},
                 {"tool_version", json::Value::ofString(tool.descriptor.toolVersion)},

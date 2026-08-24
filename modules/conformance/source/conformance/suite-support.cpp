@@ -116,11 +116,21 @@ namespace uf::operator_runtime::conformance
         // this sentence, which is the honest answer to a capability the suite
         // does not have.
         [[nodiscard]]
-        auto conformanceFrameworkTools() -> ToolProvider
+        auto conformanceFrameworkTools() -> ToolBodyProvider
         {
-            return [](ToolCallPositionIdentity const& call)
+            return [](
+                       ToolCallPositionIdentity const& call,
+                       ToolBodyRun body
+                   )
                 -> Result<ToolCallCompletion>
             {
+                if (body)
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "the conformance fixture call does not declare a body"
+                    );
+                }
                 return fail(
                     AutomationErrorKind::ActionRejected,
                     "a conformance run has no Framework Tool provider, so it "

@@ -217,11 +217,16 @@ end
 
 -- The six input verbs, each one arm of the one input Tool's closed contract.
 --
--- `hold` is deliberately absent.  Its arm engages a press and hands the LIFT to
--- the Tool call that issued it, and a chunk issues at the top of a run where no
--- call owns a lift, so a top-level hold is refused by the framework rather than
--- silently left down.  The atomic press-wait-release the old `explore_hold`
--- performed has no arm in the input contract at all.
+-- A pointer hold is the body-taking arm: the press is engaged before the body,
+-- every observation the body issues sees it held, and scope exit lifts it even
+-- when the body raises.  There is no duration beside the body; its extent is
+-- the hold's extent.
+function explore.hold(x: number, y: number, body: any): any
+    if type(body) ~= "function" then
+        error("explore.hold takes the function that observes while held", 2)
+    end
+    return confirmed(k_deliverTool, { action = "hold", x = x, y = y }, body)
+end
 
 function explore.click(x: number, y: number): any
     return confirmed(k_deliverTool, { action = "click", x = x, y = y })

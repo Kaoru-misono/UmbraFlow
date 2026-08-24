@@ -155,6 +155,7 @@ return {
         {
             auto tool = std::string{R"json({"argument_schema":)json"};
             tool += umbraflow::k_toolArgumentSchema;
+            tool += R"json(,"body":false)json";
             tool += R"json(,"child_effects":)json";
             tool += childEffects;
             tool += R"json(,"effect_bounds":[],"idempotency":"read_safe",)json";
@@ -603,6 +604,47 @@ return {
         INFO(why(refused));
         REQUIRE_FALSE(refused.has_value());
         CHECK(std::string{refused.error().message()}.contains("child_effects"));
+    }
+
+    TEST_CASE("a Project Tool body declaration is explicit and closed")
+    {
+        constexpr auto k_body = std::string_view{R"json(,"body":false)json"};
+
+        SUBCASE("omitting body is refused, not defaulted")
+        {
+            auto stripped = toolsJson();
+            auto const at = stripped.find(k_body);
+            REQUIRE(at != std::string::npos);
+            stripped.erase(at, k_body.size());
+
+            auto const authored = AuthoredProject{
+                stripped,
+                bindingsJson(acceptedBindings()),
+                k_pluginSource,
+            };
+            auto const refused = authored.load();
+            INFO(why(refused));
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(std::string{refused.error().message()}.contains("body"));
+        }
+
+        SUBCASE("true is refused until Project Tool body semantics exist")
+        {
+            auto enabled = toolsJson();
+            auto const at = enabled.find(k_body);
+            REQUIRE(at != std::string::npos);
+            enabled.replace(at, k_body.size(), R"json(,"body":true)json");
+
+            auto const authored = AuthoredProject{
+                enabled,
+                bindingsJson(acceptedBindings()),
+                k_pluginSource,
+            };
+            auto const refused = authored.load();
+            INFO(why(refused));
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(std::string{refused.error().message()}.contains("body"));
+        }
     }
 
     // The three bind-time refusals, each reached from an authored document

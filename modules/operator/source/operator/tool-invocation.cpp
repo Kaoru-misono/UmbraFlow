@@ -445,10 +445,38 @@ namespace uf::operator_runtime
             InputArm{"scroll", k_scrollArmMembers},
         };
 
+        auto inputBodyDeclaration() -> ToolBodyDeclaration
+        {
+            return ToolBodyDeclaration{
+                .takesBody = false,
+                .taggedBy  = "action",
+                .arms      = {
+                    ToolBodyArm{.name = "click", .takesBody = false},
+                    ToolBodyArm{.name = "drag", .takesBody = false},
+                    ToolBodyArm{.name = "hold", .takesBody = true},
+                    ToolBodyArm{.name = "key", .takesBody = false},
+                    ToolBodyArm{.name = "move", .takesBody = false},
+                    ToolBodyArm{.name = "scroll", .takesBody = false},
+                },
+            };
+        }
+
         constexpr auto k_projectWriteArms = std::array{
             InputArm{"capture", k_captureWriteMembers},
             InputArm{"text", k_textWriteMembers},
         };
+
+        auto projectWriteBodyDeclaration() -> ToolBodyDeclaration
+        {
+            return ToolBodyDeclaration{
+                .takesBody = false,
+                .taggedBy  = "action",
+                .arms      = {
+                    ToolBodyArm{.name = "capture", .takesBody = false},
+                    ToolBodyArm{.name = "text", .takesBody = false},
+                },
+            };
+        }
 
         [[nodiscard]]
         auto armActionNames(std::span<InputArm const> arms) -> std::string
@@ -750,6 +778,7 @@ namespace uf::operator_runtime
                     .maximumChildRisk       = Risk::ReadOnly,
                     .maximumChildCalls      = k_maximumObserveChildCalls,
                 },
+                .body = ToolBodyDeclaration{.takesBody = true},
                 .limits = WorkflowLimits{
                     .maximumSteps         = 1U,
                     .maximumDispatches    = 0U,
@@ -890,6 +919,7 @@ namespace uf::operator_runtime
                 .requiredCapabilities = {},
                 .effectBounds         = std::move(bounds),
                 .uiActionBounds       = {},
+                .body                 = projectWriteBodyDeclaration(),
                 .limits               = WorkflowLimits{
                     .maximumSteps         = 1U,
                     .maximumDispatches    = 0U,
@@ -1027,6 +1057,16 @@ namespace uf::operator_runtime
                 .requiredCapabilities = {},
                 .effectBounds         = std::move(bounds),
                 .uiActionBounds       = {std::string{k_deliverInputTool}},
+                .childEffects         = ChildEffectDeclaration{
+                    .childToolNames = {
+                        std::string{k_observeTool},
+                    },
+                    .maximumChildSurface    = ToolSurface::Semantic,
+                    .maximumChildMutability = ToolMutability::ReadOnly,
+                    .maximumChildRisk       = Risk::ReadOnly,
+                    .maximumChildCalls      = k_maximumObserveChildCalls,
+                },
+                .body = inputBodyDeclaration(),
                 .limits               = WorkflowLimits{
                     .maximumSteps         = 1U,
                     .maximumDispatches    = 1U,
@@ -1543,6 +1583,87 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
+        auto bodyMaterial(ToolBodyDeclaration const& declaration) -> json::Value
+        {
+            if (declaration.taggedBy.empty())
+            {
+                return json::Value::ofBoolean(declaration.takesBody);
+            }
+            auto arms = std::vector<json::Member>{};
+            arms.reserve(declaration.arms.size());
+            for (auto const& arm : declaration.arms)
+            {
+                arms.emplace_back(
+                    arm.name,
+                    json::Value::ofBoolean(arm.takesBody)
+                );
+            }
+            return json::Value::ofObject({
+                {"arms", json::Value::ofObject(std::move(arms))},
+                {"tag", json::Value::ofString(declaration.taggedBy)},
+            });
+        }
+
+        [[nodiscard]]
+        auto bodyMatchesArgumentContract(
+            ToolBodyDeclaration const& declaration,
+            json::Value const& argumentContract
+        ) -> Status
+        {
+            auto const* const p_tag  = argumentContract.find("tag");
+            auto const* const p_arms = argumentContract.find("arms");
+            auto const tagged = p_tag != nullptr || p_arms != nullptr;
+            if (!tagged)
+            {
+                if (!declaration.taggedBy.empty())
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "an untagged argument contract has a per-arm body declaration"
+                    );
+                }
+                return ok();
+            }
+            if (
+                p_tag == nullptr || p_arms == nullptr
+                || p_tag->kind() != json::ValueKind::String
+                || p_arms->kind() != json::ValueKind::Object
+                || declaration.taggedBy != p_tag->string()
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "a tagged argument contract and its body declaration name different tags"
+                );
+            }
+
+            auto contractArms = std::vector<std::string>{};
+            contractArms.reserve(p_arms->members().size());
+            for (auto const& [name, ignored] : p_arms->members())
+            {
+                static_cast<void>(ignored);
+                contractArms.emplace_back(name);
+            }
+            auto bodyArms = std::vector<std::string>{};
+            bodyArms.reserve(declaration.arms.size());
+            std::ranges::transform(
+                declaration.arms,
+                std::back_inserter(bodyArms),
+                &ToolBodyArm::name
+            );
+            std::ranges::sort(contractArms);
+            std::ranges::sort(bodyArms);
+            if (contractArms != bodyArms)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "a tagged Tool body declaration must state every argument arm exactly once"
+                );
+            }
+            return ok();
+        }
+
+        [[nodiscard]]
         auto descriptorMaterial(
             FrameworkToolDefinition const& definition,
             ToolDescriptor const& descriptor
@@ -1550,6 +1671,7 @@ namespace uf::operator_runtime
         {
             return json::Value::ofObject({
                 {"argument_contract", definition.argumentMaterial()},
+                {"body", bodyMaterial(descriptor.body)},
                 {"child_effects", childEffectsMaterial(descriptor.childEffects)},
                 {"effect_bounds",
                  effectBoundsMaterial(descriptor.effectBounds)},
@@ -2200,6 +2322,10 @@ namespace uf::operator_runtime
                 childEffectDeclarationValid(entry.descriptor.childEffects),
                 "reading the child_effects of " + entry.name
             );
+            UF_TRY_CONTEXT(
+                toolBodyDeclarationValid(entry.descriptor.body),
+                "reading the body declaration of " + entry.name
+            );
         }
         std::ranges::sort(tools, {}, &ToolCatalogEntry::name);
         auto const repeated = std::ranges::adjacent_find(
@@ -2408,6 +2534,23 @@ namespace uf::operator_runtime
                 descriptor,
                 definition.descriptor(),
                 "building a Framework Tool Catalog descriptor"
+            );
+            UF_TRY_CONTEXT(
+                childEffectDeclarationValid(descriptor.childEffects),
+                "building the child_effects of " + std::string{definition.name}
+            );
+            UF_TRY_CONTEXT(
+                toolBodyDeclarationValid(descriptor.body),
+                "building the body declaration of "
+                    + std::string{definition.name}
+            );
+            UF_TRY_CONTEXT(
+                bodyMatchesArgumentContract(
+                    descriptor.body,
+                    definition.argumentMaterial()
+                ),
+                "matching the body declaration to the argument contract of "
+                    + std::string{definition.name}
             );
             material.emplace_back(descriptorMaterial(definition, descriptor));
             tools.emplace_back(ToolCatalogEntry{
