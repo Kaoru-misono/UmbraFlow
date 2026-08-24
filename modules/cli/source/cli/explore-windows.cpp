@@ -11,6 +11,7 @@
 #include <task/exploration-session.hpp>
 #include <task/task-host.hpp>
 
+#include <filesystem>
 #include <utility>
 
 namespace uf::cli
@@ -26,14 +27,17 @@ namespace uf::cli
 
         // Before the project is loaded, because an authoring session's first write
         // would otherwise find the directory missing and the store it writes through
-        // will not create one (see project-skeleton.hpp).
+        // will not create one (see project-skeleton.hpp). It also lays down the
+        // genesis artifact when the project has none, which is what the open
+        // below needs there.
         UF_TRY(ensureProjectSkeleton(args.project));
 
         auto host = task::TaskHost{};
         UF_TRY_VALUE(
             generation,
-            host.openAnnotationProject(
+            host.openUnsealedProject(
                 args.project,
+                args.project / std::filesystem::path{k_projectRuntimeArtifactPath},
                 task::TaskHostConfig{
                     .externalCancellation = cancellation.token(),
                 }
@@ -47,8 +51,8 @@ namespace uf::cli
         UF_TRY_VALUE(bound, platform::bindTarget(WindowHandle{args.windowHandle}));
 
         // Every bound below is the same field with the same default the other
-        // front-ends pass. startExplorationSession latches the Annotation claim,
-        // so a Runtime generation or an already claimed generation refuses here.
+        // front-ends pass. startExplorationSession latches this generation's
+        // exploration front end, so a second one refuses here.
         UF_TRY_VALUE(
             session,
             host.startExplorationSession(

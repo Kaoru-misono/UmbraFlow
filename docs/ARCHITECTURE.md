@@ -96,7 +96,15 @@ No build, check, freeze or run path reaches the transport.
   cannot adopt its fence. The next Operator open invalidates process-local lease
   state, but a failed fallback can still omit the expected release transition
   from the audit trail.
-- `TaskHost` owns every Runtime or Annotation generation. `cancel()` requests
+- `TaskHost` owns every generation, and there is one kind of them: each carries
+  a verified RuntimeArtifact, and the only thing that varies is whether a
+  closing record seals that artifact's hash. An unsealed one is a directory
+  somebody is still editing, and `installBinding` refuses it, so no
+  `RuntimeModelBinding` ever attests to bytes nothing sealed. There is no
+  annotation phase and no runtime phase; what a session may do is its
+  `tool_closure`'s answer
+  (`docs/decisions/2026-08-24-there-is-no-annotation-phase.md`). `cancel()`
+  requests
   stop; there is no generation-retirement or quiescence operation. That is
   sufficient while the Host dies with one `ProductLifecycle`, not for a future
   resident Host that reloads generations in place.
@@ -147,9 +155,17 @@ directory or behind a CLI flag because the party a policy protects is the party
 that must give it: the machine's owner administers this root, while a project
 directory and a command line both belong to whoever is asking to act.
 
-Production cannot attach, traverse or read the authoring workspace. Runtime
-artifacts, sessions and traces never carry annotation screenshots. The two
-SQLite databases are not one transaction domain.
+The two SQLite databases are not one transaction domain.
+
+Whether a session may reach the authoring workspace, capture a screen or write
+into a project directory is its `tool_closure`'s answer and its operator's
+policy grant, not a property of the binary or of the Host object it holds
+(`docs/decisions/2026-08-24-there-is-no-annotation-phase.md`). What the
+framework owes is that every such grant is loud -- named in the pinned
+registration, hashed into the session manifest, and recorded in the ledger --
+not that it is impossible. The one thing that is structural is the seal: a
+RuntimeModelBinding is only ever built over a hash a closing record covers, so
+no run attests to bytes that can still move under it.
 
 ## Deliberate absences
 

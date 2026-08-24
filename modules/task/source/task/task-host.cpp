@@ -2,6 +2,7 @@
 
 #include "exploration-session.hpp"
 #include "framework-bundle.hpp"
+#include "platform/confined-file.hpp"
 #include "runtime-model-file.hpp"
 #include "script-bindings.hpp"
 #include "task-context.hpp"
@@ -185,14 +186,14 @@ namespace uf::task
             {
                 return fail(
                     AutomationErrorKind::IoFailure,
-                    std::format("cannot inspect annotation project {}: {}", root.string(), error.message())
+                    std::format("cannot inspect project root {}: {}", root.string(), error.message())
                 );
             }
             if (!std::filesystem::is_directory(status) || std::filesystem::is_symlink(status))
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "annotation project root must be a real directory, not a link"
+                    "project root must be a real directory, not a link"
                 );
             }
             auto canonical = std::filesystem::canonical(root, error);
@@ -201,7 +202,7 @@ namespace uf::task
                 return fail(
                     AutomationErrorKind::IoFailure,
                     std::format(
-                        "cannot canonicalize annotation project {}: {}",
+                        "cannot canonicalize project root {}: {}",
                         root.string(),
                         error.message()
                     )
@@ -211,7 +212,7 @@ namespace uf::task
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "annotation project root must have a non-empty directory name"
+                    "project root must have a non-empty directory name"
                 );
             }
             return canonical;
@@ -266,33 +267,37 @@ namespace uf::task
         };
 
         GenerationId                                 m_id;
-        GenerationKind                               m_kind;
         std::filesystem::path                        m_root;
         std::string                                  m_projectId;
-        std::shared_ptr<RuntimeArtifactHandle const> m_artifact{};
-        std::shared_ptr<RuntimeModelBinding const>   m_binding{};
-        std::optional<script::Engine>                m_runtimeVm{};
-        MonotonicInstant::Duration                   m_maximumReceiptAge{};
+        std::shared_ptr<RuntimeArtifactHandle const> m_artifact;
+
+        // The installed generation whose durable pin seals this artifact's
+        // hash, when one does. Absent means the hash was derived from bytes on
+        // disk and nothing attests that they are final -- see installBinding.
+        std::optional<uint64>                      m_sealedAt;
+        std::shared_ptr<RuntimeModelBinding const> m_binding{};
+        std::optional<script::Engine>              m_runtimeVm{};
+        MonotonicInstant::Duration                 m_maximumReceiptAge{};
 
         std::stop_source                       m_stop{};
         std::stop_callback<ExternalStopBridge> m_externalStop;
-        bool                                   m_annotationClaimed{};
+        bool                                   m_explorationClaimed{};
         TaskContext*                           m_pRuntimeContext{};
 
     public:
         Generation(
             GenerationId id,
-            GenerationKind kind,
             std::filesystem::path root,
             std::string projectId,
             std::shared_ptr<RuntimeArtifactHandle const> artifact,
+            std::optional<uint64> sealedAt,
             TaskHostConfig const& config
         )
             : m_id{id}
-            , m_kind{kind}
             , m_root{std::move(root)}
             , m_projectId{std::move(projectId)}
             , m_artifact{std::move(artifact)}
+            , m_sealedAt{sealedAt}
             , m_maximumReceiptAge{config.maximumReceiptAge}
             , m_externalStop{
                   config.externalCancellation,
@@ -308,7 +313,13 @@ namespace uf::task
         ~Generation() = default;
 
         [[nodiscard]] auto id() const noexcept -> GenerationId { return m_id; }
-        [[nodiscard]] auto kind() const noexcept -> GenerationKind { return m_kind; }
+
+        // Whether a closing record seals this artifact's hash, and which
+        // installed generation it was recorded at.
+        [[nodiscard]] auto sealedAt() const noexcept -> std::optional<uint64>
+        {
+            return m_sealedAt;
+        }
 
         [[nodiscard]]
         auto root() const noexcept -> std::filesystem::path const& { return m_root; }
@@ -336,28 +347,29 @@ namespace uf::task
             return m_maximumReceiptAge;
         }
 
+        // A binding is an assertion about bytes, so it may only be installed
+        // over bytes something has sealed. An unsealed artifact's hash was
+        // derived from a directory that may still be edited, and a binding to
+        // it would be an assertion the framework cannot make good on.
         [[nodiscard]]
         auto installBinding(std::shared_ptr<RuntimeModelBinding const> binding) -> Status
         {
-            if (m_kind != GenerationKind::Runtime || !m_artifact)
+            if (!m_sealedAt)
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "only a Runtime generation can own a RuntimeModelBinding"
+                    std::format(
+                        "RuntimeModel artifact {} carries no closing record, so "
+                        "no binding can attest to it",
+                        m_artifact->rootHash().hex()
+                    )
                 );
             }
             if (m_binding)
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "this Runtime generation is already finalized"
-                );
-            }
-            if (m_annotationClaimed)
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "a claimed generation cannot be finalized"
+                    "this generation is already finalized"
                 );
             }
             m_binding = std::move(binding);
@@ -366,7 +378,7 @@ namespace uf::task
 
         [[nodiscard]] auto installRuntimeVm(script::Engine vm) -> Status
         {
-            if (m_kind != GenerationKind::Runtime || !m_binding || m_runtimeVm.has_value())
+            if (!m_binding || m_runtimeVm.has_value())
             {
                 return fail(
                     AutomationErrorKind::InternalInvariant,
@@ -379,11 +391,11 @@ namespace uf::task
 
         [[nodiscard]] auto bindRuntimeContext(TaskContext& context) -> Status
         {
-            if (m_kind != GenerationKind::Runtime || !m_binding || !m_runtimeVm.has_value())
+            if (!m_binding || !m_runtimeVm.has_value())
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "trusted Runtime execution requires a finalized Runtime generation"
+                    "trusted Runtime execution requires a finalized generation"
                 );
             }
             if (m_pRuntimeContext != nullptr)
@@ -413,16 +425,21 @@ namespace uf::task
             return m_runtimeVm.has_value() ? &*m_runtimeVm : nullptr;
         }
 
-        [[nodiscard]] auto claimAnnotation() -> Status
+        // One exploration front end per generation. It is a latch on the
+        // front end and not on what the session may do: a session's powers are
+        // its Tool closure's answer, and this only says that two front ends
+        // cannot drive one generation's ledger, template store and trace at
+        // once.
+        [[nodiscard]] auto claimExplorationFrontEnd() -> Status
         {
-            if (m_kind != GenerationKind::Annotation)
+            if (m_explorationClaimed)
             {
                 return fail(
-                    AutomationErrorKind::UnsupportedCapability,
-                    "Annotation cannot open a production Runtime generation"
+                    AutomationErrorKind::InvalidResource,
+                    "this generation already has an exploration front end"
                 );
             }
-            m_annotationClaimed = true;
+            m_explorationClaimed = true;
             return ok();
         }
 
@@ -440,7 +457,7 @@ namespace uf::task
         {
             return TaskStatus{
                 .cancellationRequested = m_stop.stop_requested(),
-                .annotationClaimed     = m_annotationClaimed,
+                .explorationClaimed    = m_explorationClaimed,
                 .runtimeModelBound     = static_cast<bool>(m_binding),
             };
         }
@@ -488,13 +505,6 @@ namespace uf::task
     {
         UF_TRY_VALUE(p_generation, requireGeneration(generation));
         auto const& artifact = p_generation->artifact();
-        if (p_generation->kind() != GenerationKind::Runtime || !artifact)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "trusted Runtime finalize requires a RuntimeArtifact generation"
-            );
-        }
         // The one place the trusted parser's own generation meets the artifact's.
         // loadRuntimeArtifact has already held the artifact against
         // k_runtimeModelFormat, so this fires exactly when model.luau and
@@ -560,11 +570,11 @@ namespace uf::task
     {
         UF_TRY_VALUE(p_generation, requireGeneration(generation));
         auto const& binding = p_generation->binding();
-        if (p_generation->kind() != GenerationKind::Runtime || !binding)
+        if (!binding)
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
-                "runtime assets require a finalized Runtime generation"
+                "runtime assets require a finalized generation"
             );
         }
         return p_generation->artifact()->fileBytes(relativePath);
@@ -656,11 +666,11 @@ namespace uf::task
 
         UF_TRY_VALUE(p_generation, requireGeneration(generation));
         auto const& binding = p_generation->binding();
-        if (p_generation->kind() != GenerationKind::Runtime || !binding)
+        if (!binding)
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
-                "Receipt minting requires a privately finalized Runtime generation"
+                "Receipt minting requires a privately finalized generation"
             );
         }
         UF_TRY(context.requireReceiptCycle(cycle, evidenceCycleOrdinal));
@@ -973,12 +983,12 @@ namespace uf::task
     {
         UF_TRY_VALUE(p_generation, requireGeneration(authority.runtimeGeneration));
         auto const& binding = p_generation->binding();
-        if (p_generation->kind() != GenerationKind::Runtime || !binding)
+        if (!binding)
         {
             return fail(
                 AutomationErrorKind::UnsupportedCapability,
                 "authorized UI-action delivery requires a privately finalized "
-                "Runtime generation"
+                "generation"
             );
         }
 
@@ -1081,15 +1091,20 @@ namespace uf::task
             );
         }
         auto artifact = std::move(installed.m_artifact);
+        auto const sealedAt = installed.m_installedGeneration;
         auto const id = GenerationId{m_nextGenerationValue};
         ++m_nextGenerationValue;
         m_generations.emplace_back(
             std::make_unique<Generation>(
                 id,
-                GenerationKind::Runtime,
                 artifact->root(),
                 artifact->root().filename().string(),
                 std::move(artifact),
+                // The seal. An InstalledRuntimeArtifact exists only where the
+                // ledger answered for this exact hash, so carrying the
+                // installed generation here is carrying the closing record's
+                // own coordinate rather than a flag this function chose.
+                std::optional{sealedAt},
                 config
             )
         );
@@ -1113,8 +1128,9 @@ namespace uf::task
         return id;
     }
 
-    auto TaskHost::openAnnotationProject(
+    auto TaskHost::openUnsealedProject(
         std::filesystem::path const& projectRoot,
+        std::filesystem::path const& artifactRoot,
         TaskHostConfig const& config
     ) -> Result<GenerationId>
     {
@@ -1126,16 +1142,34 @@ namespace uf::task
             );
         }
         UF_TRY_VALUE(root, canonicalProjectRoot(projectRoot));
+
+        // Self-derived, and that is the point: the hash comes from the bytes
+        // that are on disk at this instant, so it names what is there and
+        // attests to nothing about what will be there next. loadRuntimeArtifact
+        // still verifies the whole closure against that hash, so the artifact
+        // is internally consistent -- it is simply not sealed, and no
+        // RuntimeModelBinding will be built over it.
+        UF_TRY_VALUE(confined, task_platform::ConfinedRoot::open(artifactRoot));
+        UF_TRY_VALUE(
+            manifestBytes,
+            confined.readFile(
+                k_runtimeArtifactManifestFileName,
+                k_maximumRuntimeManifestBytes
+            )
+        );
+        UF_TRY_VALUE(rootHash, sha256(manifestBytes));
+        UF_TRY_VALUE(artifact, loadRuntimeArtifact(artifactRoot, rootHash));
+
         auto const id = GenerationId{m_nextGenerationValue};
         ++m_nextGenerationValue;
         auto projectId = root.filename().string();
         m_generations.emplace_back(
             std::make_unique<Generation>(
                 id,
-                GenerationKind::Annotation,
                 std::move(root),
                 std::move(projectId),
-                nullptr,
+                std::make_shared<RuntimeArtifactHandle const>(std::move(artifact)),
+                std::nullopt,
                 config
             )
         );
@@ -1147,15 +1181,7 @@ namespace uf::task
     ) -> Result<std::vector<std::byte>>
     {
         UF_TRY_VALUE(p_generation, requireGeneration(generation));
-        auto const& artifact = p_generation->artifact();
-        if (p_generation->kind() != GenerationKind::Runtime || !artifact)
-        {
-            return fail(
-                AutomationErrorKind::UnsupportedCapability,
-                "Annotation generations do not carry RuntimeArtifact bytes"
-            );
-        }
-        auto const bytes = artifact->modelBytes();
+        auto const bytes = p_generation->artifact()->modelBytes();
         return std::vector<std::byte>{bytes.begin(), bytes.end()};
     }
 
@@ -1164,13 +1190,29 @@ namespace uf::task
     ) -> Result<RuntimeModelBinding>
     {
         UF_TRY_VALUE(p_generation, requireGeneration(generation));
-        auto const& binding = p_generation->binding();
-        if (p_generation->kind() != GenerationKind::Runtime || !binding)
+        // The sealing assertion, and the only thing this function is for
+        // besides handing the value over. A binding says "this generation
+        // parsed THESE bytes"; a hash nothing sealed names bytes that can still
+        // move, so the assertion would be about a moving target. Both the hash
+        // and the record that is missing are named, because a caller told only
+        // "refused" cannot tell an unsealed directory from a parse that failed.
+        if (!p_generation->sealedAt())
         {
             return fail(
                 AutomationErrorKind::UnsupportedCapability,
-                "a RuntimeModel binding requires a privately finalized Runtime "
-                "generation"
+                std::format(
+                    "RuntimeModel artifact {} carries no closing record in the "
+                    "ledger, so this Host will not bind it",
+                    p_generation->artifact()->rootHash().hex()
+                )
+            );
+        }
+        auto const& binding = p_generation->binding();
+        if (!binding)
+        {
+            return fail(
+                AutomationErrorKind::UnsupportedCapability,
+                "a RuntimeModel binding requires a privately finalized generation"
             );
         }
         return *binding;
@@ -1183,11 +1225,11 @@ namespace uf::task
     {
         UF_TRY_VALUE(p_generation, requireGeneration(generation));
         auto const& binding = p_generation->binding();
-        if (p_generation->kind() != GenerationKind::Runtime || !binding)
+        if (!binding)
         {
             return fail(
                 AutomationErrorKind::UnsupportedCapability,
-                "UI observation requires a privately finalized Runtime generation"
+                "UI observation requires a privately finalized generation"
             );
         }
         if (m_nextObservationOrdinal == std::numeric_limits<uint64>::max())
@@ -1250,7 +1292,7 @@ namespace uf::task
     ) -> Result<std::unique_ptr<ExplorationSession>>
     {
         UF_TRY_VALUE(p_generation, requireGeneration(generation));
-        UF_TRY(p_generation->claimAnnotation());
+        UF_TRY(p_generation->claimExplorationFrontEnd());
 
         auto const runId = EngineRunId{m_nextRunValue};
         ++m_nextRunValue;

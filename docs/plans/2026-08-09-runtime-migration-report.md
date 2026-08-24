@@ -75,7 +75,7 @@ fixtures cannot satisfy them.
 | U-04 | trusted Runtime | RM:`Evidence/Geometry` | CTEST `contract-runtime-u04` |
 | U-05 | trusted Runtime | RM:`Evidence/StateResolution` | CTEST `contract-runtime-u05` |
 | U-06 | Host | OP:`ReceiptRef/DeliveryOutcome` | CTEST `contract-runtime-u06` |
-| U-07 | Annotation + deployment boundary | AW:`Publication` + RA | CTEST `contract-runtime-u07` |
+| U-07 | Seal boundary between a project directory and a deployable artifact | AW:`Publication` + RA | CTEST `contract-runtime-u07` — re-anchored on 2026-08-24: the boundary is the closing record over an artifact hash, not an annotation/runtime phase split, which [the ruling](../decisions/2026-08-24-there-is-no-annotation-phase.md) deleted |
 | U-08 | Host + deployment boundary | RA + TR | CTEST `contract-runtime-u08` |
 | S-01 | Snapshot coordinator | OP:`SnapshotParts` + JR:`ProjectState` | CTEST `contract-state-s01` and CTEST `schema-state-s01` |
 | S-02 | Snapshot coordinator | OP:`ProjectSnapshot/SnapshotToken` | CTEST `contract-state-s02` and CTEST `schema-state-s02` |

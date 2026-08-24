@@ -71,8 +71,8 @@ namespace uf::task
         MonotonicInstant::Duration maximumReceiptAge{k_defaultMaxActionFrameAge};
     };
 
-    // Phase 1 uses live ports only for privileged Annotation. There is no
-    // business task or production input configuration until Operator exists.
+    // The live ports one exploration front end drives, and the ceilings it
+    // drives them under.
     struct TaskRunConfig final
     {
         std::unique_ptr<engine::IFrameSource> frameSource{};
@@ -110,20 +110,23 @@ namespace uf::task
     struct TaskStatus final
     {
         bool cancellationRequested{};
-        bool annotationClaimed{};
+        bool explorationClaimed{};
         bool runtimeModelBound{};
     };
 
-    // Host owns the two deliberately separate generation kinds:
+    // One kind of generation. Every one carries a verified RuntimeArtifact and
+    // the project root that artifact was opened from; what varies between two
+    // generations is whether the artifact's hash is SEALED -- whether a closing
+    // record in the ledger attests that those bytes are final.
     //
-    // - Runtime generations carry one verified RuntimeArtifact and may be
-    //   privately finalized into one generation-owned RuntimeModelBinding.
-    // - Annotation generations carry only an authoring directory and can start
-    //   the privileged screenshot-bearing ExplorationSession.
-    //
-    // A generation can never change kind. Production therefore has no route to
-    // authoring files or screenshots, and Annotation cannot masquerade as a
-    // deployment artifact.
+    // A sealed generation is finalized into a generation-owned
+    // RuntimeModelBinding and can be observed and acted through. An unsealed
+    // one is a directory somebody is still editing: its bytes can change under
+    // the reader, so a binding to them would attest to something that is not a
+    // fact, and installBinding refuses it. That is the whole difference. There
+    // is no annotation generation and no runtime generation, because there is
+    // no annotation phase and no runtime phase -- what a session may DO is its
+    // Tool closure's answer and never a property of the Host object it holds.
     //
     // Control-target ruling: one TaskHost is permanently bound to the first
     // controlled target whose fence it adopts. It never carries per-target
@@ -131,12 +134,6 @@ namespace uf::task
     // different controlled target owns a different TaskHost for that target.
     class TaskHost final
     {
-        enum class GenerationKind : uint8
-        {
-            Runtime,
-            Annotation,
-        };
-
         // Private nested type: ordinary C++ and every script/plugin value can
         // neither name nor construct a Receipt. A copy carries only an opaque
         // lookup token; all proof remains in Host-owned storage.
@@ -427,11 +424,25 @@ namespace uf::task
             TaskHostConfig const& config = {}
         ) -> Result<GenerationId>;
 
-        // Authoring entry: deliberately does not inspect or bind a deployment
-        // artifact. It is the only generation kind accepted by Annotation.
+        // Opens the artifact a project directory holds right now, deriving its
+        // root hash from the manifest bytes on disk.
+        //
+        // The hash is therefore SELF-derived and nothing has sealed it: these
+        // are bytes somebody may still be editing. The generation is otherwise
+        // an ordinary one -- it carries the model, and a session over it reads
+        // that model like any other -- but installBinding refuses it, so it can
+        // never become a RuntimeModelBinding and nothing downstream can attest
+        // to bytes no closing record covers. A session that means to RUN the
+        // model runs the sealed one and edits this directory beside it; the
+        // divergence between the two is what the parentage chain records.
+        //
+        // `artifactRoot` is where this project keeps the artifact its own
+        // declaration names; the caller reads that declaration, because this
+        // Host reads no project document.
         [[nodiscard]]
-        auto openAnnotationProject(
+        auto openUnsealedProject(
             std::filesystem::path const& projectRoot,
+            std::filesystem::path const& artifactRoot,
             TaskHostConfig const& config = {}
         ) -> Result<GenerationId>;
 
@@ -444,16 +455,19 @@ namespace uf::task
         // the one way anything outside the Host learns those identifiers, and it
         // is a copy of a Host-minted value rather than a request to compute one,
         // so a caller can neither name a model the Host did not parse nor state
-        // a vocabulary of its own. An Annotation generation, or a Runtime one
-        // whose model has not been finalized, is refused.
+        // a vocabulary of its own.
+        //
+        // It accepts only a SEALED artifact: a hash a closing record in the
+        // ledger attests to. An unsealed one is refused naming the hash and the
+        // record that is missing, because a binding is an assertion about bytes
+        // and an in-flight directory has none to assert.
         [[nodiscard]]
         auto runtimeModelBinding(GenerationId generation)
             -> Result<RuntimeModelBinding>;
 
-        // Runs one observation cycle on a Runtime generation and returns what
-        // the trusted resolver concluded. Annotation generations are refused:
-        // the kinds never convert, and a production snapshot must not be able
-        // to reach authoring files.
+        // Runs one observation cycle on a finalized generation and returns what
+        // the trusted resolver concluded. A generation with no binding is
+        // refused, which is every unsealed one.
         //
         // The context is supplied rather than remembered, for deliver()'s
         // reason: a Host that stored a TaskContext* would be holding a borrow of

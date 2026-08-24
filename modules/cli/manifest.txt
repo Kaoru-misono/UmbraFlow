@@ -1,9 +1,13 @@
-# The privileged annotation command surface: argument parsing, the queue/results
-# protocol, and the process error/exit-code boundary. entry/ keeps only main.cpp,
-# which is the executable's own translation unit.
+# The command surface: argument parsing, the queue/results protocol, and the
+# process error/exit-code boundary. entry/ keeps only main.cpp, which is the
+# executable's own translation unit.
 #
-# Privileged exploration is still implemented by task::ExplorationSession, so
-# task and engine are public dependencies until the authoring host is split.
+# Exploration is still implemented by task::ExplorationSession over a VM of its
+# own, so task and engine are public dependencies. That second VM is the last
+# piece of the deleted annotation phase still standing: the ruling in
+# docs/decisions/2026-08-24-there-is-no-annotation-phase.md makes the screenshot
+# and authoring natives ordinary Tools reached through the one dispatcher, which
+# is what removes it.
 
 [module]
 name = cli

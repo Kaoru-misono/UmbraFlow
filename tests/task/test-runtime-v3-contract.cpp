@@ -1545,56 +1545,127 @@ identity = ["screen.anchor"]
         CHECK(runtime.actions().clicks() == 0U);
     }
 
+    // U-07, re-anchored: the boundary between a project's own directory and a
+    // deployable artifact is the SEAL, not a phase.
+    //
+    // What this case no longer asserts, because
+    // docs/decisions/2026-08-24-there-is-no-annotation-phase.md deleted it: that
+    // a Host generation has a kind, that a production one cannot start an
+    // exploration front end, and that a project-directory one cannot read its
+    // own model. All three were the compile-time authoring/production split,
+    // which is a limit the framework invented rather than one it was given.
+    //
+    // What is left is real and is here: a hash nothing sealed cannot become a
+    // RuntimeModelBinding, and the refusal names the hash and the record that
+    // is missing.
     TEST_CASE("contract-runtime-u07")
     {
-        auto const runtimeDirectory = TemporaryDirectory{};
+        auto const sealedDirectory = TemporaryDirectory{};
         auto host = TaskHost{};
-        auto const runtimeGeneration = loadedRuntime(host, runtimeDirectory);
-        auto runtime = RuntimeContext{
-            frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{15}),
-            1'000
-        };
-        auto runtimeSurface = TaskHostTestAccess::run(
-            host,
-            runtimeGeneration,
-            runtime.context(),
-            "return project ~= nil and observe ~= nil and explore == nil "
-            "and model == nil and resolution == nil and evidence == nil"
+        auto const sealedGeneration = loadedRuntime(host, sealedDirectory);
+
+        // A project directory, with the same model in the place a project's own
+        // declaration names. Nothing has sealed these bytes: the hash is
+        // derived from what is on disk at this instant.
+        auto const projectDirectory = TemporaryDirectory{};
+        write(projectDirectory.path() / "annotation-screenshot.png", "authoring pixels");
+        auto const unsealedArtifact =
+            projectDirectory.path() / "runtime" / "artifact";
+        auto const unsealedHash =
+            publish(unsealedArtifact, runtimeModel(), runtimeAssets());
+        auto const unsealed = host.openUnsealedProject(
+            projectDirectory.path(),
+            unsealedArtifact
         );
-        REQUIRE(runtimeSurface.has_value());
-        CHECK(runtimeSurface->boolean() == std::optional<bool>{true});
+        REQUIRE(unsealed.has_value());
+
+        // Both read the model they carry. There is no phase gate on bytes: a
+        // session editing a model reads it exactly as a session running one
+        // does, and what it may DO with it is its Tool closure's answer.
+        auto const sealedBytes = host.runtimeModelBytes(sealedGeneration);
+        REQUIRE(sealedBytes.has_value());
+        auto const unsealedBytes = host.runtimeModelBytes(*unsealed);
+        REQUIRE(unsealedBytes.has_value());
+        CHECK(*sealedBytes == *unsealedBytes);
+
+        // The seal, and the only difference between the two. Removing the
+        // sealedAt() test in TaskHost::runtimeModelBinding reds this.
+        auto const bound = host.runtimeModelBinding(sealedGeneration);
+        REQUIRE(bound.has_value());
+
+        auto const refused = host.runtimeModelBinding(*unsealed);
+        REQUIRE_FALSE(refused.has_value());
+        auto const message = std::string{refused.error().message()};
+        INFO("refusal: ", message);
+        CHECK(message.contains(unsealedHash.hex()));
+        CHECK(message.contains("no closing record"));
+        CHECK(
+            automationErrorKind(refused.error())
+            == std::optional<AutomationErrorKind>{
+                AutomationErrorKind::UnsupportedCapability
+            }
+        );
+
+        // The other half of the seal, at the door a binding is INSTALLED
+        // through rather than read through. The trusted parser's own seam is
+        // reachable here on purpose (see TaskHostTestAccess), so this is not a
+        // check nothing can fail: a generation whose artifact declares no asset
+        // satisfies every closure test finalize makes, and the seal is the one
+        // thing left that refuses it. Removing the sealedAt() test in
+        // TaskHost::Generation::installBinding reds this.
+        auto const genesisDirectory = TemporaryDirectory{};
+        auto const genesisArtifact =
+            genesisDirectory.path() / "runtime" / "artifact";
+        auto const genesisHash = publish(
+            genesisArtifact,
+            std::string{k_genesisRuntimeModelToml},
+            {}
+        );
+        auto const genesis = host.openUnsealedProject(
+            genesisDirectory.path(),
+            genesisArtifact
+        );
+        REQUIRE(genesis.has_value());
+        auto const finalized = TaskHostTestAccess::finalizeWithParserFormat(
+            host,
+            *genesis,
+            k_runtimeModelFormat
+        );
+        REQUIRE_FALSE(finalized.has_value());
+        auto const installRefusal = std::string{finalized.error().message()};
+        INFO("install refusal: ", installRefusal);
+        CHECK(installRefusal.contains(genesisHash.hex()));
+        CHECK(installRefusal.contains("no closing record"));
+
+        // And an exploration front end opens over the unsealed generation, on
+        // the ordinary path and with no kind consulted. A second one over the
+        // same generation is refused, because two front ends cannot drive one
+        // generation's ledger and trace at once.
+        auto session = host.startExplorationSession(
+            *unsealed,
+            explorationConfig(
+                frame({std::byte{0}, std::byte{0}, std::byte{0}}, FrameId{17}),
+                projectDirectory.path() / "authoring-trace.jsonl"
+            )
+        );
+        REQUIRE(session.has_value());
         CHECK_FALSE(
             host.startExplorationSession(
-                runtimeGeneration,
+                *unsealed,
                 explorationConfig(
-                    frame({std::byte{0}, std::byte{0}, std::byte{0}}, FrameId{16}),
-                    runtimeDirectory.path() / "forbidden-trace.jsonl"
+                    frame({std::byte{0}, std::byte{0}, std::byte{0}}, FrameId{18}),
+                    projectDirectory.path() / "second-trace.jsonl"
                 )
             ).has_value()
         );
 
-        auto const authoringDirectory = TemporaryDirectory{};
-        write(authoringDirectory.path() / "annotation-screenshot.png", "authoring pixels");
-        auto annotation = host.openAnnotationProject(authoringDirectory.path());
-        REQUIRE(annotation.has_value());
-        CHECK_FALSE(host.runtimeModelBytes(*annotation).has_value());
-        auto session = host.startExplorationSession(
-            *annotation,
-            explorationConfig(
-                frame({std::byte{0}, std::byte{0}, std::byte{0}}, FrameId{17}),
-                authoringDirectory.path() / "authoring-trace.jsonl"
-            )
-        );
-        REQUIRE(session.has_value());
         auto authoringSurface = (*session)->evaluate(
             R"lua(
                 local blob = explore.cycle(function(cycle)
                     return cycle:crop(0, 0, 1, 1)
                 end)
                 local measured = explore.probe(blob, 0, 0, 1, 1)
-                return explore ~= nil and project == nil and observe == nil
-                    and model == nil and resolution == nil and evidence == nil
-                    and type(blob) == "string" and #blob > 0
+                return type(blob) == "string" and #blob > 0
                     and measured.image_width == 1 and measured.image_height == 1
             )lua",
             "authoring-boundary"
@@ -2683,36 +2754,6 @@ identity = ["screen.anchor"]
         // Nothing was read at all: an absent Binding does not spend a Host read
         // on pixels that belong to whatever is there instead.
         CHECK(p_reader->calls() == 0U);
-    }
-
-    TEST_CASE("TaskHost::observe refuses an Annotation generation before the VM")
-    {
-        auto const directory = TemporaryDirectory{};
-        auto host = TaskHost{};
-        auto const generation = loadedRuntime(host, directory);
-        auto runtime = RuntimeContext{
-            frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{25}),
-            1'000
-        };
-        auto const authoringDirectory = TemporaryDirectory{};
-        auto const annotation = host.openAnnotationProject(authoringDirectory.path());
-        REQUIRE(annotation.has_value());
-
-        auto const refused = host.observe(*annotation, runtime.context());
-        REQUIRE_FALSE(refused.has_value());
-
-        // UnsupportedCapability and not InvalidResource: the kind gate refuses
-        // before any VM is reached. bindRuntimeContext would refuse the same
-        // call afterwards and would say InvalidResource, so the kind is what
-        // says WHICH gate held.
-        CHECK(
-            automationErrorKind(refused.error())
-            == std::optional<AutomationErrorKind>{
-                AutomationErrorKind::UnsupportedCapability
-            }
-        );
-        CHECK_FALSE(runtime.context().hasOpenCycle());
-        CHECK(host.observe(generation, runtime.context()).has_value());
     }
 
     // Three models differing only in the geometry they declare. The first pins
