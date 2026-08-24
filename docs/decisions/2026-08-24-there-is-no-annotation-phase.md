@@ -5,8 +5,7 @@ This **wholly supersedes**
 which keeps its bytes, **with one exception**: that document's ruling on
 hold-with-children — engage/disengage, parent and child in the ledger's call
 tree, the holding call's `ActiveRun` frame as the issuing context, and no
-re-entrancy — stands unchanged and is load-bearing here for a reason given
-below.
+re-entrancy — stands unchanged and is implemented as written.
 
 [`2026-08-24-a-policy-artifact-is-supplied-by-the-operator.md`](2026-08-24-a-policy-artifact-is-supplied-by-the-operator.md)
 is untouched. This decision depends on it and extends it.
@@ -17,190 +16,192 @@ is untouched. This decision depends on it and extends it.
 > runtime phase. It is all just calling Tools; some of them just use different
 > Tools.
 
-Nothing in the system may encode the phase. The difference between a session
-that annotates and a session that runs the product is **which Tools are in its
-closure**, and `tool_closure` is already a required member of the project
-registration.
-
-## Why the superseded ruling was wrong
-
-It produced two manifest types and two admission authorities. That shape is what
-`CLAUDE.md` forbids in as many words — two spellings of one thing, plus a second
-path that reaches the same dispatcher and the same ledger.
-
-It reached that shape because the brief it answered listed only candidates that
-preserved `GenerationKind {Runtime, Annotation}` and the "a generation can never
-change kind" invariant. **That invariant is itself the textbook case of a limit
-the framework invented.** Four facts, absent from that brief, remove every pillar
-under it:
-
-- An empty RuntimeArtifact is unrepresentable **only** because `ui_targets` and
-  `surfaces` carry `minItems: 1` in the runtime schema. That is a schema choice.
-- `ControllerKind` already has `Human`.
-- `AgentProfile` holds a budget and a manifest hash. It is a **budget**, not an
-  identity artifact, and a budget is as real for a human-driven session as for
-  an agent-driven one.
-- The PolicyArtifact is **operator-supplied**, so requiring a session to pin one
-  costs the Project zero files.
-
-With the pillars gone, the split's only remaining function was to encode
-who-may-do-what in the type system — which is the framework deciding on the
-operator's behalf.
-
-## The security defect in the superseded ruling
-
-Worth stating plainly, because it inverts the safety argument. That ruling gave
-an annotation session **no** policy artifact and **no** budget — and an
-annotation session is the one that captures the operator's screen and drives the
-operator's mouse and keyboard. It is the deepest host access the system has.
-Under the standing rule that **a limit must be given by whoever it protects**,
-that put the session most in need of declared limits in the position of having
-the fewest.
-
-This decision fixes it: an annotating session pins the same operator policy a
-production session pins, with an operator-declared budget.
-
 ## The decision
 
-One `SessionManifestSpec`, five fields, unchanged in name and shape, filled by
-every session:
+**One kind of session. One five-field `SessionManifestSpec`, its name and its
+fields unchanged. One admission authority. One dispatch path. One native
+vocabulary.** The entire difference between annotating and running the product
+lives in `tool_closure` — a set the registration declares, the operator supplies,
+and the framework enforces.
 
-- `runtimeModelArtifactRootHash` — for a session that annotates, this is
-  `H_start`: **the artifact it is editing**. A brand-new project's first session
-  pins the empty model.
-- `operatorProtocolSchemaHash`, `projectRegistrationHash` — as today.
-- `policyArtifactHash` — the operator's, the same one production pins.
-- `agentProfileHash` — controller kind `Human`, with an operator-declared budget.
+`GenerationKind` and the "a generation can never change kind" invariant are
+**deleted outright**, not narrowed: an enum whose values are the two phases is
+the phase the owner forbade the system to know, and nothing real is left for it
+to carry. What is real is the closure (declared), the pinned hashes (recorded),
+and sealed state (in the ledger).
 
-`GenerationKind` is **deleted outright**, not narrowed: a residual enum would be
-the same two spellings in smaller type. `OperatorPolicyAuthority` admits every
-session. The capability difference — screen capture, input injection, writing
-into authoring state — becomes a **policy grant**.
+`ui_targets` and `surfaces` get `minItems: 0`. A session that annotates pins in
+`runtimeModelArtifactRootHash` **the model it is editing**; it pins the
+operator's policy artifact, and an agent profile with `ControllerKind::Human`
+carrying an operator-declared budget, where **unbounded is a declared value and
+never an absence**.
 
-`ui_targets` and `surfaces` get `minItems: 0`. The `1` refuses an honest value:
-the true state of every project at birth. A model with nothing in it runs and
-can do nothing, which is self-consistent and useless — and **whether it is
-useless is the Project's business**. That `1` is also what manufactured "a new
-project's first annotating session has nothing to pin", so one invented limit
-was breeding a second downstream. An empty array is explicit bytes, so this does
-not create an "absent means the old behaviour" reading.
+A compile-time authoring/production split is the textbook case of a limit the
+framework **invented**. A closure and a policy grant are limits the framework was
+**given**.
 
-## The two invariants that are integrity, not permission
+## H_genesis
 
-The rule proposed during review — *a session must not write into the authoring
-directory of the artifact it pins as its running model* — **does not survive as
-stated**. Under this decision "the model I am running" and "the base I am
-editing" are the same field, so that rule would forbid annotation itself. What
-it was reaching for is two rules, and these are exhaustive:
+With `minItems: 0` the empty model is representable, and its content hash is a
+constant: **every project in the universe shares one H_genesis.** The parentage
+chain gains a natural root, and a new project's first session binds H_genesis
+successfully and gets a model that can do nothing — coherent. H_genesis is
+sealed by construction at project initialisation.
 
-**(i) Pin-at-open immutability.** All five pinned artifacts are resolved and
-byte-verified when the session opens, and those bytes govern for the session's
-whole life. **An edit made during a session never takes effect within that
-session.** It lands in working state, crystallises as `H_end` in the closing
-record, and only a later session can pin it. This covers more than the model:
-the policy artifact and the agent profile are pinned the same way, so "a session
-holding authoring-write rewrites its own policy" is structurally impossible —
-writing new policy bytes does not change the authorisation already pinned. This
-is the framework's verifiability promise, not a permission.
+## Why `minItems: 1` was not load-bearing
 
-**(ii) Exclusive ownership.** While a session holds working state, there is no
-second writer. Otherwise the closing record "session S produced `H_end`" is a
-statement the framework signed and cannot verify: the `H_start → H_end` delta
-must be attributable to that session's recorded actions. **Today's kind split
-does not provide this guarantee at all**, so adding it here is a net gain.
+The only thing it protected was a tautology: that a useless model is useless. A
+production session pinning a zero-target model runs and can do nothing —
+coherent, merely useless, and **whether it is useless is the Project's
+business**. If an operator cares, that is one line of policy, not a schema
+constraint. Refusing an honest value is the framework deciding that a Project's
+model must be non-trivial.
 
-Candidates considered and rejected as integrity rules: model **provenance** —
-binding a hash that never appeared as any session's `H_end` is **recorded, not
-refused**, because byte verification is the verification, and refusing it would
-decide how a Project's state may evolve and would forbid hand-written or
-imported models; **masquerade** — under one hash chain there is nothing left to
-masquerade as; **forking** the same `H_start` into two chains — permitted and
-recorded faithfully, merging is the Project's business; **screen capture and
-input injection** — permission, granted by the operator.
+It did bear weight, in the worst way: it made the genesis state unrepresentable,
+and that single fact is what manufactured the case for a second manifest type.
+One invented limit was breeding another downstream.
 
-### The iterate-and-test pressure point
+## Integrity versus permission — the exhaustive list
 
-The strongest attack on this shape: an author wants edit → test-run → edit, and
-pin-at-open forbids an edit becoming a rule in the same session.
+The test: a rule is **integrity** if and only if breaking it would make the
+ledger false, or would let a session escape its own admission terms from the
+inside. Everything else is who-may-do-what, and belongs to the closure and the
+policy.
 
-The ruling: an annotating session's Tools may read and write the working tree
-freely **as data**. What they cannot do is make those bytes the **rules** the
-current session is pinned to. To test-run an edit, snapshot `H_i` and open a
-child session pinned to `H_i` — and the hold-with-children mechanism kept from
-the superseded document (parent and child frames in the ledger's call tree) is
-exactly the machinery for that. Every test-run becomes an honest, traceable
-generation. The two rulings interlock rather than merely coexist.
+Two principles generate the whole list.
+
+> **Principle A — admission is immutable and cannot be escaped from within.**
+> The terms a session was admitted under are frozen for its life, and no closure
+> content can thaw them.
+>
+> **Principle B — the ledger never records an assertion the framework has not
+> verified.**
+
+**1. Admission freeze (A).** Everything the manifest pins — the model snapshot,
+the policy artifact, the registration and its closure, the profile and its
+budget, the protocol schema — is immutable *to the session itself*. Any Tool,
+whether or not the closure holds it, acts on the world and never on this
+session's admission terms. This cannot be expressed as a closure rule, because it
+must hold **while the closure does contain the relevant Tool**: a session may
+author a new policy file for future sessions, but the one it was admitted under
+is frozen. This also covers the budget — a session cannot raise its own ceiling
+mid-run.
+
+**2. Snapshot execution (A + B).** The running model is materialised from the
+pinned content hash and never read live from the mutable authoring directory.
+
+**The rule proposed during review dissolves here.** "A session must not write
+into the authoring directory of the model it pins" is not an invariant; it is a
+patch for leaky loading. Once the model is materialised by hash, that write is
+harmless: the write lands in the authoring directory, execution continues on the
+immutable snapshot, and the divergence between them is exactly what
+`H_start → H_end` exists to record. Forbidding the write would forbid the core
+loop annotation exists for — run, observe, edit, run again.
+
+*Verified in tree*: production already works this way.
+`OperatorCoordinator::openInstalledRuntimeArtifact` requires an installed
+artifact pin in the database and then opens from the content-addressed
+`runtimeArtifactRoot` keyed by `artifactRootHash`. So this rule is near-free
+rather than the migration's largest item. Had it not been, the correct move was
+to land snapshot materialisation in the migration's first commit — never a
+temporary ban on the write as a transition, which would be a bridge.
+
+**3. Parentage authenticity (B).** The closing record asserts "this session
+produced `H_end` from `H_start`", and may assert it only if the framework can
+show no other writer touched that authoring root during the session; otherwise
+the record must state the shared-writer fact. Mechanism: a session whose closure
+holds authoring Tools takes a write lease on that authoring root at open. This
+cannot be a closure rule — a closure says "may call authoring Tools" and cannot
+say anything about cross-session exclusion. Note what is ruled: **do not record
+a false ledger**, not "forbid concurrency". The framework records and verifies;
+whether concurrency is allowed is the operator's call.
+
+**4. Attribution (B).** Every ledger record binds to the session's admitted
+identity, manifest hash and controller kind; a session cannot record under
+another's name. Already true today, carried forward unchanged.
+
+**5. Sealed binding (B).** A RuntimeModel binding accepts only a **sealed**
+artifact — a hash carrying a closing record in the ledger — and never an
+in-flight directory. Pinning an unsealed tree would make `H_start` an assertion
+about mutable bytes, violating Principle B directly. **This is what replaces the
+generation-kind check.**
+
+**6. Delegation decay (A, conditional).** Any Tool that creates a new action
+context must produce one whose limits converge inside its creator's admission,
+unless independently admitted by the operator. Today's parent/child call tree
+inherits the session's admission and satisfies this by construction, so the rule
+is **dormant** until a Tool that can spawn a session exists.
+
+### Completeness
+
+There is no seventh. The candidates tried and rejected — screen capture, writing
+the authoring directory, driving product Tools, "annotation artifacts leaking
+into deployment" — all reduce either to permission (closure and policy) or to
+rules 1–5; the leak case is covered by rule 5 plus admission. Any future
+candidate gets tested against Principles A and B: if it does not reduce to one of
+them, it is permission and belongs to the closure.
 
 ## What `runtimeModelBinding` becomes
 
-The kind precondition is deleted. `TaskHost::runtimeModelBinding` resolves the
-hash in the artifact store, verifies the bytes, and binds. Its refusals become
-specific — "hash not in store", "bytes do not match hash" — rather than "wrong
-kind". The "privately finalized" gate collapses into a constructive guarantee:
-the store admits only closing-record `H_end` values and explicitly recorded
-imports, so "bindable" and "closed" need no check to relate.
+It drops the half that checked kind and keeps the half that asserts sealing: it
+refuses a hash with no closing record, naming the hash and the missing record.
+Specific signals, as always — not "wrong kind".
 
 ## What is still refused, and the one honest loss
 
-**Still refused**, by a changed mechanism: use of a capability the pinned policy
-does not grant — checked at dispatch, refused by naming the missing grant and
-the pinned policy hash; an artifact whose bytes do not match its hash; an
-unauthorised actor, an unbound Tool, a mismatched identity.
+**Still refused**: a Tool call outside the closure (the single dispatcher checks
+each call against the pinned registration's closure, naming the Tool and the
+closure); an actor the policy artifact does not authorise; an unbound Tool, a
+mismatched identity, an unverifiable pin; tampering with this session's own
+admission terms (rule 1, under any closure); binding an unsealed artifact
+(rule 5); a second writer on a leased root (rule 3 — refused, or recorded
+faithfully as shared); exceeding the budget, naming what was exceeded and what
+the limit was.
 
-**Newly refused**: a second writer on working state.
+**Newly possible, and this is the point rather than a hole**: a session whose
+closure holds **both** product Tools and authoring Tools — the edit-and-observe
+loop in one session. That is what the annotation work on `uf-chaos` actually
+wants, and it is this merge's largest positive. Also: an authoring-produced
+artifact reaches a production binding through sealing and admission, with no kind
+laundering step.
 
-**Structurally impossible**, needing no refusal: an in-session edit becoming that
-session's own rules.
-
-**Newly possible, and this is the honest loss**: an operator **can** grant screen
-capture and authoring-write to a production-shaped session. That was impossible
-at compile time before, and one policy file can now produce a session that both
-runs a model and mutates authoring state. It is a real loss of one layer of
-defence in depth. It is also precisely the loss the standing line **requires**
-accepting: the protected party for host access is the operator, and a framework
-that refuses a grant the machine's owner wrote by hand is inventing a limit. The
-grant is not silent — it is in a hashed, pinned, ledgered artifact. The mirror
-gain is larger: the session with the deepest host access goes from pinning no
-policy and no budget to pinning both.
+**The honest loss**: the old guarantee "production has no route to screen
+capture" becomes "no route unless the operator grants it, and every use is
+recorded". By the standing line that is not a loss — the old guarantee was the
+framework deciding for the machine's owner, and the protected party for host
+access *is* the operator. The framework's duty is to make that grant **loud** in
+the manifest and the ledger, not to forbid it.
 
 ## Migration
 
 1. `schema/umbraflow-runtime-v3.schema.json`: `ui_targets` and `surfaces`
-   `minItems` 1 → 0; migrate every recorded schema hash and generated product in
-   the same change.
-2. Delete `GenerationKind`, the two-kind invariant, and every branch and test on
-   them. Rewrite `TaskHost::runtimeModelBinding` as above with specific refusals.
-3. `SessionManifestSpec` keeps its name and its five fields. A session that
-   annotates fills all five: `H_start` (the empty model for a new project), the
-   operator's policy artifact, and a `Human` agent profile carrying an
-   operator-declared budget — **an unbounded budget is an explicitly encoded
-   declared value, never an absence**.
-4. Add the host-access grant vocabulary to the policy artifact — screen capture,
-   input injection, authoring-write, enumerated from what the code can actually
-   do. Check per grant at dispatch; name the missing grant and the policy hash on
-   refusal.
-5. Implement pin-at-open: the five pinned artifacts resolved and verified at
-   open, immutable for the session; `H_end` only in the closing record; an
-   exclusive write lease on working state for the session's life.
-6. Ledger: the closing record carries `H_end`, forming the `H_start → H_end`
-   chain. Binding a hash with no recorded provenance records that fact
-   specifically and does not refuse.
-7. One authority: `OperatorPolicyAuthority` admits every session. The
-   second-authority design is void.
-8. Migrate the recorded manifest bytes and schema hashes in the test fixtures in
-   the same change. No fixture reads two shapes.
+   `minItems` 1 → 0; regenerate via `generate_public_contract.py`; define
+   H_genesis and seal it at project initialisation in the same commit.
+2. Delete `GenerationKind`, the two-kind invariant and every branch on them.
+   Replace `TaskHost::runtimeModelBinding`'s kind check with the sealing
+   assertion. `product-lifecycle.cpp` shrinks accordingly.
+3. Session open: the closure comes from the pinned registration; the single
+   dispatcher checks the closure on every call; the screenshot and authoring
+   natives become ordinary Tools, in a closure or not, and that is the only axis.
+4. `AgentProfile`: a `ControllerKind::Human` session carries an explicitly
+   declared operator budget — unbounded is a declared value, never a default.
+   The manifest always pins a policy artifact and a profile.
+5. Snapshot materialisation: confirmed already in place for production; extend
+   the same path to every session rather than adding a second one.
+6. The authoring-root write lease and the shared-writer branch of the closing
+   record (rule 3).
+7. Tests: delete the kind out of the fixtures; rewrite the annotation-side tests
+   as "a session with a different closure"; **delete** the tests that assert the
+   type split — they assert an invented limit.
+8. `correct-doc-drift` over `docs/ARCHITECTURE.md` and the annotation design
+   document.
 
 ## Deliberately left unresolved
 
-- Whether "privately finalized" carries a publication-visibility distinction
-  orthogonal to kind. Check against the code during implementation; if it does,
-  it survives as a release mechanism and is out of scope here.
-- The mechanism for pin-at-open — an open-time snapshot versus a write lock on
-  the source directory. The invariant is ruled; the mechanism belongs to the
-  implementation.
-- The grant vocabulary's granularity and naming, to be enumerated from real
-  capabilities and phrased for an operator.
-- How an unbounded budget is encoded. The only constraint is that it be explicit
-  bytes.
-- How two chains forked from one `H_start` are merged. Ruled explicitly as **not
-  the framework's business**; it records both chains faithfully.
+- The exact policy lines granting the screen-capture and input Tools. The
+  operator owns them; shape them the next time the policy grammar is touched.
+- The field shape of the shared-writer record (rule 3's faithful-recording
+  branch).
+- Activation of rule 6, dormant until a session-spawning Tool exists.
+- Only the two named `minItems` are ruled on. Other plural constraints in the
+  schema are not relaxed with them; rule on each when it is met.
