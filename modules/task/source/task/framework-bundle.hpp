@@ -146,10 +146,13 @@ namespace uf::task
     [[nodiscard]]
     auto frameworkProjectGlobals() -> std::vector<std::string>;
 
-    // The privileged authoring VM publishes only `explore`. The module owns its
-    // cycle bracket, its acting verbs and confined project I/O; no raw native
-    // table enters the project environment, and no cycle ticket leaves the
-    // bracket that minted it.
+    // The exploration VM publishes only `explore`, and the module is Luau sugar
+    // over ONE seam: every verb it offers -- observing, measuring inside an
+    // observation's body, input, waiting, and reading or writing the project --
+    // is a call of a Tool from the same framework catalog a production session
+    // holds. No raw native table enters the project environment, and there is
+    // no authoring surface behind this list to enter it with
+    // (docs/decisions/2026-08-24-there-is-no-annotation-phase.md).
     [[nodiscard]]
     auto explorationProjectGlobals() -> std::vector<std::string>;
 
@@ -158,9 +161,14 @@ namespace uf::task
     //
     // It is a function beside the other two rather than a literal at the boot
     // site so the three whitelists can be compared against each other. `explore`
-    // is in exactly one of them, and that is the half of the environment split a
-    // test can read; the other half is that the two private surfaces are built
-    // by different functions and neither environment is handed the other's.
+    // is in exactly one of them, and that is what a test can read.
+    //
+    // It is MODULE WIRING and not a permission boundary. The two private
+    // surfaces are built by different functions and neither environment is
+    // handed the other's, which keeps a Runtime VM from resolving a Tool call
+    // and an exploration VM from finalizing a model -- but what an exploration
+    // chunk may DO is the Operator policy's answer about a Tool call, exactly as
+    // it is for every other caller. There is no trust split here to protect.
     [[nodiscard]]
     auto runtimeProjectGlobals() -> std::vector<std::string>;
 
