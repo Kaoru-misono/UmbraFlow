@@ -391,6 +391,29 @@ namespace uf::cli
 
         auto& context = (*session)->context();
 
+        // The 16 `explore_*` natives still reach the screen, over the engine
+        // session the LIFECYCLE built rather than one this session opened for
+        // itself. They become Tools in the step after this one; what this
+        // asserts is that moving where the session comes from did not move how
+        // they reach it.
+        auto const cropped = (*session)->evaluate(
+            R"lua(
+                local blob = explore.cycle(function(cycle)
+                    return cycle:crop(0, 0, 1, 1)
+                end)
+                local measured = explore.probe(blob, 0, 0, 1, 1)
+                return type(blob) == "string" and #blob > 0
+                    and measured.image_width == 1
+                    and measured.image_height == 1
+            )lua",
+            "annotation-native-surface"
+        );
+        auto const croppedWhy = cropped.has_value()
+            ? std::string{}
+            : std::string{cropped.error().message()};
+        REQUIRE_MESSAGE(cropped.has_value(), croppedWhy);
+        CHECK(cropped->boolean() == std::optional<bool>{true});
+
         // Read-only screen observation carries no effect bounds, so deny-all
         // admits it. This is the half that would be lost if annotation answered
         // deny-all by refusing the session outright.
