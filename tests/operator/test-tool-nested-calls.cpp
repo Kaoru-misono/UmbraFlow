@@ -161,7 +161,7 @@ namespace uf::operator_runtime
                 },
                 .timeout = TimeoutPolicy{
                     .maximumElapsedMillis = k_boundMillis,
-                    .onTimeout            = TimeoutAction::Reconcile,
+                    .onTimeout            = TimeoutAction::Reobserve,
                 },
                 .mutability  = ToolMutability::Mutating,
                 .surface     = ToolSurface::Semantic,

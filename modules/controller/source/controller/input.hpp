@@ -371,8 +371,8 @@ namespace uf
     // offset leaves the client area is refused with nothing pressed. Once the
     // press has landed the guarantee changes hands: every later failure returns
     // with the button still down, and releasing it is the caller's -- see
-    // engine::IActionSink::drag, whose implementation owes the compensating
-    // drain longPress already owes.
+    // engine::IActionSink::releaseHeldInputs, which the engine calls after every
+    // delivery whichever way that delivery went.
     [[nodiscard]]
     auto drag(
         DeliveryTarget const& target,

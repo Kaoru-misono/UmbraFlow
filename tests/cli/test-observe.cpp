@@ -161,6 +161,14 @@ namespace uf::cli
                 return ok();
             }
 
+            // Deliberately NOT counted: the teardown runs after every delivery
+            // and posts nothing of its own, so counting it would make
+            // "delivered nothing" impossible to state.
+            [[nodiscard]] auto releaseHeldInputs() -> Status override
+            {
+                return ok();
+            }
+
             [[nodiscard]] auto targetWorld() const noexcept -> TargetWorld override
             {
                 return TargetWorld::Recorded;

@@ -409,6 +409,9 @@ namespace uf::operator_runtime::conformance
             return ok();
         }
 
+        // No verb here presses anything, so there is never anything to release.
+        [[nodiscard]] auto releaseHeldInputs() -> Status override { return ok(); }
+
         // Counts and discards; no verb here reaches a window. It must agree
         // with ObservationFrameSource above or EngineSession::create refuses
         // the session, which is the check that keeps a recorded capture from

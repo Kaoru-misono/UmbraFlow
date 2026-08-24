@@ -92,9 +92,9 @@ namespace uf::task
         // not weaker. EngineSession::pressKey refuses before the sink on a
         // requested stop, a foreign or spent observation and a target instance
         // that no longer matches; it can fail at the sink; and it can fail
-        // after the key has already gone down, because
-        // ControllerActionSink::pressKey drains a press whose release did not
-        // land. One Result covers all three there too, so every key-path error
+        // after the key has already gone down, because controller::keyPress
+        // reports a press whose release did not land as one Err. One Result
+        // covers all three there too, so every key-path error
         // is TransportUnknown as well -- a keystroke that reached the target is
         // exactly as unprovable-absent as a click that did.
         TransportUnknown,

@@ -1022,8 +1022,9 @@ identity = ["screen.anchor"]
 
     // Every key-path error is TransportUnknown, for the reason the click path's
     // is: EngineSession::pressKey fails before the sink, at the sink, and after
-    // the press has already gone down -- ControllerActionSink::pressKey drains
-    // exactly that last case into one Err. NotDelivered would claim an absence
+    // the press has already gone down -- controller::keyPress reports that last
+    // case as one Err, and the engine's own teardown putting the key back up
+    // does not make the press unhappen. NotDelivered would claim an absence
     // this path cannot prove, and only NotDelivered unlocks a Rejected
     // disposition downstream.
     //

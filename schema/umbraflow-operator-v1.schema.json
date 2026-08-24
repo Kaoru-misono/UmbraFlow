@@ -426,7 +426,7 @@
       "required": ["maximum_elapsed_ms", "on_timeout"],
       "properties": {
         "maximum_elapsed_ms": { "type": "integer", "minimum": 1 },
-        "on_timeout": { "enum": ["reobserve", "reconcile", "stop"] }
+        "on_timeout": { "enum": ["reobserve", "stop"] }
       }
     },
     "UIActionIntent": {

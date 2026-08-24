@@ -34,6 +34,12 @@ namespace uf::operator_runtime
         // under, the per-call elapsed ceiling any duration a caller states must
         // lie within, and how many children the descriptor admits.
         //
+        // That ceiling is the WORKFLOW limit and not the timeout policy's wall
+        // clock. The two were one number while nothing enforced the timeout;
+        // once ToolRuntimeExecutor judges a returning call against it, the wall
+        // clock has to leave room for the work a stated duration names, so a
+        // duration bounded by it would make the longest legal call time out.
+        //
         // It is deliberately not the whole descriptor. Every remaining bound is
         // ENFORCEMENT data, evaluated by admission on the exact catalog bytes
         // per call; republishing it here would be a second copy of the
@@ -44,7 +50,7 @@ namespace uf::operator_runtime
             auto const argumentContract = json::Value::ofObject({
                 {"maximum_duration_ms",
                  json::Value::ofNumber(
-                     static_cast<double>(tool.descriptor.timeout.maximumElapsedMillis)
+                     static_cast<double>(tool.descriptor.limits.maximumElapsedMillis)
                  )},
             });
             auto const childEffects = json::Value::ofObject({

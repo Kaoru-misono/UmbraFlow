@@ -414,7 +414,9 @@ namespace uf
 
         // From here on the button is DOWN, so every early return below leaves it
         // down on purpose: this function cannot know whether releasing at a place
-        // it could not reach is better than reporting. The caller owes the drain.
+        // it could not reach is better than reporting. Putting it back up is
+        // engine::IActionSink::releaseHeldInputs, which the engine calls after
+        // every delivery whichever way that delivery went.
         auto const dwell  = travel / k_dragSettleFraction;
         auto const moving = travel - dwell;
         auto const pause  = moving / k_dragMoves;

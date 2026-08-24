@@ -224,6 +224,14 @@ namespace uf::task
                 return ok();
             }
 
+            // Deliberately NOT recorded as an act: it posts nothing here, and a
+            // teardown in the delivered list would make every verb below look
+            // like two.
+            [[nodiscard]] auto releaseHeldInputs() -> Status override
+            {
+                return ok();
+            }
+
             [[nodiscard]] auto targetWorld() const noexcept -> TargetWorld override
             {
                 return TargetWorld::Recorded;

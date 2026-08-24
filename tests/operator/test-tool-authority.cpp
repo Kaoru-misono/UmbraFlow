@@ -204,7 +204,16 @@ namespace uf::operator_runtime
         );
         REQUIRE(wait.has_value());
         CHECK(wait->descriptor().limits.maximumWaits == 1U);
-        CHECK(wait->descriptor().timeout.maximumElapsedMillis == 60'000U);
+
+        // The two elapsed ceilings differ ON PURPOSE, and only for this Tool:
+        // the workflow limit is the longest wait a caller may ask for and is
+        // what the pinned catalog publishes as maximum_duration_ms, while the
+        // timeout policy is the wall clock ToolRuntimeExecutor judges the
+        // returning call against. Equal numbers would time out the longest
+        // legal wait every time, since sleeping for the ceiling returns after
+        // it.
+        CHECK(wait->descriptor().limits.maximumElapsedMillis == 60'000U);
+        CHECK(wait->descriptor().timeout.maximumElapsedMillis == 66'000U);
 
         // An Agent is offered the Semantic Framework Tools and none of the
         // Privileged ones: bare-coordinate input is absent rather than present

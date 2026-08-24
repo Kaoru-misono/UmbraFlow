@@ -343,6 +343,18 @@ namespace uf::engine
             std::string_view cancelMessage
         ) const -> Status;
 
+        // beginDelivery's other half, and the teardown that keeps the input
+        // invariant IActionSink::releaseHeldInputs states: every delivery this
+        // session makes ends by releasing whatever the sink still holds,
+        // whichever way the delivery went.
+        //
+        // It takes the delivery's own outcome and gives it back so that the two
+        // cannot be reported separately: `delivered` stays the reported failure
+        // when there is one, and a release that itself failed is appended to it
+        // as context, or becomes the failure when the delivery had none.
+        [[nodiscard]]
+        auto endDelivery(Status delivered) -> Status;
+
         // The input one verb that names no screen position delivers: a keystroke
         // or a wheel count. A closed pair, so the trace field naming the verb and
         // the sink call performing it follow from the alternative rather than

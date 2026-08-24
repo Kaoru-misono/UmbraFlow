@@ -847,8 +847,9 @@ namespace uf::task
         // engine's Result cannot say whether it did. clickPoint fails before the
         // sink, at the sink, and after the click landed; pressKey does the same,
         // and its post-sink case is real rather than theoretical, because a
-        // press whose release did not land is drained at the controller and
-        // reported as one error. TransportUnknown is the only honest answer for
+        // press whose release did not land is reported as one error. The
+        // engine's teardown puts the key back up and does not make the press
+        // unhappen, so TransportUnknown is still the only honest answer for
         // either kind, and it deliberately does not prove absence.
         //
         // Which of the two runs is the Receipt's own intent and is decided here

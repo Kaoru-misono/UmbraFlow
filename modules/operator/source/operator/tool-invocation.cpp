@@ -59,6 +59,15 @@ namespace uf::operator_runtime
         constexpr auto k_maximumStatusMillis = uint64{1'000U};
         constexpr auto k_maximumInputMillis = uint64{15'000U};
 
+        // The wall clock framework.workflow.wait is judged against, and the one
+        // Framework Tool whose timeout ceiling cannot be its workflow ceiling.
+        // A wait that sleeps for exactly k_maximumWaitMillis returns a little
+        // after it, so a timeout ceiling equal to the longest admitted wait
+        // would refuse the longest legal call every time. The headroom is the
+        // Framework's to choose because framework.* Tools are the Framework's
+        // own declaration; a Project's ceilings stay the Project's.
+        constexpr auto k_waitTimeoutMillis = uint64{66'000U};
+
         // The two identity domain tags. They are constants rather than literals
         // inside their builders because the protocol material renders the exact
         // preimage bytes: one spelling reaches both, so a tag bumped for a
@@ -355,7 +364,7 @@ namespace uf::operator_runtime
                 },
                 .timeout = TimeoutPolicy{
                     .maximumElapsedMillis = k_maximumInputMillis,
-                    .onTimeout            = TimeoutAction::Reconcile,
+                    .onTimeout            = TimeoutAction::Reobserve,
                 },
                 .mutability  = ToolMutability::Mutating,
                 .surface     = ToolSurface::Semantic,
@@ -385,7 +394,7 @@ namespace uf::operator_runtime
                 },
                 .timeout = TimeoutPolicy{
                     .maximumElapsedMillis = k_maximumInputMillis,
-                    .onTimeout            = TimeoutAction::Reconcile,
+                    .onTimeout            = TimeoutAction::Reobserve,
                 },
                 .mutability  = ToolMutability::Mutating,
                 .surface     = ToolSurface::Privileged,
@@ -409,7 +418,7 @@ namespace uf::operator_runtime
                     .maximumElapsedMillis = k_maximumWaitMillis,
                 },
                 .timeout = TimeoutPolicy{
-                    .maximumElapsedMillis = k_maximumWaitMillis,
+                    .maximumElapsedMillis = k_waitTimeoutMillis,
                     .onTimeout            = TimeoutAction::Stop,
                 },
                 .mutability  = ToolMutability::ReadOnly,

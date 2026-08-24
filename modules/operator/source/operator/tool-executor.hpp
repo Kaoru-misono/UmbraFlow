@@ -49,6 +49,15 @@ namespace uf::operator_runtime
         // is the whole of what a producer supplies: read-only and mutating
         // differ in what the request carries and in how a provider's failure is
         // classified, never in which function was called.
+        //
+        // It is also where the Tool's own OP:`TimeoutPolicy` is enforced, for
+        // the reason this is the shared seam at all: a ceiling read in one
+        // caller path and not another would be a ceiling a Project could not
+        // rely on. A call whose provider returns later than the declared
+        // maximum_elapsed_ms gets a durable outcome naming what was exceeded
+        // and what the limit was, and the declared on_timeout then decides
+        // whether this call returns an outcome the run carries on from
+        // (`reobserve`) or a failure that ends it (`stop`).
         [[nodiscard]]
         auto invoke(
             ToolAdmissionRequest const& request,

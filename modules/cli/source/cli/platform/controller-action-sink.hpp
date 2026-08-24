@@ -1,7 +1,6 @@
 #pragma once
 
 #include <controller/input.hpp>
-#include <core/error/error.hpp>
 #include <core/error/result.hpp>
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
@@ -26,13 +25,6 @@ namespace uf::cli::platform
         DeliveryTarget m_target;
         HeldInputs     m_held{};
         AuditLog       m_audit{};
-
-        // Drains whatever the failed verb left held and returns the verb's own
-        // error, with a note appended when the drain itself failed. One function for
-        // all three verbs that can leave a button or key down: `what` names the
-        // verb, and nothing else differs.
-        [[nodiscard]]
-        auto drainAfterFailure(Error error, std::string_view what) -> Status;
 
         // The refresh-target callback the controller verbs that span time require:
         // it re-reads the live desktop and reports the bound window as gone if it
@@ -97,8 +89,7 @@ namespace uf::cli::platform
         // Posts one pointer message through controller::movePointer, the same
         // deliver -> postInputMessage -> PostMessageW route click() takes, with
         // the same lease forwarded. It is the one verb here that takes the held
-        // inputs as a const borrow: it changes no button state, so it owes no
-        // compensation drain.
+        // inputs as a const borrow: it changes no button state.
         [[nodiscard]]
         auto movePointer(
             Point<ClientSpace> point,
@@ -107,9 +98,7 @@ namespace uf::cli::platform
 
         // Posts the press, the held moves and the release through
         // controller::drag -- the same route click() takes, with the same lease
-        // forwarded and the same refresh-target callback longPress supplies. It
-        // owes the compensating drain for longPress's reason and more often: a
-        // drag has more ways to fail between the press and the release.
+        // forwarded and the same refresh-target callback longPress supplies.
         [[nodiscard]]
         auto drag(
             Point<ClientSpace> start,
@@ -117,5 +106,10 @@ namespace uf::cli::platform
             MonotonicInstant::Duration travel,
             ObservationLease const& lease
         ) -> Status override;
+
+        // Posts the release of every key and button m_held still records, and
+        // reports the first release the target would not take. See the port for
+        // the invariant this keeps and for who calls it.
+        [[nodiscard]] auto releaseHeldInputs() -> Status override;
     };
 }

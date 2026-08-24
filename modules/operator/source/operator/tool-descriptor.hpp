@@ -118,13 +118,18 @@ namespace uf::operator_runtime
         ToolIdempotency declared
     ) noexcept -> bool;
 
-    // What a timed-out step does next. Never a domain success: a postcondition
+    // What a timed-out call does next. Never a domain success: a postcondition
     // that did not arrive is a reason to look again, not evidence that the
     // effect landed.
+    //
+    // The two are what the framework can carry out on the Project's behalf and
+    // the whole of it: Reobserve records the overrun and lets the run continue,
+    // so the Project looks again; Stop records it and ends the run. There was a
+    // third, `reconcile`, and it was deleted rather than left unenforced -- see
+    // ToolRuntimeExecutor::invoke, which is where both are enforced.
     enum class TimeoutAction : uint8
     {
         Reobserve,
-        Reconcile,
         Stop,
     };
 

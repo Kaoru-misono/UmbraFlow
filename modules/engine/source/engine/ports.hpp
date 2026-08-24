@@ -162,10 +162,9 @@ namespace uf::engine
         //
         // It takes a lease for click()'s reason and not for scroll()'s -- this
         // verb names a coordinate measured off a frame, so the lease is
-        // authorization and not merely delivery material. The implementation MUST
-        // also leave the button released on every exit path including a failed
-        // one: a verb whose safety argument is that it strands no held state
-        // cannot strand held state when it fails.
+        // authorization and not merely delivery material. A failure between the
+        // press and the release leaves the button down, and putting it back up
+        // is releaseHeldInputs's job rather than this verb's.
         [[nodiscard]]
         virtual auto longPress(
             Point<ClientSpace> point,
@@ -210,10 +209,10 @@ namespace uf::engine
         // this verb exists for. What it must keep checking is that the moves are
         // still landing in the window that was authorized.
         //
-        // The implementation MUST leave the button released on every exit path
-        // including a failed one. This is the same clause longPress carries and
-        // it is harder to keep here, because a drag has more ways to fail after
-        // the press than a hold does.
+        // A drag has more ways to fail after the press than a hold does, and
+        // none of them is this verb's to compensate for: releaseHeldInputs is
+        // where a button left down comes back up, and EngineSession calls it
+        // once for every delivery it makes.
         [[nodiscard]]
         virtual auto drag(
             Point<ClientSpace> start,
@@ -243,6 +242,30 @@ namespace uf::engine
             Point<ClientSpace> point,
             ObservationLease const& lease
         ) -> Status = 0;
+
+        // Posts the release of every key and button this sink still holds down,
+        // and holds nothing when it returns.
+        //
+        // INVARIANT: NO INPUT STATE MAY SURVIVE THE END OF ITS TOOL CALL. On
+        // timeout, on error, on abort, every input still held is released. This
+        // is a guarantee and not a tidy-up: a hung call that is still holding a
+        // mouse button down is a worse failure than a hung call, and it is the
+        // framework's to prevent for the same reason it refuses an unauthorised
+        // actor -- it is not deciding what the Project should do next, it is
+        // refusing to leave the machine in a state nobody asked for.
+        //
+        // EngineSession::endDelivery calls this after every delivery it makes,
+        // whichever way that delivery went, which is what makes the guarantee
+        // the framework's rather than each adapter's memory. Doing so is the
+        // whole of the compensation owed: an implementation that holds nothing
+        // answers ok().
+        //
+        // A failed release is reported rather than swallowed, because a target
+        // that would not take the release is exactly the case an operator has to
+        // be told about; the delivery's own error stays the reported one when
+        // there is one.
+        [[nodiscard]]
+        virtual auto releaseHeldInputs() -> Status = 0;
 
         // Whether the inputs this sink posts reach a target that moves on its
         // own, and Live by default, both for IFrameSource::targetWorld's

@@ -952,6 +952,31 @@ namespace uf::engine
         return ensureUsable(observation, verb);
     }
 
+    auto EngineSession::endDelivery(Status delivered) -> Status
+    {
+        auto released = m_actionSink->releaseHeldInputs();
+        if (released)
+        {
+            return delivered;
+        }
+        if (delivered)
+        {
+            return released;
+        }
+
+        // The delivery's own failure is what a caller is looking at, so the
+        // release that also failed is context on it rather than a second error
+        // that replaces the first.
+        auto error = std::move(delivered).error();
+        error.addContext(
+            std::format(
+                "releasing what the delivery left held also failed: {}",
+                released.error().message()
+            )
+        );
+        return std::unexpected{std::move(error)};
+    }
+
     auto EngineSession::stampInput(
         trace::TraceEventSpec event,
         UnaimedInput input
@@ -1097,7 +1122,7 @@ namespace uf::engine
             return std::unexpected{std::move(revalidation).error()};
         }
 
-        auto delivered = matchVariant(
+        auto delivered = endDelivery(matchVariant(
             input,
             [this, identity](KeyName key) -> Status
             {
@@ -1107,7 +1132,7 @@ namespace uf::engine
             {
                 return m_actionSink->scroll(notches, observation.m_lease);
             }
-        );
+        ));
         if (!delivered)
         {
             UF_TRY(rejectAction(identity, delivered.error(), input));
@@ -1149,7 +1174,9 @@ namespace uf::engine
 
         auto const identity = observation.m_frameIdentity;
 
-        auto delivered = m_actionSink->click(clientPoint, observation.m_lease);
+        auto delivered = endDelivery(
+            m_actionSink->click(clientPoint, observation.m_lease)
+        );
         if (!delivered)
         {
             UF_TRY(rejectAction(identity, delivered.error(), std::nullopt));
@@ -1263,10 +1290,8 @@ namespace uf::engine
 
         auto const identity = observation.m_frameIdentity;
 
-        auto delivered = m_actionSink->longPress(
-            clientPoint,
-            hold,
-            observation.m_lease
+        auto delivered = endDelivery(
+            m_actionSink->longPress(clientPoint, hold, observation.m_lease)
         );
         if (!delivered)
         {
@@ -1331,7 +1356,9 @@ namespace uf::engine
 
         auto const identity = observation.m_frameIdentity;
 
-        auto delivered = m_actionSink->movePointer(clientPoint, observation.m_lease);
+        auto delivered = endDelivery(
+            m_actionSink->movePointer(clientPoint, observation.m_lease)
+        );
         if (!delivered)
         {
             UF_TRY(rejectAction(identity, delivered.error(), std::nullopt));
@@ -1418,11 +1445,13 @@ namespace uf::engine
 
         auto const identity = observation.m_frameIdentity;
 
-        auto delivered = m_actionSink->drag(
-            startClient,
-            endClient,
-            travel,
-            observation.m_lease
+        auto delivered = endDelivery(
+            m_actionSink->drag(
+                startClient,
+                endClient,
+                travel,
+                observation.m_lease
+            )
         );
         if (!delivered)
         {

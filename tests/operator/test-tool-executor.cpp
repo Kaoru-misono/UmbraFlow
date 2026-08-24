@@ -8,10 +8,13 @@
 
 #include <doctest/doctest.h>
 
+#include <chrono>
 #include <limits>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -1049,6 +1052,196 @@ namespace uf::operator_runtime
             CHECK(refused.error().message().contains(
                 "A read-only Tool cannot report proven_absent"
             ));
+        }
+    }
+
+    // The ceiling a Project declared, enforced. Both arms share one prepared
+    // store because the store IS the cost here: what separates them is one
+    // enumerator in one descriptor, and running that difference against two
+    // stores would buy nothing.
+    TEST_CASE(
+        "a Tool call that outran its declared ceiling reports the ceiling and "
+        "its on_timeout decides the run"
+    )
+    {
+        constexpr auto k_declaredCeilingMillis = uint64{1U};
+        constexpr auto k_lateProviderWork      = std::chrono::milliseconds{25};
+
+        auto temporary = test_support::TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+        auto const toolName = prepared.project.toolName("observe-1");
+
+        // Descriptors this suite states over the registration's OWN declaration
+        // bytes. The catalog identity is the hash of those bytes, so a trusted
+        // reader may shrink a ceiling to one a case can cross in milliseconds
+        // without moving anything the session pinned -- which is the same seam
+        // a deployment reader occupies.
+        auto const catalogWith = [&prepared, &toolName](TimeoutAction action)
+        {
+            auto descriptor = test_support::toolInvocation(
+                prepared.project,
+                toolName
+            ).descriptor();
+            REQUIRE(descriptor.mutability == ToolMutability::ReadOnly);
+            descriptor.timeout = TimeoutPolicy{
+                .maximumElapsedMillis = k_declaredCeilingMillis,
+                .onTimeout            = action,
+            };
+            auto tools = std::vector<ToolCatalogEntry>{
+                ToolCatalogEntry{
+                    .name       = toolName,
+                    .descriptor = std::move(descriptor),
+                },
+            };
+            auto owner = ProjectToolCatalogSchemaOwner::create(
+                prepared.project.registration,
+                prepared.project.toolCatalogBytes,
+                [tools = std::move(tools)]()
+                    -> Result<std::vector<ToolCatalogEntry>> { return tools; },
+                [](std::string_view, std::string_view) -> Status { return ok(); }
+            );
+            REQUIRE(owner.has_value());
+            return *std::move(owner);
+        };
+
+        auto const callUnder = [&toolName](
+            ProjectToolCatalogSchemaOwner const& catalog,
+            ToolRootRequestIdentity const& root,
+            std::string_view runName
+        )
+        {
+            auto arguments = CanonicalJson::parseExact(R"({"value":1})");
+            REQUIRE(arguments.has_value());
+            auto invocation = catalog.validate(toolName, *std::move(arguments));
+            REQUIRE(invocation.has_value());
+            auto call = toolCallAt(
+                root,
+                nullptr,
+                1U,
+                ToolExecutionIdentity{
+                    .runIdentity                 = testHash(runName),
+                    .frameworkReleaseIdentity    = testHash("executor-framework"),
+                    .toolRuntimeProtocolIdentity = testHash("executor-protocol"),
+                    .environmentIdentity         = testHash("executor-environment"),
+                },
+                *invocation
+            );
+            REQUIRE(call.has_value());
+            return *std::move(call);
+        };
+
+        // A provider that answers correctly and late. It answers at all because
+        // the overrun is what decides the outcome: an answer that arrived past
+        // the ceiling is not the answer the Project declared it would take.
+        auto const lateProvider = [k_lateProviderWork](
+            ToolCallPositionIdentity const&
+        ) -> Result<ToolCallCompletion>
+        {
+            std::this_thread::sleep_for(k_lateProviderWork);
+            auto answer = CanonicalJson::parseExact(R"({"observed":true})");
+            REQUIRE(answer.has_value());
+            return ToolCallCompletion::confirmed(*std::move(answer));
+        };
+
+        auto executor = ToolRuntimeExecutor{prepared.store};
+
+        {
+            auto const catalog = catalogWith(TimeoutAction::Stop);
+            auto const root    = toolRoot("executor-timeout-stop");
+            auto const call    = callUnder(
+                catalog,
+                root,
+                "executor-timeout-stop-run"
+            );
+            auto stopped = executor.invoke(
+                ToolAdmissionRequest{
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = call,
+                    .policyAuthority = prepared.policyAuthority,
+                },
+                lateProvider
+            );
+
+            // `stop` is a returned FAILURE, which is what ends a run at every
+            // caller adapter and at the scoped seam alike.
+            REQUIRE_FALSE(stopped.has_value());
+            CHECK(
+                automationErrorKind(stopped.error())
+                == AutomationErrorKind::Timeout
+            );
+
+            // The signal names WHAT was exceeded and WHAT the limit was. A
+            // generic failure here would be a limit the Project declared and
+            // then could not act on.
+            CHECK(stopped.error().message().contains(toolName));
+            CHECK(stopped.error().message().contains(
+                "exceeded the maximum_elapsed_ms of 1 its Tool declared"
+            ));
+
+            // The overrun is DURABLE and not merely reported: replaying the
+            // coordinate answers out of the row without running anything.
+            auto executions = uint64{};
+            auto replayed   = executor.invoke(
+                ToolAdmissionRequest{
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = call,
+                    .policyAuthority = prepared.policyAuthority,
+                },
+                [&executions](ToolCallPositionIdentity const&)
+                {
+                    ++executions;
+                    auto answer = CanonicalJson::parseExact("{}");
+                    REQUIRE(answer.has_value());
+                    return ToolCallCompletion::confirmed(*std::move(answer));
+                }
+            );
+            REQUIRE(replayed.has_value());
+            REQUIRE(replayed->payload.has_value());
+            CHECK(executions == 0U);
+            CHECK(replayed->state == ToolCallState::TerminalFailure);
+            auto const& payload = replayed->payload->bytes();
+            CHECK(payload.find(R"("kind":"timeout")") != std::string::npos);
+            CHECK(payload.find(R"("maximum_elapsed_ms":1)") != std::string::npos);
+            CHECK(payload.find(R"("on_timeout":"stop")") != std::string::npos);
+        }
+
+        {
+            auto const catalog = catalogWith(TimeoutAction::Reobserve);
+            auto const root    = toolRoot("executor-timeout-reobserve");
+            auto const call    = callUnder(
+                catalog,
+                root,
+                "executor-timeout-reobserve-run"
+            );
+            auto reobserved = executor.invoke(
+                ToolAdmissionRequest{
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = call,
+                    .policyAuthority = prepared.policyAuthority,
+                },
+                lateProvider
+            );
+
+            // `reobserve` is a returned VALUE: the run carries on holding the
+            // recorded timeout, which is what lets the Project look again
+            // rather than be torn down.
+            REQUIRE(reobserved.has_value());
+            REQUIRE(reobserved->payload.has_value());
+            CHECK(reobserved->state == ToolCallState::TerminalFailure);
+            auto const& payload = reobserved->payload->bytes();
+            CHECK(payload.find(R"("kind":"timeout")") != std::string::npos);
+            CHECK(
+                payload.find(R"("on_timeout":"reobserve")") != std::string::npos
+            );
+
+            // What the provider answered is deliberately NOT the outcome.
+            CHECK(payload.find(R"("observed")") == std::string::npos);
         }
     }
 }

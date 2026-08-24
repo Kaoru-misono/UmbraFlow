@@ -16,28 +16,17 @@
 
 namespace uf::cli::platform
 {
-    auto ControllerActionSink::drainAfterFailure(
-        Error error,
-        std::string_view what
-    ) -> Status
+    auto ControllerActionSink::releaseHeldInputs() -> Status
     {
-        // The original failure remains the reported error; a compensation release
-        // that itself fails only adds context.
         auto releases = releaseHeld(m_target, m_held, m_audit);
-        for (auto const& release : releases)
+        for (auto& release : releases)
         {
             if (!release.result)
             {
-                error.addContext(
-                    std::format(
-                        "input compensation after a failed {} also failed: {}",
-                        what,
-                        release.result.error().message()
-                    )
-                );
+                return std::unexpected{std::move(release.result).error()};
             }
         }
-        return std::unexpected{std::move(error)};
+        return ok();
     }
 
     auto ControllerActionSink::refreshTargetCallback(std::string_view what)
@@ -85,15 +74,7 @@ namespace uf::cli::platform
         ObservationLease const& lease
     ) -> Status
     {
-        auto delivered = uf::click(m_target, lease, point, m_held, m_audit);
-        if (delivered)
-        {
-            return ok();
-        }
-
-        // The click may have left a pointer button held; drain it so the target is
-        // not stranded mid-press.
-        return drainAfterFailure(std::move(delivered).error(), "click");
+        return uf::click(m_target, lease, point, m_held, m_audit);
     }
 
     auto ControllerActionSink::pressKey(
@@ -101,21 +82,13 @@ namespace uf::cli::platform
         TargetGeneration actionGeneration
     ) -> Status
     {
-        auto delivered = uf::keyPress(
+        return uf::keyPress(
             m_target,
             actionGeneration,
             KeyInput::fromKeyName(key),
             m_held,
             m_audit
         );
-        if (delivered)
-        {
-            return ok();
-        }
-
-        // The press may have landed while the release did not; drain it so the key
-        // is not left held down.
-        return drainAfterFailure(std::move(delivered).error(), "key");
     }
 
     auto ControllerActionSink::scroll(
@@ -138,8 +111,6 @@ namespace uf::cli::platform
             static_cast<float>(m_target.clientHeight()) / 2.0F,
         };
 
-        // No compensation drain is owed: a wheel is one posted message that holds
-        // nothing down, so a failed scroll strands no half-press in the target.
         return uf::scroll(m_target, lease, centre, delta, m_held, m_audit);
     }
 
@@ -158,7 +129,11 @@ namespace uf::cli::platform
         // reported rather than posted to.
         auto refreshTarget = refreshTargetCallback("long press");
 
-        auto delivered = uf::longPress(
+        // A long press can leave a button that WENT down and did not come up,
+        // since the refresh across the hold can refuse the release. Putting it
+        // back up is releaseHeldInputs's, which the engine calls after this
+        // returns however it returned.
+        return uf::longPress(
             m_target,
             lease,
             point,
@@ -167,15 +142,6 @@ namespace uf::cli::platform
             m_audit,
             std::move(refreshTarget)
         );
-        if (delivered)
-        {
-            return ok();
-        }
-
-        // A long press is the one verb whose failure mode is a button that WENT down
-        // and did not come up, since the refresh across the hold can refuse the
-        // release. The port's "released on every exit path" guarantee is kept here.
-        return drainAfterFailure(std::move(delivered).error(), "long press");
     }
 
     auto ControllerActionSink::movePointer(
@@ -183,13 +149,11 @@ namespace uf::cli::platform
         ObservationLease const& lease
     ) -> Status
     {
-        // No compensation drain is owed, for the scroll's reason: one posted
-        // message that holds nothing down, so a failed move strands no half-press.
         // controller::movePointer reads the held inputs to decide whether the
         // message is a plain move or a drag; nothing this port exposes leaves a
-        // button held ACROSS calls, so the plain move is what it picks here. The
-        // held moves inside drag() are the other branch, and they never leave this
-        // port with a button down either.
+        // button held ACROSS deliveries, because the engine releases what one
+        // left held before the next begins, so the plain move is what it picks
+        // here. The held moves inside drag() are the other branch.
         return uf::movePointer(m_target, lease, point, m_held, m_audit);
     }
 
@@ -200,7 +164,11 @@ namespace uf::cli::platform
         ObservationLease const& lease
     ) -> Status
     {
-        auto delivered = uf::drag(
+        // The long press's clause, and the reason it matters more here: a drag
+        // can fail at any of its held moves as well as at the refresh, so "the
+        // button went down and did not come up" is its ordinary failure rather
+        // than its unlucky one. It is still not this verb's to compensate for.
+        return uf::drag(
             m_target,
             lease,
             start,
@@ -210,16 +178,5 @@ namespace uf::cli::platform
             m_audit,
             refreshTargetCallback("drag")
         );
-        if (delivered)
-        {
-            return ok();
-        }
-
-        // The long press's clause, and the reason it matters more here: a drag can
-        // fail at any of sixteen held moves as well as at the refresh, so "the
-        // button went down and did not come up" is its ordinary failure rather
-        // than its unlucky one. The port's "released on every exit path" guarantee
-        // is kept here.
-        return drainAfterFailure(std::move(delivered).error(), "drag");
     }
 }

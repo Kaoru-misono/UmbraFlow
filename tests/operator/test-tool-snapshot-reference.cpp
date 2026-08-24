@@ -526,7 +526,7 @@ namespace uf::operator_runtime
             semantic->effectBounds.front().payloadSchemaHash
             == coordinate->effectBounds.front().payloadSchemaHash
         );
-        CHECK(semantic->timeout.onTimeout == TimeoutAction::Reconcile);
+        CHECK(semantic->timeout.onTimeout == TimeoutAction::Reobserve);
 
         // Observation is the one Tool that spends an observation, and it spends
         // exactly one without dispatching anything.
@@ -546,7 +546,7 @@ namespace uf::operator_runtime
         // hash compared against itself pins nothing.
         CHECK(
             catalog->toolCatalogHash().hex()
-            == "a32904ff445c0297b788c34d5ffec0aca8dd89f0314404f14ee7da689c42d354"
+            == "555a56b6c064015f3aa5b6f2feea61ff489356085cb0485310becbce7c9df492"
         );
 
         auto material = CanonicalJson::parseExact(catalog->canonicalJcs());

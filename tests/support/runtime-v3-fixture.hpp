@@ -474,6 +474,11 @@ identity = ["panel.anchor"]
             return ok();
         }
 
+        // No verb here presses anything, so there is never anything to release.
+        // The invariant this serves is exercised where a sink can hold a button
+        // down, in tests/engine/test-session.cpp.
+        [[nodiscard]] auto releaseHeldInputs() -> Status override { return ok(); }
+
         [[nodiscard]] auto clicks() const noexcept -> uint32 { return m_clicks; }
 
         [[nodiscard]] auto keys() const noexcept -> uint32 { return m_keys; }
@@ -506,7 +511,8 @@ identity = ["panel.anchor"]
 
         // A refused keystroke is what a real sink cannot describe either: the
         // press may have reached the target before the release failed, and
-        // ControllerActionSink::pressKey drains exactly that case into one Err.
+        // controller::keyPress reports exactly that case as one Err while the
+        // engine's teardown puts the key back up.
         auto refuseKeys() noexcept -> void { m_refuseKeys = true; }
 
         // Counts and discards. It must agree with FrameSource above or

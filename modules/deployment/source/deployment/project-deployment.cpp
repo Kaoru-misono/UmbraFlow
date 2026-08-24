@@ -171,7 +171,6 @@ namespace uf::deployment
 
         constexpr auto k_timeoutActions = std::array{
             operator_runtime::TimeoutAction::Reobserve,
-            operator_runtime::TimeoutAction::Reconcile,
             operator_runtime::TimeoutAction::Stop,
         };
 

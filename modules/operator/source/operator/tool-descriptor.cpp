@@ -143,7 +143,6 @@ namespace uf::operator_runtime
         switch (action)
         {
         case TimeoutAction::Reobserve: return "reobserve";
-        case TimeoutAction::Reconcile: return "reconcile";
         case TimeoutAction::Stop: return "stop";
         }
 
@@ -155,7 +154,6 @@ namespace uf::operator_runtime
     {
         constexpr auto k_timeoutActions = std::array{
             TimeoutAction::Reobserve,
-            TimeoutAction::Reconcile,
             TimeoutAction::Stop,
         };
         auto const found = std::ranges::find(

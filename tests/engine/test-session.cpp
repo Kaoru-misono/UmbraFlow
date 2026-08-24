@@ -365,6 +365,14 @@ namespace uf::engine
             std::optional<Point<ClientSpace>> m_lastMove{};
             std::optional<ObservationLease>   m_lastMoveLease{};
 
+            // The half of a real sink the counters above cannot stand in for:
+            // controller::drag presses before it travels, so a drag that fails
+            // partway returns with the button STILL DOWN. Modelling that is the
+            // only way a case can watch the framework take it back up.
+            bool   m_pointerHeld{false};
+            bool   m_abortDragMidTravel{false};
+            uint32 m_releaseCount{0};
+
             TargetWorld m_world;
 
         public:
@@ -471,6 +479,19 @@ namespace uf::engine
                 m_lastDragStart = start;
                 m_lastDragEnd   = end;
                 m_lastTravel    = travel;
+
+                // The press first, exactly as controller::drag does it, so an
+                // abort below leaves the button down rather than merely
+                // reporting one.
+                m_pointerHeld = true;
+                if (m_abortDragMidTravel)
+                {
+                    return fail(
+                        AutomationErrorKind::TargetUnavailable,
+                        "the drag target went away between two held moves"
+                    );
+                }
+                m_pointerHeld = false;
                 return ok();
             }
 
@@ -487,6 +508,31 @@ namespace uf::engine
                 m_lastMove      = point;
                 m_lastMoveLease = lease;
                 return ok();
+            }
+
+            [[nodiscard]] auto releaseHeldInputs() -> Status override
+            {
+                ++m_releaseCount;
+                m_pointerHeld = false;
+                return ok();
+            }
+
+            // Makes the drag fail between two held moves with the button down,
+            // which is the shape every failure past controller::drag's press
+            // has.
+            void abortDragMidTravel() noexcept
+            {
+                m_abortDragMidTravel = true;
+            }
+
+            [[nodiscard]] auto pointerHeld() const noexcept -> bool
+            {
+                return m_pointerHeld;
+            }
+
+            [[nodiscard]] auto releaseCount() const noexcept -> uint32
+            {
+                return m_releaseCount;
             }
 
             [[nodiscard]] auto clickCount() const noexcept -> uint32
@@ -1977,6 +2023,34 @@ namespace uf::engine
         auto const* p_endX = fieldAs<std::string>(*p_drag, "end_client_x");
         REQUIRE(p_endX != nullptr);
         CHECK(*p_endX == "2");
+
+        // The teardown ran on the delivery that SUCCEEDED as well. It is
+        // unconditional or it is not a guarantee: a release that only happens
+        // after a failure is a compensation, and the next reader has to work out
+        // which failures are covered.
+        CHECK(under.clicks->releaseCount() == 1);
+        CHECK_FALSE(under.clicks->pointerHeld());
+
+        // A DRAG ABORTED MID-TRAVEL, which is what makes the invariant
+        // falsifiable at all: the sink presses, fails between two held moves,
+        // and returns with the button down. Take the endDelivery call out of
+        // EngineSession::drag and pointerHeld() below stays true.
+        under.clicks->abortDragMidTravel();
+        auto again = session.observe();
+        REQUIRE(again.has_value());
+        auto const aborted = session.drag(
+            *std::move(again),
+            PixelPoint{0, 0},
+            PixelPoint{2, 0},
+            travel
+        );
+        REQUIRE_FALSE(aborted.has_value());
+        requireErrorKind(aborted.error(), AutomationErrorKind::TargetUnavailable);
+        CHECK(under.clicks->dragCount() == 2);
+
+        // No input state survived the end of the call that pressed it.
+        CHECK_FALSE(under.clicks->pointerHeld());
+        CHECK(under.clicks->releaseCount() == 2);
     }
 
     TEST_CASE("engine session refuses a drag that travels backwards in time")
