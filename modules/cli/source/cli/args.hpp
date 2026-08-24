@@ -63,13 +63,25 @@ namespace uf::cli
         )
     );
 
-    // The privileged annotation front end. Queue and result paths are required
-    // because a durable cursor, rather than a one-shot command, prevents an
-    // agent restart from delivering the same input twice.
+    // The annotation front end. Queue and result paths are required because a
+    // durable cursor, rather than a one-shot command, prevents an agent restart
+    // from delivering the same input twice.
+    //
+    // The Operator production root is required for the reason ObserveArgs and
+    // InvokeArgs require it, and there is no flagless spelling of it: an
+    // exploration session goes through the one production admission door, so
+    // it names the runtime that governs it exactly as every other verb does
+    // (docs/decisions/2026-08-24-the-annotation-policy-is-the-operators.md).
+    // The annotation policy is read from that root's own
+    // `policy-artifact.json` and from nowhere else; absent, it resolves to the
+    // Operator-owned deny-all artifact.
     struct ExploreArgs final
     {
         std::filesystem::path project{};
         intptr                windowHandle{};
+
+        std::filesystem::path runtime{};
+
         std::filesystem::path queue{};
         std::filesystem::path results{};
 

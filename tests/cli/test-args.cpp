@@ -46,6 +46,8 @@ namespace uf::cli
                 "proj",
                 "--hwnd",
                 "0x20",
+                "--runtime",
+                "production",
                 "--queue",
                 "queue.jsonl",
                 "--results",
@@ -150,6 +152,8 @@ namespace uf::cli
                 "project-root",
                 "--hwnd",
                 "0x7f",
+                "--runtime",
+                "production",
                 "--queue",
                 "queue.jsonl",
                 "--results",
@@ -172,6 +176,7 @@ namespace uf::cli
         REQUIRE(result.has_value());
         CHECK(result->project == std::filesystem::path{"project-root"});
         CHECK(result->windowHandle == intptr{0x7f});
+        CHECK(result->runtime == std::filesystem::path{"production"});
         CHECK(result->queue == std::filesystem::path{"queue.jsonl"});
         CHECK(result->results == std::filesystem::path{"results.jsonl"});
         CHECK(result->budget == uint64{4096});
@@ -205,6 +210,7 @@ namespace uf::cli
         auto const required = std::array{
             std::string{"--project"},
             std::string{"--hwnd"},
+            std::string{"--runtime"},
             std::string{"--queue"},
             std::string{"--results"},
         };
@@ -216,7 +222,15 @@ namespace uf::cli
             raw.erase(found, found + 2);
 
             INFO("missing flag: ", missing);
-            CHECK_FALSE(parseExploreArguments(raw).has_value());
+            auto const refused = parseExploreArguments(raw);
+            REQUIRE_FALSE(refused.has_value());
+
+            // On the message, not only on the failure. --runtime is what makes
+            // an exploration session go through the one production admission
+            // door, and a caller told only "invalid" cannot tell a missing
+            // Operator root from a mistyped window handle
+            // (docs/decisions/2026-08-24-the-annotation-policy-is-the-operators.md).
+            CHECK(refused.error().message().contains(missing));
         }
     }
 
@@ -226,20 +240,20 @@ namespace uf::cli
             std::vector<std::string>{"--unknown", "value"},
             std::vector<std::string>{"--project"},
             std::vector<std::string>{
-                "--project", "p", "--hwnd", "32", "--queue", "q",
-                "--results", "r",
+                "--project", "p", "--hwnd", "32", "--runtime", "prod",
+                "--queue", "q", "--results", "r",
             },
             std::vector<std::string>{
-                "--project", "p", "--hwnd", "0x0", "--queue", "q",
-                "--results", "r",
+                "--project", "p", "--hwnd", "0x0", "--runtime", "prod",
+                "--queue", "q", "--results", "r",
             },
             std::vector<std::string>{
-                "--project", "p", "--hwnd", "0x20", "--queue", "q",
-                "--results", "r", "--budget", "many",
+                "--project", "p", "--hwnd", "0x20", "--runtime", "prod",
+                "--queue", "q", "--results", "r", "--budget", "many",
             },
             std::vector<std::string>{
-                "--project", "p", "--hwnd", "0x20", "--queue", "q",
-                "--results", "r", "--idle-timeout", "soon",
+                "--project", "p", "--hwnd", "0x20", "--runtime", "prod",
+                "--queue", "q", "--results", "r", "--idle-timeout", "soon",
             },
         };
 

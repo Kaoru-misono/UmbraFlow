@@ -19,9 +19,15 @@
 
 #include <script/scoped-tool-program.hpp>
 
+#include <task/exploration-session.hpp>
 #include <task/platform/confined-file.hpp>
 #include <task/runtime-model-file.hpp>
 #include <task/task-host.hpp>
+
+#include <engine/session.hpp>
+
+#include <trace/file-sink.hpp>
+#include <trace/recorder.hpp>
 
 #include <schema/framework-schema-catalog.hpp>
 
@@ -41,8 +47,10 @@
 #include <atomic>
 #include <chrono>
 #include <format>
+#include <memory>
 #include <optional>
 #include <span>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -82,6 +90,13 @@ namespace uf::service
         // and approval checks.
         constexpr auto k_upgradeControllerId = std::string_view{"umbra-flow-upgrade"};
         constexpr auto k_upgradeTargetId     = std::string_view{"runtime-artifact"};
+
+        // What wrote an exploration session's trace stream. The stream's
+        // session identity is the Operator's and arrives through the pinned
+        // session; the producer is the only part of the header this module
+        // names, and it is named here rather than taken from a caller because
+        // an exploration session is one thing and there is one of it.
+        constexpr auto k_explorationTraceProducer = std::string_view{"annotation"};
 
         // The Framework Tools this module answers. Every name is spelled once
         // here so the provider switch and the seam that reads an argument
@@ -1026,6 +1041,86 @@ namespace uf::service
         };
     }
 
+
+    auto ProductLifecycle::startExplorationSession(
+        task::TaskRunConfig config,
+        std::stop_token cancellation
+    ) -> Result<std::unique_ptr<task::ExplorationSession>>
+    {
+        auto const pinned = identity();
+
+        // Declared before the engine session and the exploration session that
+        // borrow it, and heap-allocated, because both hold its address for
+        // their whole lives.
+        //
+        // Its stream identity is the OPERATOR's -- the session row start()
+        // pinned and the SessionManifest that row was admitted against -- and
+        // that is the whole of what "one door" buys the annotation trace. A
+        // session that derived a stream name for itself named a session the
+        // ledger had never heard of.
+        UF_TRY_VALUE(sink, trace::FileTraceSink::createNew(config.tracePath));
+        UF_TRY_VALUE(
+            opened,
+            trace::TraceRecorder::create(
+                std::move(sink),
+                trace::TraceStreamSpec{
+                    .sessionId           = pinned.sessionId,
+                    .sessionManifestHash = pinned.sessionManifestHash,
+                    .producer            = std::string{k_explorationTraceProducer},
+                }
+            )
+        );
+        auto recorder = std::make_unique<trace::TraceRecorder>(std::move(opened));
+
+        // projectFingerprint is the PINNED model's and never the live target's.
+        // An exploration session used to attest its own geometry by handing the
+        // live fingerprint to both members, which made the engine's
+        // compatibility gate compare a value against itself. A session that
+        // pins H_genesis therefore observes and crops a target of any size and
+        // is refused a template search or a delivered input on it, naming the
+        // mismatch -- which is the empty model being enforced faithfully rather
+        // than a session pretending to have authored the screen in front of it.
+        UF_TRY_VALUE(
+            session,
+            engine::EngineSession::create(
+                std::move(config.frameSource),
+                std::move(config.actionSink),
+                *recorder,
+                engine::EngineSessionConfig{
+                    .liveFingerprint         = config.liveFingerprint,
+                    .projectFingerprint      = pinned.runtimeModel.fingerprint(),
+                    .maximumPixelComparisons = config.maximumPixelComparisons,
+                    .recognitionTimeout      = config.recognitionTimeout,
+                    .maxActionFrameAge       = config.maxActionFrameAge,
+                    .cancellation            = cancellation,
+                },
+                std::move(config.ocrEngine)
+            )
+        );
+
+        return m_impl->operatorHost.host().startExplorationSession(
+            m_impl->generation,
+            std::move(recorder),
+            std::move(session),
+            task::ExplorationSessionSpec{
+                // The deployment this project declares, rather than the name of
+                // the directory it happens to sit in: the trace line naming a
+                // project has to survive the project being moved. The
+                // registration hash would be the stronger name and cannot be
+                // used -- a bare 64-character hash is what the trace refuses as
+                // payload text, and the manifest hash on the stream header is
+                // already the identity a reader joins on.
+                .projectId            = pinned.deployment,
+                .projectRoot          = pinned.projectDirectory,
+                .tracePath            = std::move(config.tracePath),
+                .cancellation         = std::move(cancellation),
+                .maximumReadsPerCycle = config.maximumReadsPerCycle,
+                .maximumCropsPerCycle = config.maximumCropsPerCycle,
+                .memoryQuotaBytes     = config.memoryQuotaBytes,
+                .maxScriptRuntime     = config.maxScriptRuntime,
+            }
+        );
+    }
 
     auto ProductLifecycle::observe(task::TaskContext& context)
         -> Result<ProductObservation>

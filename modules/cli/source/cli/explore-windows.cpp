@@ -3,15 +3,12 @@
 #include "platform/ocr-engine-binding.hpp"
 #include "platform/target-binding.hpp"
 #include "platform/windows-console-cancellation.hpp"
-#include "project-skeleton.hpp"
 
 #include <controller/discovery.hpp>
 #include <core/error/result.hpp>
 
-#include <task/exploration-session.hpp>
 #include <task/task-host.hpp>
 
-#include <filesystem>
 #include <utility>
 
 namespace uf::cli
@@ -25,52 +22,27 @@ namespace uf::cli
 
         UF_TRY_VALUE(cancellation, platform::ConsoleCancellation::install());
 
-        // Before the project is loaded, because an authoring session's first write
-        // would otherwise find the directory missing and the store it writes through
-        // will not create one (see project-skeleton.hpp). It also lays down the
-        // genesis artifact when the project has none, which is what the open
-        // below needs there.
-        UF_TRY(ensureProjectSkeleton(args.project));
-
-        auto host = task::TaskHost{};
-        UF_TRY_VALUE(
-            generation,
-            host.openUnsealedProject(
-                args.project,
-                args.project / std::filesystem::path{k_projectRuntimeArtifactPath},
-                task::TaskHostConfig{
-                    .externalCancellation = cancellation.token(),
-                }
-            )
-        );
-
         // A model directory that will not build an engine must fail before any
         // window is enumerated.
         UF_TRY_VALUE(ocrEngine, platform::bindOcrEngine(args.ocrModels));
 
         UF_TRY_VALUE(bound, platform::bindTarget(WindowHandle{args.windowHandle}));
 
-        // Every bound below is the same field with the same default the other
-        // front-ends pass. startExplorationSession latches this generation's
-        // exploration front end, so a second one refuses here.
-        UF_TRY_VALUE(
-            session,
-            host.startExplorationSession(
-                generation,
-                task::TaskRunConfig{
-                    .frameSource             = std::move(bound.frameSource),
-                    .actionSink              = std::move(bound.actionSink),
-                    .ocrEngine               = std::move(ocrEngine),
-                    .liveFingerprint         = bound.liveFingerprint,
-                    .maximumPixelComparisons = args.budget,
-                    .recognitionTimeout      = args.recognitionTimeout,
-                    .maxActionFrameAge       = args.maxFrameAge,
-                    .tracePath               = args.trace,
-                }
-            )
+        return exploreProject(
+            args,
+            paths,
+            task::TaskRunConfig{
+                .frameSource             = std::move(bound.frameSource),
+                .actionSink              = std::move(bound.actionSink),
+                .ocrEngine               = std::move(ocrEngine),
+                .liveFingerprint         = bound.liveFingerprint,
+                .maximumPixelComparisons = args.budget,
+                .recognitionTimeout      = args.recognitionTimeout,
+                .maxActionFrameAge       = args.maxFrameAge,
+                .tracePath               = args.trace,
+            },
+            cancellation.token()
         );
-
-        return exploreSession(*session, args, paths, cancellation.token());
     }
 
     auto exploreCancellationRequested() noexcept -> bool

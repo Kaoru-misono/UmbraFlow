@@ -21,6 +21,9 @@
 
 #include <script/engine.hpp>
 
+#include <trace/file-sink.hpp>
+#include <trace/recorder.hpp>
+
 #include <doctest/doctest.h>
 
 #include <array>
@@ -30,6 +33,7 @@
 #include <format>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -578,18 +582,61 @@ identity = ["screen.anchor"]
             return loadedRuntime(host, directory, dragRuntimeModel());
         }
 
+        // What service::ProductLifecycle::startExplorationSession composes in
+        // production, composed here instead: the recorder and the engine
+        // session are the ledgered caller's to build, so a test that wants an
+        // exploration session builds them too rather than reaching a door the
+        // Host no longer has.
         [[nodiscard]]
-        auto explorationConfig(Frame value, std::filesystem::path tracePath)
-            -> TaskRunConfig
+        auto startExploration(
+            TaskHost& host,
+            GenerationId generation,
+            Frame value,
+            std::filesystem::path const& projectRoot,
+            std::filesystem::path tracePath
+        ) -> Result<std::unique_ptr<ExplorationSession>>
         {
-            return TaskRunConfig{
-                .frameSource     = std::make_unique<FrameSource>(std::move(value)),
-                .actionSink      = std::make_unique<ActionSink>(),
-                .liveFingerprint = fingerprint(),
-                .maximumPixelComparisons = 1'000,
-                .recognitionTimeout = std::chrono::seconds{1},
-                .tracePath          = std::move(tracePath),
-            };
+            auto sink = trace::FileTraceSink::createNew(tracePath);
+            REQUIRE(sink.has_value());
+            auto const manifestHash = sha256(
+                std::as_bytes(std::span{std::string_view{"exploration-fixture"}})
+            );
+            REQUIRE(manifestHash.has_value());
+            auto opened = trace::TraceRecorder::create(
+                std::move(*sink),
+                trace::TraceStreamSpec{
+                    .sessionId           = "session-exploration-fixture",
+                    .sessionManifestHash = *manifestHash,
+                    .producer            = "annotation",
+                }
+            );
+            REQUIRE(opened.has_value());
+            auto recorder = std::make_unique<trace::TraceRecorder>(
+                std::move(*opened)
+            );
+            auto session = engine::EngineSession::create(
+                std::make_unique<FrameSource>(std::move(value)),
+                std::make_unique<ActionSink>(),
+                *recorder,
+                engine::EngineSessionConfig{
+                    .liveFingerprint    = fingerprint(),
+                    .projectFingerprint = fingerprint(),
+                    .maximumPixelComparisons = 1'000,
+                    .recognitionTimeout      = std::chrono::seconds{1},
+                },
+                nullptr
+            );
+            REQUIRE(session.has_value());
+            return host.startExplorationSession(
+                generation,
+                std::move(recorder),
+                *std::move(session),
+                ExplorationSessionSpec{
+                    .projectId   = "exploration-fixture",
+                    .projectRoot = projectRoot,
+                    .tracePath   = std::move(tracePath),
+                }
+            );
         }
 
         // The fixture's model with `geometry` standing in for the two lines it
@@ -1647,21 +1694,21 @@ identity = ["screen.anchor"]
         // the ordinary path and with no kind consulted. A second one over the
         // same generation is refused, because two front ends cannot drive one
         // generation's ledger and trace at once.
-        auto session = host.startExplorationSession(
+        auto session = startExploration(
+            host,
             *unsealed,
-            explorationConfig(
-                frame({std::byte{0}, std::byte{0}, std::byte{0}}, FrameId{17}),
-                projectDirectory.path() / "authoring-trace.jsonl"
-            )
+            frame({std::byte{0}, std::byte{0}, std::byte{0}}, FrameId{17}),
+            projectDirectory.path(),
+            projectDirectory.path() / "authoring-trace.jsonl"
         );
         REQUIRE(session.has_value());
         CHECK_FALSE(
-            host.startExplorationSession(
+            startExploration(
+                host,
                 *unsealed,
-                explorationConfig(
-                    frame({std::byte{0}, std::byte{0}, std::byte{0}}, FrameId{18}),
-                    projectDirectory.path() / "second-trace.jsonl"
-                )
+                frame({std::byte{0}, std::byte{0}, std::byte{0}}, FrameId{18}),
+                projectDirectory.path(),
+                projectDirectory.path() / "second-trace.jsonl"
             ).has_value()
         );
 

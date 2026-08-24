@@ -7,6 +7,7 @@
 #include <operator/tool-invocation.hpp>
 
 #include <task/task-context.hpp>
+#include <task/task-host.hpp>
 #include <task/runtime-model-file.hpp>
 #include <task/ui-observation.hpp>
 
@@ -16,6 +17,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <stop_token>
 #include <string>
 #include <utility>
 #include <vector>
@@ -167,6 +169,29 @@ namespace uf::service
         [[nodiscard]]
         auto observe(task::TaskContext& context)
             -> Result<ProductObservation>;
+
+        // Opens this session's exploration front end over `config`'s live
+        // ports. There is ONE production door onto a desktop, and this is
+        // annotation's side of it: the session that comes back records into the
+        // trace stream this lifecycle's Operator session names, observes
+        // through the RuntimeModel this lifecycle pinned, and is admitted under
+        // the policy artifact the Operator root carries -- absent which the
+        // resolution is deny-all
+        // (docs/decisions/2026-08-24-the-annotation-policy-is-the-operators.md).
+        //
+        // `cancellation` is the caller's process stop token rather than
+        // anything this lifecycle holds: what interrupts an annotation session
+        // is a person at the terminal that started it.
+        //
+        // The returned session borrows nothing from this object beyond what it
+        // was handed, but its TaskContext is what every Tool call this
+        // lifecycle issues for that session must be driven against, so it must
+        // not outlive this lifecycle.
+        [[nodiscard]]
+        auto startExplorationSession(
+            task::TaskRunConfig config,
+            std::stop_token cancellation
+        ) -> Result<std::unique_ptr<task::ExplorationSession>>;
 
         // Runs a Framework-owned Tool through the same durable Tool Runtime
         // seam every actor adapter uses. Exact terminal replay returns without

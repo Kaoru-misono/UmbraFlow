@@ -91,6 +91,34 @@ namespace uf::task
         std::filesystem::path      tracePath{};
     };
 
+    // What one exploration session needs that is a property neither of the
+    // desktop nor of the ledgered session it runs inside: where its authoring
+    // writes may land, when it stops, and the ceilings its VM answers to.
+    //
+    // `projectRoot` is stated rather than read off the generation, and that is
+    // the whole reason this type exists. A generation opened from an installed
+    // RuntimeArtifact is rooted at the Operator's content-addressed store,
+    // while an exploration session's project_read and project_write are
+    // confined to the PROJECT directory it is editing; taking the generation's
+    // root would point authoring writes at the CAS.
+    //
+    // `cancellation` is the caller's process-level stop token rather than the
+    // generation's, because the process that opened the session is the one a
+    // person interrupts.
+    struct ExplorationSessionSpec final
+    {
+        std::string           projectId{};
+        std::filesystem::path projectRoot{};
+        std::filesystem::path tracePath{};
+
+        std::stop_token cancellation{};
+
+        uint32                     maximumReadsPerCycle{32};
+        uint32                     maximumCropsPerCycle{8};
+        uint64                     memoryQuotaBytes{};
+        MonotonicInstant::Duration maxScriptRuntime{k_defaultMaxScriptRuntime};
+    };
+
     struct TaskRunReport final
     {
         std::filesystem::path tracePath{};
@@ -278,7 +306,6 @@ namespace uf::task
         std::vector<PendingReceipt>              m_receipts{};
 
         uint64 m_nextGenerationValue{1};
-        uint64 m_nextRunValue{1};
         uint64 m_nextReceiptOrdinal{1};
         uint64 m_nextObservationOrdinal{1};
         uint64 m_hostNonce;
@@ -500,10 +527,24 @@ namespace uf::task
         // which of the two it is looking at.
         auto disengageObservationFrame(TaskContext& context) noexcept -> bool;
 
+        // Latches this generation's exploration front end and hands back a
+        // session over the recorder and engine session the CALLER built.
+        //
+        // Neither is built here, and that is the point: both carry the ledgered
+        // identity of the session an exploration run was admitted under -- the
+        // Operator's session id and SessionManifest hash in the trace stream,
+        // and the pinned RuntimeModel's fingerprint in the engine -- and this
+        // Host has no way to learn either. An exploration session that minted
+        // them for itself was a second door onto the desktop
+        // (docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md
+        // V5); service::ProductLifecycle::startExplorationSession is the only
+        // production caller of this, and it is the one door.
         [[nodiscard]]
         auto startExplorationSession(
             GenerationId generation,
-            TaskRunConfig config
+            std::unique_ptr<trace::TraceRecorder> recorder,
+            engine::EngineSession session,
+            ExplorationSessionSpec spec
         ) -> Result<std::unique_ptr<ExplorationSession>>;
 
         [[nodiscard]] auto cancel(GenerationId generation) -> Status;

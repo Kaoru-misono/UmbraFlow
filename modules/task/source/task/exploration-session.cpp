@@ -10,23 +10,19 @@
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
 
-#include <domain/content-hash.hpp>
 #include <domain/error.hpp>
-#include <domain/ids.hpp>
 
 #include <engine/session.hpp>
 
 #include <script/engine.hpp>
 
 #include <trace/event.hpp>
-#include <trace/file-sink.hpp>
 #include <trace/recorder.hpp>
 
 #include <filesystem>
 #include <format>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -35,23 +31,6 @@ namespace uf::task
 {
     namespace
     {
-        [[nodiscard]]
-        auto authoringTraceRootHash(
-            std::string_view projectId,
-            GenerationId generation,
-            std::string_view frameworkBundleDigest
-        ) -> Result<ContentHash>
-        {
-            auto const manifest = std::format(
-                "protocol=annotation-trace/v1\nproject={}\nframework={}\nluau={}\ngeneration={}",
-                projectId,
-                frameworkBundleDigest,
-                luauRuntimeVersion(),
-                generation.value()
-            );
-            return sha256(std::as_bytes(std::span{manifest}));
-        }
-
         // The opening line of an exploration session's run bracket.
         //
         // The framework version, the bundle hash and the Luau compiler version are
@@ -140,46 +119,25 @@ namespace uf::task
     }
 
     auto ExplorationSession::create(
-        TaskRunConfig config,
-        Spec spec,
-        EngineRunId runId,
-        GenerationId generationId
+        std::unique_ptr<trace::TraceRecorder> recorder,
+        engine::EngineSession session,
+        ExplorationSessionSpec spec
     ) -> Result<std::unique_ptr<ExplorationSession>>
     {
-        UF_TRY_VALUE(traceSink, trace::FileTraceSink::createNew(config.tracePath));
+        if (!recorder)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "an exploration session needs the trace recorder its ledgered "
+                "caller opened; it mints none of its own"
+            );
+        }
 
-        // One digest for both lines below. It is derived rather than baked --
-        // frameworkBundleHash() hashes the embedded sources together with the
-        // reserved alias, dependency depth and declaration tier each module
-        // carries in framework-bundle.cpp -- so it can fail in principle and is
-        // taken once, before anything is written.
+        // Derived rather than baked -- frameworkBundleHash() hashes the embedded
+        // sources together with the reserved alias, dependency depth and
+        // declaration tier each module carries in framework-bundle.cpp -- so it
+        // can fail in principle and is taken before anything is written.
         UF_TRY_VALUE(frameworkBundleDigest, frameworkBundleHash());
-        UF_TRY_VALUE(
-            sessionManifestHash,
-            authoringTraceRootHash(
-                spec.projectId,
-                generationId,
-                frameworkBundleDigest
-            )
-        );
-        UF_TRY_VALUE(
-            builtRecorder,
-            trace::TraceRecorder::create(
-                std::move(traceSink),
-                trace::TraceStreamSpec{
-                    .sessionId = std::format(
-                        "annotation-{}-{}",
-                        generationId.value(),
-                        runId.value()
-                    ),
-                    .sessionManifestHash = sessionManifestHash,
-                    .producer            = "annotation",
-                }
-            )
-        );
-        auto recorder = std::make_unique<trace::TraceRecorder>(
-            std::move(builtRecorder)
-        );
 
         UF_TRY(
             recorder->emit(
@@ -191,24 +149,6 @@ namespace uf::task
         // references a task SOURCE was validated against before its VM existed;
         // an agent's chunks arrive one at a time after the VM is up, so an empty
         // line would report a pass that never ran.
-        UF_TRY_VALUE(
-            session,
-            engine::EngineSession::create(
-                std::move(config.frameSource),
-                std::move(config.actionSink),
-                *recorder,
-                engine::EngineSessionConfig{
-                    .liveFingerprint         = config.liveFingerprint,
-                    .projectFingerprint      = config.liveFingerprint,
-                    .maximumPixelComparisons = config.maximumPixelComparisons,
-                    .recognitionTimeout      = config.recognitionTimeout,
-                    .maxActionFrameAge       = config.maxActionFrameAge,
-                    .cancellation            = spec.cancellation,
-                },
-                std::move(config.ocrEngine)
-            )
-        );
-
         auto owned = std::make_unique<ExplorationSession>(
             CreateTag{},
             std::move(recorder),
@@ -216,10 +156,10 @@ namespace uf::task
             TaskContextConfig{
                 .cancellation         = spec.cancellation,
                 .projectRoot          = std::move(spec.projectRoot),
-                .maximumReadsPerCycle = config.maximumReadsPerCycle,
-                .maximumCropsPerCycle = config.maximumCropsPerCycle,
+                .maximumReadsPerCycle = spec.maximumReadsPerCycle,
+                .maximumCropsPerCycle = spec.maximumCropsPerCycle,
             },
-            config.tracePath
+            std::move(spec.tracePath)
         );
 
         // The VM is built AFTER the session owns its context, because the private
@@ -241,8 +181,8 @@ namespace uf::task
         auto vm = script::Engine::create(
             script::EngineConfig{
                 .cancellation      = spec.cancellation,
-                .memoryQuotaBytes  = config.memoryQuotaBytes,
-                .maxRuntime        = config.maxScriptRuntime,
+                .memoryQuotaBytes  = spec.memoryQuotaBytes,
+                .maxRuntime        = spec.maxScriptRuntime,
                 .frameworkModules  = frameworkScriptModules(),
                 .installHostTables = scriptHostTableInstaller(),
                 .installPrivateCapabilities = annotationPrivateCapabilities(
@@ -383,5 +323,10 @@ namespace uf::task
         -> std::filesystem::path const&
     {
         return m_tracePath;
+    }
+
+    auto ExplorationSession::context() noexcept -> TaskContext&
+    {
+        return m_context;
     }
 }

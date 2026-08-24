@@ -828,6 +828,7 @@ endif()
 
 set(CLI_TEST_SOURCES
     cli/test-args.cpp
+    cli/test-explore-door.cpp
     cli/test-explore-protocol.cpp
     cli/test-observe.cpp
     cli/test-ocr.cpp

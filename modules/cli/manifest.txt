@@ -32,7 +32,8 @@ unity_build = false
 # already reachable through deployment, which is an accident of that edge and
 # not a declaration this module can rely on.
 #
-# service is where every Operator-reaching verb goes through. observe.cpp and
+# service is where every Operator-reaching verb goes through. explore.cpp,
+# observe.cpp and
 # invoke.cpp start a ProductLifecycle, reclaim.cpp calls reclaimRuntimeArtifacts,
 # and upgrade.cpp and approve.cpp call the two release doors; those functions
 # hold the only production calls that open an OperatorCoordinator -- no file in

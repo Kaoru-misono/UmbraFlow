@@ -8,9 +8,6 @@
 #include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
 
-#include <domain/ids.hpp>
-#include <domain/space.hpp>
-
 #include <engine/session.hpp>
 
 #include <script/engine.hpp>
@@ -20,8 +17,6 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
-#include <stop_token>
-#include <string>
 #include <string_view>
 
 namespace uf::task
@@ -31,6 +26,15 @@ namespace uf::task
     // A third front-end rather than a mode of the other two, because an agent
     // sends CODE chunk by chunk and reads what came back before writing the next
     // (docs/archive/plans/2026-08-01-three-layers-and-agent-operator.md 3).
+    //
+    // It owns NEITHER its trace recorder's identity nor its engine session: both
+    // are built by the ledgered caller that admitted this run and handed over at
+    // create(). What that buys is that an exploration session's trace stream
+    // carries the Operator's own session id and SessionManifest hash, and its
+    // engine is bound to the RuntimeModel that session pinned -- rather than an
+    // identity this class derived for itself off the project directory's name
+    // (docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md
+    // V5).
     //
     // The second environment lives here. The VM this owns is booted with the
     // authoring private surface and publishes only the `explore` framework
@@ -71,21 +75,6 @@ namespace uf::task
         std::filesystem::path m_tracePath;
 
     public:
-        // Everything one exploration session needs that is a property of the
-        // loaded project rather than of the desktop.
-        struct Spec final
-        {
-            std::string projectId{};
-
-            // The directory project_read and project_write are confined to. An
-            // exploration session needs it where an operator session did not:
-            // exploration project I/O must not be able to name the rest of the
-            // disk.
-            std::filesystem::path projectRoot{};
-
-            std::stop_token cancellation{};
-        };
-
         ExplorationSession(
             CreateTag,
             std::unique_ptr<trace::TraceRecorder> recorder,
@@ -101,16 +90,18 @@ namespace uf::task
 
         ~ExplorationSession() = default;
 
-        // Opens the run bracket, binds the ports and boots the VM. Everything
-        // fallible happens here, so a session that exists has run.started in its
-        // trace, a bound target, and an environment ready to run a chunk. `config`
-        // and `spec` are taken by value: the ports end up inside the session.
+        // Opens the run bracket and boots the VM over the recorder and engine
+        // session the caller admitted this run with. Everything fallible happens
+        // here, so a session that exists has run.started in its trace, a bound
+        // target, and an environment ready to run a chunk.
+        //
+        // Reached in production only through TaskHost::startExplorationSession,
+        // which latches the generation's front-end claim.
         [[nodiscard]]
         static auto create(
-            TaskRunConfig config,
-            Spec spec,
-            EngineRunId runId,
-            GenerationId generationId
+            std::unique_ptr<trace::TraceRecorder> recorder,
+            engine::EngineSession session,
+            ExplorationSessionSpec spec
         ) -> Result<std::unique_ptr<ExplorationSession>>;
 
         // Runs one agent-supplied chunk and reports what it returned. `chunkName`
@@ -148,5 +139,13 @@ namespace uf::task
         [[nodiscard]]
         auto tracePath() const noexcept UF_LIFETIME_BOUND
             -> std::filesystem::path const&;
+
+        // The context this session's chunks run against, for the ledgered
+        // caller that started it. A Tool call issued through that caller has to
+        // reach the SAME engine session the chunks do, or a session would be
+        // observing one screen and recording another; borrowing it here is what
+        // makes that structural rather than a rule two composition roots have to
+        // agree on. The borrow lives only as long as this session does.
+        [[nodiscard]] auto context() noexcept UF_LIFETIME_BOUND -> TaskContext&;
     };
 }

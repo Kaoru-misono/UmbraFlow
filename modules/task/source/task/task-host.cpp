@@ -1300,23 +1300,18 @@ namespace uf::task
 
     auto TaskHost::startExplorationSession(
         GenerationId generation,
-        TaskRunConfig config
+        std::unique_ptr<trace::TraceRecorder> recorder,
+        engine::EngineSession session,
+        ExplorationSessionSpec spec
     ) -> Result<std::unique_ptr<ExplorationSession>>
     {
         UF_TRY_VALUE(p_generation, requireGeneration(generation));
         UF_TRY(p_generation->claimExplorationFrontEnd());
 
-        auto const runId = EngineRunId{m_nextRunValue};
-        ++m_nextRunValue;
         return ExplorationSession::create(
-            std::move(config),
-            ExplorationSession::Spec{
-                .projectId    = p_generation->projectId(),
-                .projectRoot  = p_generation->root(),
-                .cancellation = p_generation->cancellation(),
-            },
-            runId,
-            generation
+            std::move(recorder),
+            std::move(session),
+            std::move(spec)
         );
     }
 

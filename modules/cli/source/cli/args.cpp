@@ -31,6 +31,7 @@ namespace uf::cli
         {
             Project,
             WindowHandle,
+            Runtime,
             Queue,
             Results,
             Budget,
@@ -50,6 +51,7 @@ namespace uf::cli
         constexpr auto k_exploreFlags = std::array{
             ExploreFlagSpec{"--project", ExploreFlag::Project},
             ExploreFlagSpec{"--hwnd", ExploreFlag::WindowHandle},
+            ExploreFlagSpec{"--runtime", ExploreFlag::Runtime},
             ExploreFlagSpec{"--queue", ExploreFlag::Queue},
             ExploreFlagSpec{"--results", ExploreFlag::Results},
             ExploreFlagSpec{"--budget", ExploreFlag::Budget},
@@ -655,6 +657,7 @@ namespace uf::cli
     {
         auto project      = std::optional<std::filesystem::path>{};
         auto windowHandle = std::optional<intptr>{};
+        auto runtime      = std::optional<std::filesystem::path>{};
         auto queue        = std::optional<std::filesystem::path>{};
         auto results      = std::optional<std::filesystem::path>{};
 
@@ -691,6 +694,9 @@ namespace uf::cli
                 windowHandle = parsed;
                 break;
             }
+            case ExploreFlag::Runtime:
+                runtime = std::filesystem::path{value};
+                break;
             case ExploreFlag::Queue:
                 queue = std::filesystem::path{value};
                 break;
@@ -744,6 +750,7 @@ namespace uf::cli
         }
 
         UF_TRY_VALUE(requiredProject, requirePath(std::move(project), "--project"));
+        UF_TRY_VALUE(requiredRuntime, requirePath(std::move(runtime), "--runtime"));
         UF_TRY_VALUE(requiredQueue, requirePath(std::move(queue), "--queue"));
         UF_TRY_VALUE(requiredResults, requirePath(std::move(results), "--results"));
         if (!windowHandle)
@@ -754,6 +761,7 @@ namespace uf::cli
         return ExploreArgs{
             .project            = std::move(requiredProject),
             .windowHandle       = *windowHandle,
+            .runtime            = std::move(requiredRuntime),
             .queue              = std::move(requiredQueue),
             .results            = std::move(requiredResults),
             .budget             = budget,
@@ -1408,16 +1416,29 @@ namespace uf::cli
     {
         return
             "Usage:\n"
-            "  umbra-flow explore --project DIR --hwnd 0xHANDLE "
-            "--queue PATH --results PATH [options]\n"
+            "  umbra-flow explore --project DIR --hwnd 0xHANDLE --runtime DIR\n"
+            "                     --queue PATH --results PATH [options]\n"
             "\n"
-            "Executes privileged annotation chunks arriving as JSON lines in\n"
-            "--queue and writes one durable result line per chunk. This entry\n"
-            "does not execute project business tasks.\n"
+            "Executes annotation chunks arriving as JSON lines in --queue and\n"
+            "writes one durable result line per chunk. This entry does not\n"
+            "execute project business tasks.\n"
+            "\n"
+            "It opens the same production door `observe` and `invoke` open: it\n"
+            "loads the project at --project, opens that project's installed\n"
+            "RuntimeArtifact from the Operator production root at --runtime,\n"
+            "pins a session against the policy artifact that root carries, and\n"
+            "runs every chunk under it. A --runtime holding no installed\n"
+            "generation for this project is refused rather than bootstrapped.\n"
+            "\n"
+            "The annotation policy is the Operator's, and lives at\n"
+            "<runtime>/policy-artifact.json. With none there the resolution is\n"
+            "deny-all: read-only screen observation still runs, and an input\n"
+            "injection is refused naming the grant the artifact does not make.\n"
             "\n"
             "Required:\n"
             "  --project DIR                Annotation project directory\n"
             "  --hwnd 0xHANDLE              Target handle from `umbra-flow targets`\n"
+            "  --runtime DIR                Operator production root\n"
             "  --queue PATH                 Chunk queue this session tails\n"
             "  --results PATH               Durable result lines\n"
             "\n"

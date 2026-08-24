@@ -2,8 +2,14 @@
 
 #include "args.hpp"
 #include "explore-protocol.hpp"
+#include "project-skeleton.hpp"
 #include "queue-cursor.hpp"
 #include "queue-ipc.hpp"
+
+#include <service/product-lifecycle.hpp>
+
+#include <operator/agent-profile.hpp>
+#include <operator/controller.hpp>
 
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
@@ -19,6 +25,7 @@
 #include <filesystem>
 #include <format>
 #include <optional>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -45,6 +52,14 @@ namespace uf::cli
         };
 
         inline constexpr auto k_exploreResultsLabel = std::string_view{"explore"};
+
+        // The controller this verb authenticates as, on the same terms
+        // `umbra-flow-observe` does: it names the entry point rather than the
+        // run, because every exploration session this process opens presents the
+        // same one and the Operator mints the session behind it.
+        inline constexpr auto k_exploreControllerId = std::string_view{
+            "umbra-flow-explore"
+        };
 
         // The instant an unanswered queue ends the session. An idle timeout the
         // clock cannot be advanced by saturates to the furthest instant it has,
@@ -338,5 +353,71 @@ namespace uf::cli
         }
 
         return session.finish(std::move(failure));
+    }
+
+    auto exploreProject(
+        ExploreArgs const& args,
+        ExploreIpcPaths const& paths,
+        task::TaskRunConfig config,
+        std::stop_token const& cancellation
+    ) -> Result<task::TaskRunReport>
+    {
+        // Before the project is loaded, because an authoring session's first
+        // write would otherwise find the directory missing and the store it
+        // writes through will not create one (see project-skeleton.hpp).
+        UF_TRY(ensureProjectSkeleton(args.project));
+
+        // One explore process is one run over its target window, on observe's
+        // terms and for observe's reason.
+        auto const controlledTargetId = std::format("window-{}", args.windowHandle);
+        UF_TRY_VALUE(
+            worldScope,
+            operator_runtime::ObservedInstanceWorldScope::run(controlledTargetId, 1)
+        );
+        UF_TRY_VALUE(
+            lifecycle,
+            service::ProductLifecycle::start(
+                service::ProductStart{
+                    .projectDirectory = args.project,
+                    .runtimeDirectory = args.runtime,
+                    .authenticatedControllerId = std::string{
+                        k_exploreControllerId
+                    },
+                    .controllerCapabilities = {},
+                    .controlledTargetId     = controlledTargetId,
+                    // A person at a terminal, on `observe`'s terms. An
+                    // annotation session is somebody sitting in front of the
+                    // window they are annotating: they may report external
+                    // input about a third party, and the Agent ceiling -- the
+                    // semantic Tool surface only -- would refuse the low-level
+                    // input the act of annotating is made of.
+                    .kind = operator_runtime::ControllerKind::Human,
+
+                    // Declared rather than defaulted, exactly as `observe`
+                    // declares it: the bytes are hashed into the
+                    // SessionManifest, so an unbounded grant is attributable to
+                    // this run.
+                    .agentProfileJcs = std::string{
+                        operator_runtime::k_unboundedAgentProfileJcs
+                    },
+                    .worldScope = worldScope,
+                }
+            )
+        );
+
+        // Started, therefore closed, on observeProject's terms: the control
+        // lease this verb now holds is the Operator's answer to "who may act on
+        // this target", and a process that returns without releasing it leaves
+        // that answer standing with nobody behind it.
+        auto report = [&]() -> Result<task::TaskRunReport>
+        {
+            UF_TRY_VALUE(
+                session,
+                lifecycle.startExplorationSession(std::move(config), cancellation)
+            );
+            return exploreSession(*session, args, paths, cancellation);
+        }();
+        auto closed = lifecycle.shutdown();
+        return service::reportAfterClose(std::move(report), std::move(closed));
     }
 }

@@ -512,11 +512,12 @@ namespace uf::cli
             CHECK(!start.has_value());
         }
 
-        TEST_CASE("explore takes the four flags that name a session")
+        TEST_CASE("explore takes the five flags that name a session")
         {
             auto const raw = std::vector<std::string>{
                 "--project", "proj",
                 "--hwnd",    "0x504f2",
+                "--runtime", "production",
                 "--queue",   "q.jsonl",
                 "--results", "r.jsonl",
             };
@@ -524,6 +525,7 @@ namespace uf::cli
             REQUIRE(parsed.has_value());
             CHECK(parsed->project == std::filesystem::path{"proj"});
             CHECK(parsed->windowHandle == intptr{0x504f2});
+            CHECK(parsed->runtime == std::filesystem::path{"production"});
             CHECK(parsed->budget == k_defaultPixelComparisonBudget);
             CHECK(!parsed->ocrModels.has_value());
 

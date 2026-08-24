@@ -69,6 +69,28 @@ namespace uf::cli
         ExploreChunk const& chunk
     ) -> ExploreExecution;
 
+    // The whole of the production door, over ports the caller already bound:
+    // it lays out the project skeleton, starts a ProductLifecycle against the
+    // Operator root `args.runtime` names, opens the exploration session THAT
+    // lifecycle provides, runs the queue against it, and closes the lifecycle
+    // on every exit path.
+    //
+    // There is no second door. An exploration session is admitted through the
+    // same start `observe` and `invoke` use -- a production project, its
+    // installed and sealed RuntimeArtifact, a ledger, the Operator's policy
+    // artifact, a registration, and a session manifest pinning policy and
+    // profile (docs/decisions/2026-08-24-the-annotation-policy-is-the-operators.md).
+    //
+    // Host-neutral by construction, for observeProject's reason: every host
+    // compiles the composition and only the binding of a live desktop differs.
+    [[nodiscard]]
+    auto exploreProject(
+        ExploreArgs const& args,
+        ExploreIpcPaths const& paths,
+        task::TaskRunConfig config,
+        std::stop_token const& cancellation
+    ) -> Result<task::TaskRunReport>;
+
     // Runs annotation-agent chunks against one bound target. The Windows build
     // binds a live target; other hosts report the capability as unsupported.
     [[nodiscard]]
