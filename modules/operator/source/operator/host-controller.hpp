@@ -17,6 +17,13 @@ namespace uf::operator_runtime
     // implementation, so a displaced fence cannot enter a reservation after
     // takeover returns or move between a successful reservation and
     // TaskHost::deliver.
+    //
+    // PER OPERATION, never across a held input. Each method below takes the
+    // lock for its own span and gives it back before it returns, so an engaged
+    // hold -- which outlives the call that engaged it -- leaves nothing locked
+    // behind for the child calls that observe while the button is down. A lock
+    // spanning a whole hold would serialise exactly the calls hold-with-children
+    // exists to allow.
     class OperatorTaskHost final
     {
         struct Impl;

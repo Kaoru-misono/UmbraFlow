@@ -550,6 +550,64 @@ return {
             };
         }
 
+        // What a fake engaged input records: how many presses were handed to a
+        // run, how many of those were lifted, and whether the target refuses
+        // the lift.
+        struct EngagedInputLog final
+        {
+            uint32 engaged{0};
+            uint32 lifted{0};
+            bool   refuseRelease{false};
+        };
+
+        // A Framework provider that ENGAGES rather than acting and returning.
+        // It hands the run the release and answers with the input still held,
+        // which is the shape a holding Framework Tool has: everything the
+        // handler does next happens while the button is down.
+        //
+        // It needs the dispatcher it is installed in, which is why the seam is
+        // a slot filled after create -- the same knot ProductLifecycle ties,
+        // where one object owns both the provider surface and the dispatcher.
+        [[nodiscard]]
+        auto engagingFrameworkProvider(
+            std::shared_ptr<std::optional<ProjectToolDispatcher>> seam,
+            std::shared_ptr<EngagedInputLog> log
+        ) -> ToolProvider
+        {
+            return [seam = std::move(seam), log = std::move(log)](
+                       ToolCallPositionIdentity const& call
+                   ) -> Result<ToolCallCompletion>
+            {
+                ++log->engaged;
+                UF_TRY(
+                    (*seam)->attachHeldInput(
+                        call.parentIdentity(),
+                        [log]() -> Status
+                        {
+                            ++log->lifted;
+                            if (log->refuseRelease)
+                            {
+                                return fail(
+                                    AutomationErrorKind::IoFailure,
+                                    "the target would not take the release"
+                                );
+                            }
+                            return ok();
+                        }
+                    )
+                );
+                UF_TRY_VALUE(
+                    recorded,
+                    CanonicalJson::parseExact(json::canonicalBytes(
+                        json::Value::ofObject({
+                            {"engaged", json::Value::ofString(call.toolName())},
+                        })
+                    ))
+                );
+                return ToolCallCompletion::confirmed(std::move(recorded));
+            };
+        }
+
         [[nodiscard]]
         auto toolCatalogOwner(
             VerifiedProjectGeneration const& registration
@@ -1065,6 +1123,158 @@ return {
     //
     // Rewriting @umbraflow/tools' membership test in tools.call as
     // `if false then` reds this case.
+    // Hold-with-children's frame guarantee, at the layer that owns the frame.
+    //
+    // An input engaged by a child call is lifted when the RUN closes, not when
+    // the leaf that pressed returns -- which is the whole difference between a
+    // press something can look past and a press that ends inside its own call.
+    // The invariant it keeps is engine::IActionSink::releaseHeldInputs's,
+    // measured per frame; see
+    // docs/decisions/2026-08-24-an-authoring-session-is-a-first-class-tool-session.md.
+    //
+    // Deleting the run.releaseHeldInput() call in runBoundEntry reds every
+    // subcase here.
+    TEST_CASE("a Tool call lifts the input a child engaged, on every exit path")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const registration = verifiedGeneration();
+        auto prepared = firstIncarnation(temporary.path(), registration);
+
+        auto const held = std::make_shared<EngagedInputLog>();
+        auto const seam =
+            std::make_shared<std::optional<ProjectToolDispatcher>>();
+
+        auto dispatcher = ProjectToolDispatcher::create(
+            prepared.store,
+            prepared.observations,
+            prepared.policyAuthority,
+            engagingFrameworkProvider(seam, held)
+        );
+        REQUIRE_MESSAGE(dispatcher.has_value(), failureText(dispatcher));
+        *seam = *dispatcher;
+
+        auto registrar = ProjectGenerationRegistrar{};
+        auto const program =
+            loadProgram(registration, registrar, *dispatcher);
+
+        SUBCASE("a handler that finished leaves nothing held")
+        {
+            auto const root = rootFor("dispatch-hold-finished");
+            auto const call = rootCall(
+                program,
+                root,
+                R"({"children":["framework.audit.record"]})"
+            );
+            auto const answered = dispatcher->dispatch(
+                program,
+                ToolAdmissionRequest{
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = call,
+                    .policyAuthority = prepared.policyAuthority,
+                },
+                std::stop_token{}
+            );
+            REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
+            CHECK(answered->state == ToolCallState::Confirmed);
+
+            // The press outlived the call that made it and was lifted exactly
+            // once, by the frame that owned it.
+            CHECK(held->engaged == 1U);
+            CHECK(held->lifted == 1U);
+        }
+
+        SUBCASE("a child call that aborts mid-hold still leaves nothing held")
+        {
+            // The second child names a Tool outside the pinned closure, so the
+            // handler raises AFTER the first child engaged. This is the exit
+            // path a leaf-owned release could never cover: nothing in the
+            // engaging call runs again to clean up after it.
+            auto const root = rootFor("dispatch-hold-aborted");
+            auto const call = rootCall(
+                program,
+                root,
+                R"({"children":["framework.audit.record","dispatch.project.absent"]})"
+            );
+            auto const answered = dispatcher->dispatch(
+                program,
+                ToolAdmissionRequest{
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = call,
+                    .policyAuthority = prepared.policyAuthority,
+                },
+                std::stop_token{}
+            );
+            REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
+            CHECK(answered->state == ToolCallState::TerminalFailure);
+
+            CHECK(held->engaged == 1U);
+            CHECK(held->lifted == 1U);
+        }
+
+        SUBCASE("a release the target refuses is reported rather than swallowed")
+        {
+            held->refuseRelease = true;
+
+            auto const root = rootFor("dispatch-hold-release-refused");
+            auto const call = rootCall(
+                program,
+                root,
+                R"({"children":["framework.audit.record"]})"
+            );
+            auto const answered = dispatcher->dispatch(
+                program,
+                ToolAdmissionRequest{
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = call,
+                    .policyAuthority = prepared.policyAuthority,
+                },
+                std::stop_token{}
+            );
+            REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
+
+            // The handler answered fine; the release did not. A target that
+            // will not take a release is exactly what an operator has to be
+            // told about, so it becomes this call's outcome rather than a
+            // detail a scope guard dropped.
+            CHECK(answered->state == ToolCallState::TerminalFailure);
+            CHECK(payloadOf(*answered).contains("would not take the release"));
+            CHECK(held->lifted == 1U);
+        }
+
+        SUBCASE("one run holds one engagement")
+        {
+            // One release lifts every held input, so a second engagement on one
+            // run would share the first one's act and neither could say which
+            // of them ended.
+            auto const root = rootFor("dispatch-hold-twice");
+            auto const call = rootCall(
+                program,
+                root,
+                R"({"children":["framework.audit.record","framework.audit.record"]})"
+            );
+            auto const answered = dispatcher->dispatch(
+                program,
+                ToolAdmissionRequest{
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = root,
+                    .call            = call,
+                    .policyAuthority = prepared.policyAuthority,
+                },
+                std::stop_token{}
+            );
+            REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
+            CHECK(held->engaged == 2U);
+            CHECK(held->lifted == 1U);
+        }
+    }
+
     TEST_CASE("a child naming a Tool outside the pinned closure is refused by name")
     {
         auto temporary          = TemporaryDirectory{};

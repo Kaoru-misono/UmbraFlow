@@ -70,10 +70,12 @@ namespace uf::operator_runtime
     class ProjectToolDispatcher::State final
     {
     public:
-        // One live handler invocation. Every member but the context is a borrow
+        // One live handler invocation. The five reference members are borrows
         // owned by the dispatch frame that built it, and that frame strictly
         // outlives the run: the run executes synchronously inside it, and the
-        // table entry is erased before it returns.
+        // table entry is erased before it returns. The issuing context and the
+        // held input below are the run's OWN, because both outlive the
+        // individual child call that produced them.
         struct ActiveRun final
         {
             ProjectGenerationHandle const& program;
@@ -85,6 +87,29 @@ namespace uf::operator_runtime
             // Fresh on every entry, first dispatch and re-entry alike, and
             // numbering from 1. Nothing persists it and nothing resumes it.
             ToolCallIssuingContext context;
+
+            // The release of an input a child call engaged and handed over, and
+            // empty on every run that engaged none -- which is every run until
+            // one does. Owned by the run because the run is the frame the press
+            // outlives its own leaf call inside.
+            HeldInputRelease heldInput{};
+
+            // Lifts what this run holds, once, and answers ok() when it holds
+            // nothing.
+            //
+            // The release leaves the run BEFORE it is attempted, so a release
+            // the target refused is reported once rather than retried by
+            // whatever closes the run next, over a button nothing here can still
+            // see the state of.
+            [[nodiscard]] auto releaseHeldInput() -> Status
+            {
+                auto release = std::exchange(heldInput, HeldInputRelease{});
+                if (!release)
+                {
+                    return ok();
+                }
+                return release();
+            }
         };
 
     private:
@@ -140,6 +165,42 @@ namespace uf::operator_runtime
                 );
             };
             return ToolRuntimeExecutor{m_coordinator}.invoke(request, runHandler);
+        }
+
+        [[nodiscard]]
+        auto attachHeldInput(
+            ContentHash const& holdingCall,
+            HeldInputRelease release
+        ) -> Status
+        {
+            if (!release)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "an engaged input must be handed over together with the "
+                    "release that lifts it"
+                );
+            }
+            auto const found = m_runs.find(holdingCall);
+            if (found == m_runs.end())
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "no live issuing context is anchored on the durable position "
+                        + holdingCall.hex()
+                );
+            }
+            auto& run = found->second.get();
+            if (run.heldInput)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "the Tool call at " + holdingCall.hex()
+                        + " already holds an engaged input"
+                );
+            }
+            run.heldInput = std::move(release);
+            return ok();
         }
 
         // One child call, arriving from inside a running handler's VM.
@@ -311,20 +372,49 @@ namespace uf::operator_runtime
                 }
             );
 
-            UF_TRY_VALUE(
-                answer,
-                program.invokeBoundTool(
-                    call.toolName(),
-                    arguments,
-                    script::ScopedRunRequest{
-                        .parentPosition = call.identity(),
-                        .cancellation   = cancellation,
-                    }
-                )
+            auto answer = program.invokeBoundTool(
+                call.toolName(),
+                arguments,
+                script::ScopedRunRequest{
+                    .parentPosition = call.identity(),
+                    .cancellation   = cancellation,
+                }
             );
+
+            // Unconditional, and before the handler's answer is even looked at:
+            // a run that engaged an input owns lifting it, whichever way that
+            // handler went. This is where the invariant at
+            // engine::IActionSink::releaseHeldInputs is kept for the Tool-call
+            // frame, and it is measured per FRAME rather than per leaf call
+            // because an engaged press is meant to outlive the call that made
+            // it.
+            //
+            // Not a scope guard: one would have to swallow the release's own
+            // failure. Nothing between the run's registration above and this
+            // line can engage anything, so a single explicit call covers every
+            // path that could have left something held.
+            auto lifted = run.releaseHeldInput();
+            if (!answer)
+            {
+                auto error = std::move(answer).error();
+                if (!lifted)
+                {
+                    error.addContext(
+                        "lifting the input this Tool call left held also "
+                        "failed: "
+                            + std::string{lifted.error().message()}
+                    );
+                }
+                return std::unexpected{std::move(error)};
+            }
+            if (!lifted)
+            {
+                return std::unexpected{std::move(lifted).error()};
+            }
+
             UF_TRY_VALUE(
                 result,
-                CanonicalJson::parseExact(json::canonicalBytes(answer))
+                CanonicalJson::parseExact(json::canonicalBytes(*answer))
             );
             // A handler that terminated leaving recorded calls unconsumed for
             // this context issued a different sequence than the one on record,
@@ -384,6 +474,14 @@ namespace uf::operator_runtime
                 cancellation
             );
         };
+    }
+
+    auto ProjectToolDispatcher::attachHeldInput(
+        ContentHash const& holdingCall,
+        HeldInputRelease release
+    ) -> Status
+    {
+        return m_state->attachHeldInput(holdingCall, std::move(release));
     }
 
     auto ProjectToolDispatcher::dispatch(

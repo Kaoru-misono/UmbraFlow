@@ -13,11 +13,21 @@
 
 #include <core/error/result.hpp>
 
+#include <functional>
 #include <memory>
 #include <stop_token>
 
 namespace uf::operator_runtime
 {
+    // The release of an input a Tool call engaged and left held.
+    //
+    // A callable protocol rather than a handle on anything, because the
+    // dispatcher reaches no action sink and must not learn to: the child call
+    // that pressed is the only thing that knows how to lift, so it hands the
+    // lift back and the frame that owns the press holds it until that frame
+    // closes.
+    using HeldInputRelease = std::move_only_function<Status()>;
+
     // The dispatch executor: everything between an admitted call and the
     // terminal durable row that answers it.
     //
@@ -118,6 +128,34 @@ namespace uf::operator_runtime
         // The callable owns everything it reaches, so it is safe to store for
         // as long as the program lives.
         [[nodiscard]] auto toolRuntimeSeam() const -> script::ToolRuntimeInvoke;
+
+        // Hands the run anchored on `holdingCall` the release of an input a
+        // child call has just engaged and left held.
+        //
+        // THE FRAME THAT LIFTS A HELD INPUT IS THE TOOL CALL THAT OWNS IT, not
+        // the leaf call that pressed. A leaf that released before returning
+        // could hold nothing while anything looked at the screen, and looking at
+        // the screen while the button is down is the entire capability; see
+        // docs/decisions/2026-08-24-an-authoring-session-is-a-first-class-tool-session.md.
+        // The engaging leaf therefore returns with the button still down and
+        // leaves its release here, and the run lifts it on every exit path.
+        //
+        // The parent/child structure this rests on is the LEDGER'S CALL TREE and
+        // not the call stack: `holdingCall` is a durable position, the children
+        // that follow are ordinary un-nested calls, and nothing is re-entered. A
+        // release the target refused is reported rather than swallowed, because
+        // a target that will not take one is exactly what an operator has to be
+        // told about.
+        //
+        // Refused when no run is anchored at `holdingCall`, and when that run
+        // already holds a release: one release lifts every held input at once,
+        // so a second would share the first one's act and neither engagement
+        // could say which one ended.
+        [[nodiscard]]
+        auto attachHeldInput(
+            ContentHash const& holdingCall,
+            HeldInputRelease release
+        ) -> Status;
 
         // Dispatch one call of one Tool this program binds.
         //
