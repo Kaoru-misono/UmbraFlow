@@ -536,11 +536,21 @@ local function collectionBuilder(bounds: { number }): (string, any) -> any
         end
         local slotsWhat = what .. ".placement.slots"
         local sourceSlots = object(slotsWhat, placement.slots)
-        only(slotsWhat, sourceSlots, { origin = true, pitch = true, tolerance = true })
+        only(
+            slotsWhat,
+            sourceSlots,
+            { origin = true, pitch = true, extent = true, tolerance = true }
+        )
         local slotOrigin = integer(slotsWhat .. ".origin", sourceSlots.origin)
+        -- pitch carries no parity constraint: a layout spans
+        -- min(pitch * (n - 1), extent) and each slot is rounded half up, so
+        -- integer pixels are a property of the slot rather than of the pitch.
+        -- Whether one cardinality's slots are far enough apart to assign an
+        -- item to exactly one of them depends on that cardinality, so it is
+        -- checked when the collection resolves, not here.
         local slotPitch = positiveInteger(slotsWhat .. ".pitch", sourceSlots.pitch)
+        local slotExtent = positiveInteger(slotsWhat .. ".extent", sourceSlots.extent)
         local slotTolerance = integer(slotsWhat .. ".tolerance", sourceSlots.tolerance)
-        if slotPitch % 2 ~= 0 then fail(slotsWhat .. ".pitch", "must be even") end
         if slotTolerance < 0 then fail(slotsWhat .. ".tolerance", "must not be negative") end
         local searchRect = rect(
             what .. ".placement.search_rect",
@@ -594,6 +604,7 @@ local function collectionBuilder(bounds: { number }): (string, any) -> any
                 slots = table.freeze({
                     origin = slotOrigin,
                     pitch = slotPitch,
+                    extent = slotExtent,
                     tolerance = slotTolerance,
                 }),
             }),

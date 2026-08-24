@@ -140,7 +140,7 @@
       }
     },
     "detected_collection_placement": {
-      "$comment": "A search region plus the trusted block Reader that detects every item inside it. search_rect bounds the measurement and is never evidence by itself. Each detected line supplies one item's exact image-space rectangle. order turns those measured rectangles into stable zero-based indices; overlapping spans on that axis are ambiguous and the resolver refuses them instead of inheriting detector enumeration order. slots describes the regular centred layout on that same axis. Its origin is the measured item-origin coordinate for a one-item layout. For n items, slot k is origin - (n - 1) * pitch / 2 + k * pitch. pitch must be even so every centred layout lands on integer coordinates.",
+      "$comment": "A search region plus the trusted block Reader that detects every item inside it. search_rect bounds the measurement and is never evidence by itself. Each detected line supplies one item's exact image-space rectangle. order turns those measured rectangles into stable zero-based indices; overlapping spans on that axis are ambiguous and the resolver refuses them instead of inheriting detector enumeration order. slots describes the regular centred layout on that same axis. Its origin is the measured item-origin coordinate for a one-item layout. A layout of n items spans min(pitch * (n - 1), extent), so its spacing is pitch until extent binds and then shrinks as the layout grows: slot k is origin + (2k - (n - 1)) * min(pitch * (n - 1), extent) / (2 * (n - 1)) rounded half up, and a one-item layout is origin itself. Rounding each slot is what lands every cardinality on integer coordinates, so pitch carries no parity constraint. Whether one cardinality's slots are far enough apart to assign items to them is a property of that cardinality, so the resolver checks it when the collection resolves rather than when it is declared.",
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "search_rect", "reader", "order", "slots"],
@@ -150,13 +150,14 @@
         "reader": { "$ref": "#/$defs/identifier" },
         "order": { "enum": ["left_to_right", "top_to_bottom"] },
         "slots": {
-          "$comment": "origin is the one-item slot coordinate on order's axis. pitch is the positive distance between adjacent slots and is even because halving an odd pitch would put centred even-cardinality layouts between integer pixels. tolerance is the maximum distance between a measured item origin and its assigned slot.",
+          "$comment": "origin is the one-item slot coordinate on order's axis. pitch is the positive distance between adjacent slots while the layout is short enough for that distance to hold. extent is the positive upper bound on the distance between the first and last slot, and it is required because a Surface is finite: every centred layout already has one, so a declaration without it is hiding a fact rather than describing an unbounded fan. tolerance is the maximum distance between a measured item origin and its assigned slot; a cardinality whose smallest adjacent slot gap is below 2 * tolerance + 1 cannot assign an item to one slot and is refused at resolution.",
           "type": "object",
           "additionalProperties": false,
-          "required": ["origin", "pitch", "tolerance"],
+          "required": ["origin", "pitch", "extent", "tolerance"],
           "properties": {
             "origin": { "type": "integer", "minimum": 0 },
-            "pitch": { "type": "integer", "minimum": 2 },
+            "pitch": { "type": "integer", "minimum": 1 },
+            "extent": { "type": "integer", "minimum": 1 },
             "tolerance": { "type": "integer", "minimum": 0 }
           }
         }
@@ -718,7 +719,7 @@
       }
     },
     "resolved_collection": {
-      "$comment": "The result of resolving one declared collection against one resolved state in the same live cycle. count is the number of detected items. complete and partial carry those measured items; partial slot indices may contain gaps. unknown means no detected-item-to-layout assignment exists within the search rectangle and carries no items list. An absent Reader result is a complete collection with count zero. Unknown Reader evidence or ambiguous spatial order still produces no resolved_collection.",
+      "$comment": "The result of resolving one declared collection against one resolved state in the same live cycle. count is the number of detected items. complete and partial carry those measured items; partial slot indices may contain gaps. unknown means no detected-item-to-layout assignment exists among the cardinalities whose slots stay inside the search rectangle and stay assignable, and carries no items list. An absent Reader result is a complete collection with count zero. Unknown Reader evidence, ambiguous spatial order, or a detected cardinality whose own slots sit closer together than 2 * tolerance + 1 still produces no resolved_collection.",
       "type": "object",
       "additionalProperties": false,
       "required": ["completeness", "count"],

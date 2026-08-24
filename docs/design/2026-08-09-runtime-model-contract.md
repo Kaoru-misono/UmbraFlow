@@ -124,7 +124,7 @@ Collection {
   placement = {
     kind = "detected", search_rect, reader,
     order = "left_to_right" | "top_to_bottom",
-    slots = { origin, pitch, tolerance }
+    slots = { origin, pitch, extent, tolerance }
   },
   actions = [ ... ],
   reads = [ { reader, offset = [dx, dy], size = [width, height] }, ... ]
@@ -135,8 +135,18 @@ The placement Reader is detector evidence and must have `layout = "block"`.
 Each detected line supplies an item's exact image-space rectangle. `order`
 sorts those rectangles into stable zero-based indices; overlapping spans on the
 ordering axis are ambiguous rather than inherited from detector enumeration.
-The declared regular slot layout uses the one-item `origin`, an even positive
-`pitch`, and a maximum assignment `tolerance`.
+The declared slot layout uses the one-item `origin`, a positive `pitch`, a
+positive `extent`, and a maximum assignment `tolerance`. A layout of `n` items
+spans `min(pitch * (n - 1), extent)`, so the declared pitch holds while the fan
+is short and the spacing shrinks once `extent` binds; each slot is that centred
+coordinate rounded half up, which is what lands every cardinality on integer
+pixels and why `pitch` carries no parity constraint. `extent` is required
+rather than optional because a Surface is finite: every centred layout already
+has a bound, and omitting it would declare an unbounded fan that cannot exist.
+Whether one cardinality's slots are far enough apart to assign an item to
+exactly one of them is a property of that cardinality, so the resolver refuses a
+detected cardinality whose smallest adjacent slot gap is below
+`2 * tolerance + 1`, naming that cardinality, the gap and the tolerance.
 
 The detected count and item rectangles are runtime results, not authored item
 geometry. A resolved Collection reports `completeness` as `complete`, `partial`,

@@ -476,46 +476,105 @@ local function orderedCollectionLines(collection: any, lines: { any }): ({ any }
     local ordered = {}
     for index, line in lines do ordered[index] = line end
     local axis = if collection.placement.order == "left_to_right" then 1 else 2
-    local extent = if axis == 1 then 3 else 4
+    local size = if axis == 1 then 3 else 4
     table.sort(ordered, function(left: any, right: any): boolean
         return left.rect[axis] < right.rect[axis]
     end)
     for index = 2, #ordered do
         local previous = ordered[index - 1].rect
         local current = ordered[index].rect
-        if previous[axis] + previous[extent] > current[axis] then
+        if previous[axis] + previous[size] > current[axis] then
             return nil, "ambiguous_order"
         end
     end
     return ordered, nil
 end
 
-local function fittedCollection(collection: any, ordered: { any }): any
+-- The declared slot coordinates of one cardinality, in integer pixels. A
+-- layout of n items spans min(pitch * (n - 1), extent): the declared pitch
+-- holds while the fan is short, and once extent binds the spacing shrinks with
+-- the cardinality instead of the span growing. Each slot is the exact rational
+-- coordinate rounded half up, computed from integers alone so the result never
+-- depends on the order the divisions happen in; that per-slot rounding, not a
+-- constraint on pitch, is what keeps every cardinality on integer pixels.
+local function layoutSlots(slots: any, count: number): { number }
+    if count == 1 then return { slots.origin } end
+    local span = math.min(slots.pitch * (count - 1), slots.extent)
+    local denominator = 2 * (count - 1)
+    local result: { number } = table.create(count)
+    for index = 0, count - 1 do
+        local numerator = 2 * slots.origin * (count - 1)
+            + (2 * index - (count - 1)) * span
+        result[index + 1] = math.floor(
+            (2 * numerator + denominator) / (2 * denominator)
+        )
+    end
+    return result
+end
+
+-- The smallest distance between two adjacent slots of one layout, which is
+-- what decides whether a measured origin can belong to exactly one of them.
+-- A one-item layout has no adjacent pair and therefore no such distance.
+local function smallestSlotGap(layout: { number }): number?
+    local smallest: number? = nil
+    for index = 2, #layout do
+        local gap = layout[index] - layout[index - 1]
+        if smallest == nil or gap < smallest then smallest = gap end
+    end
+    return smallest
+end
+
+local function fittedCollection(collection: any, ordered: { any }): (any?, string?)
     local measuredCount = #ordered
     if measuredCount == 0 then
-        return table.freeze({ completeness = "complete", count = 0, items = freezeList({}) })
+        return table.freeze({
+            completeness = "complete",
+            count = 0,
+            items = freezeList({}),
+        }), nil
     end
     local axis = if collection.placement.order == "left_to_right" then 1 else 2
     local searchRect = collection.placement.search_rect
     local searchStart = searchRect[axis]
     local searchEnd = searchStart + searchRect[axis + 2]
     local slots = collection.placement.slots
+    -- Two adjacent slots closer together than this cannot be told apart by a
+    -- measurement the declaration allows to sit `tolerance` from either.
+    local assignable = 2 * slots.tolerance + 1
     for layoutCount = measuredCount, math.huge do
-        local halfSpan = (layoutCount - 1) * slots.pitch / 2
-        local firstSlot = slots.origin - halfSpan
-        local lastSlot = slots.origin + halfSpan
-        if firstSlot < searchStart or lastSlot >= searchEnd then break end
+        local layout = layoutSlots(slots, layoutCount)
+        if layout[1] < searchStart or layout[layoutCount] >= searchEnd then break end
+        local gap = smallestSlotGap(layout)
+        if gap ~= nil and gap < assignable then
+            -- A larger layout only packs its slots tighter, so this is the last
+            -- cardinality worth trying. When it is the detected cardinality the
+            -- declaration cannot place the items that were actually measured,
+            -- and that is refused by name rather than reported as no-fit.
+            if layoutCount == measuredCount then
+                return nil, string.format(
+                    "ambiguous_slots: %d items leave adjacent slots %d apart, "
+                        .. "under the %d that tolerance %d requires",
+                    layoutCount,
+                    gap,
+                    assignable,
+                    slots.tolerance
+                )
+            end
+            break
+        end
         local items = {}
         local slotIndex = 0
         local fits = true
         for position, line in ordered do
             local coordinate = line.rect[axis]
-            local slot = firstSlot + slotIndex * slots.pitch
-            while slotIndex < layoutCount and slot < coordinate - slots.tolerance do
+            while slotIndex < layoutCount - 1
+                and layout[slotIndex + 1] < coordinate - slots.tolerance
+            do
                 slotIndex += 1
-                slot = firstSlot + slotIndex * slots.pitch
             end
-            if slotIndex >= layoutCount or math.abs(coordinate - slot) > slots.tolerance then
+            if slotIndex >= layoutCount
+                or math.abs(coordinate - layout[slotIndex + 1]) > slots.tolerance
+            then
                 fits = false
                 break
             end
@@ -527,15 +586,15 @@ local function fittedCollection(collection: any, ordered: { any }): any
                 completeness = if layoutCount == measuredCount then "complete" else "partial",
                 count = measuredCount,
                 items = items,
-            })
+            }), nil
         end
     end
-    return table.freeze({ completeness = "unknown", count = measuredCount })
+    return table.freeze({ completeness = "unknown", count = measuredCount }), nil
 end
 
 local function collectionItems(collection: any, reading: any): (any?, string?)
     if type(reading) ~= "table" then return nil, "not_measured" end
-    if reading.kind == "absent" then return fittedCollection(collection, {}), nil end
+    if reading.kind == "absent" then return fittedCollection(collection, {}) end
     if reading.kind ~= "read" or type(reading.lines) ~= "table" then
         local reason = if reading.kind == "unknown" and evidence.is_unknown_reason(reading.reason)
             then reading.reason
@@ -544,7 +603,7 @@ local function collectionItems(collection: any, reading: any): (any?, string?)
     end
     local ordered, orderReason = orderedCollectionLines(collection, reading.lines)
     if ordered == nil then return nil, orderReason end
-    return fittedCollection(collection, ordered), nil
+    return fittedCollection(collection, ordered)
 end
 
 -- Resolves one Collection click against one measured item. The item index is

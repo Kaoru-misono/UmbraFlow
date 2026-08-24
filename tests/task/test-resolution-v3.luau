@@ -464,7 +464,7 @@ local reading = model.compile({
                 search_rect = { 100, 80, 1080, 160 },
                 reader = "flavour.reader",
                 order = "left_to_right",
-                slots = { origin = 631, pitch = 316, tolerance = 2 },
+                slots = { origin = 631, pitch = 316, extent = 1080, tolerance = 2 },
             },
             actions = {
                 {
@@ -490,11 +490,45 @@ local reading = model.compile({
                 search_rect = { 100, 80, 1080, 160 },
                 reader = "flavour.reader",
                 order = "left_to_right",
-                slots = { origin = 631, pitch = 316, tolerance = 2 },
+                slots = { origin = 631, pitch = 316, extent = 1080, tolerance = 2 },
             },
             actions = {},
             reads = { { reader = "name.reader", offset = { 0, 50 }, size = { 240, 60 } } },
             predicate = { kind = "text_equals", reader = "name.reader", value = "wanted" },
+        },
+        -- The event collection this repository shipped before a layout had an
+        -- extent, restated with the extent its own pitch already implied. Its
+        -- one-, two- and three-item slots must stay byte-identical, and its
+        -- four-item layout must fan inside 836 pixels rather than growing to
+        -- 1254 the way a fixed pitch would.
+        {
+            id = "events",
+            surface = "scene",
+            placement = {
+                kind = "detected",
+                search_rect = { 0, 80, 1280, 160 },
+                reader = "flavour.reader",
+                order = "left_to_right",
+                slots = { origin = 629, pitch = 418, extent = 836, tolerance = 0 },
+            },
+            actions = {},
+            reads = {},
+        },
+        -- A layout whose own slots sit closer together than a measurement is
+        -- allowed to stray from one of them. Nothing about the declaration is
+        -- refusable on its own; only a cardinality makes it so.
+        {
+            id = "crowded",
+            surface = "scene",
+            placement = {
+                kind = "detected",
+                search_rect = { 500, 80, 300, 160 },
+                reader = "flavour.reader",
+                order = "left_to_right",
+                slots = { origin = 600, pitch = 8, extent = 8, tolerance = 4 },
+            },
+            actions = {},
+            reads = {},
         },
     },
     stitched_maps = {
@@ -897,6 +931,104 @@ do
     assert(
         unknown.completeness == "unknown" and unknown.items == nil,
         "collection completeness must report unknown without items when no layout fits"
+    )
+end
+
+-- A layout's span is bounded by its declared extent, so its spacing shrinks as
+-- the cardinality grows instead of the fan growing with it. Every slot is the
+-- exact centred coordinate rounded half up, which is what puts a layout on
+-- integer pixels whatever the parity of its pitch.
+--
+-- The first three cardinalities are the regression anchor: the event
+-- collection that predates `extent` must resolve to exactly the coordinates it
+-- always did. The fourth is where the bound bites -- a fixed pitch would put
+-- the outer items at 2 and 1256.
+--
+-- Its tolerance is zero, so `complete` at exactly the measured cardinality is
+-- what pins each coordinate: one pixel of drift on any item and the layout of
+-- that cardinality no longer fits at all.
+do
+    local function resolvedFan(id: string, lines: { { any } }): (any?, string?)
+        local cycle = evidence.begin_cycle()
+        local records = readingRecords(cycle, "present", "absent", "present")
+        local state = resolution.resolve_state(reading, cycle, records)
+        local result, reason = resolution.resolve_collection(
+            reading,
+            cycle,
+            state,
+            id,
+            { [model.collection_reading_key(id, "flavour.reader")] = readBlock(lines) }
+        )
+        evidence.end_cycle(cycle)
+        return result, reason
+    end
+
+    local function fanLines(origins: { number }): { { any } }
+        local lines = {}
+        for position, origin in origins do
+            lines[position] = { "item" .. tostring(position), { origin, 100, 8, 40 } }
+        end
+        return lines
+    end
+
+    for _, expected in {
+        { 629 },
+        { 420, 838 },
+        { 211, 629, 1047 },
+        { 211, 490, 768, 1047 },
+    } do
+        local result, reason = resolvedFan("events", fanLines(expected))
+        assert(reason == nil and result ~= nil, "T-002 a bounded fan must resolve")
+        assert(
+            result.completeness == "complete" and #result.items == #expected,
+            "T-002 every declared slot of a bounded fan must be assignable"
+        )
+        for position, item in result.items do
+            assert(
+                item.index == position - 1 and item.rect[1] == expected[position],
+                "T-002 a bounded fan's slot must be the exact half-up rounded coordinate"
+            )
+        end
+    end
+end
+
+-- Whether a layout can be assigned at all is a property of its cardinality,
+-- not of its declaration, so it is decided here and not when the model is
+-- compiled. Two slots closer together than 2 * tolerance + 1 leave a
+-- measurement able to belong to either, and that is refused by name.
+do
+    local function crowded(origins: { number }): (any?, string?)
+        local cycle = evidence.begin_cycle()
+        local records = readingRecords(cycle, "present", "absent", "present")
+        local state = resolution.resolve_state(reading, cycle, records)
+        local lines = {}
+        for position, origin in origins do
+            lines[position] = { "item" .. tostring(position), { origin, 100, 4, 40 } }
+        end
+        local result, reason = resolution.resolve_collection(
+            reading,
+            cycle,
+            state,
+            "crowded",
+            { [model.collection_reading_key("crowded", "flavour.reader")] = readBlock(lines) }
+        )
+        evidence.end_cycle(cycle)
+        return result, reason
+    end
+
+    local single, singleReason = crowded({ 600 })
+    assert(
+        singleReason == nil and single ~= nil and single.completeness == "complete",
+        "a one-item layout has no adjacent slots and stays assignable"
+    )
+
+    local pair, pairReason = crowded({ 596, 604 })
+    assert(
+        pair == nil
+            and pairReason
+                == "ambiguous_slots: 2 items leave adjacent slots 8 apart, "
+                    .. "under the 9 that tolerance 4 requires",
+        "a cardinality whose slots sit inside the tolerance must be refused by name"
     )
 end
 

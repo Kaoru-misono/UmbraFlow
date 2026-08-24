@@ -89,7 +89,7 @@ placement = {
   search_rect = [120, 300, 1680, 300],
   reader = "options.text",
   order = "left_to_right",
-  slots = { origin = 631, pitch = 316, tolerance = 2 },
+  slots = { origin = 631, pitch = 316, extent = 1080, tolerance = 2 },
 }
 actions = [{ id = "pick", kind = "click", proof_locator = "save.template", offset = [12, 18] }]
 reads = [{ reader = "header.text", offset = [0, -40], size = [320, 40] }]
@@ -137,6 +137,7 @@ assert(
 )
 assert(runtime.collection_by_id.options.placement.slots.origin == 631)
 assert(runtime.collection_by_id.options.placement.slots.pitch == 316)
+assert(runtime.collection_by_id.options.placement.slots.extent == 1080)
 assert(runtime.collection_by_id.options.placement.slots.tolerance == 2)
 assert(runtime.collection_by_id.options.actions[1].id == "pick")
 assert(runtime.collection_by_id.options.actions[1].offset[1] == 12)
@@ -264,11 +265,21 @@ rejects(function()
     project.parse(replace(valid, '  reader = "options.text",\n', ""))
 end, "T-002 collection detector must require a Reader")
 rejects(function()
-    project.parse(replace(valid, '  slots = { origin = 631, pitch = 316, tolerance = 2 },\n', ""))
+    project.parse(replace(valid, '  slots = { origin = 631, pitch = 316, extent = 1080, tolerance = 2 },\n', ""))
 end, "T-002 collection placement must require a slot layout")
+-- A layout's extent is the bound its own pitch stops describing once the fan
+-- is long enough. There is no absent reading of it: a declaration that omits
+-- it is refused rather than treated as an unbounded fan.
 rejects(function()
+    project.parse(replace(valid, "extent = 1080, ", ""))
+end, "T-002 collection slots must declare an extent")
+-- Integer pixels are now a property of each rounded slot, so an odd pitch is
+-- an ordinary declaration rather than a refusal.
+assert(
     project.parse(replace(valid, "pitch = 316", "pitch = 315"))
-end, "T-002 collection slot pitch must be even")
+        .collection_by_id["options"].placement.slots.pitch == 315,
+    "T-002 collection slot pitch carries no parity constraint"
+)
 rejects(function()
     project.parse(replace(valid, '  kind = "detected",\n', '  kind = "fixed",\n'))
 end, "T-002 collection placement must have one destructive spelling")
