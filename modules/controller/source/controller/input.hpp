@@ -347,11 +347,11 @@ namespace uf
     ) -> Status;
 
     [[nodiscard]]
-    auto longPress(
+    auto hold(
         DeliveryTarget const& target,
         ObservationLease lease,
         Point<ClientSpace> point,
-        MonotonicInstant::Duration hold,
+        MonotonicInstant::Duration duration,
         HeldInputs& held,
         AuditLog& audit,
         std::move_only_function<Result<DeliveryTarget>()> refreshTarget

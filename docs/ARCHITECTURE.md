@@ -120,7 +120,11 @@ Operator authority
   -> controller native input primitive
 ```
 
-No other module exports a production click/key/drag path.
+No other module exports a production input path. The declared input vocabulary
+is `click`, `key`, `drag`, `hold`, `scroll` and `move`, and it is the whole of
+it: there is no authoring-only half, because anything that changes the target on
+delivery is input whoever drives it. What separates an authoring actor from a
+production one is the authority it holds, not which verbs exist.
 
 ## Artifact and database boundary
 

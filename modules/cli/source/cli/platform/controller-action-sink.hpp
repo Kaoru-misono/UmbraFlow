@@ -29,7 +29,7 @@ namespace uf::cli::platform
         // The refresh-target callback the controller verbs that span time require:
         // it re-reads the live desktop and reports the bound window as gone if it
         // no longer enumerates. `what` names the verb so the refusal says which
-        // one was mid-flight. Shared by longPress and drag because the question
+        // one was mid-flight. Shared by hold and drag because the question
         // they ask across their pause is the same question.
         [[nodiscard]]
         auto refreshTargetCallback(std::string_view what)
@@ -75,14 +75,14 @@ namespace uf::cli::platform
         ) -> Status override;
 
         // Posts the press, holds it, re-reads the bound window, and posts the
-        // release through controller::longPress -- the same route click() takes,
+        // release through controller::hold -- the same route click() takes,
         // with the same lease forwarded. It supplies the refresh-target callback
-        // controller::longPress requires; see the definition for what that callback
+        // controller::hold requires; see the definition for what that callback
         // can honestly re-read here.
         [[nodiscard]]
-        auto longPress(
+        auto hold(
             Point<ClientSpace> point,
-            MonotonicInstant::Duration hold,
+            MonotonicInstant::Duration duration,
             ObservationLease const& lease
         ) -> Status override;
 
@@ -98,7 +98,7 @@ namespace uf::cli::platform
 
         // Posts the press, the held moves and the release through
         // controller::drag -- the same route click() takes, with the same lease
-        // forwarded and the same refresh-target callback longPress supplies.
+        // forwarded and the same refresh-target callback hold supplies.
         [[nodiscard]]
         auto drag(
             Point<ClientSpace> start,

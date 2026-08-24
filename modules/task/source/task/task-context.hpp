@@ -49,19 +49,24 @@ namespace uf::task
         std::chrono::seconds{30}
     };
 
-    // The longest a single long press may hold the button down. A separate and
-    // much lower ceiling than the settle one: a long press leaves a pointer
-    // button physically down in the target with only this host to lift it, and
-    // every other input queued behind it. Beyond it is Tier B, for
+    // The longest a single hold may keep the button down. A separate and much
+    // lower ceiling than the settle one: a hold leaves a pointer button
+    // physically down in the target with only this host to lift it, and every
+    // other input queued behind it. Beyond it is Tier B, for
     // k_maxSettleDuration's reason.
-    // CALIBRATION: five seconds is a placeholder. Targets that publish a
-    // long-press gesture measure it in hundreds of milliseconds.
-    inline constexpr auto k_maxLongPressHold = MonotonicInstant::Duration{
+    //
+    // It is also the bound a DECLARED hold answers to, which is why
+    // model.luau refuses a hold_ms above the same figure: a declaration asking
+    // for a press longer than the host will hold is one the artifact boundary
+    // can refuse before any target sees it.
+    // CALIBRATION: five seconds is a placeholder. Targets that publish a hold
+    // gesture measure it in hundreds of milliseconds.
+    inline constexpr auto k_maxHoldDuration = MonotonicInstant::Duration{
         std::chrono::seconds{5}
     };
 
-    // The longest a single drag may spend travelling. The long-press ceiling's
-    // reason exactly -- the button is down for all of it -- and the same number,
+    // The longest a single drag may spend travelling. The hold ceiling's reason
+    // exactly -- the button is down for all of it -- and the same number,
     // because what is bounded is the same thing: how long this host may leave a
     // pointer button physically down in the target.
     // CALIBRATION: five seconds is a placeholder. A pan that needs more than a
@@ -263,6 +268,28 @@ namespace uf::task
             MonotonicInstant::Duration travel
         ) -> Result<engine::DragReceipt>;
 
+        // The remaining three of the six the declared vocabulary grants. Each
+        // is deliverReceiptClick's sibling on its own engine verb, and the
+        // ceilings are NOT re-stated here: a declared hold was already bounded
+        // by the artifact boundary that admitted the model, and a declared
+        // notch count is judged by the one definition that owns it. What this
+        // layer does is spend the cycle into the verb the Receipt's intent
+        // named.
+        [[nodiscard]]
+        auto deliverReceiptHold(
+            CycleTicket ticket,
+            PixelPoint point,
+            MonotonicInstant::Duration duration
+        ) -> Result<engine::HoldReceipt>;
+
+        [[nodiscard]]
+        auto deliverReceiptScroll(CycleTicket ticket, int32 notches)
+            -> Result<engine::ScrollReceipt>;
+
+        [[nodiscard]]
+        auto deliverReceiptMove(CycleTicket ticket, PixelPoint point)
+            -> Result<engine::PointerMoveReceipt>;
+
     public:
         explicit TaskContext(
             engine::EngineSession session,
@@ -450,8 +477,12 @@ namespace uf::task
             ProbeColourKey key
         ) -> Result<ColourGridReport>;
 
-        // The six acts an exploration chunk may deliver, each spending the
-        // cycle `ticket` names so one frame delivers at most one input.
+        // The six acts, each spending the cycle `ticket` names so one frame
+        // delivers at most one input. They are the whole input vocabulary and
+        // are spelled exactly as a declaration spells them -- click, key, drag,
+        // hold, scroll, move -- because there is one vocabulary and no
+        // authoring-only half of it. What the entries below take is a bare
+        // coordinate rather than a Binding, and that is the only difference.
         //
         // WHY THESE NEED NO RECEIPT. A Receipt exists so that a PLUGIN-issued
         // action is auditable and replayable: a model-declared action, a
@@ -485,19 +516,19 @@ namespace uf::task
         // task-context.cpp for why that line is not a second spelling of the
         // engine's own.
         [[nodiscard]]
-        auto cycleClickPoint(CycleTicket ticket, PixelPoint point) -> Status;
+        auto cycleClick(CycleTicket ticket, PixelPoint point) -> Status;
 
-        // `hold` and `travel` have no default at any layer: how long a target
-        // wants a press held is a fact about that target. This is the layer that
-        // bounds them, because it is the one whose refusal can name what the
-        // chunk wrote -- k_maxLongPressHold and k_maxDragTravel, refused before
-        // the cycle is spent so a mistyped duration costs no frame and leaves no
-        // button down.
+        // `duration` and `travel` have no default at any layer: how long a
+        // target wants a press held is a fact about that target. This is the
+        // layer that bounds them, because it is the one whose refusal can name
+        // what the chunk wrote -- k_maxHoldDuration and k_maxDragTravel,
+        // refused before the cycle is spent so a mistyped duration costs no
+        // frame and leaves no button down.
         [[nodiscard]]
-        auto cycleLongPress(
+        auto cycleHold(
             CycleTicket ticket,
             PixelPoint point,
-            MonotonicInstant::Duration hold
+            MonotonicInstant::Duration duration
         ) -> Status;
 
         // Both points are bare coordinates. The far end is a coordinate rather
@@ -513,7 +544,7 @@ namespace uf::task
         ) -> Status;
 
         [[nodiscard]]
-        auto cycleMovePointer(CycleTicket ticket, PixelPoint point) -> Status;
+        auto cycleMove(CycleTicket ticket, PixelPoint point) -> Status;
 
         [[nodiscard]]
         auto cycleScroll(CycleTicket ticket, int32 notches) -> Status;

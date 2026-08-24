@@ -229,9 +229,10 @@ assert(
         .reader_by_id["header.text"].layout == "block"
 )
 
--- Two action kinds, and the placement rule follows the kinds present rather
--- than the count. A keystroke names no coordinate, so a Binding granting only
--- keystrokes carries no action_point and one that carries anyway is refused.
+-- Six action kinds, and the placement rule follows the kinds present rather
+-- than the count. A keystroke and a wheel scroll name no coordinate, so a
+-- Binding granting only those carries no action_point and one that carries
+-- anyway is refused; a click, drag, hold or move requires one.
 --
 -- Plain substring replacement rather than gsub: every model fragment below
 -- contains a rectangle, and `[` opens a character class in a Lua pattern.
@@ -245,6 +246,9 @@ end
 local clickAction = '{ id = "activate", kind = "click", proof_locator = "save.template" }'
 local keyAction = '{ id = "activate", kind = "key", key = "ENTER", proof_locator = "save.template" }'
 local dragAction = '{ id = "pan", kind = "drag", offset = [-400, 0], duration_ms = 600, proof_locator = "save.template" }'
+local holdAction = '{ id = "inspect", kind = "hold", hold_ms = 350, proof_locator = "save.template" }'
+local moveAction = '{ id = "hover", kind = "move", proof_locator = "save.template" }'
+local scrollAction = '{ id = "wheel", kind = "scroll", notches = -3, proof_locator = "save.template" }'
 local actionPointLine = '  action_point = [1710, 965],\n'
 
 -- A collection's Reader is its item detector, so the declaration accepts only
@@ -302,8 +306,37 @@ rejects(function()
     project.parse(replace(valid, clickAction, replace(dragAction, "[-400, 0]", "[400, 400]")))
 end, "T-006 drag endpoint must remain in base_resolution")
 
+-- The three kinds the vocabulary gained, each parsed as declared. A hold and a
+-- move aim at the same measured point a click does; a scroll names none, so its
+-- Binding drops the action_point exactly as a keystroke's does.
+local holding = project.parse(replace(valid, clickAction, holdAction))
+assert(holding.binding_by_id["settings.save"].actions[1].kind == "hold")
+assert(holding.binding_by_id["settings.save"].actions[1].hold_ms == 350)
+
+local hovering = project.parse(replace(valid, clickAction, moveAction))
+assert(hovering.binding_by_id["settings.save"].actions[1].kind == "move")
+assert(hovering.binding_by_id["settings.save"].placement.action_point[1] == 1710)
+
+local wheeling = project.parse(
+    replace(replace(valid, clickAction, scrollAction), actionPointLine, "")
+)
+assert(wheeling.binding_by_id["settings.save"].actions[1].kind == "scroll")
+assert(wheeling.binding_by_id["settings.save"].actions[1].notches == -3)
+assert(wheeling.binding_by_id["settings.save"].placement.action_point == nil)
+
+-- A hold has no default and answers to the same ceiling the delivery layer
+-- holds a button under, so a declaration asking for a press the Host would
+-- refuse to lift is refused at the artifact boundary instead.
+rejects(function()
+    project.parse(replace(valid, clickAction, replace(holdAction, ", hold_ms = 350", "")))
+end, "a hold duration must be explicit")
+rejects(function()
+    project.parse(replace(valid, clickAction, replace(holdAction, "hold_ms = 350", "hold_ms = 5001")))
+end, "a hold must stay inside the ceiling the delivery layer holds a button under")
+
 -- A key carrying a coordinate, a click without one, a key with no name, a click
--- carrying one, and a kind nothing delivers: five refusals, one rule each.
+-- carrying one, a scroll carrying a coordinate, and a kind nothing delivers:
+-- six refusals, one rule each.
 rejects(function() project.parse(replace(valid, clickAction, keyAction)) end)
 rejects(function() project.parse(replace(valid, actionPointLine, "")) end)
 rejects(function()
@@ -324,11 +357,12 @@ rejects(function()
         '{ id = "activate", kind = "click", key = "ENTER", proof_locator = "save.template" }'
     ))
 end)
+rejects(function() project.parse(replace(valid, clickAction, scrollAction)) end)
 rejects(function()
     project.parse(replace(
         valid,
         clickAction,
-        '{ id = "activate", kind = "scroll", proof_locator = "save.template" }'
+        '{ id = "activate", kind = "tap", proof_locator = "save.template" }'
     ))
 end)
 

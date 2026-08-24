@@ -240,7 +240,7 @@ namespace uf::engine
         int32   notches{};
     };
 
-    // The record of one delivered long press: the frame it was authorized
+    // The record of one delivered hold: the frame it was authorized
     // against, the client-space point the button went down at, and how long it
     // stayed down. The hold is the only thing separating this receipt from an
     // ActReceipt for the same coordinate.
@@ -248,7 +248,7 @@ namespace uf::engine
     // No in-class initializers for the frame or the point: FrameId and Point
     // have no default state, so every construction site supplies both.
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
-    struct LongPressReceipt final
+    struct HoldReceipt final
     {
         FrameId            frameId;
         Point<ClientSpace> pressPoint;
@@ -581,38 +581,38 @@ namespace uf::engine
         // pressKey()'s reason: the verb names no screen position. The fingerprint
         // check and the lease-age refusal are absent for that reason too.
         //
-        // The lease still travels to the sink as delivery material. The
-        // exploration-only authority and bound-target aim are ruled at
-        // IActionSink::scroll.
+        // The lease still travels to the sink as delivery material. Where a
+        // wheel lands, and why a Binding that grants one declares a move beside
+        // it, are ruled at IActionSink::scroll.
         [[nodiscard]]
         auto scroll(
             Observation&& observation,
             int32 notches
         ) -> Result<ScrollReceipt>;
 
-        // Delivers one long press at `point` for `hold`, spending `observation`.
+        // Delivers one hold at `point` for `duration`, spending `observation`.
         //
         // Its authorization contract is clickPoint's clause for clause, because a
-        // long press names a coordinate the caller measured off this frame:
+        // hold names a coordinate the caller measured off this frame:
         // requested stop, foreign handle, consumed handle, live fingerprint,
         // lease validity at delivery, target-instance revalidation before the
         // post, and the spent observation. Nothing here may be looser than a
         // click -- a second and laxer path to the same window is the hole this
         // closes.
         //
-        // It spends the observation deliberately: a delivered long press changes
+        // It spends the observation deliberately: a delivered hold changes
         // the screen, so reading the result costs a fresh observation rather than
         // reusing the frame that authorized the press.
         //
-        // `hold` is the caller's with no default at this layer or above; see
-        // IActionSink::longPress. Bounding it belongs to the host surface a
+        // `duration` is the caller's with no default at this layer or above; see
+        // IActionSink::hold. Bounding it belongs to the host surface a
         // script reaches, where a refusal can name what the author wrote.
         [[nodiscard]]
-        auto longPress(
+        auto hold(
             Observation&& observation,
             PixelPoint point,
-            MonotonicInstant::Duration hold
-        ) -> Result<LongPressReceipt>;
+            MonotonicInstant::Duration duration
+        ) -> Result<HoldReceipt>;
 
         // Moves the pointer to `point`, pressing nothing, and spends
         // `observation`.
@@ -639,7 +639,7 @@ namespace uf::engine
         // Delivers one drag from `start` to `end` over `travel`, spending
         // `observation`.
         //
-        // Its authorization contract is longPress's clause for clause: requested
+        // Its authorization contract is hold's clause for clause: requested
         // stop, foreign handle, consumed handle, live fingerprint, lease validity
         // at delivery, target-instance revalidation before the post, and the
         // spent observation. Every one of those is a fact about the FRAME, so it
@@ -652,7 +652,7 @@ namespace uf::engine
         // fails. Its client-area bound is checked at the layer that knows the
         // live client size, before the button goes down; see IActionSink::drag.
         //
-        // It spends the observation for longPress's reason, and more plainly: a
+        // It spends the observation for hold's reason, and more plainly: a
         // drag is what moves the thing being looked at, so the frame that
         // authorized it describes a screen that no longer exists.
         //

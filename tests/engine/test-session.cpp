@@ -351,10 +351,10 @@ namespace uf::engine
             std::optional<int32>            m_lastNotches{};
             std::optional<ObservationLease> m_lastScrollLease{};
 
-            uint32                                    m_longPressCount{0};
-            std::optional<Point<ClientSpace>>         m_lastLongPress{};
-            std::optional<MonotonicInstant::Duration> m_lastHold{};
-            std::optional<ObservationLease>           m_lastLongPressLease{};
+            uint32                                    m_holdCount{0};
+            std::optional<Point<ClientSpace>>         m_lastHoldPoint{};
+            std::optional<MonotonicInstant::Duration> m_lastHoldDuration{};
+            std::optional<ObservationLease>           m_lastHoldLease{};
 
             uint32                                    m_dragCount{0};
             std::optional<Point<ClientSpace>>         m_lastDragStart{};
@@ -371,6 +371,7 @@ namespace uf::engine
             // only way a case can watch the framework take it back up.
             bool   m_pointerHeld{false};
             bool   m_abortDragMidTravel{false};
+            bool   m_abortHoldWhileDown{false};
             uint32 m_releaseCount{0};
 
             TargetWorld m_world;
@@ -451,16 +452,30 @@ namespace uf::engine
             // separately droppable: a case asserting only that a press happened
             // would pass against a sink handed a hold it threw away.
             [[nodiscard]]
-            auto longPress(
+            auto hold(
                 Point<ClientSpace> point,
-                MonotonicInstant::Duration hold,
+                MonotonicInstant::Duration duration,
                 ObservationLease const& lease
             ) -> Status override
             {
-                ++m_longPressCount;
-                m_lastLongPress      = point;
-                m_lastHold           = hold;
-                m_lastLongPressLease = lease;
+                ++m_holdCount;
+                m_lastHoldPoint    = point;
+                m_lastHoldDuration = duration;
+                m_lastHoldLease    = lease;
+
+                // The press first, exactly as controller::hold does it, so an
+                // abort below leaves the button down rather than merely
+                // reporting one. A hold keeps a button down for its whole
+                // duration, so every failure after the press has this shape.
+                m_pointerHeld = true;
+                if (m_abortHoldWhileDown)
+                {
+                    return fail(
+                        AutomationErrorKind::TargetUnavailable,
+                        "the hold target went away while the button was down"
+                    );
+                }
+                m_pointerHeld = false;
                 return ok();
             }
 
@@ -525,6 +540,15 @@ namespace uf::engine
                 m_abortDragMidTravel = true;
             }
 
+            // The hold's own version of it: fail while the button is down,
+            // which is the shape every failure past controller::hold's press
+            // has -- including the refresh across the hold refusing the
+            // release.
+            void abortHoldWhileDown() noexcept
+            {
+                m_abortHoldWhileDown = true;
+            }
+
             [[nodiscard]] auto pointerHeld() const noexcept -> bool
             {
                 return m_pointerHeld;
@@ -584,9 +608,9 @@ namespace uf::engine
                 return m_lastScrollLease;
             }
 
-            [[nodiscard]] auto longPressCount() const noexcept -> uint32
+            [[nodiscard]] auto holdCount() const noexcept -> uint32
             {
-                return m_longPressCount;
+                return m_holdCount;
             }
 
             [[nodiscard]] auto dragCount() const noexcept -> uint32
@@ -615,23 +639,24 @@ namespace uf::engine
             }
 
             [[nodiscard]]
-            auto lastLongPress() const noexcept -> std::optional<Point<ClientSpace>>
+            auto lastHoldPoint() const noexcept
+                -> std::optional<Point<ClientSpace>>
             {
-                return m_lastLongPress;
+                return m_lastHoldPoint;
             }
 
             [[nodiscard]]
-            auto lastHold() const noexcept
+            auto lastHoldDuration() const noexcept
                 -> std::optional<MonotonicInstant::Duration>
             {
-                return m_lastHold;
+                return m_lastHoldDuration;
             }
 
             [[nodiscard]]
-            auto lastLongPressLease() const noexcept
+            auto lastHoldLease() const noexcept
                 -> std::optional<ObservationLease>
             {
-                return m_lastLongPressLease;
+                return m_lastHoldLease;
             }
 
             [[nodiscard]] auto moveCount() const noexcept -> uint32
@@ -1844,7 +1869,7 @@ namespace uf::engine
         }
     }
 
-    TEST_CASE("engine session delivers a long press and spends the observation")
+    TEST_CASE("engine session delivers a hold and spends the observation")
     {
         auto const fingerprint = fingerprintOf(3, 1, 96);
         auto under = matchingSession(fingerprint, baseConfig(fingerprint));
@@ -1856,42 +1881,42 @@ namespace uf::engine
 
         auto const hold = MonotonicInstant::Duration{std::chrono::milliseconds{350}};
         auto handle        = *std::move(observation);
-        auto const receipt = session.longPress(std::move(handle), PixelPoint{1, 0}, hold);
+        auto const receipt = session.hold(std::move(handle), PixelPoint{1, 0}, hold);
         REQUIRE(receipt.has_value());
-        CHECK(under.clicks->longPressCount() == 1);
+        CHECK(under.clicks->holdCount() == 1);
         CHECK(receipt->frameId == FrameId{17});
         CHECK(receipt->hold == hold);
 
         // The hold the caller named reached the PORT: every other assertion here
         // would still hold if the duration were dropped between session and sink.
         // Replace `hold` with a constant in the sink call and only this goes red.
-        REQUIRE(under.clicks->lastHold().has_value());
+        REQUIRE(under.clicks->lastHoldDuration().has_value());
         // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
-        CHECK(*under.clicks->lastHold() == hold);
-        REQUIRE(under.clicks->lastLongPress().has_value());
+        CHECK(*under.clicks->lastHoldDuration() == hold);
+        REQUIRE(under.clicks->lastHoldPoint().has_value());
         // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
-        CHECK(under.clicks->lastLongPress()->x() == doctest::Approx(1.0));
+        CHECK(under.clicks->lastHoldPoint()->x() == doctest::Approx(1.0));
 
         // The lease reaching the sink is this observation's own, which keeps the
         // controller's delivery-time fence in the loop as layer two.
-        REQUIRE(under.clicks->lastLongPressLease().has_value());
+        REQUIRE(under.clicks->lastHoldLease().has_value());
         // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
-        CHECK(under.clicks->lastLongPressLease()->frameId() == FrameId{17});
+        CHECK(under.clicks->lastHoldLease()->frameId() == FrameId{17});
 
         // The press changed the screen, so the observation is spent. Remove the
-        // invalidation in EngineSession::longPress and one frame delivers two
+        // invalidation in EngineSession::hold and one frame delivers two
         // presses, so this goes red.
         // NOLINTNEXTLINE(bugprone-use-after-move): the spent handle must fail closed.
-        auto const retry = session.longPress(std::move(handle), PixelPoint{1, 0}, hold);
+        auto const retry = session.hold(std::move(handle), PixelPoint{1, 0}, hold);
         REQUIRE_FALSE(retry.has_value());
         requireErrorKind(retry.error(), AutomationErrorKind::StaleObservation);
-        CHECK(under.clicks->longPressCount() == 1);
+        CHECK(under.clicks->holdCount() == 1);
 
         auto const eventTypes = eventTypesOf(under.traces->events());
         CHECK(
             std::ranges::count(
                 eventTypes,
-                std::string{"engine.long_press_delivered"}
+                std::string{"engine.hold_delivered"}
             )
             == 1
         );
@@ -1908,13 +1933,44 @@ namespace uf::engine
 
         auto const* p_press = findEvent(
             under.traces->events(),
-            "engine.long_press_delivered"
+            "engine.hold_delivered"
         );
         REQUIRE(p_press != nullptr);
         auto const* p_hold = fieldAs<uint64>(*p_press, "hold_millis");
         REQUIRE(p_hold != nullptr);
         CHECK(*p_hold == uint64{350});
         CHECK(fieldAs<std::string>(*p_press, "client_x") != nullptr);
+
+        // The teardown ran on the delivery that SUCCEEDED as well, for the
+        // reason it runs on the drag that succeeded: unconditional or it is not
+        // a guarantee.
+        CHECK(under.clicks->releaseCount() == 1);
+        CHECK_FALSE(under.clicks->pointerHeld());
+
+        // A HOLD ABORTED WHILE THE BUTTON IS DOWN, which is what makes the
+        // invariant falsifiable for this verb: the sink presses, fails before
+        // the release, and returns with the button down. Take the endDelivery
+        // call out of EngineSession::hold and pointerHeld() below stays true.
+        //
+        // This is the verb the invariant was landed for. A hold that means
+        // anything holds the button while something else looks at the screen,
+        // so every way that look can fail is a way to leave a button down in a
+        // target with only this session to lift it.
+        under.clicks->abortHoldWhileDown();
+        auto again = session.observe();
+        REQUIRE(again.has_value());
+        auto const aborted = session.hold(
+            *std::move(again),
+            PixelPoint{1, 0},
+            hold
+        );
+        REQUIRE_FALSE(aborted.has_value());
+        requireErrorKind(aborted.error(), AutomationErrorKind::TargetUnavailable);
+        CHECK(under.clicks->holdCount() == 2);
+
+        // No input state survived the end of the call that pressed it.
+        CHECK_FALSE(under.clicks->pointerHeld());
+        CHECK(under.clicks->releaseCount() == 2);
     }
 
     TEST_CASE("engine session delivers a drag and spends the observation")
@@ -1998,7 +2054,7 @@ namespace uf::engine
             == 1
         );
 
-        // And NOT as a click, for the long press's reason.
+        // And NOT as a click, for the hold's reason.
         CHECK(
             std::ranges::count(
                 eventTypes,
@@ -2087,14 +2143,14 @@ namespace uf::engine
         );
     }
 
-    TEST_CASE("engine session fences a long press exactly as it fences a click")
+    TEST_CASE("engine session fences a hold exactly as it fences a click")
     {
-        // The pairing is the point: a long press names a coordinate, so the
+        // The pairing is the point: a hold names a coordinate, so the
         // failure guarded against is a SECOND and laxer path to the same window
         // beside the click's. The first four subcases each have an exact twin
         // among the click cases -- expired lease, mismatched fingerprint and
         // replaced target instance above, cancelled run just below -- and
-        // removing the matching check from EngineSession::longPress leaves the
+        // removing the matching check from EngineSession::hold leaves the
         // twin green while this goes red. The fifth has no twin and cannot:
         // clickPoint names no hold, so the backwards hold is this verb's own
         // argument check rather than a shared gate.
@@ -2110,14 +2166,14 @@ namespace uf::engine
 
             auto observation = under.session->observe();
             REQUIRE(observation.has_value());
-            auto const receipt = under.session->longPress(
+            auto const receipt = under.session->hold(
                 std::move(*observation),
                 PixelPoint{1, 0},
                 hold
             );
             REQUIRE_FALSE(receipt.has_value());
             requireErrorKind(receipt.error(), AutomationErrorKind::StaleObservation);
-            CHECK(under.clicks->longPressCount() == 0);
+            CHECK(under.clicks->holdCount() == 0);
         }
 
         SUBCASE("a mismatched fingerprint refuses the press")
@@ -2129,7 +2185,7 @@ namespace uf::engine
 
             auto observation = under.session->observe();
             REQUIRE(observation.has_value());
-            auto const receipt = under.session->longPress(
+            auto const receipt = under.session->hold(
                 std::move(*observation),
                 PixelPoint{1, 0},
                 hold
@@ -2139,7 +2195,7 @@ namespace uf::engine
                 receipt.error(),
                 AutomationErrorKind::TargetCompatibilityUnverified
             );
-            CHECK(under.clicks->longPressCount() == 0);
+            CHECK(under.clicks->holdCount() == 0);
         }
 
         SUBCASE("a replaced target instance refuses the press")
@@ -2151,14 +2207,14 @@ namespace uf::engine
             REQUIRE(observation.has_value());
             under.source->invalidateTargetInstance();
 
-            auto const receipt = under.session->longPress(
+            auto const receipt = under.session->hold(
                 std::move(*observation),
                 PixelPoint{1, 0},
                 hold
             );
             REQUIRE_FALSE(receipt.has_value());
             requireErrorKind(receipt.error(), AutomationErrorKind::TargetUnavailable);
-            CHECK(under.clicks->longPressCount() == 0);
+            CHECK(under.clicks->holdCount() == 0);
         }
 
         SUBCASE("a cancelled run refuses the press before any sink call")
@@ -2173,14 +2229,14 @@ namespace uf::engine
             REQUIRE(observation.has_value());
             REQUIRE(cancellation.request_stop());
 
-            auto const receipt = under.session->longPress(
+            auto const receipt = under.session->hold(
                 std::move(*observation),
                 PixelPoint{1, 0},
                 hold
             );
             REQUIRE_FALSE(receipt.has_value());
             requireErrorKind(receipt.error(), AutomationErrorKind::Cancelled);
-            CHECK(under.clicks->longPressCount() == 0);
+            CHECK(under.clicks->holdCount() == 0);
         }
 
         SUBCASE("a hold that runs backwards refuses the press and keeps the frame")
@@ -2190,14 +2246,14 @@ namespace uf::engine
 
             auto observation = under.session->observe();
             REQUIRE(observation.has_value());
-            auto const receipt = under.session->longPress(
+            auto const receipt = under.session->hold(
                 std::move(*observation),
                 PixelPoint{1, 0},
                 MonotonicInstant::Duration{-1}
             );
             REQUIRE_FALSE(receipt.has_value());
             requireErrorKind(receipt.error(), AutomationErrorKind::ActionRejected);
-            CHECK(under.clicks->longPressCount() == 0);
+            CHECK(under.clicks->holdCount() == 0);
         }
     }
 
@@ -2221,7 +2277,7 @@ namespace uf::engine
         // which is the whole guarantee this verb sells.
         CHECK(under.clicks->moveCount() == 1);
         CHECK(under.clicks->clickCount() == 0);
-        CHECK(under.clicks->longPressCount() == 0);
+        CHECK(under.clicks->holdCount() == 0);
         CHECK(under.clicks->keyCount() == 0);
         CHECK(under.clicks->scrollCount() == 0);
         REQUIRE(under.clicks->lastMove().has_value());
@@ -2248,12 +2304,12 @@ namespace uf::engine
         CHECK(
             std::ranges::count(
                 eventTypes,
-                std::string{"engine.pointer_move_delivered"}
+                std::string{"engine.move_delivered"}
             )
             == 1
         );
 
-        // And NOT as a click, for the long press's reason: a reader counting
+        // And NOT as a click, for the hold's reason: a reader counting
         // delivered clicks would otherwise count a message that pressed nothing.
         CHECK(
             std::ranges::count(
@@ -2265,7 +2321,7 @@ namespace uf::engine
 
         auto const* p_move = findEvent(
             under.traces->events(),
-            "engine.pointer_move_delivered"
+            "engine.move_delivered"
         );
         REQUIRE(p_move != nullptr);
         auto const* p_clientX = fieldAs<std::string>(*p_move, "client_x");

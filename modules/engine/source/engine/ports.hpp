@@ -72,7 +72,7 @@ namespace uf::engine
     };
 
     // A port that delivers one background input to the bound target: a click, a
-    // keystroke, a wheel scroll, a long press, or a pointer move. Each verb
+    // keystroke, a wheel scroll, a hold, or a pointer move. Each verb
     // states its own authorization contract below; they do not share one,
     // because what the engine has already authorized differs between a verb that
     // names a coordinate and one that does not.
@@ -132,12 +132,13 @@ namespace uf::engine
         // dropping it would remove the controller's D0 fence exactly as dropping
         // it from click() would.
         //
-        // A wheel is authorized only by an exploration observation cycle. It
-        // aims at the bound target itself and is not a Runtime Receipt action:
-        // Runtime v3 has no declared semantic hover container to authorize.
-        // No new gate is needed for this ruling because the closed Runtime
-        // action vocabulary structurally rejects `scroll`, while the existing
-        // exploration verb already exercises observation-cycle delivery.
+        // A wheel is a DECLARED Runtime action like every other input. It names
+        // no coordinate, so a Binding that grants one declares a `move` beside
+        // it and the caller delivers the move first; what a scroll aims at is
+        // whatever the target already believes is hovered, and this port cannot
+        // change that. Its Receipt is authorized on the same terms a keystroke's
+        // is: the proof template was re-measured present on this very cycle, so
+        // the screen that takes the wheel is the screen that is showing.
         //
         // `notches` crosses as a plain count because its bound is not
         // platform-neutral: Windows carries the delta in a signed 16-bit word, so
@@ -149,8 +150,8 @@ namespace uf::engine
             ObservationLease const& lease
         ) -> Status = 0;
 
-        // Delivers one long press at `point`: the button goes down, stays down
-        // for `hold`, and comes back up before this returns.
+        // Delivers one hold at `point`: the button goes down, stays down
+        // for `duration`, and comes back up before this returns.
         //
         // The port exposes this and not pointerDown/pointerUp: press, hold and
         // release begin and end inside this call, so nothing above ever holds a
@@ -166,15 +167,15 @@ namespace uf::engine
         // press and the release leaves the button down, and putting it back up
         // is releaseHeldInputs's job rather than this verb's.
         [[nodiscard]]
-        virtual auto longPress(
+        virtual auto hold(
             Point<ClientSpace> point,
-            MonotonicInstant::Duration hold,
+            MonotonicInstant::Duration duration,
             ObservationLease const& lease
         ) -> Status = 0;
 
         // Presses at `start`, travels to `end` over `travel` with the button
         // held, and releases there. Press, travel and release all begin and end
-        // inside this call, for the reason longPress does: nothing above ever
+        // inside this call, for the reason hold does: nothing above ever
         // holds a half-pressed target.
         //
         // The held moves in between are the verb. A target that pans reads the

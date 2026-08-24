@@ -1260,17 +1260,17 @@ namespace uf::engine
         };
     }
 
-    auto EngineSession::longPress(
+    auto EngineSession::hold(
         Observation&& observation,
         PixelPoint point,
-        MonotonicInstant::Duration hold
-    ) -> Result<LongPressReceipt>
+        MonotonicInstant::Duration duration
+    ) -> Result<HoldReceipt>
     {
         UF_TRY(
             beginDelivery(
                 observation,
-                "longPress",
-                "cancelled before long press delivery"
+                "hold",
+                "cancelled before hold delivery"
             )
         );
 
@@ -1278,11 +1278,11 @@ namespace uf::engine
         // a hold this layer cannot pass on: a negative duration is a receipt and a
         // trace line describing an act nobody performed. Refused before the
         // observation is spent, so a caller with a sign error keeps its frame.
-        if (hold < MonotonicInstant::Duration::zero())
+        if (duration < MonotonicInstant::Duration::zero())
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "a long press hold cannot run backwards"
+                "a hold cannot run backwards"
             );
         }
 
@@ -1291,7 +1291,7 @@ namespace uf::engine
         auto const identity = observation.m_frameIdentity;
 
         auto delivered = endDelivery(
-            m_actionSink->longPress(clientPoint, hold, observation.m_lease)
+            m_actionSink->hold(clientPoint, duration, observation.m_lease)
         );
         if (!delivered)
         {
@@ -1304,7 +1304,7 @@ namespace uf::engine
         observation.m_invalidated = true;
 
         auto pressEvent = engineEvent(
-            "engine.long_press_delivered",
+            "engine.hold_delivered",
             identity,
             {
                 trace::TraceField{
@@ -1319,7 +1319,7 @@ namespace uf::engine
                     .name  = "hold_millis",
                     .value = static_cast<uint64>(
                         std::chrono::duration_cast<std::chrono::milliseconds>(
-                            hold
+                            duration
                         ).count()
                     ),
                 },
@@ -1333,10 +1333,10 @@ namespace uf::engine
             )
         );
 
-        return LongPressReceipt{
+        return HoldReceipt{
             .frameId    = identity.frameId(),
             .pressPoint = clientPoint,
-            .hold       = hold,
+            .hold       = duration,
         };
     }
 
@@ -1369,7 +1369,7 @@ namespace uf::engine
         observation.m_invalidated = true;
 
         auto moveEvent = engineEvent(
-            "engine.pointer_move_delivered",
+            "engine.move_delivered",
             identity,
             {
                 trace::TraceField{
@@ -1407,7 +1407,7 @@ namespace uf::engine
             beginDelivery(observation, "drag", "cancelled before drag delivery")
         );
 
-        // longPress's clause, for its reason: a negative travel is a receipt and
+        // hold's clause, for its reason: a negative travel is a receipt and
         // a trace line describing an act nobody performed. Refused before the
         // observation is spent, so a caller with a sign error keeps its frame.
         if (travel < MonotonicInstant::Duration::zero())

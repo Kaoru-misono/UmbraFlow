@@ -114,30 +114,30 @@ namespace uf::cli::platform
         return uf::scroll(m_target, lease, centre, delta, m_held, m_audit);
     }
 
-    auto ControllerActionSink::longPress(
+    auto ControllerActionSink::hold(
         Point<ClientSpace> point,
-        MonotonicInstant::Duration hold,
+        MonotonicInstant::Duration duration,
         ObservationLease const& lease
     ) -> Status
     {
-        // controller::longPress asks for the delivery target again after the hold and
+        // controller::hold asks for the delivery target again after the hold and
         // refuses to post the release if its identity moved. This composition holds a
         // snapshot and re-resolves nothing, so that comparison is a no-op here until
         // a composition root re-resolves a target mid-run -- the seam the callback
         // exists for. What it does do here is FAIL: the live enumeration is re-read
         // across the hold, so a window gone by the time the button should come up is
         // reported rather than posted to.
-        auto refreshTarget = refreshTargetCallback("long press");
+        auto refreshTarget = refreshTargetCallback("hold");
 
-        // A long press can leave a button that WENT down and did not come up,
+        // A hold can leave a button that WENT down and did not come up,
         // since the refresh across the hold can refuse the release. Putting it
         // back up is releaseHeldInputs's, which the engine calls after this
         // returns however it returned.
-        return uf::longPress(
+        return uf::hold(
             m_target,
             lease,
             point,
-            hold,
+            duration,
             m_held,
             m_audit,
             std::move(refreshTarget)
@@ -164,7 +164,7 @@ namespace uf::cli::platform
         ObservationLease const& lease
     ) -> Status
     {
-        // The long press's clause, and the reason it matters more here: a drag
+        // The hold's clause, and the reason it matters more here: a drag
         // can fail at any of its held moves as well as at the refresh, so "the
         // button went down and did not come up" is its ordinary failure rather
         // than its unlucky one. It is still not this verb's to compensate for.

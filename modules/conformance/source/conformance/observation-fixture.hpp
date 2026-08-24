@@ -383,7 +383,7 @@ namespace uf::operator_runtime::conformance
         }
 
         [[nodiscard]]
-        auto longPress(
+        auto hold(
             Point<ClientSpace>,
             MonotonicInstant::Duration,
             ObservationLease const&

@@ -150,7 +150,7 @@ ALLOWED_COMMANDS = frozenset(
 # (script/ffi/environment.cpp, installProjectEnvironmentPrototype). Every list
 # is read below, from its own definition, in every environment -- and NOTHING
 # ELSE IS. A global is a table, and this rule says nothing about that table's
-# members: `key`, `drag`, `scroll`, `long_press` and `move_pointer` are methods
+# members: `key`, `drag`, `scroll`, `hold` and `move` are methods
 # of the cycle view `explore` hands out (modules/task/runtime/explore.luau) and
 # are legal there, which is why they appear below and the gate is green. What
 # the rule forbids is any of these names becoming a BINDING a project script can
@@ -169,16 +169,16 @@ FORBIDDEN_PROJECT_GLOBALS = frozenset(
         "double_click",
         "drag",
         "explore",
+        "hold",
         "input",
         "key",
         "key_press",
         "keypress",
-        "long_press",
         "model",
         "mouse_down",
         "mouse_move",
         "mouse_up",
-        "move_pointer",
+        "move",
         "navigation",
         "observe",
         "press",

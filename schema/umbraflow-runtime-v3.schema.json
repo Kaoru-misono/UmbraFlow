@@ -261,6 +261,41 @@
         "proof_locator": { "$ref": "#/$defs/identifier" }
       }
     },
+    "hold_action": {
+      "$comment": "One atomic hold at fixed_placement.action_point: the button goes down, stays down for hold_ms, and is released before the delivery returns. hold_ms is project-owned measured behavior with no default, because how long a target wants a press held is a fact about that target. It is bounded by the same ceiling the delivery layer holds a button under, so a declaration cannot ask for a press the Host would refuse to lift. This is the only spelling of a held press: there is no long_press, and no press/release pair, because a press whose release lives in another call can be left down by a process that dies between the two.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "hold_ms", "proof_locator"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "kind": { "const": "hold" },
+        "hold_ms": { "type": "integer", "minimum": 0, "maximum": 5000 },
+        "proof_locator": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "scroll_action": {
+      "$comment": "One wheel scroll of notches detents, positive away from the operator and negative toward them. It carries no coordinate, for key_action's reason: a wheel names no position and lands on whatever the target already believes is hovered, so a Binding that scrolls declares a move beside it and the plugin delivers the move first. The accepted notch range is closed and defined once, in the trusted C++ WheelDelta, which refuses zero and refuses a count whose raw form leaves the word the message encodes it in; restating that range here would be a second spelling of one rule.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "notches", "proof_locator"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "kind": { "const": "scroll" },
+        "notches": { "type": "integer" },
+        "proof_locator": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "move_action": {
+      "$comment": "One pointer move to fixed_placement.action_point, pressing nothing. It is production vocabulary rather than an authoring convenience: a hover state and the tooltip it opens are things a Project may have to reach, and a wheel scrolls only what the target believes is hovered.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "proof_locator"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "kind": { "const": "move" },
+        "proof_locator": { "$ref": "#/$defs/identifier" }
+      }
+    },
     "collection_action": {
       "oneOf": [
         { "$ref": "#/$defs/click_action" },
@@ -268,10 +303,14 @@
       ]
     },
     "binding_action": {
+      "$comment": "The whole input vocabulary, and one spelling of each act. There is no authoring-only half: anything that changes the target on delivery is input whoever drives it, and what separates an authoring actor from a production one is the authority its policy grants rather than which verbs exist.",
       "oneOf": [
         { "$ref": "#/$defs/click_action" },
         { "$ref": "#/$defs/key_action" },
-        { "$ref": "#/$defs/drag_action" }
+        { "$ref": "#/$defs/drag_action" },
+        { "$ref": "#/$defs/hold_action" },
+        { "$ref": "#/$defs/scroll_action" },
+        { "$ref": "#/$defs/move_action" }
       ]
     },
     "binding": {
@@ -323,11 +362,11 @@
           }
         },
         {
-          "$comment": "action_point exists exactly when some action needs a coordinate. The condition reads 'every action names no coordinate', which is also true of a Binding granting no action at all, so both of those forbid the point and a click or drag requires one.",
+          "$comment": "action_point exists exactly when some action needs a coordinate. The condition reads 'every action names no coordinate', which is also true of a Binding granting no action at all, so both of those forbid the point, while a click, drag, hold or move requires one. Key and scroll are the two that name none.",
           "if": {
             "properties": {
               "actions": {
-                "items": { "properties": { "kind": { "const": "key" } } }
+                "items": { "properties": { "kind": { "enum": ["key", "scroll"] } } }
               }
             }
           },

@@ -1,6 +1,15 @@
 --!strict
--- Privileged authoring-only exploration surface.  It is never a business
--- global and does not participate in RuntimeModel resolution or Receipt flow.
+-- Privileged exploration surface.  It is not a business global and does not
+-- participate in RuntimeModel resolution or Receipt flow.
+--
+-- The acting verbs are `click`, `key`, `drag`, `hold`, `scroll` and `move`, and
+-- they are spelled exactly as the declared action vocabulary spells them
+-- (schema/umbraflow-runtime-v3.schema.json, binding_action).  There is one
+-- input vocabulary and no authoring-only half of it: anything that changes the
+-- target on delivery is input whoever drives it.  What an authoring chunk does
+-- NOT need is a Binding to name, which is a chicken-and-egg about the model
+-- rather than an extra power -- an agent must reach a screen before it can
+-- model one.
 --
 -- The acting verbs live on the CYCLE view rather than on this module, because
 -- every one of them spends the cycle it was called on: a ticket that is never
@@ -146,22 +155,28 @@ function explore.cycle(callback: any): any
     -- Clicks a bare coordinate and spends the cycle.  A business script clicks
     -- what a Binding placed; an agent has no model yet and clicks where it
     -- decided to look, which is how the first screen ever gets modelled.
-    function view:click_point(x: number, y: number)
+    function view:click(x: number, y: number)
         live()
-        requireNative("explore_click_point")(state.ticket, x, y)
+        requireNative("explore_click")(state.ticket, x, y)
     end
 
-    -- click_point with a duration.  A long press is how a target volunteers
-    -- what it will not show otherwise, so it is a thing to be measured.  The
-    -- hold has NO DEFAULT: how long a target wants a press held is a fact about
-    -- that target, and a duration the caller cannot see is a decision the
-    -- caller did not make.
-    function view:long_press(x: number, y: number, holdMillis: number)
+    -- Presses one bare point, keeps the button down for `holdMillis`, and
+    -- releases before returning.  A hold is how a target volunteers what it will
+    -- not show otherwise, so it is a thing to be measured.  The duration has NO
+    -- DEFAULT: how long a target wants a press held is a fact about that target,
+    -- and a duration the caller cannot see is a decision the caller did not
+    -- make.
+    --
+    -- `hold` is the one spelling.  There is no `long_press`, and no down/up
+    -- pair: a press whose release lives in another call can be left down by a
+    -- process that dies between the two, and the release here is inside the
+    -- call whatever way it ends.
+    function view:hold(x: number, y: number, holdMillis: number)
         live()
         if type(holdMillis) ~= "number" then
-            error("view:long_press needs hold_ms in milliseconds", 2)
+            error("view:hold needs hold_ms in milliseconds", 2)
         end
-        requireNative("explore_long_press")(state.ticket, x, y, holdMillis)
+        requireNative("explore_hold")(state.ticket, x, y, holdMillis)
     end
 
     -- Presses one bare point, travels to another with the button held, and
@@ -186,9 +201,9 @@ function explore.cycle(callback: any): any
     -- Moves the pointer, pressing nothing.  It is the input a wheel needs in
     -- front of it, because a scroll names no position and lands wherever the
     -- pointer already was.
-    function view:move_pointer(x: number, y: number)
+    function view:move(x: number, y: number)
         live()
-        requireNative("explore_move_pointer")(state.ticket, x, y)
+        requireNative("explore_move")(state.ticket, x, y)
     end
 
     -- One wheel scroll of `notches` detents, positive away from the operator

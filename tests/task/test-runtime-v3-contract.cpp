@@ -485,19 +485,45 @@ identity = ["screen.anchor"]
 )toml";
         }
 
-        [[nodiscard]] auto dragRuntimeModel() -> std::string
+        // The fixture's world with its one AIMED action replaced by another.
+        // Every aimed kind authorizes against the same measured placement and
+        // the same proof, so the declaration is the only thing that varies
+        // between the cases below and a difference at the sink is a difference
+        // the kind made.
+        [[nodiscard]]
+        auto runtimeModelGranting(std::string_view action) -> std::string
         {
             auto result = runtimeModel();
             auto constexpr click = std::string_view{
                 R"({ id = "activate", kind = "click", proof_locator = "confirm-mark" })"
             };
-            auto constexpr drag = std::string_view{
-                R"({ id = "activate", kind = "drag", offset = [1, 0], duration_ms = 600, proof_locator = "confirm-mark" })"
-            };
             auto const at = result.find(click);
             REQUIRE(at != std::string::npos);
-            result.replace(at, click.size(), drag);
+            result.replace(at, click.size(), action);
             return result;
+        }
+
+        // The same substitution over the world whose Binding carries no
+        // action_point, which is the only world an UNAIMED kind can be
+        // declared in: the model refuses a point nothing aims at.
+        [[nodiscard]]
+        auto keyRuntimeModelGranting(std::string_view action) -> std::string
+        {
+            auto result = keyRuntimeModel();
+            auto constexpr key = std::string_view{
+                R"({ id = "activate", kind = "key", key = "E", proof_locator = "confirm-mark" })"
+            };
+            auto const at = result.find(key);
+            REQUIRE(at != std::string::npos);
+            result.replace(at, key.size(), action);
+            return result;
+        }
+
+        [[nodiscard]] auto dragRuntimeModel() -> std::string
+        {
+            return runtimeModelGranting(
+                R"({ id = "activate", kind = "drag", offset = [1, 0], duration_ms = 600, proof_locator = "confirm-mark" })"
+            );
         }
 
         auto const k_runtimeKeyAction = UiActionUnderTest{
@@ -525,12 +551,15 @@ identity = ["screen.anchor"]
         }
 
         [[nodiscard]]
-        auto loadedDragRuntime(TaskHost& host, TemporaryDirectory const& directory)
-            -> GenerationId
+        auto loadedRuntime(
+            TaskHost& host,
+            TemporaryDirectory const& directory,
+            std::string_view model
+        ) -> GenerationId
         {
             auto const rootHash = publish(
                 directory.path(),
-                dragRuntimeModel(),
+                std::string{model},
                 runtimeAssets()
             );
             auto const generation = TaskHostTestAccess::activate(
@@ -540,6 +569,13 @@ identity = ["screen.anchor"]
             );
             REQUIRE(generation.has_value());
             return *generation;
+        }
+
+        [[nodiscard]]
+        auto loadedDragRuntime(TaskHost& host, TemporaryDirectory const& directory)
+            -> GenerationId
+        {
+            return loadedRuntime(host, directory, dragRuntimeModel());
         }
 
         [[nodiscard]]
@@ -964,6 +1000,161 @@ identity = ["screen.anchor"]
         REQUIRE(posted.has_value());
         // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(posted->value() == "E");
+    }
+
+    // The three actions the declared vocabulary gained, each end to end: a
+    // model that grants exactly one of them, the Receipt minted for it, and the
+    // verb that arrives at the last port before the platform adapter.
+    //
+    // One case rather than three, because the setup is identical and only the
+    // declaration moves -- which is also the property being asserted. Each arm
+    // checks the OTHER verbs stayed at zero, so a dispatch that fell through to
+    // the click branch is red here whatever the report says about itself.
+    //
+    // These are production deliveries. Before this vocabulary existed a project
+    // could declare none of them, so a method proven during annotation -- a hold
+    // that opens a detail view a click never shows -- was undeliverable; that is
+    // what these arms are here to keep true.
+    TEST_CASE("the three actions the vocabulary gained deliver as declared")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const fence = controlFence(7);
+        REQUIRE(TaskHostTestAccess::adoptControlFence(host, fence).has_value());
+
+        SUBCASE("a declared hold posts its measured point for its declared span")
+        {
+            auto const generation = loadedRuntime(
+                host,
+                directory,
+                runtimeModelGranting(
+                    R"({ id = "activate", kind = "hold", hold_ms = 350, proof_locator = "confirm-mark" })"
+                )
+            );
+            auto const authority = dispatchAuthority(fence, generation);
+            auto runtime = RuntimeContext{
+                frame(
+                    {std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}},
+                    FrameId{71}
+                ),
+                1'000
+            };
+            REQUIRE(
+                TaskHostTestAccess::run(
+                    host,
+                    generation,
+                    runtime.context(),
+                    authorizeActionSource(k_runtimeUiAction)
+                ).has_value()
+            );
+            auto const delivered = TaskHostTestAccess::deliver(
+                host,
+                authority,
+                TaskHostTestAccess::pendingReceipt(host, k_runtimeUiAction),
+                runtime.context()
+            );
+            REQUIRE(delivered.has_value());
+            CHECK(delivered->outcome() == DeliveryOutcome::Delivered);
+            CHECK(runtime.actions().holds() == 1U);
+            CHECK(runtime.actions().clicks() == 0U);
+            REQUIRE(runtime.actions().lastHoldPoint().has_value());
+            REQUIRE(runtime.actions().lastHoldDuration().has_value());
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
+            CHECK(runtime.actions().lastHoldPoint()->x() == doctest::Approx(1.0));
+            CHECK(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    *runtime.actions().lastHoldDuration()
+                ).count()
+                == 350
+            );
+        }
+
+        SUBCASE("a declared move posts its measured point and presses nothing")
+        {
+            auto const generation = loadedRuntime(
+                host,
+                directory,
+                runtimeModelGranting(
+                    R"({ id = "activate", kind = "move", proof_locator = "confirm-mark" })"
+                )
+            );
+            auto const authority = dispatchAuthority(fence, generation);
+            auto runtime = RuntimeContext{
+                frame(
+                    {std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}},
+                    FrameId{72}
+                ),
+                1'000
+            };
+            REQUIRE(
+                TaskHostTestAccess::run(
+                    host,
+                    generation,
+                    runtime.context(),
+                    authorizeActionSource(k_runtimeUiAction)
+                ).has_value()
+            );
+            auto const delivered = TaskHostTestAccess::deliver(
+                host,
+                authority,
+                TaskHostTestAccess::pendingReceipt(host, k_runtimeUiAction),
+                runtime.context()
+            );
+            REQUIRE(delivered.has_value());
+            CHECK(delivered->outcome() == DeliveryOutcome::Delivered);
+            CHECK(runtime.actions().moves() == 1U);
+            CHECK(runtime.actions().clicks() == 0U);
+            CHECK(runtime.actions().holds() == 0U);
+            REQUIRE(runtime.actions().lastMovePoint().has_value());
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
+            CHECK(runtime.actions().lastMovePoint()->x() == doctest::Approx(1.0));
+        }
+
+        SUBCASE("a declared scroll posts its declared detents and no coordinate")
+        {
+            auto const generation = loadedRuntime(
+                host,
+                directory,
+                keyRuntimeModelGranting(
+                    R"({ id = "activate", kind = "scroll", notches = -3, proof_locator = "confirm-mark" })"
+                )
+            );
+            auto const authority = dispatchAuthority(
+                fence,
+                generation,
+                k_runtimeKeyAction.uiTarget
+            );
+            auto runtime = RuntimeContext{
+                frame(
+                    {std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}},
+                    FrameId{73}
+                ),
+                1'000
+            };
+            REQUIRE(
+                TaskHostTestAccess::run(
+                    host,
+                    generation,
+                    runtime.context(),
+                    authorizeActionSource(k_runtimeKeyAction)
+                ).has_value()
+            );
+            auto const delivered = TaskHostTestAccess::deliver(
+                host,
+                authority,
+                TaskHostTestAccess::pendingReceipt(host, k_runtimeKeyAction),
+                runtime.context()
+            );
+            REQUIRE(delivered.has_value());
+            CHECK(delivered->outcome() == DeliveryOutcome::Delivered);
+            CHECK(runtime.actions().scrolls() == 1U);
+            CHECK(runtime.actions().clicks() == 0U);
+            CHECK(runtime.actions().keys() == 0U);
+
+            // The sign travels. A chain that dropped it would scroll the wrong
+            // way and every count above would stay green.
+            CHECK(runtime.actions().lastNotches() == std::optional<int32>{-3});
+        }
     }
 
     TEST_CASE("T-006 Runtime drag is one authorized delivery with declared offset and duration")

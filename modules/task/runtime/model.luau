@@ -387,9 +387,14 @@ local function placementBuilder(bounds: { number }): (string, any) -> any
     end
 end
 
--- One action an owner grants. A Binding click or drag starts at
--- fixed_placement.action_point; a Collection click uses the same item-origin
--- offset spelling as a Collection read.
+-- The six acts an owner may grant, and one spelling of each. A Binding click,
+-- drag, hold or move starts at fixed_placement.action_point; a Collection click
+-- uses the same item-origin offset spelling as a Collection read.
+--
+-- There is no authoring-only half of this vocabulary. Anything that changes the
+-- target on delivery is input whoever drives it, and what separates an
+-- authoring actor from a production one is the authority its policy grants
+-- rather than which verbs it can name.
 local function actionBuilder(itemRelative: boolean): (string, any) -> any
     return function(what: string, value: any): any
         local source = object(what, value)
@@ -454,9 +459,41 @@ local function actionBuilder(itemRelative: boolean): (string, any) -> any
                 proof_locator = identifier(what .. ".proof_locator", source.proof_locator),
             })
         end
+        if source.kind == "hold" and not itemRelative then
+            only(what, source, { id = true, kind = true, hold_ms = true, proof_locator = true })
+            return table.freeze({
+                id = identifier(what .. ".id", source.id),
+                kind = "hold",
+                hold_ms = integer(what .. ".hold_ms", source.hold_ms),
+                proof_locator = identifier(what .. ".proof_locator", source.proof_locator),
+            })
+        end
+        if source.kind == "scroll" and not itemRelative then
+            only(what, source, { id = true, kind = true, notches = true, proof_locator = true })
+            return table.freeze({
+                id = identifier(what .. ".id", source.id),
+                kind = "scroll",
+                -- The accepted range lives in the trusted C++ WheelDelta, which
+                -- refuses zero and refuses a count that leaves the word the
+                -- message encodes it in. This layer does not repeat it, so the
+                -- two can never come to disagree about it.
+                notches = integer(what .. ".notches", source.notches),
+                proof_locator = identifier(what .. ".proof_locator", source.proof_locator),
+            })
+        end
+        if source.kind == "move" and not itemRelative then
+            only(what, source, { id = true, kind = true, proof_locator = true })
+            return table.freeze({
+                id = identifier(what .. ".id", source.id),
+                kind = "move",
+                proof_locator = identifier(what .. ".proof_locator", source.proof_locator),
+            })
+        end
         fail(
             what .. ".kind",
-            if itemRelative then "must be click or key" else "must be click, key, or drag"
+            if itemRelative
+                then "must be click or key"
+                else "must be click, key, drag, hold, scroll, or move"
         )
     end
 end
@@ -604,12 +641,19 @@ local function bindingBuilder(bounds: { number }): (string, any) -> any
         mapById(what .. ".actions", actions)
         local placement = buildPlacement(what .. ".placement", source.placement)
         -- The point exists exactly when something aims at it. A Binding that
-        -- grants only keystrokes is in the same position as one granting no
-        -- action: nothing here is a coordinate, so carrying one would put a
-        -- number in the model that nothing measures and nothing delivers.
+        -- grants only keystrokes and wheel scrolls is in the same position as
+        -- one granting no action: nothing here is a coordinate, so carrying one
+        -- would put a number in the model that nothing measures and nothing
+        -- delivers.
+        local aimedKinds: { [string]: boolean } = {
+            click = true,
+            drag = true,
+            hold = true,
+            move = true,
+        }
         local aimed = false
         for _, valueAction in actions do
-            if valueAction.kind == "click" or valueAction.kind == "drag" then aimed = true end
+            if aimedKinds[valueAction.kind] then aimed = true end
         end
         if aimed and placement.action_point == nil then
             fail(what .. ".placement", "needs action_point when a point action is granted")
@@ -626,6 +670,15 @@ local function bindingBuilder(bounds: { number }): (string, any) -> any
                 end
                 if valueAction.duration_ms < 0 or valueAction.duration_ms > 750 then
                     fail(what .. ".actions", "contains a drag outside the 0..750 ms travel bound")
+                end
+            end
+            -- The same ceiling the delivery layer holds a button under. A
+            -- declaration asking for a longer press is one the Host would
+            -- refuse to lift, and the artifact boundary is where a model is
+            -- checked rather than the moment an action is taken.
+            if valueAction.kind == "hold" then
+                if valueAction.hold_ms < 0 or valueAction.hold_ms > 5000 then
+                    fail(what .. ".actions", "contains a hold outside the 0..5000 ms hold bound")
                 end
             end
         end

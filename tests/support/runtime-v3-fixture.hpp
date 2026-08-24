@@ -391,10 +391,17 @@ identity = ["panel.anchor"]
         uint32                                    m_clicks{};
         uint32                                    m_keys{};
         uint32                                    m_drags{};
+        uint32                                    m_holds{};
+        uint32                                    m_scrolls{};
+        uint32                                    m_moves{};
         std::optional<KeyName>                    m_lastKey{};
         std::optional<Point<ClientSpace>>         m_lastDragStart{};
         std::optional<Point<ClientSpace>>         m_lastDragEnd{};
         std::optional<MonotonicInstant::Duration> m_lastDragTravel{};
+        std::optional<Point<ClientSpace>>         m_lastHoldPoint{};
+        std::optional<MonotonicInstant::Duration> m_lastHoldDuration{};
+        std::optional<int32>                      m_lastNotches{};
+        std::optional<Point<ClientSpace>>         m_lastMovePoint{};
 
         bool m_refuseClicks{};
         bool m_refuseKeys{};
@@ -438,18 +445,31 @@ identity = ["panel.anchor"]
             return ok();
         }
 
-        [[nodiscard]] auto scroll(int32, ObservationLease const&) -> Status override
+        // The notch count is recorded rather than counted, for pressKey's
+        // reason: "a wheel was delivered" and "THAT many detents were
+        // delivered, in that direction" are two claims and only the second says
+        // the declaration's own number survived the whole chain.
+        [[nodiscard]]
+        auto scroll(int32 notches, ObservationLease const&) -> Status override
         {
+            ++m_scrolls;
+            m_lastNotches = notches;
             return ok();
         }
 
+        // Point and duration both, because both are separately droppable: a
+        // case asserting only that a press happened would pass against a chain
+        // that threw the declared hold away.
         [[nodiscard]]
-        auto longPress(
-            Point<ClientSpace>,
-            MonotonicInstant::Duration,
+        auto hold(
+            Point<ClientSpace> point,
+            MonotonicInstant::Duration duration,
             ObservationLease const&
         ) -> Status override
         {
+            ++m_holds;
+            m_lastHoldPoint    = point;
+            m_lastHoldDuration = duration;
             return ok();
         }
 
@@ -469,14 +489,20 @@ identity = ["panel.anchor"]
         }
 
         [[nodiscard]]
-        auto movePointer(Point<ClientSpace>, ObservationLease const&) -> Status override
+        auto movePointer(
+            Point<ClientSpace> point,
+            ObservationLease const&
+        ) -> Status override
         {
+            ++m_moves;
+            m_lastMovePoint = point;
             return ok();
         }
 
-        // No verb here presses anything, so there is never anything to release.
-        // The invariant this serves is exercised where a sink can hold a button
-        // down, in tests/engine/test-session.cpp.
+        // No verb here presses anything -- hold above records and returns
+        // rather than holding a button down -- so there is never anything to
+        // release. The invariant this serves is exercised where a sink can hold
+        // a button down, in tests/engine/test-session.cpp.
         [[nodiscard]] auto releaseHeldInputs() -> Status override { return ok(); }
 
         [[nodiscard]] auto clicks() const noexcept -> uint32 { return m_clicks; }
@@ -505,6 +531,40 @@ identity = ["panel.anchor"]
             -> std::optional<MonotonicInstant::Duration>
         {
             return m_lastDragTravel;
+        }
+
+        [[nodiscard]] auto holds() const noexcept -> uint32 { return m_holds; }
+
+        [[nodiscard]] auto scrolls() const noexcept -> uint32
+        {
+            return m_scrolls;
+        }
+
+        [[nodiscard]] auto moves() const noexcept -> uint32 { return m_moves; }
+
+        [[nodiscard]]
+        auto lastHoldPoint() const noexcept -> std::optional<Point<ClientSpace>>
+        {
+            return m_lastHoldPoint;
+        }
+
+        [[nodiscard]]
+        auto lastHoldDuration() const noexcept
+            -> std::optional<MonotonicInstant::Duration>
+        {
+            return m_lastHoldDuration;
+        }
+
+        [[nodiscard]]
+        auto lastNotches() const noexcept -> std::optional<int32>
+        {
+            return m_lastNotches;
+        }
+
+        [[nodiscard]]
+        auto lastMovePoint() const noexcept -> std::optional<Point<ClientSpace>>
+        {
+            return m_lastMovePoint;
         }
 
         auto refuseClicks() noexcept -> void { m_refuseClicks = true; }

@@ -76,12 +76,18 @@ namespace uf::task
             Click,
             Key,
             Drag,
+            Hold,
+            Scroll,
+            Move,
         };
 
         constexpr auto k_receiptActionKinds = std::array{
             std::pair{std::string_view{"click"}, ReceiptActionKind::Click},
             std::pair{std::string_view{"key"}, ReceiptActionKind::Key},
             std::pair{std::string_view{"drag"}, ReceiptActionKind::Drag},
+            std::pair{std::string_view{"hold"}, ReceiptActionKind::Hold},
+            std::pair{std::string_view{"scroll"}, ReceiptActionKind::Scroll},
+            std::pair{std::string_view{"move"}, ReceiptActionKind::Move},
         };
 
         // The layouts a Reader may declare, spelled as the model spells them.
@@ -859,11 +865,11 @@ namespace uf::task
         // TaskContext's declarations for why an exploration chunk needs no
         // Receipt to reach them and what still fences them.
 
-        auto cycleClickPoint(lua_State* state) -> int
+        auto cycleClick(lua_State* state) -> int
         {
             auto* const context = boundContext(state);
             guardLive(state, context);
-            auto const status = context->cycleClickPoint(
+            auto const status = context->cycleClick(
                 *cycleAt(state, 1),
                 PixelPoint{
                     unsignedInteger(state, 2, "click x"),
@@ -877,17 +883,17 @@ namespace uf::task
             return 0;
         }
 
-        auto cycleLongPress(lua_State* state) -> int
+        auto cycleHold(lua_State* state) -> int
         {
             auto* const context = boundContext(state);
             guardLive(state, context);
-            auto const status = context->cycleLongPress(
+            auto const status = context->cycleHold(
                 *cycleAt(state, 1),
                 PixelPoint{
-                    unsignedInteger(state, 2, "long press x"),
-                    unsignedInteger(state, 3, "long press y"),
+                    unsignedInteger(state, 2, "hold x"),
+                    unsignedInteger(state, 3, "hold y"),
                 },
-                millisDuration(state, 4, "long press hold")
+                millisDuration(state, 4, "hold duration")
             );
             if (!status)
             {
@@ -919,11 +925,11 @@ namespace uf::task
             return 0;
         }
 
-        auto cycleMovePointer(lua_State* state) -> int
+        auto cycleMove(lua_State* state) -> int
         {
             auto* const context = boundContext(state);
             guardLive(state, context);
-            auto const status = context->cycleMovePointer(
+            auto const status = context->cycleMove(
                 *cycleAt(state, 1),
                 PixelPoint{
                     unsignedInteger(state, 2, "pointer move x"),
@@ -1072,10 +1078,10 @@ namespace uf::task
             install(state, surface, "explore_project_read", &projectRead, context);
             install(state, surface, "explore_project_write", &projectWrite, context);
             install(state, surface, "explore_terminal", &terminal, context);
-            install(state, surface, "explore_click_point", &cycleClickPoint, context);
-            install(state, surface, "explore_long_press", &cycleLongPress, context);
+            install(state, surface, "explore_click", &cycleClick, context);
+            install(state, surface, "explore_hold", &cycleHold, context);
             install(state, surface, "explore_drag", &cycleDrag, context);
-            install(state, surface, "explore_move_pointer", &cycleMovePointer, context);
+            install(state, surface, "explore_move", &cycleMove, context);
             install(state, surface, "explore_scroll", &cycleScroll, context);
             install(state, surface, "explore_key", &cycleKey, context);
             install(state, surface, "explore_settle", &settle, context);
@@ -1330,6 +1336,21 @@ namespace uf::task
                 signedInteger(state, -1, name),
             };
             lua_pop(state, 3);
+            return result;
+        }
+
+        [[nodiscard]]
+        static auto tableSignedInteger(
+            lua_State* state,
+            int table,
+            char const* field,
+            std::string_view name
+        ) -> int32
+        {
+            auto const absolute = lua_absindex(state, table);
+            lua_rawgetfield(state, absolute, field);
+            auto const result = signedInteger(state, -1, name);
+            lua_pop(state, 1);
             return result;
         }
 
@@ -1926,11 +1947,58 @@ namespace uf::task
                 "Runtime Receipt placement rect"
             );
 
-            // The rectangle is checked for BOTH kinds and for one reason: it is
+            // The rectangle is checked for EVERY kind and for one reason: it is
             // the rectangle the proof template was searched in, so a payload
             // naming another one is not the Binding this cycle measured. A
-            // keystroke aims at nothing inside it and is still tied to it.
+            // keystroke and a wheel scroll aim at nothing inside it and are
+            // still tied to it.
             auto const measuredPlacement = placementRect == p_proof->searchRect;
+
+            // The point the four aiming kinds deliver into, checked once. A
+            // point outside the rectangle the proof was measured in is a
+            // coordinate this cycle never established, whichever verb was
+            // asked for.
+            auto const aimedPoint = [&]() -> PixelPoint
+            {
+                auto const point = tablePoint(
+                    state,
+                    placement,
+                    "action_point",
+                    "Runtime Receipt action point"
+                );
+                if (
+                    !measuredPlacement
+                    || point.x() < placementRect.x()
+                    || point.y() < placementRect.y()
+                    || point.x() >= placementRect.right()
+                    || point.y() >= placementRect.bottom()
+                )
+                {
+                    raiseTierB(
+                        state,
+                        AutomationErrorKind::InvalidResource,
+                        "Runtime Receipt placement is not the measured Binding placement"
+                    );
+                }
+                return point;
+            };
+
+            // What an unaimed kind answers to instead: the placement carries no
+            // point, because a point nothing authorized is one nothing would
+            // ever notice being ignored.
+            auto const unaimedPlacement = [&](char const* what) -> void
+            {
+                requireAbsentField(state, placement, "action_point", what);
+                if (!measuredPlacement)
+                {
+                    raiseTierB(
+                        state,
+                        AutomationErrorKind::InvalidResource,
+                        "Runtime Receipt placement is not the measured Binding placement"
+                    );
+                }
+            };
+
             auto input = [&]() -> TrustedReceiptInput
             {
                 switch (actionKind)
@@ -1938,47 +2006,11 @@ namespace uf::task
                 case ReceiptActionKind::Click:
                 {
                     requireAbsentField(state, 3, "key", "Runtime Receipt click");
-                    auto const point = tablePoint(
-                        state,
-                        placement,
-                        "action_point",
-                        "Runtime Receipt action point"
-                    );
-                    if (
-                        !measuredPlacement
-                        || point.x() < placementRect.x()
-                        || point.y() < placementRect.y()
-                        || point.x() >= placementRect.right()
-                        || point.y() >= placementRect.bottom()
-                    )
-                    {
-                        raiseTierB(
-                            state,
-                            AutomationErrorKind::InvalidResource,
-                            "Runtime Receipt placement is not the measured Binding placement"
-                        );
-                    }
-                    return TrustedReceiptInput{point};
+                    return TrustedReceiptInput{TrustedClickInput{aimedPoint()}};
                 }
                 case ReceiptActionKind::Key:
                 {
-                    // A keystroke names no coordinate, so a placement carrying
-                    // one here would be a point nothing authorized and nothing
-                    // would ever notice it was ignored.
-                    requireAbsentField(
-                        state,
-                        placement,
-                        "action_point",
-                        "Runtime Receipt key placement"
-                    );
-                    if (!measuredPlacement)
-                    {
-                        raiseTierB(
-                            state,
-                            AutomationErrorKind::InvalidResource,
-                            "Runtime Receipt placement is not the measured Binding placement"
-                        );
-                    }
+                    unaimedPlacement("Runtime Receipt key placement");
                     // The one definition of which key names exist. A model
                     // whose key is outside the set was already refused when the
                     // artifact was bound; this is the same call on the value
@@ -1988,17 +2020,51 @@ namespace uf::task
                     {
                         raiseFromError(state, &runtimeContext, key.error());
                     }
-                    return TrustedReceiptInput{*key};
+                    return TrustedReceiptInput{TrustedKeyInput{*key}};
+                }
+                case ReceiptActionKind::Hold:
+                {
+                    requireAbsentField(state, 3, "key", "Runtime Receipt hold");
+                    return TrustedReceiptInput{
+                        TrustedHoldInput{
+                            .point    = aimedPoint(),
+                            .duration = tableMillis(
+                                state,
+                                3,
+                                "hold_ms",
+                                "Runtime Receipt hold duration"
+                            ),
+                        }
+                    };
+                }
+                case ReceiptActionKind::Scroll:
+                {
+                    requireAbsentField(state, 3, "key", "Runtime Receipt scroll");
+                    unaimedPlacement("Runtime Receipt scroll placement");
+                    // The accepted notch range belongs to controller::
+                    // WheelDelta, which refuses zero and refuses a count whose
+                    // raw form leaves the word the message encodes it in. This
+                    // seam carries the number; the delivery edge refuses it.
+                    return TrustedReceiptInput{
+                        TrustedScrollInput{
+                            tableSignedInteger(
+                                state,
+                                3,
+                                "notches",
+                                "Runtime Receipt scroll notches"
+                            ),
+                        }
+                    };
+                }
+                case ReceiptActionKind::Move:
+                {
+                    requireAbsentField(state, 3, "key", "Runtime Receipt move");
+                    return TrustedReceiptInput{TrustedMoveInput{aimedPoint()}};
                 }
                 case ReceiptActionKind::Drag:
                 {
                     requireAbsentField(state, 3, "key", "Runtime Receipt drag");
-                    auto const start = tablePoint(
-                        state,
-                        placement,
-                        "action_point",
-                        "Runtime Receipt drag start"
-                    );
+                    auto const start = aimedPoint();
                     auto const offset = tableSignedPair(
                         state,
                         3,
@@ -2008,8 +2074,7 @@ namespace uf::task
                     auto const endX = int64{start.x()} + int64{offset[0]};
                     auto const endY = int64{start.y()} + int64{offset[1]};
                     if (
-                        !measuredPlacement
-                        || endX < 0
+                        endX < 0
                         || endY < 0
                         || endX > int64{std::numeric_limits<uint32>::max()}
                         || endY > int64{std::numeric_limits<uint32>::max()}

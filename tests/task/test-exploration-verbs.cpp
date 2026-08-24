@@ -184,7 +184,7 @@ namespace uf::task
             }
 
             [[nodiscard]]
-            auto longPress(
+            auto hold(
                 Point<ClientSpace>,
                 MonotonicInstant::Duration hold,
                 ObservationLease const&
@@ -192,7 +192,7 @@ namespace uf::task
             {
                 m_acts.emplace_back(
                     DeliveredAct{
-                        .verb       = "long_press",
+                        .verb       = "hold",
                         .holdMillis = millis(hold),
                     }
                 );
@@ -220,7 +220,7 @@ namespace uf::task
             auto movePointer(Point<ClientSpace>, ObservationLease const&)
                 -> Status override
             {
-                m_acts.emplace_back(DeliveredAct{.verb = "pointer_move"});
+                m_acts.emplace_back(DeliveredAct{.verb = "move"});
                 return ok();
             }
 
@@ -488,10 +488,10 @@ namespace uf::task
         // One cycle per act, because each spends the cycle it was called on.
         auto const result = world.run(
             R"lua(
-                explore.cycle(function(view) view:click_point(1, 0) end)
-                explore.cycle(function(view) view:long_press(1, 0, 40) end)
+                explore.cycle(function(view) view:click(1, 0) end)
+                explore.cycle(function(view) view:hold(1, 0, 40) end)
                 explore.cycle(function(view) view:drag(0, 0, 2, 0, 25) end)
-                explore.cycle(function(view) view:move_pointer(2, 0) end)
+                explore.cycle(function(view) view:move(2, 0) end)
                 explore.cycle(function(view) view:scroll(-3) end)
                 explore.cycle(function(view) view:key("ENTER") end)
                 return "done"
@@ -508,9 +508,9 @@ namespace uf::task
             verbs
             == std::vector<std::string>{
                 "click",
-                "long_press",
+                "hold",
                 "drag",
-                "pointer_move",
+                "move",
                 "scroll",
                 "key",
             }
@@ -574,10 +574,10 @@ namespace uf::task
         auto world = ExplorationWorld{};
         auto const result = world.run(
             R"lua(
-                explore.cycle(function(view) view:click_point(1, 0) end)
-                explore.cycle(function(view) view:long_press(1, 0, 40) end)
+                explore.cycle(function(view) view:click(1, 0) end)
+                explore.cycle(function(view) view:hold(1, 0, 40) end)
                 explore.cycle(function(view) view:drag(0, 0, 2, 0, 25) end)
-                explore.cycle(function(view) view:move_pointer(2, 0) end)
+                explore.cycle(function(view) view:move(2, 0) end)
                 explore.cycle(function(view) view:scroll(-3) end)
                 explore.cycle(function(view) view:key("ENTER") end)
                 return "done"
@@ -588,9 +588,9 @@ namespace uf::task
         auto const types = eventTypes(world);
         auto const expected = std::vector<std::string>{
             "annotation.click_delivered",
-            "annotation.long_press_delivered",
+            "annotation.hold_delivered",
             "annotation.drag_delivered",
-            "annotation.pointer_move_delivered",
+            "annotation.move_delivered",
             "annotation.scroll_delivered",
             "annotation.key_delivered",
         };
@@ -620,7 +620,7 @@ namespace uf::task
         auto const result = world.run(
             R"lua(
                 explore.cycle(function(view)
-                    if pcall(function() view:long_press(1, 0, 600000) end) then
+                    if pcall(function() view:hold(1, 0, 600000) end) then
                         error("the ceiling did not refuse")
                     end
                 end)
@@ -631,7 +631,7 @@ namespace uf::task
 
         CHECK(world.acts().empty());
         CHECK_FALSE(
-            std::ranges::contains(eventTypes(world), "annotation.long_press_delivered")
+            std::ranges::contains(eventTypes(world), "annotation.hold_delivered")
         );
     }
 
@@ -643,8 +643,8 @@ namespace uf::task
         auto const result = world.run(
             R"lua(
                 explore.cycle(function(view)
-                    view:click_point(1, 0)
-                    if pcall(function() view:click_point(1, 0) end) then
+                    view:click(1, 0)
+                    if pcall(function() view:click(1, 0) end) then
                         error("the spent cycle delivered twice")
                     end
                 end)
@@ -892,7 +892,7 @@ namespace uf::task
                         { red = 2, green = 2, blue = 2, removes = false }
                     )
                     view:crop(0, 0, 3, 1)
-                    view:click_point(1, 0)
+                    view:click(1, 0)
                 end)
                 return "done"
             )lua"
@@ -949,7 +949,7 @@ namespace uf::task
                             "census_grid",
                             "read_lines",
                             "crop",
-                            "click_point",
+                            "click",
                             "key",
                         } do
                             if view[verb] ~= nil then

@@ -850,21 +850,33 @@ namespace uf::task
         // press whose release did not land is reported as one error. The
         // engine's teardown puts the key back up and does not make the press
         // unhappen, so TransportUnknown is still the only honest answer for
-        // either kind, and it deliberately does not prove absence.
+        // every kind, and it deliberately does not prove absence. A hold and a
+        // drag hold a button down for the whole of their delivery, so the
+        // window in which that is true is longest for them; what closes it is
+        // EngineSession::endDelivery releasing whatever was left held, on every
+        // exit path, rather than anything this layer compensates for.
         //
-        // Which of the two runs is the Receipt's own intent and is decided here
-        // and nowhere else: an overload set over the sum, so a third kind
+        // Which of the six runs is the Receipt's own intent and is decided here
+        // and nowhere else: an overload set over the sum, so a seventh kind
         // cannot be added without this dispatch failing to compile.
         auto delivered = matchVariant(
             pending.intent.input,
-            [&context, &pending](PixelPoint point) -> Result<DeliveredInput>
+            [&context, &pending](TrustedClickInput const& click)
+                -> Result<DeliveredInput>
             {
-                UF_TRY_VALUE(act, context.deliverReceiptClick(pending.cycle, point));
+                UF_TRY_VALUE(
+                    act,
+                    context.deliverReceiptClick(pending.cycle, click.point)
+                );
                 return DeliveredInput{act};
             },
-            [&context, &pending](KeyName key) -> Result<DeliveredInput>
+            [&context, &pending](TrustedKeyInput const& stroke)
+                -> Result<DeliveredInput>
             {
-                UF_TRY_VALUE(pressed, context.deliverReceiptKey(pending.cycle, key));
+                UF_TRY_VALUE(
+                    pressed,
+                    context.deliverReceiptKey(pending.cycle, stroke.key)
+                );
                 return DeliveredInput{pressed};
             },
             [&context, &pending](TrustedDragInput const& drag) -> Result<DeliveredInput>
@@ -877,6 +889,37 @@ namespace uf::task
                         drag.end,
                         drag.travel
                     )
+                );
+                return DeliveredInput{delivered};
+            },
+            [&context, &pending](TrustedHoldInput const& held)
+                -> Result<DeliveredInput>
+            {
+                UF_TRY_VALUE(
+                    delivered,
+                    context.deliverReceiptHold(
+                        pending.cycle,
+                        held.point,
+                        held.duration
+                    )
+                );
+                return DeliveredInput{delivered};
+            },
+            [&context, &pending](TrustedScrollInput const& wheel)
+                -> Result<DeliveredInput>
+            {
+                UF_TRY_VALUE(
+                    delivered,
+                    context.deliverReceiptScroll(pending.cycle, wheel.notches)
+                );
+                return DeliveredInput{delivered};
+            },
+            [&context, &pending](TrustedMoveInput const& move)
+                -> Result<DeliveredInput>
+            {
+                UF_TRY_VALUE(
+                    delivered,
+                    context.deliverReceiptMove(pending.cycle, move.point)
                 );
                 return DeliveredInput{delivered};
             }

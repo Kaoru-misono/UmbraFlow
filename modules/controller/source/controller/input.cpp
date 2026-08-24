@@ -312,11 +312,11 @@ namespace uf
         return deliverPointerUp(target, pixel, held, audit);
     }
 
-    auto longPress(
+    auto hold(
         DeliveryTarget const& target,
         ObservationLease lease,
         Point<ClientSpace> point,
-        MonotonicInstant::Duration hold,
+        MonotonicInstant::Duration duration,
         HeldInputs& held,
         AuditLog& audit,
         std::move_only_function<Result<DeliveryTarget>()> refreshTarget
@@ -326,20 +326,20 @@ namespace uf
         {
             return fail(
                 AutomationErrorKind::InternalInvariant,
-                "long press requires a refresh-target callback"
+                "hold requires a refresh-target callback"
             );
         }
-        if (hold < MonotonicInstant::Duration::zero())
+        if (duration < MonotonicInstant::Duration::zero())
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "long press duration must be non-negative"
+                "hold duration must be non-negative"
             );
         }
 
         UF_TRY_VALUE(pixel, pointerPixel(target, lease, point));
         UF_TRY(deliverPointerDown(target, pixel, held, audit));
-        std::this_thread::sleep_for(hold);
+        std::this_thread::sleep_for(duration);
         UF_TRY_VALUE(refreshed, refreshTarget());
         UF_TRY(controller_detail::ensureSameDeliveryIdentity(target, refreshed));
         return deliverPointerUp(refreshed, pixel, held, audit);

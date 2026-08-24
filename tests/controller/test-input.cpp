@@ -507,14 +507,14 @@ namespace uf
         CHECK(audit.empty());
     }
 
-    TEST_CASE("long press rejects a negative hold before delivery")
+    TEST_CASE("hold rejects a negative hold before delivery")
     {
         auto const deliveryTarget = target(0);
         auto held          = HeldInputs{};
         auto audit         = AuditLog{};
         auto refreshCalled = false;
 
-        auto const result = longPress(
+        auto const result = hold(
             deliveryTarget,
             observationLease(),
             Point<ClientSpace>{0.0F, 0.0F},
@@ -536,13 +536,13 @@ namespace uf
         CHECK(audit.empty());
     }
 
-    TEST_CASE("long press rejects an empty refresh callback before delivery")
+    TEST_CASE("hold rejects an empty refresh callback before delivery")
     {
         auto const deliveryTarget = target(0);
         auto held  = HeldInputs{};
         auto audit = AuditLog{};
 
-        auto const result = longPress(
+        auto const result = hold(
             deliveryTarget,
             observationLease(),
             Point<ClientSpace>{0.0F, 0.0F},

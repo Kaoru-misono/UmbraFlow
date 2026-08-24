@@ -758,6 +758,34 @@ namespace uf::task
         return m_session.drag(std::move(observation), start, end, travel);
     }
 
+    auto TaskContext::deliverReceiptHold(
+        CycleTicket ticket,
+        PixelPoint point,
+        MonotonicInstant::Duration duration
+    ) -> Result<engine::HoldReceipt>
+    {
+        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
+        return m_session.hold(std::move(observation), point, duration);
+    }
+
+    auto TaskContext::deliverReceiptScroll(
+        CycleTicket ticket,
+        int32 notches
+    ) -> Result<engine::ScrollReceipt>
+    {
+        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
+        return m_session.scroll(std::move(observation), notches);
+    }
+
+    auto TaskContext::deliverReceiptMove(
+        CycleTicket ticket,
+        PixelPoint point
+    ) -> Result<engine::PointerMoveReceipt>
+    {
+        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
+        return m_session.movePointer(std::move(observation), point);
+    }
+
     // The six below share one shape and it is deliberate: spend the cycle, hand
     // the observation to the engine verb that owns the act, and write the
     // front-end's line only once the act has landed. The spend comes first on
@@ -769,7 +797,7 @@ namespace uf::task
     // engine.action_rejected naming the reason, and a delivered-line for an act
     // that did not happen is the one entry an auditor must never find.
 
-    auto TaskContext::cycleClickPoint(CycleTicket ticket, PixelPoint point) -> Status
+    auto TaskContext::cycleClick(CycleTicket ticket, PixelPoint point) -> Status
     {
         UF_TRY_VALUE(observation, m_cycles.spend(ticket));
         UF_TRY_VALUE(
@@ -781,21 +809,25 @@ namespace uf::task
         );
     }
 
-    auto TaskContext::cycleLongPress(
+    auto TaskContext::cycleHold(
         CycleTicket ticket,
         PixelPoint point,
-        MonotonicInstant::Duration hold
+        MonotonicInstant::Duration duration
     ) -> Status
     {
         // Both refusals precede the spend, so a chunk with a sign error or a
-        // mistyped hold keeps its frame and leaves no button down.
-        if (hold < MonotonicInstant::Duration::zero() || hold > k_maxLongPressHold)
+        // mistyped duration keeps its frame and leaves no button down.
+        if (
+            duration < MonotonicInstant::Duration::zero()
+            || duration > k_maxHoldDuration
+        )
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
                 std::format(
-                    "a long press must hold for between 0 and {} milliseconds",
-                    traceMillis(k_maxLongPressHold)
+                    "a hold must keep the button down for between 0 and {} "
+                    "milliseconds",
+                    traceMillis(k_maxHoldDuration)
                 )
             );
         }
@@ -803,14 +835,17 @@ namespace uf::task
         UF_TRY_VALUE(observation, m_cycles.spend(ticket));
         UF_TRY_VALUE(
             receipt,
-            m_session.longPress(std::move(observation), point, hold)
+            m_session.hold(std::move(observation), point, duration)
         );
         auto fields = pointFields(point);
         fields.emplace_back(
-            trace::TraceField{.name = "hold_millis", .value = traceMillis(hold)}
+            trace::TraceField{
+                .name  = "hold_millis",
+                .value = traceMillis(duration),
+            }
         );
         return m_recorder.emit(
-            annotationActionEvent("long_press", receipt.frameId, std::move(fields))
+            annotationActionEvent("hold", receipt.frameId, std::move(fields))
         );
     }
 
@@ -859,7 +894,7 @@ namespace uf::task
         );
     }
 
-    auto TaskContext::cycleMovePointer(CycleTicket ticket, PixelPoint point) -> Status
+    auto TaskContext::cycleMove(CycleTicket ticket, PixelPoint point) -> Status
     {
         UF_TRY_VALUE(observation, m_cycles.spend(ticket));
         UF_TRY_VALUE(
@@ -868,7 +903,7 @@ namespace uf::task
         );
         return m_recorder.emit(
             annotationActionEvent(
-                "pointer_move",
+                "move",
                 receipt.frameId,
                 pointFields(point)
             )

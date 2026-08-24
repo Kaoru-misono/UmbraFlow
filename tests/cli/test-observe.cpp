@@ -129,7 +129,7 @@ namespace uf::cli
             }
 
             [[nodiscard]]
-            auto longPress(
+            auto hold(
                 Point<ClientSpace>,
                 MonotonicInstant::Duration,
                 ObservationLease const&

@@ -1076,12 +1076,15 @@ function resolution.authorize(
         variant = resolvedBinding.variant,
         action = selected.id,
         action_kind = selected.kind,
-        -- Absent for a click, which names a coordinate instead. The Host is
-        -- told which key to deliver rather than reading it back out of a model
-        -- it does not interpret.
+        -- Each of the four below is present for exactly the kinds that carry
+        -- it and absent for the rest, so a request states what its own act
+        -- needs and nothing more. The Host is told what to deliver rather than
+        -- reading it back out of a model it does not interpret.
         key = selected.key,
         offset = selected.offset,
         duration_ms = selected.duration_ms,
+        hold_ms = selected.hold_ms,
+        notches = selected.notches,
         evidence_ids = freezeList(evidenceIds),
     })
     requestLedger[request] = {

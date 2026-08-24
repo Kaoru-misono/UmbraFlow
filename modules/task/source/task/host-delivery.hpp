@@ -101,11 +101,16 @@ namespace uf::task
     };
 
     // What one delivery posted, as the engine described it. Each alternative is
-    // the engine's receipt for the one input kind the Runtime Receipt authorized.
+    // the engine's receipt for the one input kind the Runtime Receipt
+    // authorized, and there is one per declarable action: the six are the whole
+    // input vocabulary a Project may grant.
     using DeliveredInput = std::variant<
         engine::ActReceipt,
         engine::KeyReceipt,
-        engine::DragReceipt
+        engine::DragReceipt,
+        engine::HoldReceipt,
+        engine::ScrollReceipt,
+        engine::PointerMoveReceipt
     >;
 
     // What one TaskHost::deliver did with one Receipt. Constructible only by

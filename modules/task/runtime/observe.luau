@@ -375,6 +375,8 @@ function observe.open(runtimeModel: any): any
                 key = payload.request.key,
                 offset = payload.request.offset,
                 duration_ms = payload.request.duration_ms,
+                hold_ms = payload.request.hold_ms,
+                notches = payload.request.notches,
                 placement = payload.placement,
                 proof_locator = payload.proof_locator,
             })

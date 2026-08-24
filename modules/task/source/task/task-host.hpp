@@ -175,8 +175,22 @@ namespace uf::task
             ProjectFingerprint       fingerprint;
         };
 
-        // PixelPoint has no default state, so every drag intent construction
-        // supplies both endpoints.
+        // PixelPoint has no default state, so every point-bearing intent
+        // construction supplies its point.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+        struct TrustedClickInput final
+        {
+            PixelPoint point;
+        };
+
+        // KeyName has no default state either, for its own reason: create() is
+        // the only producer of one.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+        struct TrustedKeyInput final
+        {
+            KeyName key;
+        };
+
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
         struct TrustedDragInput final
         {
@@ -185,15 +199,47 @@ namespace uf::task
             MonotonicInstant::Duration travel{};
         };
 
-        // What one Receipt authorizes the Host to deliver. A sum type because
-        // exactly one shape is true of any Receipt: a click names one point, a
-        // keystroke names a key and no point, and a drag names both endpoints
-        // plus the project's declared travel duration.
-        using TrustedReceiptInput = std::variant<PixelPoint, KeyName, TrustedDragInput>;
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+        struct TrustedHoldInput final
+        {
+            PixelPoint                 point;
+            MonotonicInstant::Duration duration{};
+        };
 
-        // No in-class initializer for the input: neither alternative has a
-        // default state, so the variant has none either and every construction
-        // site supplies it.
+        struct TrustedScrollInput final
+        {
+            int32 notches{};
+        };
+
+        // A move carries the same one point a click does and is a type of its
+        // own rather than the same one: what separates them is which engine
+        // verb the Receipt authorized, and a sum whose two alternatives had the
+        // same type could not say which.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+        struct TrustedMoveInput final
+        {
+            PixelPoint point;
+        };
+
+        // What one Receipt authorizes the Host to deliver, and the whole input
+        // vocabulary a declaration may grant. A sum type because exactly one
+        // shape is true of any Receipt: a click and a move name one point, a
+        // keystroke names a key and no point, a scroll names a detent count and
+        // no point, a hold names a point and how long the button stays down,
+        // and a drag names both endpoints plus the project's declared travel
+        // duration.
+        using TrustedReceiptInput = std::variant<
+            TrustedClickInput,
+            TrustedKeyInput,
+            TrustedDragInput,
+            TrustedHoldInput,
+            TrustedScrollInput,
+            TrustedMoveInput
+        >;
+
+        // No in-class initializer for the input: no alternative has a default
+        // state, so the variant has none either and every construction site
+        // supplies it.
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
         struct TrustedReceiptIntent final
         {
