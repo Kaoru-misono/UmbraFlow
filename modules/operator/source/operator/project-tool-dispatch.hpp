@@ -37,6 +37,14 @@ namespace uf::operator_runtime
     // runs it when that call's scope exits.
     using ObservationFrameClose = std::move_only_function<Status()>;
 
+    // The body of an observation, run while the frame is held.
+    //
+    // A callable for the two above's reason: the dispatcher reaches no VM and
+    // must not learn to. What it owns is the ISSUING CONTEXT the body's calls
+    // are numbered under, which is the half of "recorded as child calls of that
+    // observe node" nothing outside this module can supply.
+    using ObservationBodyRun = std::move_only_function<Status()>;
+
     // The dispatch executor: everything between an admitted call and the
     // terminal durable row that answers it.
     //
@@ -214,6 +222,31 @@ namespace uf::operator_runtime
         // tell an inherited frame from one opened inside it.
         [[nodiscard]]
         auto heldObservationFrame() const -> std::optional<ContentHash>;
+
+        // Runs one observation's body with an issuing context anchored on
+        // `call`, so every Tool call the body makes is numbered as that call's
+        // child and recorded under it.
+        //
+        // It is the same anchoring a bound Project handler gets, and
+        // deliberately the same code path: a body and a handler differ in what
+        // executes -- a Luau closure inside an already-running VM against a
+        // fresh scoped run -- and not at all in what a call issued inside them
+        // is. `call` must be the call whose durable row is DISPATCHING right
+        // now, which is what lets a grant be minted from it; the observe
+        // provider is inside its own dispatch when it runs a body, so that
+        // holds by construction.
+        //
+        // The five borrows live for the extent of the body and nothing is
+        // retained past it.
+        [[nodiscard]]
+        auto runObservationBody(
+            ProjectGenerationHandle const& program,
+            ControllerBinding const& controller,
+            ControlLease const& lease,
+            ToolRootRequestIdentity const& root,
+            ToolCallPositionIdentity const& call,
+            ObservationBodyRun body
+        ) -> Status;
 
         // Dispatch one call of one Tool this program binds.
         //

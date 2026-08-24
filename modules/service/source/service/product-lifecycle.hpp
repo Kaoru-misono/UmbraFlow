@@ -3,6 +3,7 @@
 #include <operator/controller.hpp>
 #include <operator/host-controller.hpp>
 #include <operator/ledger.hpp>
+#include <operator/project-tool-dispatch.hpp>
 #include <operator/tool-actor-adapters.hpp>
 #include <operator/tool-invocation.hpp>
 
@@ -124,6 +125,17 @@ namespace uf::service
         operator_runtime::ToolExecutionIdentity executionIdentity;
         std::string                             toolName{};
         std::string                             exactArgumentsJcs{};
+
+        // The body an observation holds its frame for, empty for every call
+        // that has none -- which is every call except an observe written with
+        // one. It runs INSIDE this call's own dispatch, so the Tool calls it
+        // makes are numbered under this call's durable position and recorded as
+        // its children
+        // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
+        //
+        // Move-only, because it is consumed exactly once: a body that could be
+        // copied could be run twice under one recorded position.
+        operator_runtime::ObservationBodyRun body{};
     };
 
     // The production session over an Operator root. The exact published

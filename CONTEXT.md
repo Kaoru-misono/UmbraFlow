@@ -547,10 +547,11 @@ environment: the host builds it, `installSandbox`
 as its chunk argument, then drops its own reference, so the only way to reach it
 afterwards is a closure it was handed to. There are two of them and neither key
 set is guessable:
-- exploration, `buildAnnotationSurface` — `explore_cycle_open`,
-  `explore_cycle_close`, `explore_crop`, `explore_probe`, `explore_project_read`,
-  `explore_project_write`, `explore_terminal`, plus the one non-capability field
-  `error_tag` carrying `"uf.error"`.
+- exploration, `buildExplorationSurface` — `invoke`, plus the one non-capability
+  field `error_tag` carrying `"uf.error"`. `invoke(toolName, arguments, body?)`
+  issues one Tool call through the `task::ExplorationToolInvoke` seam the
+  session's ledgered caller supplied, and `body` is the closure an observation
+  holds its frame for.
 - trusted runtime, `RuntimeNativeState::install` — `runtime_model_bytes`,
   `runtime_semantic_hash`, `runtime_model_finalize`, `runtime_asset`,
   `runtime_cycle_open`, `runtime_cycle_current`, `runtime_match`, `runtime_read`,
@@ -558,6 +559,37 @@ set is guessable:
 Both are deep-frozen at the end of the build. **Neither carries a click, a key
 press or any other input primitive**, and `math.random`/`math.randomseed` are
 nilled outright by `installSandbox` rather than offered here.
+
+> **Corrected 2026-08-24 by the natives-to-Tools cut, and the previous entry was
+> two breaks out of date in both directions.** It listed seven exploration keys
+> where `buildAnnotationSurface` installed sixteen — the four measuring verbs,
+> the six acting verbs, the cycle bracket, confined project read and write,
+> `explore_settle` and `explore_terminal` — so the sentence beginning "Neither
+> carries a click" was false of the table it named: `explore_click`,
+> `explore_key`, `explore_drag`, `explore_hold`, `explore_move` and
+> `explore_scroll` all stood on it, and an input delivered through them reached
+> the engine with no Receipt and left no ledger row. All sixteen are gone.
+> `explore_cycle_open`/`explore_cycle_close` are the observation Tool's own
+> bracket now and no longer natives; the measuring four are
+> `framework.screen.read_lines`, `framework.screen.probe` and
+> `framework.screen.census_grid` (there is no crop Tool — see below); the acting
+> six are arms of `framework.input.deliver`; project read and write are
+> `framework.project.read` and `framework.project.write`; `explore_settle` is
+> `framework.workflow.wait`; and `explore_terminal` is deleted, because whether
+> the generation was spent is the session's outcome rather than a verb.
+> The sentence is now true of both tables as written.
+> _Avoid_: `buildAnnotationSurface`, `annotationPrivateCapabilities` (the
+> spelling until this cut; the exploration installer is
+> `task::explorationToolCapabilities`), "the authoring private surface", "the
+> annotation surface" — there is no authoring surface and no trust split between
+> an exploration VM and a production one
+> ([the ruling](docs/decisions/2026-08-24-there-is-no-annotation-phase.md)).
+> **There is deliberately no `framework.screen.crop`**: a crop's answer is a
+> frame's pixels and a Tool result is canonical JSON inside a durable row, so a
+> cropping Tool would put pixels inside a hashed record — the
+> `framework.screen.capture` Tool this design deleted, under another name.
+> Keeping a piece of the screen is an authoring write and is spelled as one, on
+> `framework.project.write`'s `capture` arm.
 _Avoid_: native driver, private native surface, raw verbs, "never a key of any
 table" (a 2026-07-29 draft wording, replaced: the primitives are exactly the keys
 of the private table — read literally the old phrasing said the code violates its

@@ -25,32 +25,44 @@ namespace uf::task
     //
     // A third front-end rather than a mode of the other two, because an agent
     // sends CODE chunk by chunk and reads what came back before writing the next
-    // (docs/archive/plans/2026-08-01-three-layers-and-agent-operator.md 3).
+    // (docs/archive/plans/2026-08-01-three-layers-and-agent-operator.md 3). That
+    // is an INTERACTION SHAPE -- a queue of code against a single call -- and it
+    // is the whole of what makes this a separate front end.
     //
-    // It owns NEITHER its trace recorder's identity nor its engine session: both
-    // are built by the ledgered caller that admitted this run and handed over at
-    // create(). What that buys is that an exploration session's trace stream
-    // carries the Operator's own session id and SessionManifest hash, and its
-    // engine is bound to the RuntimeModel that session pinned -- rather than an
-    // identity this class derived for itself off the project directory's name
+    // IT IS NOT A SECOND ENVIRONMENT, and there is no trust split here. A chunk
+    // running in this VM has no private verbs: `explore` is Luau sugar over one
+    // seam, `ExplorationToolInvoke`, and every act it can perform on the screen,
+    // the target or the project is a call of a Tool from the same framework
+    // catalog every production session holds, recorded in the same ledger under
+    // this session's own identity and admitted or refused by the same Operator
+    // policy. What differs between annotating and running the product is which
+    // grants that policy carries -- nothing else, and in particular no property
+    // of this type
+    // (docs/decisions/2026-08-24-there-is-no-annotation-phase.md, and
+    // docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md
+    // V1).
+    //
+    // It owns NEITHER its trace recorder's identity, NOR its engine session, NOR
+    // its Tool Runtime: all three are built by the ledgered caller that admitted
+    // this run and handed over at create(). What that buys is that an
+    // exploration session's trace stream carries the Operator's own session id
+    // and SessionManifest hash, its engine is bound to the RuntimeModel that
+    // session pinned, and its Tool calls occupy durable positions under that
+    // session's root request -- rather than an identity this class derived for
+    // itself off the project directory's name
     // (docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md
     // V5).
     //
-    // The second environment lives here. The VM this owns is booted with the
-    // authoring private surface and publishes only the `explore` framework
-    // module. That difference is the whole trust split (see
-    // task/script-bindings.hpp and task/framework-bundle.hpp).
-    //
     // One chunk is one bracket. Each evaluate() runs its chunk under a project
     // environment built fresh for it, so globals one chunk writes never reach the
-    // next, and the session sweeps any exploration cycle the chunk left open. What
+    // next, and the session sweeps any observation frame the chunk left open. What
     // survives between chunks is everything the HOST owns: the ledger's ordinals,
     // the template store, the trace sequence, and the target binding.
     //
-    // Lifetime: non-movable, because the VM borrows the context, the context
-    // borrows the recorder, and both addresses must stay fixed. Created through
-    // TaskHost::startExplorationSession, which latches the generation's front-end
-    // claim.
+    // Lifetime: non-movable, because the VM borrows the context and the seam, the
+    // context borrows the recorder, and all three addresses must stay fixed.
+    // Created through TaskHost::startExplorationSession, which latches the
+    // generation's front-end claim.
     //
     // NOT thread-safe: every verb runs on the owning thread.
     class ExplorationSession final
@@ -67,9 +79,15 @@ namespace uf::task
 
         TaskContext m_context;
 
-        // Empty until create() boots it, and destroyed before m_context because
-        // members die in reverse declaration order -- which is the lifetime
-        // contract task/script-bindings.hpp states for the private surface.
+        // The Tool Runtime this session's chunks call through, owned here
+        // because the VM's one native primitive holds its address for the whole
+        // life of the VM. Declared before m_vm for that reason.
+        ExplorationToolInvoke m_toolRuntime;
+
+        // Empty until create() boots it, and destroyed before m_context and
+        // m_toolRuntime because members die in reverse declaration order --
+        // which is the lifetime contract task/script-bindings.hpp states for the
+        // private surface.
         std::optional<script::Engine> m_vm{};
 
         std::filesystem::path m_tracePath;
@@ -80,6 +98,7 @@ namespace uf::task
             std::unique_ptr<trace::TraceRecorder> recorder,
             engine::EngineSession session,
             TaskContextConfig contextConfig,
+            ExplorationToolInvoke toolRuntime,
             std::filesystem::path tracePath
         ) noexcept;
 

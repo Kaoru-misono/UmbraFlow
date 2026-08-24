@@ -19,15 +19,18 @@
 #include <cli/explore.hpp>
 
 #include <conformance/observation-fixture.hpp>
+#include <conformance/operator-protocol.hpp>
 
 #include <operator/agent-profile.hpp>
 #include <operator/controller.hpp>
 #include <operator/ledger.hpp>
+#include <operator/policy.hpp>
 #include <operator/tool-invocation.hpp>
 
 #include <service/product-lifecycle.hpp>
 
 #include <core/error/result.hpp>
+#include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/content-hash.hpp>
@@ -44,8 +47,13 @@
 #include <task/exploration-session.hpp>
 #include <task/task-host.hpp>
 
+#include "../json/repository-path.hpp"
+
 #include <doctest/doctest.h>
 
+#include <sqlite3.h>
+
+#include <algorithm>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
@@ -86,6 +94,178 @@ namespace uf::cli
         constexpr auto k_privilegedRefusal = std::string_view{
             "Operator policy grants no Privileged surface to tool "
             "framework.input.deliver"
+        };
+
+        constexpr auto k_projectWriteTool = std::string_view{
+            "framework.project.write"
+        };
+        constexpr auto k_readLinesTool = std::string_view{
+            "framework.screen.read_lines"
+        };
+        constexpr auto k_probeTool = std::string_view{
+            "framework.screen.probe"
+        };
+
+        // One durable Tool call row, joined to the admission that admitted it.
+        // Six of the seven members are what "recorded in the ledger" means for
+        // an annotator's input: which Tool ran, where it sat in the call tree,
+        // how it ended, which session it is attributed to, and which policy
+        // judged it.
+        struct ToolCallRow final
+        {
+            std::string toolName{};
+            std::string callIdentity{};
+            std::string parentIdentity{};
+            std::string state{};
+            std::string sessionId{};
+            std::string policyHash{};
+            std::string canonicalArgs{};
+        };
+
+        struct SqliteClose final
+        {
+            auto operator()(sqlite3* p_database) const noexcept -> void
+            {
+                static_cast<void>(sqlite3_close(p_database));
+            }
+        };
+
+        struct SqliteFinalize final
+        {
+            auto operator()(sqlite3_stmt* p_statement) const noexcept -> void
+            {
+                static_cast<void>(sqlite3_finalize(p_statement));
+            }
+        };
+
+        // What one read-only query answers over the Operator's own database, as
+        // text. See ExploreDoorWorld::recordedToolCalls for why a case about
+        // annotation has to read the store at all.
+        [[nodiscard]]
+        auto ledgerRows(
+            std::filesystem::path const& databasePath,
+            std::string_view query
+        ) -> std::vector<std::vector<std::string>>
+        {
+            auto* p_openedDatabase = static_cast<sqlite3*>(nullptr);
+            auto const opened      = sqlite3_open_v2(
+                databasePath.string().c_str(),
+                &p_openedDatabase,
+                SQLITE_OPEN_READONLY,
+                nullptr
+            );
+            auto database = std::unique_ptr<sqlite3, SqliteClose>{p_openedDatabase};
+            REQUIRE(opened == SQLITE_OK);
+            REQUIRE(database != nullptr);
+
+            auto* p_preparedStatement = static_cast<sqlite3_stmt*>(nullptr);
+            auto const prepared       = sqlite3_prepare_v2(
+                database.get(),
+                query.data(),
+                static_cast<int>(query.size()),
+                &p_preparedStatement,
+                nullptr
+            );
+            auto statement = std::unique_ptr<sqlite3_stmt, SqliteFinalize>{
+                p_preparedStatement,
+            };
+            REQUIRE(prepared == SQLITE_OK);
+            REQUIRE(statement != nullptr);
+
+            auto const columns = sqlite3_column_count(statement.get());
+            auto rows = std::vector<std::vector<std::string>>{};
+            auto step = sqlite3_step(statement.get());
+            while (step == SQLITE_ROW)
+            {
+                auto row = std::vector<std::string>{};
+                for (auto column = 0; column < columns; ++column)
+                {
+                    auto const* p_text = sqlite3_column_text(statement.get(), column);
+                    REQUIRE(p_text != nullptr);
+                    // SAFETY: SQLite answers with a pointer and a byte count,
+                    // and sqlite3_column_bytes reports the length of the very
+                    // column sqlite3_column_text just returned. A span is what
+                    // names that pair without a raw pointer standing for a
+                    // buffer.
+                    UF_UNSAFE_BUFFER_BEGIN
+                    auto const text = std::span{
+                        p_text,
+                        static_cast<std::size_t>(
+                            sqlite3_column_bytes(statement.get(), column)
+                        ),
+                    };
+                    UF_UNSAFE_BUFFER_END
+                    row.emplace_back(text.begin(), text.end());
+                }
+                rows.emplace_back(std::move(row));
+                step = sqlite3_step(statement.get());
+            }
+            REQUIRE(step == SQLITE_DONE);
+            return rows;
+        }
+
+        // The published Operator protocol schema's hash, which is the one
+        // ProductLifecycle pins into the SessionManifest a policy is verified
+        // against. A policy artifact naming any other hash is refused.
+        [[nodiscard]] auto operatorProtocolSchemaHash() -> ContentHash
+        {
+            constexpr auto k_operatorSchema = std::string_view{
+                "schema/umbraflow-operator-v1.schema.json"
+            };
+            auto const root = json::repositoryRoot(k_operatorSchema);
+            REQUIRE_FALSE(root.empty());
+            auto stream = std::ifstream{root / k_operatorSchema, std::ios::binary};
+            REQUIRE(stream.good());
+            auto const bytes = std::string{
+                std::istreambuf_iterator<char>{stream},
+                std::istreambuf_iterator<char>{},
+            };
+            auto const hashed = sha256(
+                std::as_bytes(std::span{std::string_view{bytes}})
+            );
+            REQUIRE(hashed.has_value());
+            return *hashed;
+        }
+
+        // Counts every capture the engine was asked for, through a counter the
+        // case owns, for CountingActionSink's reason.
+        //
+        // IT IS HOW "ONE FRAME" IS PROVED. An observation's body measures the
+        // frame that observation is holding, so a body that read two rectangles
+        // costs exactly ONE capture; a measuring Tool that captured for itself
+        // would cost three, and would be answering about a screen nobody aimed
+        // at (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
+        class CountingFrameSource final : public engine::IFrameSource
+        {
+            Frame                   m_frame;
+            std::shared_ptr<uint32> m_captures;
+
+        public:
+            CountingFrameSource(
+                Frame frame,
+                std::shared_ptr<uint32> captures
+            ) noexcept
+                : m_frame{std::move(frame)}
+                , m_captures{std::move(captures)}
+            {
+            }
+
+            [[nodiscard]]
+            auto capture(CaptureBudget const&) -> Result<Frame> override
+            {
+                ++*m_captures;
+                return m_frame;
+            }
+
+            [[nodiscard]] auto validateTargetInstance() -> Status override
+            {
+                return ok();
+            }
+
+            [[nodiscard]] auto targetWorld() const noexcept -> TargetWorld override
+            {
+                return TargetWorld::Recorded;
+            }
         };
 
         // Counts every verb the engine was asked to post, through a counter the
@@ -282,8 +462,11 @@ namespace uf::cli
             }
 
             [[nodiscard]]
-            auto ports(std::shared_ptr<uint32> delivered, std::string_view trace)
-                const -> task::TaskRunConfig
+            auto ports(
+                std::shared_ptr<uint32> delivered,
+                std::string_view trace,
+                std::shared_ptr<uint32> captures = std::make_shared<uint32>()
+            ) const -> task::TaskRunConfig
             {
                 auto const fingerprint = ProjectFingerprint::create(
                     k_recordedWidth,
@@ -293,13 +476,12 @@ namespace uf::cli
                 );
                 REQUIRE(fingerprint.has_value());
                 return task::TaskRunConfig{
-                    .frameSource = std::make_unique<
-                        operator_runtime::conformance::ObservationFrameSource
-                    >(
+                    .frameSource = std::make_unique<CountingFrameSource>(
                         operator_runtime::conformance::observationFrame(
                             m_probe,
                             FrameId{4001}
-                        )
+                        ),
+                        std::move(captures)
                     ),
                     .actionSink = std::make_unique<CountingActionSink>(
                         std::move(delivered)
@@ -310,6 +492,98 @@ namespace uf::cli
                     .recognitionTimeout      = k_defaultRecognitionTimeout,
                     .tracePath               = path(trace),
                 };
+            }
+
+            // The Operator's own file, written into the Operator's own root.
+            //
+            // THIS IS THE HAND-WRITTEN FILE THE CORRECTED ONBOARDING CLAIM NAMES
+            // (docs/decisions/2026-08-24-the-annotation-policy-is-the-operators.md):
+            // a developer annotates a brand-new project under deny-all as far as
+            // looking at the screen, and the first annotation stroke or the
+            // first injected input needs this. It grants the two Privileged
+            // Tools by name and allows their effects, and it is written by the
+            // Operator rather than scaffolded, because a permission the
+            // requester signs for itself is a rubber stamp.
+            auto authorizeAnnotation() const -> ContentHash
+            {
+                auto const policy =
+                    operator_runtime::conformance::policyArtifactBytes(
+                        operatorProtocolSchemaHash(),
+                        std::vector<std::string>{
+                            std::string{k_deliverInputTool},
+                            std::string{k_projectWriteTool},
+                        },
+                        // The measuring Tools are granted here too, and only so
+                        // that a case can watch one refuse for the RIGHT
+                        // reason: outside a body they are refused twice over --
+                        // the Privileged surface first, then the missing frame
+                        // -- and a case that saw only the first would never
+                        // reach the refusal it is about.
+                        std::vector<std::string>{
+                            std::string{k_deliverInputTool},
+                            std::string{k_probeTool},
+                            std::string{k_projectWriteTool},
+                            std::string{k_readLinesTool},
+                        }
+                    );
+                auto stream = std::ofstream{
+                    m_runtime
+                        / std::string{
+                            operator_runtime::k_operatorPolicyArtifactFileName
+                        },
+                    std::ios::binary | std::ios::trunc,
+                };
+                REQUIRE(stream.good());
+                stream << policy;
+                REQUIRE(stream.good());
+                auto const hashed = sha256(
+                    std::as_bytes(std::span{std::string_view{policy}})
+                );
+                REQUIRE(hashed.has_value());
+                return *hashed;
+            }
+
+            // Every Tool call the Operator recorded for this world, in the order
+            // it recorded them, joined to the admission attempt that admitted
+            // each one.
+            //
+            // It reads the Operator's storage because that is the subject: a
+            // case that asked only whether an input landed would have passed
+            // before this change, when an annotator's input reached the target
+            // with no Receipt and no durable row at all. A coordinator holds the
+            // file under PRAGMA locking_mode=EXCLUSIVE for its whole lifetime,
+            // so this may only run once the lifecycle has been destroyed.
+            [[nodiscard]] auto recordedToolCalls() const -> std::vector<ToolCallRow>
+            {
+                auto const rows = ledgerRows(
+                    m_runtime / "operator-runtime.sqlite",
+                    "SELECT position.tool_name, position.call_identity, "
+                    "position.parent_call_identity, history.state, "
+                    "attempt.session_id, attempt.policy_hash, "
+                    "position.canonical_args "
+                    "FROM tool_call_positions position "
+                    "JOIN tool_call_history history "
+                    "ON history.call_identity=position.call_identity "
+                    "JOIN tool_admission_attempts attempt "
+                    "ON attempt.call_identity=position.call_identity "
+                    "AND attempt.attempt_number=history.active_admission_attempt "
+                    "ORDER BY position.rowid"
+                );
+                auto calls = std::vector<ToolCallRow>{};
+                for (auto const& row : rows)
+                {
+                    REQUIRE(row.size() == 7U);
+                    calls.emplace_back(ToolCallRow{
+                        .toolName      = row[0],
+                        .callIdentity  = row[1],
+                        .parentIdentity = row[2],
+                        .state         = row[3],
+                        .sessionId     = row[4],
+                        .policyHash    = row[5],
+                        .canonicalArgs = row[6],
+                    });
+                }
+                return calls;
             }
         };
 
@@ -391,28 +665,54 @@ namespace uf::cli
 
         auto& context = (*session)->context();
 
-        // The 16 `explore_*` natives still reach the screen, over the engine
-        // session the LIFECYCLE built rather than one this session opened for
-        // itself. They become Tools in the step after this one; what this
-        // asserts is that moving where the session comes from did not move how
-        // they reach it.
-        auto const cropped = (*session)->evaluate(
+        // AN OBSERVATION WITH A BODY, UNDER DENY-ALL. The observation is
+        // Semantic and read-only so deny-all admits it, and the measurement
+        // inside its body is a CHILD call -- whose surface is judged against
+        // what the observation declared it may delegate rather than against the
+        // Operator's top-of-run grant. That is the whole of why a session with
+        // no policy can still look at the screen
+        // (docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md
+        // V4).
+        auto const measured = (*session)->evaluate(
             R"lua(
-                local blob = explore.cycle(function(cycle)
-                    return cycle:crop(0, 0, 1, 1)
+                local resolved = explore.observe(function(frame)
+                    local report = frame:probe(0, 0, 1, 1, {
+                        red = 0, green = 0, blue = 0, removes = false,
+                    })
+                    if report.rect_pixels ~= 1 then
+                        error("probe measured " .. tostring(report.rect_pixels))
+                    end
                 end)
-                local measured = explore.probe(blob, 0, 0, 1, 1)
-                return type(blob) == "string" and #blob > 0
-                    and measured.image_width == 1
-                    and measured.image_height == 1
+                return resolved.state_resolution ~= nil
             )lua",
-            "annotation-native-surface"
+            "annotation-observation-body"
         );
-        auto const croppedWhy = cropped.has_value()
+        auto const measuredWhy = measured.has_value()
             ? std::string{}
-            : std::string{cropped.error().message()};
-        REQUIRE_MESSAGE(cropped.has_value(), croppedWhy);
-        CHECK(cropped->boolean() == std::optional<bool>{true});
+            : std::string{measured.error().message()};
+        REQUIRE_MESSAGE(measured.has_value(), measuredWhy);
+        CHECK(measured->boolean() == std::optional<bool>{true});
+
+        // The same session's input, refused by name from inside a chunk rather
+        // than through the adapter below. The refusal reaches the chunk as the
+        // Operator's own sentence, which is what an annotator has to read.
+        auto const refused = (*session)->evaluate(
+            R"lua(
+                local ok, err = pcall(function() explore.click(0, 0) end)
+                if ok then return "delivered" end
+                if type(err) == "userdata" then return err.message end
+                return tostring(err)
+            )lua",
+            "annotation-input-under-deny-all"
+        );
+        REQUIRE(refused.has_value());
+        REQUIRE(refused->text() != nullptr);
+        CHECK_MESSAGE(
+            std::string_view{*refused->text()}.find(k_privilegedRefusal)
+                != std::string_view::npos,
+            "a chunk's input was not refused by the Operator's own sentence: ",
+            *refused->text()
+        );
 
         // Read-only screen observation carries no effect bounds, so deny-all
         // admits it. This is the half that would be lost if annotation answered
@@ -502,5 +802,353 @@ namespace uf::cli
                 "No active RuntimeArtifact is compatible with the required root"
             )
         );
+    }
+
+    // THE DEBT THIS WHOLE FOUR-STEP ORDER EXISTS TO REPAY.
+    //
+    // Before this change an input issued while annotating went straight from a
+    // private native to the engine: no Receipt, no admission, and NO LEDGER ROW
+    // AT ALL. A case that only proved the input still lands would have passed
+    // then and proves nothing now. What is asserted here is the row: which Tool
+    // ran, which session it is attributed to, and which policy admitted it
+    // (docs/decisions/2026-08-24-there-is-no-annotation-phase.md, step 4 of the
+    // ordering in
+    // docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md).
+    TEST_CASE(
+        "an input issued while annotating is recorded in the ledger, with the "
+        "Tool that issued it and the policy that admitted it"
+    )
+    {
+        auto const world     = ExploreDoorWorld{};
+        auto const policyHash = world.authorizeAnnotation();
+        auto const delivered = std::make_shared<uint32>();
+
+        auto const scope = operator_runtime::ObservedInstanceWorldScope::run(
+            "window-0",
+            1
+        );
+        REQUIRE(scope.has_value());
+
+        auto sessionId = std::string{};
+        {
+            auto lifecycle = service::ProductLifecycle::start(
+                service::ProductStart{
+                    .projectDirectory          = world.project(),
+                    .runtimeDirectory          = world.runtime(),
+                    .authenticatedControllerId = "umbra-flow-explore",
+                    // The capability the Operator's own rule requires. It is a
+                    // grant like every other: the Operator wrote the rule and
+                    // the session presents what the rule asks for.
+                    .controllerCapabilities = {
+                        std::string{
+                            operator_runtime::conformance::k_operateCapability
+                        },
+                    },
+                    .controlledTargetId = "window-0",
+                    .kind               = operator_runtime::ControllerKind::Human,
+                    .agentProfileJcs = std::string{
+                        operator_runtime::k_unboundedAgentProfileJcs
+                    },
+                    .worldScope = *scope,
+                }
+            );
+            auto const lifecycleWhy = lifecycle.has_value()
+                ? std::string{}
+                : std::string{lifecycle.error().message()};
+            REQUIRE_MESSAGE(lifecycle.has_value(), lifecycleWhy);
+            sessionId = lifecycle->identity().sessionId;
+
+            auto session = lifecycle->startExplorationSession(
+                world.ports(delivered, "granted-trace.jsonl"),
+                std::stop_token{}
+            );
+            auto const sessionWhy = session.has_value()
+                ? std::string{}
+                : std::string{session.error().message()};
+            REQUIRE_MESSAGE(session.has_value(), sessionWhy);
+
+            auto const clicked = (*session)->evaluate(
+                R"lua(
+                    local answer = explore.click(0, 0)
+                    return answer.delivered == true
+                )lua",
+                "annotation-input"
+            );
+            auto const clickedWhy = clicked.has_value()
+                ? std::string{}
+                : std::string{clicked.error().message()};
+            REQUIRE_MESSAGE(clicked.has_value(), clickedWhy);
+            CHECK(clicked->boolean() == std::optional<bool>{true});
+
+            // The input landed. That half would have passed before this change
+            // too, which is exactly why it is not the assertion.
+            CHECK(*delivered == 1U);
+
+            session->reset();
+            CHECK(lifecycle->shutdown().has_value());
+        }
+
+        // The half that could not have passed before: the durable row.
+        auto const recorded = world.recordedToolCalls();
+        auto const input    = std::ranges::find(
+            recorded,
+            std::string{k_deliverInputTool},
+            &ToolCallRow::toolName
+        );
+        REQUIRE_MESSAGE(
+            input != recorded.end(),
+            "the annotator's input left no Tool call row in the ledger"
+        );
+        CHECK(input->state == "confirmed");
+        CHECK(input->sessionId == sessionId);
+        CHECK(input->policyHash == policyHash.hex());
+        CHECK(input->canonicalArgs == R"({"action":"click","x":0,"y":0})");
+    }
+
+    // The three properties the frame ruling asks of a body, on one run.
+    TEST_CASE(
+        "an observation's body measures one frame and its measurements are "
+        "recorded as its children"
+    )
+    {
+        auto const world     = ExploreDoorWorld{};
+        auto const delivered = std::make_shared<uint32>();
+        auto const captures  = std::make_shared<uint32>();
+
+        // The measuring Tools are granted the Privileged surface here, and only
+        // so that the stray call below refuses for the right reason. Outside a
+        // body a measurement is refused twice over -- the surface first, the
+        // missing frame second -- and a case that saw only the first would pass
+        // without the frame rule existing at all.
+        static_cast<void>(world.authorizeAnnotation());
+
+        auto const scope = operator_runtime::ObservedInstanceWorldScope::run(
+            "window-0",
+            1
+        );
+        REQUIRE(scope.has_value());
+
+        {
+            auto lifecycle = service::ProductLifecycle::start(
+                service::ProductStart{
+                    .projectDirectory          = world.project(),
+                    .runtimeDirectory          = world.runtime(),
+                    .authenticatedControllerId = "umbra-flow-explore",
+                    .controllerCapabilities    = {},
+                    .controlledTargetId        = "window-0",
+                    .kind                      = operator_runtime::ControllerKind::Human,
+                    .agentProfileJcs = std::string{
+                        operator_runtime::k_unboundedAgentProfileJcs
+                    },
+                    .worldScope = *scope,
+                }
+            );
+            REQUIRE(lifecycle.has_value());
+
+            auto session = lifecycle->startExplorationSession(
+                world.ports(delivered, "body-trace.jsonl", captures),
+                std::stop_token{}
+            );
+            REQUIRE(session.has_value());
+
+            // A MEASURING TOOL OUTSIDE A BODY IS REFUSED BY NAME. It binds by
+            // call position to the innermost open frame and takes no frame
+            // handle, so outside every body there is nothing for it to bind to
+            // and it says so rather than capturing one of its own.
+            auto const stray = (*session)->evaluate(
+                R"lua(
+                    local answer = explore.call(
+                        "framework.screen.read_lines",
+                        { x = 0, y = 0, width = 1, height = 1 }
+                    )
+                    if answer.state == "confirmed" then return "measured" end
+                    return tostring(answer.result.message)
+                )lua",
+                "annotation-stray-measurement"
+            );
+            REQUIRE(stray.has_value());
+            REQUIRE(stray->text() != nullptr);
+            CHECK_MESSAGE(
+                std::string_view{*stray->text()}.find(
+                    "there is no open observation frame"
+                ) != std::string_view::npos,
+                "a measurement outside a body was not refused by name: ",
+                *stray->text()
+            );
+
+            auto const before = *captures;
+            auto const bodied = (*session)->evaluate(
+                R"lua(
+                    explore.observe(function(frame)
+                        frame:read_lines(0, 0, 1, 1)
+                        frame:probe(0, 0, 1, 1, {
+                            red = 0, green = 0, blue = 0, removes = false,
+                        })
+                    end)
+                    return true
+                )lua",
+                "annotation-two-measurements"
+            );
+            auto const bodiedWhy = bodied.has_value()
+                ? std::string{}
+                : std::string{bodied.error().message()};
+            REQUIRE_MESSAGE(bodied.has_value(), bodiedWhy);
+
+            // ONE FRAME. Two measurements inside one observation cost exactly
+            // one capture; two would mean each verb measured a different
+            // screen, which is the drift the frame exists to delete.
+            CHECK(*captures - before == 1U);
+
+            session->reset();
+            CHECK(lifecycle->shutdown().has_value());
+        }
+
+        auto const recorded = world.recordedToolCalls();
+        auto const observe  = std::ranges::find(
+            recorded,
+            std::string{k_observeTool},
+            &ToolCallRow::toolName
+        );
+        REQUIRE(observe != recorded.end());
+        CHECK(observe->state == "confirmed");
+
+        // The measurement each Tool CONFIRMED, which is the one written inside
+        // the body: the stray call above left a terminal-failure row of its own
+        // for framework.screen.read_lines, and a search that took the first row
+        // by name would be reading that one.
+        auto const confirmedCall = [&recorded](std::string_view toolName)
+        {
+            return std::ranges::find_if(
+                recorded,
+                [toolName](ToolCallRow const& row)
+                {
+                    return row.toolName == toolName && row.state == "confirmed";
+                }
+            );
+        };
+        auto const readLines = confirmedCall(k_readLinesTool);
+        auto const probe     = confirmedCall(k_probeTool);
+        REQUIRE(readLines != recorded.end());
+        REQUIRE(probe != recorded.end());
+
+        // CHILDREN OF THE OBSERVE NODE. Both measurements are parented on the
+        // observation's own durable position rather than on the run's root,
+        // which is what "recorded in the ledger as child calls of that observe
+        // node" asks for.
+        CHECK(readLines->parentIdentity == observe->callIdentity);
+        CHECK(probe->parentIdentity == observe->callIdentity);
+
+        // And the refused one is a row too, terminal and attributed, rather
+        // than an act that happened with nothing recording it.
+        auto const strayRow = std::ranges::find_if(
+            recorded,
+            [](ToolCallRow const& row)
+            {
+                return row.toolName == k_readLinesTool
+                    && row.state == "terminal_failure";
+            }
+        );
+        REQUIRE(strayRow != recorded.end());
+        CHECK(strayRow->parentIdentity != observe->callIdentity);
+    }
+
+    // The authoring-write line, both ways round. It is the second thing an
+    // Operator's file has to grant, and the first annotation stroke is where a
+    // developer meets it.
+    TEST_CASE("an authoring write needs the Operator's grant and is refused by name without it")
+    {
+        auto const scope = operator_runtime::ObservedInstanceWorldScope::run(
+            "window-0",
+            1
+        );
+        REQUIRE(scope.has_value());
+
+        auto const runWrite = [&scope](
+                                  ExploreDoorWorld const& world,
+                                  std::vector<std::string> capabilities,
+                                  std::string_view trace
+                              ) -> std::string
+        {
+            auto const delivered = std::make_shared<uint32>();
+            auto lifecycle = service::ProductLifecycle::start(
+                service::ProductStart{
+                    .projectDirectory          = world.project(),
+                    .runtimeDirectory          = world.runtime(),
+                    .authenticatedControllerId = "umbra-flow-explore",
+                    .controllerCapabilities    = std::move(capabilities),
+                    .controlledTargetId        = "window-0",
+                    .kind                      = operator_runtime::ControllerKind::Human,
+                    .agentProfileJcs = std::string{
+                        operator_runtime::k_unboundedAgentProfileJcs
+                    },
+                    .worldScope = *scope,
+                }
+            );
+            auto const lifecycleWhy = lifecycle.has_value()
+                ? std::string{}
+                : std::string{lifecycle.error().message()};
+            REQUIRE_MESSAGE(lifecycle.has_value(), lifecycleWhy);
+
+            auto session = lifecycle->startExplorationSession(
+                world.ports(delivered, trace),
+                std::stop_token{}
+            );
+            REQUIRE(session.has_value());
+            auto const written = (*session)->evaluate(
+                R"lua(
+                    local ok, err = pcall(function()
+                        explore.write("runtime/annotation.txt", "a stroke")
+                    end)
+                    if ok then return "written" end
+                    if type(err) == "userdata" then return err.message end
+                    return tostring(err)
+                )lua",
+                "annotation-authoring-write"
+            );
+            REQUIRE(written.has_value());
+            REQUIRE(written->text() != nullptr);
+            auto const answer = std::string{*written->text()};
+            session->reset();
+            CHECK(lifecycle->shutdown().has_value());
+            return answer;
+        };
+
+        SUBCASE("without the grant")
+        {
+            auto const world   = ExploreDoorWorld{};
+            auto const refused = runWrite(world, {}, "unauthorised-trace.jsonl");
+            CHECK_MESSAGE(
+                refused.find(
+                    "Operator policy grants no Privileged surface to tool "
+                    "framework.project.write"
+                ) != std::string::npos,
+                "an authoring write under deny-all was not refused by name: ",
+                refused
+            );
+            CHECK_FALSE(
+                std::filesystem::exists(
+                    world.project() / "runtime" / "annotation.txt"
+                )
+            );
+        }
+
+        SUBCASE("with the grant")
+        {
+            auto const world = ExploreDoorWorld{};
+            static_cast<void>(world.authorizeAnnotation());
+            auto const answer = runWrite(
+                world,
+                {std::string{
+                    operator_runtime::conformance::k_operateCapability
+                }},
+                "authorised-trace.jsonl"
+            );
+            CHECK_MESSAGE(answer == std::string{"written"}, answer);
+            CHECK(
+                std::filesystem::exists(
+                    world.project() / "runtime" / "annotation.txt"
+                )
+            );
+        }
     }
 }

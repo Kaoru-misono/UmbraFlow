@@ -217,18 +217,22 @@ namespace uf::operator_runtime
 
         // An Agent is offered the Semantic Framework Tools and none of the
         // Privileged ones: bare-coordinate input is absent rather than present
-        // and refused.
+        // and refused, and so are the three measuring Tools and the authoring
+        // write -- an Agent that wants a measurement writes an observation with
+        // a body, where the child's surface is judged against what the
+        // observation declared instead.
         auto noCapabilities = std::array<std::string, 0U>{};
         auto const offered = frameworkCatalog->offeredTools(
             controllerProfile(ControllerKind::Agent),
             noCapabilities
         );
-        REQUIRE(offered.size() == 5U);
+        REQUIRE(offered.size() == 6U);
         CHECK(offered[0].name == "framework.audit.record");
         CHECK(offered[1].name == "framework.input.semantic_target");
-        CHECK(offered[2].name == "framework.screen.observe");
-        CHECK(offered[3].name == "framework.workflow.status");
-        CHECK(offered[4].name == "framework.workflow.wait");
+        CHECK(offered[2].name == "framework.project.read");
+        CHECK(offered[3].name == "framework.screen.observe");
+        CHECK(offered[4].name == "framework.workflow.status");
+        CHECK(offered[5].name == "framework.workflow.wait");
 
         auto catalogMaterial = CanonicalJson::parseExact(
             frameworkCatalog->canonicalJcs()

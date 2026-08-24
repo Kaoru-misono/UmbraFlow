@@ -284,6 +284,83 @@ namespace uf::operator_runtime
             return m_frame->call;
         }
 
+        // One observation's body, run with an issuing context anchored on the
+        // observe call's own durable position.
+        //
+        // It is runBoundEntry's registration and nothing else: the run is keyed
+        // on the position of the call it belongs to, the context numbers from
+        // 1, the held-input release is lifted unconditionally, and the context
+        // is sealed so a body that left recorded calls unconsumed is divergence
+        // rather than a detail. What it does NOT do is open or close the frame
+        // -- the observe provider owns that on both sides of this call -- and it
+        // runs no VM of its own, because the body is a closure inside the VM
+        // that issued the observe.
+        [[nodiscard]]
+        auto runObservationBody(
+            ProjectGenerationHandle const& program,
+            ControllerBinding const& controller,
+            ControlLease const& lease,
+            ToolRootRequestIdentity const& root,
+            ToolCallPositionIdentity const& call,
+            ObservationBodyRun body
+        ) -> Status
+        {
+            if (!body)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "an observation body must be run together with the closure "
+                    "that is its body"
+                );
+            }
+            auto run = ActiveRun{
+                .program     = program,
+                .controller  = controller,
+                .lease       = lease,
+                .root        = root,
+                .handlerCall = call,
+                .context     = ToolCallIssuingContext::forHandler(call),
+            };
+            auto const registered =
+                m_runs.emplace(call.identity(), std::ref(run)).second;
+            if (!registered)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "a Tool call is already dispatching in this process at "
+                        + call.identity().hex()
+                );
+            }
+            auto const closeRun = scopeExit(
+                [this, identity = call.identity()]() noexcept
+                {
+                    m_runs.erase(identity);
+                }
+            );
+
+            auto ran = body();
+
+            // Unconditional and before the answer is looked at, on
+            // runBoundEntry's terms: a body that engaged an input owns lifting
+            // it whichever way it went.
+            auto lifted = run.releaseHeldInput();
+            if (!ran)
+            {
+                auto error = std::move(ran).error();
+                if (!lifted)
+                {
+                    error.addContext(
+                        "lifting the input this observation body left held also "
+                        "failed: "
+                            + std::string{lifted.error().message()}
+                    );
+                }
+                return std::unexpected{std::move(error)};
+            }
+            UF_TRY(std::move(lifted));
+            return m_coordinator.sealToolCallContext(root, run.context);
+        }
+
         // One child call, arriving from inside a running handler's VM.
         [[nodiscard]]
         auto issueChild(
@@ -612,6 +689,25 @@ namespace uf::operator_runtime
         -> std::optional<ContentHash>
     {
         return m_state->heldObservationFrame();
+    }
+
+    auto ProjectToolDispatcher::runObservationBody(
+        ProjectGenerationHandle const& program,
+        ControllerBinding const& controller,
+        ControlLease const& lease,
+        ToolRootRequestIdentity const& root,
+        ToolCallPositionIdentity const& call,
+        ObservationBodyRun body
+    ) -> Status
+    {
+        return m_state->runObservationBody(
+            program,
+            controller,
+            lease,
+            root,
+            call,
+            std::move(body)
+        );
     }
 
     auto ProjectToolDispatcher::dispatch(

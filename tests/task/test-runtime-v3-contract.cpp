@@ -582,18 +582,54 @@ identity = ["screen.anchor"]
             return loadedRuntime(host, directory, dragRuntimeModel());
         }
 
+        // A Tool Runtime that records the name of every call and answers each
+        // one confirmed with an empty result.
+        //
+        // It stands where service::ProductLifecycle's own seam stands, and a
+        // case using it is asking one question only: DID THE VERB GO THROUGH
+        // THE SEAM. What the Operator then does with the call -- admission, the
+        // policy, the ledger row -- is asserted against a real Operator root in
+        // tests/cli/test-explore-door.cpp, because none of it is a property of
+        // the Host.
+        [[nodiscard]]
+        auto recordingToolRuntime(std::shared_ptr<std::vector<std::string>> issued)
+            -> ExplorationToolInvoke
+        {
+            return [issued = std::move(issued)](
+                       TaskContext&,
+                       std::string_view toolName,
+                       json::Value const&,
+                       ExplorationCallBody body
+                   ) -> Result<json::Value>
+            {
+                issued->emplace_back(toolName);
+                if (body)
+                {
+                    UF_TRY(body());
+                }
+                return json::Value::ofObject({
+                    {"call_identity", json::Value::ofString(std::string(64U, '0'))},
+                    {"result", json::Value::ofObject({})},
+                    {"state", json::Value::ofString("confirmed")},
+                    {"tool", json::Value::ofString(std::string{toolName})},
+                });
+            };
+        }
+
         // What service::ProductLifecycle::startExplorationSession composes in
-        // production, composed here instead: the recorder and the engine
-        // session are the ledgered caller's to build, so a test that wants an
-        // exploration session builds them too rather than reaching a door the
-        // Host no longer has.
+        // production, composed here instead: the recorder, the engine session
+        // and the Tool Runtime are the ledgered caller's to build, so a test
+        // that wants an exploration session builds them too rather than
+        // reaching a door the Host no longer has.
         [[nodiscard]]
         auto startExploration(
             TaskHost& host,
             GenerationId generation,
             Frame value,
             std::filesystem::path const& projectRoot,
-            std::filesystem::path tracePath
+            std::filesystem::path tracePath,
+            std::shared_ptr<std::vector<std::string>> issued
+                = std::make_shared<std::vector<std::string>>()
         ) -> Result<std::unique_ptr<ExplorationSession>>
         {
             auto sink = trace::FileTraceSink::createNew(tracePath);
@@ -635,6 +671,7 @@ identity = ["screen.anchor"]
                     .projectId   = "exploration-fixture",
                     .projectRoot = projectRoot,
                     .tracePath   = std::move(tracePath),
+                    .toolRuntime = recordingToolRuntime(std::move(issued)),
                 }
             );
         }
@@ -1694,12 +1731,14 @@ identity = ["screen.anchor"]
         // the ordinary path and with no kind consulted. A second one over the
         // same generation is refused, because two front ends cannot drive one
         // generation's ledger and trace at once.
+        auto const issued = std::make_shared<std::vector<std::string>>();
         auto session = startExploration(
             host,
             *unsealed,
             frame({std::byte{0}, std::byte{0}, std::byte{0}}, FrameId{17}),
             projectDirectory.path(),
-            projectDirectory.path() / "authoring-trace.jsonl"
+            projectDirectory.path() / "authoring-trace.jsonl",
+            issued
         );
         REQUIRE(session.has_value());
         CHECK_FALSE(
@@ -1712,19 +1751,33 @@ identity = ["screen.anchor"]
             ).has_value()
         );
 
+        // EVERY VERB AN EXPLORATION CHUNK WRITES IS A TOOL CALL, including the
+        // measurement written inside an observation's body. The Host reaches no
+        // engine on their behalf and holds no private verb they could reach it
+        // through: what a chunk does is decided where the call is admitted, by
+        // the Operator that admitted this session
+        // (docs/decisions/2026-08-24-there-is-no-annotation-phase.md).
         auto authoringSurface = (*session)->evaluate(
             R"lua(
-                local blob = explore.cycle(function(cycle)
-                    return cycle:crop(0, 0, 1, 1)
+                explore.observe(function(frame)
+                    frame:read_lines(0, 0, 1, 1)
                 end)
-                local measured = explore.probe(blob, 0, 0, 1, 1)
-                return type(blob) == "string" and #blob > 0
-                    and measured.image_width == 1 and measured.image_height == 1
+                explore.click(0, 0)
+                return "issued"
             )lua",
             "authoring-boundary"
         );
         REQUIRE(authoringSurface.has_value());
-        CHECK(authoringSurface->boolean() == std::optional<bool>{true});
+        REQUIRE(authoringSurface->text() != nullptr);
+        CHECK(*authoringSurface->text() == std::string{"issued"});
+        CHECK(
+            *issued
+            == std::vector<std::string>{
+                "framework.screen.observe",
+                "framework.screen.read_lines",
+                "framework.input.deliver",
+            }
+        );
     }
 
     TEST_CASE("contract-runtime-u08")

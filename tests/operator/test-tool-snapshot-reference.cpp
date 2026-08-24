@@ -419,7 +419,7 @@ namespace uf::operator_runtime
         CHECK(*crossed == ObservationRefusal::Unminted);
     }
 
-    TEST_CASE("The Framework Tool Catalog declares six built-in Tools")
+    TEST_CASE("The Framework Tool Catalog declares eleven built-in Tools")
     {
         auto catalog = FrameworkToolCatalogOwner::create();
         REQUIRE(catalog.has_value());
@@ -450,10 +450,52 @@ namespace uf::operator_runtime
                 ToolSurface::Semantic,
                 ToolIdempotency::NonIdempotent,
             },
+            // Reading the project's own authoring store is the project's own
+            // vocabulary and changes nothing, so deny-all admits it. WRITING it
+            // is the authoring-write effect line, and it is Privileged because
+            // its capture arm names a rectangle of the screen -- a Tool is
+            // judged by the more restricted of the vocabularies it speaks
+            // (docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md
+            // V4).
+            CatalogExpectation{
+                "framework.project.read",
+                ToolMutability::ReadOnly,
+                ToolSurface::Semantic,
+                ToolIdempotency::ReadSafe,
+            },
+            CatalogExpectation{
+                "framework.project.write",
+                ToolMutability::Mutating,
+                ToolSurface::Privileged,
+                ToolIdempotency::DeliverySafe,
+            },
+            // The three measuring Tools an observation's body issues. Each is
+            // Privileged because a rectangle of pixels is the machine's
+            // vocabulary; a child's surface is bounded by its parent's
+            // declaration rather than by the Operator's top-of-run grant, which
+            // is what keeps a body measuring under deny-all.
+            CatalogExpectation{
+                "framework.screen.census_grid",
+                ToolMutability::ReadOnly,
+                ToolSurface::Privileged,
+                ToolIdempotency::ReadSafe,
+            },
             CatalogExpectation{
                 "framework.screen.observe",
                 ToolMutability::ReadOnly,
                 ToolSurface::Semantic,
+                ToolIdempotency::ReadSafe,
+            },
+            CatalogExpectation{
+                "framework.screen.probe",
+                ToolMutability::ReadOnly,
+                ToolSurface::Privileged,
+                ToolIdempotency::ReadSafe,
+            },
+            CatalogExpectation{
+                "framework.screen.read_lines",
+                ToolMutability::ReadOnly,
+                ToolSurface::Privileged,
                 ToolIdempotency::ReadSafe,
             },
             CatalogExpectation{
@@ -484,7 +526,7 @@ namespace uf::operator_runtime
             );
         }
 
-        // A controller that is not restricted to semantic tools sees all six,
+        // A controller that is not restricted to semantic tools sees all eleven,
         // in the byte order the catalog declares them.
         auto noCapabilities = std::array<std::string, 0U>{};
         auto const offered  = catalog->offeredTools(
@@ -579,7 +621,7 @@ namespace uf::operator_runtime
         // hash compared against itself pins nothing.
         CHECK(
             catalog->toolCatalogHash().hex()
-            == "9dad1fafebd091b7ee53e0c83378d945ac6461d4f5592d53fe22646059469bc0"
+            == "de2c27db4b699e85dc7aeeb42f244645bc7ed4d71fc42283c6030c4f43b0f14a"
         );
 
         auto material = CanonicalJson::parseExact(catalog->canonicalJcs());

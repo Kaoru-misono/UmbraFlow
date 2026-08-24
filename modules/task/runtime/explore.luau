@@ -1,40 +1,109 @@
 --!strict
--- Privileged exploration surface.  It is not a business global and does not
--- participate in RuntimeModel resolution or Receipt flow.
+-- The exploration front end's vocabulary, and every verb in it is a Tool call.
 --
--- The acting verbs are `click`, `key`, `drag`, `hold`, `scroll` and `move`, and
--- they are spelled exactly as the declared action vocabulary spells them
--- (schema/umbraflow-runtime-v3.schema.json, binding_action).  There is one
--- input vocabulary and no authoring-only half of it: anything that changes the
--- target on delivery is input whoever drives it.  What an authoring chunk does
--- NOT need is a Binding to name, which is a chicken-and-egg about the model
--- rather than an extra power -- an agent must reach a screen before it can
--- model one.
+-- There are no private verbs here any more.  The sixteen `explore_*` natives
+-- this module used to stand on reached the engine and the project directly, so
+-- an input an annotator delivered carried no Receipt and left no ledger row at
+-- all; each of them is now an ordinary Tool of the same framework catalog a
+-- production session holds, recorded against this session's own identity and
+-- admitted or refused by the Operator's policy artifact
+-- (docs/decisions/2026-08-24-there-is-no-annotation-phase.md, step 4 of the
+-- ordering in
+-- docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md).
 --
--- The acting verbs live on the CYCLE view rather than on this module, because
--- every one of them spends the cycle it was called on: a ticket that is never
--- handed out cannot be carried past the act that consumed it, and a chunk that
--- wants to measure what it did has to open another cycle to do it.  The host
--- refuses a second act on a spent ticket, so this layer keeps no copy of that
--- rule -- one place answers "is this cycle still alive", and it is the ledger.
+-- What that changes for a chunk, stated plainly rather than smoothed over:
 --
--- The measuring verbs are on the view for a different reason: each one names the
--- frame that cycle retains, and the ticket that names it never leaves the
--- bracket.  None of them spends the cycle, so a chunk crops, reads and censuses
--- one frame and then acts on it.
+--   * Measuring is written INSIDE an observation's body.  `explore.observe`
+--     takes a function, hands it the frame view, and the crop, read and census
+--     verbs on that view measure THE ONE FRAME the observation is holding --
+--     which is what those verbs always meant.  Calling one outside a body is
+--     refused by name.
+--   * Acting is written OUTSIDE a body, at the top of the chunk.  An input is a
+--     mutating call and an observation is read-only, so an input issued inside
+--     an observation's body is outside the admitted root effect envelope and is
+--     refused; an input at the top of the chunk opens and closes its own frame,
+--     which is word for word what an observation with no body does.
+--   * `explore.settle` is gone.  Waiting is `framework.workflow.wait`, which is
+--     the one spelling of it, and it is not among the Tools an observation may
+--     delegate -- so "wait, THEN observe" stays the only expressible order for
+--     the reason it always was.
+--   * `explore.terminal` is gone.  Whether the generation was spent is the
+--     session's outcome, reported on the result line the front end writes, and
+--     never a verb a chunk asks about mid-run.
 
 local native = ...
 local explore = {}
 
-local function requireNative(name: string): any
-    if type(native) ~= "table" or type(native[name]) ~= "function" then
-        error("exploration Host does not provide '" .. name .. "'", 3)
+local k_observeTool = "framework.screen.observe"
+local k_deliverTool = "framework.input.deliver"
+local k_waitTool = "framework.workflow.wait"
+local k_readLinesTool = "framework.screen.read_lines"
+local k_probeTool = "framework.screen.probe"
+local k_censusGridTool = "framework.screen.census_grid"
+local k_projectReadTool = "framework.project.read"
+local k_projectWriteTool = "framework.project.write"
+
+-- Resolved per call rather than at load, and deliberately: every VM that boots
+-- the framework bundle loads this module, and only an exploration VM is handed
+-- the Tool Runtime seam.  A module that refused while loading would take the
+-- trusted runtime VM down with it, and what is actually true is narrower --
+-- this module has no seam to call, which is a fact about the call and not about
+-- the build.
+local function requireInvoke(): any
+    if type(native) ~= "table" or type(rawget(native :: any, "invoke")) ~= "function" then
+        error("exploration Host does not provide the Tool Runtime seam", 3)
     end
-    return native[name]
+    return rawget(native :: any, "invoke")
 end
 
-local function keyScalars(key: any, tolerance: any)
-    if key == nil then return end
+-- One Tool call, answered as the Tool Runtime recorded it:
+-- { tool, call_identity, state, result?, evidence? }.  A chunk that wants to
+-- read a refusal rather than be stopped by one calls this directly.
+function explore.call(toolName: any, arguments: any, body: any?): any
+    if type(toolName) ~= "string" then
+        error("explore.call needs a tool name string", 2)
+    end
+    if type(arguments) ~= "table" then
+        error("explore.call needs a table of arguments", 2)
+    end
+    return requireInvoke()(toolName, arguments, body)
+end
+
+-- The same call, with anything but a confirmed outcome raised.  It is the shape
+-- every verb below is written in: an annotator wants the refusal in front of it,
+-- and the Operator's own sentence is what it wants to read.
+local function confirmed(toolName: string, arguments: any, body: any?): any
+    local answer = requireInvoke()(toolName, arguments, body)
+    local state = rawget(answer, "state")
+    if state ~= "confirmed" then
+        -- The recorded outcome's own sentence, wherever it put it: a refused
+        -- delivery records `reason` and a provider failure records `message`.
+        local result = rawget(answer, "result")
+        local reason = nil
+        if type(result) == "table" then
+            reason = rawget(result, "reason") or rawget(result, "message")
+        end
+        error(
+            toolName
+                .. " was recorded "
+                .. tostring(state)
+                .. (if type(reason) == "string" then ": " .. reason else ""),
+            3
+        )
+    end
+    return rawget(answer, "result")
+end
+
+-- The frame view an observation's body measures through.  It carries no frame
+-- handle and never could: the measuring Tools bind by call position to the
+-- innermost open frame, so a view that escaped its body measures nothing and
+-- earns the same refusal any other call outside a body earns
+-- (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md
+-- W3).
+local frameView = {}
+frameView.__index = frameView
+
+local function requireColour(key: any, tolerance: any): (number, number, number, number, boolean)
     if type(key) ~= "table"
         or type(key.red) ~= "number"
         or type(key.green) ~= "number"
@@ -46,242 +115,203 @@ local function keyScalars(key: any, tolerance: any)
     if tolerance ~= nil and type(tolerance) ~= "number" then
         error("key tolerance must be numeric", 3)
     end
-    return key.red, key.green, key.blue, tolerance, key.removes
+    return key.red, key.green, key.blue, tolerance or 12, key.removes
 end
 
-function explore.cycle(callback: any): any
-    if type(callback) ~= "function" then error("explore.cycle needs a function", 2) end
-    local state = { live = true, ticket = requireNative("explore_cycle_open")() }
-    if state.ticket == nil then error("Host refused exploration cycle", 2) end
-    local view = {}
-
-    local function live()
-        if not state.live then error("exploration cycle is closed", 3) end
-    end
-
-    function view:crop(
-        x: number,
-        y: number,
-        width: number,
-        height: number,
-        key: any?,
-        tolerance: number?
-    ): (string, string, any)
-        live()
-        return requireNative("explore_crop")(
-            state.ticket,
-            x,
-            y,
-            width,
-            height,
-            keyScalars(key, tolerance)
-        )
-    end
-
-    -- Every line of text the frame holds inside the rectangle, in the host's
-    -- order, each as { text, x, y, width, height, confidence }.  The rectangle
-    -- on a line is the one the FRAME held it in, not the one asked about, which
-    -- is the whole reason to reach for this instead of drawing a rectangle per
-    -- line: it is for a region nobody can draw inside because what is in it
-    -- moves.
-    --
-    -- No lines is an empty table and an ordinary answer about the screen.  A
-    -- host with no OCR engine bound is NOT that: it refuses, naming the missing
-    -- adapter, because "no text here" and "nothing here can read text" are
-    -- different answers and only the first is about the screen.
-    function view:read_lines(
-        x: number,
-        y: number,
-        width: number,
-        height: number
-    ): any
-        live()
-        return requireNative("explore_read_lines")(
-            state.ticket,
-            x,
-            y,
-            width,
-            height
-        )
-    end
-
-    -- The colour census of one rectangle, downsampled.  The rectangle is tiled
-    -- into cells of `cellWidth` by `cellHeight` and the answer is a frozen table
-    -- carrying `columns`, `rows`, `cell_width`, `cell_height` and the flat
-    -- row-major `selected_pixels`, so the cell at (column, row) is at index
-    -- row * columns + column + 1.  Where the rectangle does not divide evenly the
-    -- right and bottom edges keep a PARTIAL cell and count only its real pixels.
-    --
-    -- One call answers for every cell at once, which is what it is for: the same
-    -- question asked a rectangle at a time is a crop and a probe per rectangle,
-    -- and pays a whole-PNG decode for each.
-    --
-    -- The key is REQUIRED where `crop` takes it or leaves it: a cell reports how
-    -- much of itself is one colour, so a grid with no key is no answer rather
-    -- than a weaker one.  Read with removes = true a cell counts the pixels the
-    -- colour does NOT take, and the two directions partition the cell.
-    function view:census_grid(
-        x: number,
-        y: number,
-        width: number,
-        height: number,
-        cellWidth: number,
-        cellHeight: number,
-        key: any,
-        tolerance: number?
-    ): any
-        live()
-        if key == nil then
-            error(
-                "view:census_grid needs key = { red = r, green = g, blue = b, "
-                    .. "removes = false }; a cell reports how much of itself is "
-                    .. "one colour, and there is no such thing as a grid of no "
-                    .. "colour",
-                2
-            )
-        end
-        return requireNative("explore_census_grid")(
-            state.ticket,
-            x,
-            y,
-            width,
-            height,
-            cellWidth,
-            cellHeight,
-            keyScalars(key, tolerance)
-        )
-    end
-
-    -- Clicks a bare coordinate and spends the cycle.  A business script clicks
-    -- what a Binding placed; an agent has no model yet and clicks where it
-    -- decided to look, which is how the first screen ever gets modelled.
-    function view:click(x: number, y: number)
-        live()
-        requireNative("explore_click")(state.ticket, x, y)
-    end
-
-    -- Presses one bare point, keeps the button down for `holdMillis`, and
-    -- releases before returning.  A hold is how a target volunteers what it will
-    -- not show otherwise, so it is a thing to be measured.  The duration has NO
-    -- DEFAULT: how long a target wants a press held is a fact about that target,
-    -- and a duration the caller cannot see is a decision the caller did not
-    -- make.
-    --
-    -- `hold` is the one spelling.  There is no `long_press`, and no down/up
-    -- pair: a press whose release lives in another call can be left down by a
-    -- process that dies between the two, and the release here is inside the
-    -- call whatever way it ends.
-    function view:hold(x: number, y: number, holdMillis: number)
-        live()
-        if type(holdMillis) ~= "number" then
-            error("view:hold needs hold_ms in milliseconds", 2)
-        end
-        requireNative("explore_hold")(state.ticket, x, y, holdMillis)
-    end
-
-    -- Presses one bare point, travels to another with the button held, and
-    -- releases there.  Both ends are bare coordinates: an agent measuring the
-    -- geometry annotation will later rest on cannot be made to name an element
-    -- that does not exist yet.  The travel has no default, for the hold's
-    -- reason.
-    function view:drag(
-        x: number,
-        y: number,
-        endX: number,
-        endY: number,
-        travelMillis: number
-    )
-        live()
-        if type(travelMillis) ~= "number" then
-            error("view:drag needs travel_ms in milliseconds", 2)
-        end
-        requireNative("explore_drag")(state.ticket, x, y, endX, endY, travelMillis)
-    end
-
-    -- Moves the pointer, pressing nothing.  It is the input a wheel needs in
-    -- front of it, because a scroll names no position and lands wherever the
-    -- pointer already was.
-    function view:move(x: number, y: number)
-        live()
-        requireNative("explore_move")(state.ticket, x, y)
-    end
-
-    -- One wheel scroll of `notches` detents, positive away from the operator
-    -- and negative toward them.
-    function view:scroll(notches: number)
-        live()
-        requireNative("explore_scroll")(state.ticket, notches)
-    end
-
-    -- One press and release of the key `name` prints, spending the cycle
-    -- exactly as a click does.  `name` is the target's own printed spelling and
-    -- the host holds the only list of which spellings exist; this layer does
-    -- not repeat it, so the two can never come to disagree about it.
-    function view:key(name: string)
-        live()
-        requireNative("explore_key")(state.ticket, name)
-    end
-
-    local ok, result = pcall(callback, table.freeze(view))
-    state.live = false
-    local closed, closeError = pcall(requireNative("explore_cycle_close"), state.ticket)
-    if ok and not closed then error(closeError, 0) end
-    if not ok then error(result, 0) end
-    return result
+-- Every line of text the held frame carries inside the rectangle, each at the
+-- rectangle THE FRAME held it in rather than the one asked about.
+function frameView:read_lines(
+    x: number,
+    y: number,
+    width: number,
+    height: number
+): any
+    return confirmed(k_readLinesTool, {
+        x = x,
+        y = y,
+        width = width,
+        height = height,
+    })
 end
 
-function explore.probe(
-    blob: string,
+-- What one rectangle of the held frame is made of: its pixel count, how many
+-- distinct colours it holds, its dominant colour, and how much of it the key
+-- takes.  The pixels themselves never cross -- keeping a piece of the screen is
+-- `explore.capture`, which is an authoring write and is judged as one.
+function frameView:probe(
     x: number,
     y: number,
     width: number,
     height: number,
-    key: any?,
+    key: any,
     tolerance: number?
 ): any
-    return requireNative("explore_probe")(
-        blob,
-        x,
-        y,
-        width,
-        height,
-        keyScalars(key, tolerance)
-    )
+    local red, green, blue, keyTolerance, removes = requireColour(key, tolerance)
+    return confirmed(k_probeTool, {
+        x = x,
+        y = y,
+        width = width,
+        height = height,
+        colour_red = red,
+        colour_green = green,
+        colour_blue = blue,
+        tolerance = keyTolerance,
+        removes = removes,
+    })
 end
 
-function explore.read(path: any): string
-    if type(path) ~= "string" then error("explore.read needs a project path", 2) end
-    return requireNative("explore_project_read")(path)
+-- The colour census of one rectangle of the held frame, downsampled into cells.
+-- The answer carries `columns`, `rows`, `cell_width`, `cell_height` and the flat
+-- row-major `selected_pixels`, so the cell at (column, row) is at index
+-- row * columns + column + 1.  Where the rectangle does not divide evenly the
+-- right and bottom edges keep a PARTIAL cell and count only its real pixels.
+--
+-- The key is required: a cell reports how much of itself is one colour, and
+-- there is no such thing as a grid of no colour.
+function frameView:census_grid(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    cellWidth: number,
+    cellHeight: number,
+    key: any,
+    tolerance: number?
+): any
+    local red, green, blue, keyTolerance, removes = requireColour(key, tolerance)
+    return confirmed(k_censusGridTool, {
+        x = x,
+        y = y,
+        width = width,
+        height = height,
+        cell_width = cellWidth,
+        cell_height = cellHeight,
+        colour_red = red,
+        colour_green = green,
+        colour_blue = blue,
+        tolerance = keyTolerance,
+        removes = removes,
+    })
 end
 
-function explore.write(path: any, content: any)
+-- One observation.  With no body it opens the frame, resolves the state and
+-- closes, which is what a single-shot observation has always been; with a body
+-- it opens, resolves, RUNS THE BODY on that one frame, and closes on whichever
+-- way the body ended.  The close is the observation Tool call's own scope
+-- exiting, so it can be neither forgotten nor written twice.
+--
+-- An observation inside an observation's body is refused by name, naming the
+-- holding call and the limit it exceeded.
+function explore.observe(body: any?): any
+    if body ~= nil and type(body) ~= "function" then
+        error("explore.observe takes the function that measures its frame", 2)
+    end
+    if body == nil then
+        return confirmed(k_observeTool, {})
+    end
+    local view = setmetatable({}, frameView)
+    return confirmed(k_observeTool, {}, function()
+        body(view)
+    end)
+end
+
+-- The six input verbs, each one arm of the one input Tool's closed contract.
+--
+-- `hold` is deliberately absent.  Its arm engages a press and hands the LIFT to
+-- the Tool call that issued it, and a chunk issues at the top of a run where no
+-- call owns a lift, so a top-level hold is refused by the framework rather than
+-- silently left down.  The atomic press-wait-release the old `explore_hold`
+-- performed has no arm in the input contract at all.
+
+function explore.click(x: number, y: number): any
+    return confirmed(k_deliverTool, { action = "click", x = x, y = y })
+end
+
+function explore.move(x: number, y: number): any
+    return confirmed(k_deliverTool, { action = "move", x = x, y = y })
+end
+
+function explore.scroll(notches: number): any
+    return confirmed(k_deliverTool, { action = "scroll", notches = notches })
+end
+
+function explore.key(name: string): any
+    return confirmed(k_deliverTool, { action = "key", key = name })
+end
+
+function explore.drag(
+    x: number,
+    y: number,
+    endX: number,
+    endY: number,
+    travelMillis: number
+): any
+    if type(travelMillis) ~= "number" then
+        error("explore.drag needs travel_ms in milliseconds", 2)
+    end
+    return confirmed(k_deliverTool, {
+        action = "drag",
+        x = x,
+        y = y,
+        to_x = endX,
+        to_y = endY,
+        travel_ms = travelMillis,
+    })
+end
+
+-- The project's own authoring store.  Reading it is read-only and a session
+-- under deny-all may do it; writing it is the authoring-write effect line, and
+-- a session whose Operator granted none is refused by name.
+function explore.read(path: any): any
+    if type(path) ~= "string" then
+        error("explore.read needs a project path", 2)
+    end
+    return confirmed(k_projectReadTool, { path = path })
+end
+
+function explore.write(path: any, content: any): any
     if type(path) ~= "string" or type(content) ~= "string" then
         error("explore.write needs a project path and string content", 2)
     end
-    requireNative("explore_project_write")(path, content)
+    return confirmed(k_projectWriteTool, {
+        action = "text",
+        path = path,
+        content = content,
+    })
 end
 
--- Pauses for the whole duration, and refuses while a cycle is open.
---
--- It is not on the cycle view for the reason it exists: a frame held across a
--- wait is older than the wait by exactly the interval that made the wait worth
--- taking.  Acting, settling and then measuring is therefore written as three
--- statements -- act inside one cycle, settle outside every cycle, measure
--- inside the next -- and the host refuses every other order.
---
--- The only verb here that lets time pass, and deliberately not one of two.
--- Waiting for something to appear is this verb in a loop with an observation
--- between the pauses; the loop's bound is the chunk's own iteration count,
--- because the sandbox hands a chunk no clock to write a deadline against.
-function explore.settle(millis: number)
-    if type(millis) ~= "number" then
-        error("explore.settle needs a wait in milliseconds", 2)
+-- Keep one rectangle of the screen as a PNG inside the project.  It is the same
+-- authoring write `explore.write` is and not a screen verb: what leaves the
+-- frame is the file's content hash, never its pixels.
+function explore.capture(
+    path: any,
+    x: number,
+    y: number,
+    width: number,
+    height: number
+): any
+    if type(path) ~= "string" then
+        error("explore.capture needs a project path", 2)
     end
-    requireNative("explore_settle")(millis)
+    return confirmed(k_projectWriteTool, {
+        action = "capture",
+        path = path,
+        x = x,
+        y = y,
+        width = width,
+        height = height,
+    })
 end
 
-function explore.terminal(): boolean
-    return requireNative("explore_terminal")()
+-- Let time pass.  It is not callable inside an observation's body, and that is
+-- the point rather than a precaution: a frame held across a wait is older than
+-- the wait by exactly the interval that made the wait worth taking, so "wait,
+-- THEN observe" is the only expressible order.
+function explore.wait(millis: any): any
+    if type(millis) ~= "number" then
+        error("explore.wait needs a wait in milliseconds", 2)
+    end
+    return confirmed(k_waitTool, { duration_ms = millis })
 end
 
 return table.freeze(explore)

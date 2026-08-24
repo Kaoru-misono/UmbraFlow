@@ -23,10 +23,13 @@
 
 #include <script/engine.hpp>
 
+#include <json/value.hpp>
+
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -62,10 +65,8 @@ namespace uf::task
 {
     namespace
     {
-        constexpr auto k_cycleType = "uf.annotation-cycle";
         constexpr auto k_errorType = "uf.error";
         constexpr auto k_errorTag  = 1;
-        constexpr auto k_defaultProbeTolerance = uint32{12};
 
         // The action kinds a Runtime Receipt payload may name, as a table and
         // an enumerator rather than a chain of string comparisons: a kind the
@@ -359,31 +360,6 @@ namespace uf::task
         }
 
         [[nodiscard]]
-        auto cycleAt(lua_State* state, int index) -> CycleTicket*
-        {
-            if (lua_type(state, index) != LUA_TUSERDATA || lua_getmetatable(state, index) == 0)
-            {
-                raiseTierB(
-                    state,
-                    AutomationErrorKind::InvalidResource,
-                    "expected an Annotation cycle handle"
-                );
-            }
-            luaL_getmetatable(state, k_cycleType);
-            auto const same = lua_rawequal(state, -1, -2) != 0;
-            lua_pop(state, 2);
-            if (!same)
-            {
-                raiseTierB(
-                    state,
-                    AutomationErrorKind::InvalidResource,
-                    "expected an Annotation cycle handle"
-                );
-            }
-            return static_cast<CycleTicket*>(lua_touserdata(state, index));
-        }
-
-        [[nodiscard]]
         auto unsignedInteger(lua_State* state, int index, std::string_view name) -> uint32
         {
             if (lua_type(state, index) != LUA_TNUMBER)
@@ -426,50 +402,6 @@ namespace uf::task
             return *built;
         }
 
-        [[nodiscard]]
-        auto colourKey(lua_State* state, int first)
-            -> std::optional<ProbeColourKey>
-        {
-            if (lua_isnoneornil(state, first))
-            {
-                return std::nullopt;
-            }
-            auto const red   = unsignedInteger(state, first, "colour red");
-            auto const green = unsignedInteger(state, first + 1, "colour green");
-            auto const blue  = unsignedInteger(state, first + 2, "colour blue");
-            if (red > 255U || green > 255U || blue > 255U)
-            {
-                raiseTierB(
-                    state,
-                    AutomationErrorKind::InvalidResource,
-                    "colour channels must be between 0 and 255"
-                );
-            }
-            if (lua_type(state, first + 4) != LUA_TBOOLEAN)
-            {
-                raiseTierB(
-                    state,
-                    AutomationErrorKind::InvalidResource,
-                    "colour direction must be a boolean"
-                );
-            }
-            return ProbeColourKey{
-                .red   = static_cast<uint8>(red),
-                .green = static_cast<uint8>(green),
-                .blue  = static_cast<uint8>(blue),
-                .tolerance = lua_isnoneornil(state, first + 3)
-                    ? k_defaultProbeTolerance
-                    : unsignedInteger(state, first + 3, "colour tolerance"),
-                .removes = lua_toboolean(state, first + 4) != 0,
-            };
-        }
-
-        auto addNumber(lua_State* state, char const* name, uint64 value) -> void
-        {
-            lua_pushnumber(state, static_cast<double>(value));
-            lua_setfield(state, -2, name);
-        }
-
         auto freezeData(lua_State* state, TaskContext* context) -> void
         {
             auto const frozen = script::deepFreeze(state, -1);
@@ -482,244 +414,6 @@ namespace uf::task
                     "cannot freeze Annotation result"
                 );
             }
-        }
-
-        auto cycleOpen(lua_State* state) -> int
-        {
-            auto* const context = boundContext(state);
-            guardLive(state, context);
-            auto result = context->openCycle();
-            if (!result)
-            {
-                raiseFromError(state, context, result.error());
-            }
-            pushBox(state, *result, k_cycleType);
-            return 1;
-        }
-
-        auto cycleClose(lua_State* state) -> int
-        {
-            auto* const context = boundContext(state);
-            guardLive(state, context);
-            lua_pushboolean(state, context->closeCycle(*cycleAt(state, 1)) ? 1 : 0);
-            return 1;
-        }
-
-        auto cycleCrop(lua_State* state) -> int
-        {
-            auto* const context = boundContext(state);
-            guardLive(state, context);
-            auto result = context->cycleCrop(
-                *cycleAt(state, 1),
-                rectangle(state, 2, "crop rectangle"),
-                colourKey(state, 6)
-            );
-            if (!result)
-            {
-                raiseFromError(state, context, result.error());
-            }
-
-            auto bytes = std::string{};
-            bytes.reserve(result->png.size());
-            for (auto const value : result->png)
-            {
-                bytes.push_back(static_cast<char>(std::to_integer<unsigned char>(value)));
-            }
-            lua_pushlstring(state, bytes.data(), bytes.size());
-            auto const hash = result->hash.hex();
-            lua_pushlstring(state, hash.data(), hash.size());
-            // Bound once, so the emptiness test and every read below are the
-            // same optional rather than nine separate results of Result's
-            // operator->.
-            auto const& mask = result->mask;
-            if (!mask.has_value())
-            {
-                lua_pushnil(state);
-                return 3;
-            }
-            lua_createtable(state, 0, 10);
-            addNumber(state, "key_red", mask->key.red);
-            addNumber(state, "key_green", mask->key.green);
-            addNumber(state, "key_blue", mask->key.blue);
-            addNumber(state, "tolerance", mask->key.tolerance);
-            lua_pushboolean(state, mask->key.removes ? 1 : 0);
-            lua_setfield(state, -2, "key_removes");
-            addNumber(state, "rect_pixels", mask->rectPixels);
-            addNumber(state, "selected_pixels", mask->selectedPixels);
-            addNumber(state, "ramp_selected_pixels", mask->rampSelectedPixels);
-            lua_pushlstring(
-                state,
-                mask->warning.data(),
-                mask->warning.size()
-            );
-            lua_setfield(state, -2, "warning");
-            freezeData(state, context);
-            return 3;
-        }
-
-        // Every line of text the cycle's frame holds inside the rectangle, each
-        // carrying the rectangle the FRAME held it in rather than the one asked
-        // about. It does not spend the cycle, so the same cycle goes on to click
-        // a line it found.
-        //
-        // A HOST WITH NO OCR ADAPTER REFUSES HERE. The engine session answers
-        // UnsupportedCapability naming the missing adapter and it leaves as a
-        // Tier B raise; an empty list would be indistinguishable from a region
-        // that really holds no text, and reading is the one capability with no
-        // score to contradict a fail-open answer.
-        auto cycleReadLines(lua_State* state) -> int
-        {
-            auto* const context = boundContext(state);
-            guardLive(state, context);
-            // Block and never the caller's choice: this verb exists for the
-            // region nobody can draw a rectangle inside, so a layout argument
-            // would offer an authoring chunk the one answer it came here to
-            // avoid.
-            auto const lines = context->cycleRead(
-                *cycleAt(state, 1),
-                rectangle(state, 2, "read rectangle"),
-                ocr::TextLayout::Block
-            );
-            if (!lines)
-            {
-                raiseFromError(state, context, lines.error());
-            }
-
-            auto const count = checkedCast<int>(lines->size());
-            UF_CHECK(count.has_value());
-            lua_createtable(state, *count, 0);
-            auto index = 1;
-            for (auto const& line : *lines)
-            {
-                lua_createtable(state, 0, 6);
-                lua_pushlstring(state, line.text.data(), line.text.size());
-                lua_setfield(state, -2, "text");
-                addNumber(state, "x", line.rect.x());
-                addNumber(state, "y", line.rect.y());
-                addNumber(state, "width", line.rect.width());
-                addNumber(state, "height", line.rect.height());
-                lua_pushnumber(
-                    state,
-                    static_cast<double>(line.confidenceBp) / 10'000.0
-                );
-                lua_setfield(state, -2, "confidence");
-                lua_rawseti(state, -2, index);
-                ++index;
-            }
-            freezeData(state, context);
-            return 1;
-        }
-
-        // The colour census of one rectangle, downsampled into cells. It does
-        // not spend the cycle either, and its rectangle, cell size and tolerance
-        // are all checked by TaskContext against the vision layer's existing
-        // ceilings before a pixel is walked.
-        //
-        // The key is REQUIRED where a crop's is optional: a cell reports how
-        // much of itself is one colour, so a grid with no key is no answer
-        // rather than a weaker one. It is refused here, before the rectangle is
-        // built, so the message names the omission rather than the shape.
-        //
-        // Only `selected_pixels` crosses. The vision report's per-cell spread is
-        // zero at every cell while an observation retains one frame, and a
-        // published field that always answers the same thing reads as a
-        // measurement somebody took; see TaskContext::cycleCensusGrid.
-        auto cycleCensusGrid(lua_State* state) -> int
-        {
-            auto* const context = boundContext(state);
-            guardLive(state, context);
-            auto const key = colourKey(state, 8);
-            if (!key.has_value())
-            {
-                raiseTierB(
-                    state,
-                    AutomationErrorKind::InvalidResource,
-                    "a census grid needs a colour key; a cell reports how much "
-                    "of itself is one colour, and there is no such thing as a "
-                    "grid of no colour"
-                );
-            }
-            auto const report = context->cycleCensusGrid(
-                *cycleAt(state, 1),
-                rectangle(state, 2, "census rectangle"),
-                unsignedInteger(state, 6, "census cell width"),
-                unsignedInteger(state, 7, "census cell height"),
-                *key
-            );
-            if (!report)
-            {
-                raiseFromError(state, context, report.error());
-            }
-
-            lua_createtable(state, 0, 5);
-            addNumber(state, "columns", report->columns);
-            addNumber(state, "rows", report->rows);
-            addNumber(state, "cell_width", report->cellWidth);
-            addNumber(state, "cell_height", report->cellHeight);
-            auto const cells = checkedCast<int>(report->selectedPixels.size());
-            UF_CHECK(cells.has_value());
-            lua_createtable(state, *cells, 0);
-            auto index = 1;
-            for (auto const selected : report->selectedPixels)
-            {
-                lua_pushnumber(state, static_cast<double>(selected));
-                lua_rawseti(state, -2, index);
-                ++index;
-            }
-            lua_setfield(state, -2, "selected_pixels");
-            freezeData(state, context);
-            return 1;
-        }
-
-        auto probe(lua_State* state) -> int
-        {
-            auto* const context = boundContext(state);
-            guardLive(state, context);
-            if (lua_type(state, 1) != LUA_TSTRING)
-            {
-                raiseTierB(
-                    state,
-                    AutomationErrorKind::InvalidResource,
-                    "probe bytes must be a string"
-                );
-            }
-            std::size_t size{};
-            char const* const text = lua_tolstring(state, 1, &size);
-            auto const view = std::string_view{text, size};
-            auto const bytes = std::as_bytes(std::span{view});
-            auto result = probePngRegion(
-                bytes,
-                rectangle(state, 2, "probe rectangle"),
-                colourKey(state, 6)
-            );
-            if (!result)
-            {
-                raiseFromError(state, context, result.error());
-            }
-            lua_createtable(state, 0, 12);
-            addNumber(state, "image_width", result->imageWidth);
-            addNumber(state, "image_height", result->imageHeight);
-            addNumber(state, "rect_pixels", result->rectPixels);
-            addNumber(state, "distinct_colours", result->distinctColours);
-            addNumber(state, "dominant_red", result->dominantRed);
-            addNumber(state, "dominant_green", result->dominantGreen);
-            addNumber(state, "dominant_blue", result->dominantBlue);
-            addNumber(state, "dominant_pixels", result->dominantPixels);
-            // PixelProbeReport engages the three selection counts together or
-            // not at all, so this asks for exactly what it then reads rather
-            // than reading two of them on the strength of the first.
-            if (
-                result->fullySelectedPixels.has_value()
-                && result->rampSelectedPixels.has_value()
-                && result->selectedWeight.has_value()
-            )
-            {
-                addNumber(state, "fully_selected_pixels", *result->fullySelectedPixels);
-                addNumber(state, "ramp_selected_pixels", *result->rampSelectedPixels);
-                addNumber(state, "selected_weight", *result->selectedWeight);
-            }
-            freezeData(state, context);
-            return 1;
         }
 
         [[nodiscard]]
@@ -737,49 +431,6 @@ namespace uf::task
             std::size_t size{};
             char const* const text = lua_tolstring(state, index, &size);
             return std::string_view{text, size};
-        }
-
-        auto projectRead(lua_State* state) -> int
-        {
-            auto* const context = boundContext(state);
-            guardLive(state, context);
-            auto result = context->projectRead(stringAt(state, 1, "project path"));
-            if (!result)
-            {
-                raiseFromError(state, context, result.error());
-            }
-            auto bytes = std::string{};
-            bytes.reserve(result->size());
-            for (auto const value : *result)
-            {
-                bytes.push_back(static_cast<char>(std::to_integer<unsigned char>(value)));
-            }
-            lua_pushlstring(state, bytes.data(), bytes.size());
-            return 1;
-        }
-
-        auto projectWrite(lua_State* state) -> int
-        {
-            auto* const context = boundContext(state);
-            guardLive(state, context);
-            auto const path = stringAt(state, 1, "project path");
-            auto const text = stringAt(state, 2, "project content");
-            auto const status = context->projectWrite(
-                path,
-                std::as_bytes(std::span{text})
-            );
-            if (!status)
-            {
-                raiseFromError(state, context, status.error());
-            }
-            return 0;
-        }
-
-        auto terminal(lua_State* state) -> int
-        {
-            auto* const context = boundContext(state);
-            lua_pushboolean(state, context->fatal() ? 1 : 0);
-            return 1;
         }
 
         [[nodiscard]]
@@ -854,237 +505,323 @@ namespace uf::task
             return Duration{*ticks};
         }
 
-        // The six acting primitives. Each takes the cycle's ticket first and
-        // spends it, so a chunk that wants to measure what it did opens another
-        // cycle -- which is also what stops a crop taken after an act from
-        // describing the frame that authorised it. The measuring primitives
-        // above take the ticket and spend nothing; `settle` below takes no
-        // ticket at all and refuses while one is open.
+        // THE EXPLORATION PRIVATE SURFACE, AND THE WHOLE OF IT.
         //
-        // They are installed by buildAnnotationSurface and by nothing else. See
-        // TaskContext's declarations for why an exploration chunk needs no
-        // Receipt to reach them and what still fences them.
-
-        auto cycleClick(lua_State* state) -> int
-        {
-            auto* const context = boundContext(state);
-            guardLive(state, context);
-            auto const status = context->cycleClick(
-                *cycleAt(state, 1),
-                PixelPoint{
-                    unsignedInteger(state, 2, "click x"),
-                    unsignedInteger(state, 3, "click y"),
-                }
-            );
-            if (!status)
-            {
-                raiseFromError(state, context, status.error());
-            }
-            return 0;
-        }
-
-        auto cycleHold(lua_State* state) -> int
-        {
-            auto* const context = boundContext(state);
-            guardLive(state, context);
-            auto const status = context->cycleHold(
-                *cycleAt(state, 1),
-                PixelPoint{
-                    unsignedInteger(state, 2, "hold x"),
-                    unsignedInteger(state, 3, "hold y"),
-                },
-                millisDuration(state, 4, "hold duration")
-            );
-            if (!status)
-            {
-                raiseFromError(state, context, status.error());
-            }
-            return 0;
-        }
-
-        auto cycleDrag(lua_State* state) -> int
-        {
-            auto* const context = boundContext(state);
-            guardLive(state, context);
-            auto const status = context->cycleDrag(
-                *cycleAt(state, 1),
-                PixelPoint{
-                    unsignedInteger(state, 2, "drag x"),
-                    unsignedInteger(state, 3, "drag y"),
-                },
-                PixelPoint{
-                    unsignedInteger(state, 4, "drag end x"),
-                    unsignedInteger(state, 5, "drag end y"),
-                },
-                millisDuration(state, 6, "drag travel")
-            );
-            if (!status)
-            {
-                raiseFromError(state, context, status.error());
-            }
-            return 0;
-        }
-
-        auto cycleMove(lua_State* state) -> int
-        {
-            auto* const context = boundContext(state);
-            guardLive(state, context);
-            auto const status = context->cycleMove(
-                *cycleAt(state, 1),
-                PixelPoint{
-                    unsignedInteger(state, 2, "pointer move x"),
-                    unsignedInteger(state, 3, "pointer move y"),
-                }
-            );
-            if (!status)
-            {
-                raiseFromError(state, context, status.error());
-            }
-            return 0;
-        }
-
-        auto cycleScroll(lua_State* state) -> int
-        {
-            auto* const context = boundContext(state);
-            guardLive(state, context);
-            auto const status = context->cycleScroll(
-                *cycleAt(state, 1),
-                signedInteger(state, 2, "wheel notches")
-            );
-            if (!status)
-            {
-                raiseFromError(state, context, status.error());
-            }
-            return 0;
-        }
-
-        // The one definition of which key names exist, applied to the value a
-        // chunk actually wrote. A name outside the set is refused BEFORE the
-        // cycle is spent, so a typo costs no frame -- and the set is not opened
-        // here: this is the same KeyName::create the Receipt path calls.
-        auto cycleKey(lua_State* state) -> int
-        {
-            auto* const context = boundContext(state);
-            guardLive(state, context);
-            auto const ticket = *cycleAt(state, 1);
-            auto const key = KeyName::create(stringAt(state, 2, "key name"));
-            if (!key)
-            {
-                raiseFromError(state, context, key.error());
-            }
-            auto const status = context->cycleKey(ticket, *key);
-            if (!status)
-            {
-                raiseFromError(state, context, status.error());
-            }
-            return 0;
-        }
-
-        // Pauses for the whole duration asked for, and refuses to do it while a
-        // cycle is open.
+        // One primitive, `invoke`, spelled exactly as script::ScopedToolProgram
+        // spells its own: a Tool name, one argument value, and -- for an
+        // observation written with one -- the body whose calls that observation
+        // holds its frame for. There are no host verbs here. The sixteen
+        // `explore_*` natives that used to stand on this table reached the
+        // engine and the project directly, which is why an input an annotator
+        // delivered had no Receipt and left no ledger row at all; every one of
+        // them is now an ordinary catalogued Tool, admitted by the Operator's
+        // policy and recorded against this session's identity
+        // (docs/decisions/2026-08-24-there-is-no-annotation-phase.md, and step 4
+        // of the ordering in
+        // docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md).
         //
-        // That refusal is the verb's point rather than a precaution. A frame
-        // held across a wait is older than the wait by exactly the interval that
-        // made the wait worth taking, so a chunk that acted, settled, and then
-        // cropped its open cycle would measure the screen it was trying to wait
-        // out. Refusing here makes "wait, THEN observe" the only expressible
-        // order, which is stronger than a verb that bundles the two and leaves
-        // the unbundled spelling reachable.
-        auto settle(lua_State* state) -> int
+        // What the two upvalues carry is stated at
+        // task::explorationToolCapabilities: the seam and the context the call
+        // is driven against, both owned by the ExplorationSession that outlives
+        // every VM built from this installer.
+
+        // How deep and how wide a value crossing this boundary may be. Both are
+        // the boundary's own limits rather than any Tool's: a Framework
+        // argument contract is judged by the catalog after this, and a refusal
+        // here names the boundary so the two cannot be mistaken for each other.
+        constexpr auto k_maximumToolValueDepth   = std::size_t{16U};
+        constexpr auto k_maximumToolValueEntries = std::size_t{4096U};
+
+        struct ToolValueBudget final
         {
-            auto* const context = boundContext(state);
-            guardLive(state, context);
-            auto const duration = millisDuration(state, 1, "settle duration");
-            if (duration > k_maxSettleDuration)
-            {
-                raiseTierB(
-                    state,
-                    AutomationErrorKind::InvalidResource,
-                    "a settle may not exceed the host's ceiling; a wait that "
-                    "long belongs to a chunk that observes between its parts"
-                );
-            }
-            if (context->hasOpenCycle())
-            {
-                raiseTierB(
-                    state,
-                    AutomationErrorKind::InvalidResource,
-                    "a settle cannot be taken while a cycle is open; the frame "
-                    "it holds would be older than the wait by the whole wait"
-                );
-            }
-            context->settle(duration);
+            std::size_t entries{};
+        };
 
-            // pollSleep returns early once the run's cancel source is requested,
-            // so a settle that ended that way must take the terminal path rather
-            // than report a wait it did not finish.
-            if (context->cancellationRequested())
-            {
-                context->markTerminal(AutomationErrorKind::Cancelled);
-                lua_pushstring(state, "uf: annotation cancelled");
-                lua_error(state);
-            }
-            return 0;
-        }
-
-        auto beginCycleMetatable(lua_State* state) -> Status
-        {
-            lua_newtable(state);
-            int const metatable = lua_gettop(state);
-            lua_newtable(state);
-            lua_setfield(state, metatable, "__index");
-            lua_pushcfunction(state, &denyWrite, "uf_cycle_newindex");
-            lua_setfield(state, metatable, "__newindex");
-            lua_pushstring(state, k_cycleType);
-            lua_pushcclosure(state, &fixedToString, "uf_cycle_tostring", 1);
-            lua_setfield(state, metatable, "__tostring");
-            lua_pushstring(state, k_cycleType);
-            lua_setfield(state, metatable, "__metatable");
-            UF_TRY(script::deepFreezeMetatable(state, metatable));
-            lua_setfield(state, LUA_REGISTRYINDEX, k_cycleType);
-            return ok();
-        }
-
-        auto install(
+        [[nodiscard]]
+        auto readToolValue(
             lua_State* state,
-            int surface,
-            char const* name,
-            lua_CFunction function,
-            TaskContext* context
-        ) -> void
+            int index,
+            std::size_t depth,
+            ToolValueBudget& budget
+        ) -> json::Value;
+
+        // A dense integer-keyed table crosses as an ARRAY and every other table
+        // as an OBJECT, which makes the empty table the empty object -- the one
+        // reading a Framework argument contract can use, since every one of
+        // them takes an object and the observation Tool takes exactly `{}`.
+        [[nodiscard]]
+        auto readToolTable(
+            lua_State* state,
+            int table,
+            std::size_t depth,
+            ToolValueBudget& budget
+        ) -> json::Value
         {
-            lua_pushlightuserdata(state, context);
-            lua_pushcclosure(state, function, name, 1);
-            lua_setfield(state, surface, name);
+            auto const absolute = lua_absindex(state, table);
+            auto const length   = static_cast<std::size_t>(
+                lua_objlen(state, absolute)
+            );
+            if (length > 0U)
+            {
+                auto items = std::vector<json::Value>{};
+                items.reserve(length);
+                for (auto element = std::size_t{1}; element <= length; ++element)
+                {
+                    lua_rawgeti(state, absolute, static_cast<int>(element));
+                    items.emplace_back(
+                        readToolValue(state, -1, depth + 1U, budget)
+                    );
+                    lua_pop(state, 1);
+                }
+                return json::Value::ofArray(std::move(items));
+            }
+
+            auto members = std::vector<json::Member>{};
+            lua_pushnil(state);
+            while (lua_next(state, absolute) != 0)
+            {
+                if (lua_type(state, -2) != LUA_TSTRING)
+                {
+                    raiseTierB(
+                        state,
+                        AutomationErrorKind::InvalidResource,
+                        "a Tool call's arguments may only be keyed by strings"
+                    );
+                }
+                std::size_t size{};
+                char const* const key = lua_tolstring(state, -2, &size);
+                members.emplace_back(
+                    std::string{key, size},
+                    readToolValue(state, -1, depth + 1U, budget)
+                );
+                lua_pop(state, 1);
+            }
+            return json::Value::ofObject(std::move(members));
         }
 
-        auto buildAnnotationSurface(lua_State* state, TaskContext* context) -> Status
+        auto readToolValue(
+            lua_State* state,
+            int index,
+            std::size_t depth,
+            ToolValueBudget& budget
+        ) -> json::Value
         {
-            UF_TRY(beginCycleMetatable(state));
-            lua_createtable(state, 0, 17);
-            int const surface = lua_gettop(state);
-            install(state, surface, "explore_cycle_open", &cycleOpen, context);
-            install(state, surface, "explore_cycle_close", &cycleClose, context);
-            install(state, surface, "explore_crop", &cycleCrop, context);
-            install(state, surface, "explore_read_lines", &cycleReadLines, context);
-            install(
-                state,
-                surface,
-                "explore_census_grid",
-                &cycleCensusGrid,
-                context
+            if (depth > k_maximumToolValueDepth)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "a Tool call's arguments are nested deeper than this "
+                    "boundary carries"
+                );
+            }
+            ++budget.entries;
+            if (budget.entries > k_maximumToolValueEntries)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "a Tool call's arguments hold more values than this "
+                    "boundary carries"
+                );
+            }
+            switch (lua_type(state, index))
+            {
+            case LUA_TBOOLEAN:
+                return json::Value::ofBoolean(lua_toboolean(state, index) != 0);
+            case LUA_TNUMBER:
+                return json::Value::ofNumber(lua_tonumber(state, index));
+            case LUA_TSTRING:
+            {
+                std::size_t size{};
+                char const* const text = lua_tolstring(state, index, &size);
+                return json::Value::ofString(std::string{text, size});
+            }
+            case LUA_TTABLE:
+                return readToolTable(state, index, depth, budget);
+            default:
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "a Tool call's arguments may only hold strings, numbers, "
+                    "booleans and tables"
+                );
+            }
+        }
+
+        auto pushToolValue(lua_State* state, json::Value const& value) -> void
+        {
+            switch (value.kind())
+            {
+            case json::ValueKind::Null:
+                lua_pushnil(state);
+                return;
+            case json::ValueKind::Boolean:
+                lua_pushboolean(state, value.boolean() ? 1 : 0);
+                return;
+            case json::ValueKind::Number:
+                lua_pushnumber(state, value.number());
+                return;
+            case json::ValueKind::String:
+            {
+                auto const text = value.string();
+                lua_pushlstring(state, text.data(), text.size());
+                return;
+            }
+            case json::ValueKind::Array:
+            {
+                auto const items = value.items();
+                auto const count = checkedCast<int>(items.size());
+                UF_CHECK(count.has_value());
+                lua_createtable(state, *count, 0);
+                auto index = 1;
+                for (auto const& item : items)
+                {
+                    pushToolValue(state, item);
+                    lua_rawseti(state, -2, index);
+                    ++index;
+                }
+                return;
+            }
+            case json::ValueKind::Object:
+            {
+                auto const members = value.members();
+                auto const count   = checkedCast<int>(members.size());
+                UF_CHECK(count.has_value());
+                lua_createtable(state, 0, *count);
+                for (auto const& member : members)
+                {
+                    pushToolValue(state, member.second);
+                    lua_pushlstring(
+                        state,
+                        member.first.data(),
+                        member.first.size()
+                    );
+                    lua_insert(state, -2);
+                    lua_rawset(state, -3);
+                }
+                return;
+            }
+            }
+            UF_UNREACHABLE_MSG("Unknown JSON value kind");
+        }
+
+        // The two upvalues one exploration native carries: the seam and the
+        // context. They are lightuserdata rather than a captured lambda because
+        // a Luau C function is a plain function pointer, and both objects are
+        // owned by the ExplorationSession that outlives the VM.
+        [[nodiscard]]
+        auto boundToolRuntime(lua_State* state) -> ExplorationToolInvoke*
+        {
+            return static_cast<ExplorationToolInvoke*>(
+                lua_tolightuserdata(state, lua_upvalueindex(2))
             );
-            install(state, surface, "explore_probe", &probe, context);
-            install(state, surface, "explore_project_read", &projectRead, context);
-            install(state, surface, "explore_project_write", &projectWrite, context);
-            install(state, surface, "explore_terminal", &terminal, context);
-            install(state, surface, "explore_click", &cycleClick, context);
-            install(state, surface, "explore_hold", &cycleHold, context);
-            install(state, surface, "explore_drag", &cycleDrag, context);
-            install(state, surface, "explore_move", &cycleMove, context);
-            install(state, surface, "explore_scroll", &cycleScroll, context);
-            install(state, surface, "explore_key", &cycleKey, context);
-            install(state, surface, "explore_settle", &settle, context);
+        }
+
+        // One Tool call, and the body an observation holds its frame for.
+        //
+        // The body is run FROM INSIDE the Tool call, by the observation's own
+        // provider while that call's durable row is still dispatching -- which
+        // is what lets the calls it makes be recorded as that observation's
+        // children. It is a pcall, so a raise inside the body is a value here
+        // rather than a longjmp through the host frames that are running it,
+        // and the frame is closed on that path exactly as on every other.
+        auto invokeTool(lua_State* state) -> int
+        {
+            auto* const context = boundContext(state);
+            guardLive(state, context);
+            auto* const p_runtime = boundToolRuntime(state);
+            UF_CHECK(p_runtime != nullptr);
+
+            auto const toolName = stringAt(state, 1, "tool name");
+            if (lua_type(state, 2) != LUA_TTABLE)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "a Tool call's arguments must be a table"
+                );
+            }
+            auto budget    = ToolValueBudget{};
+            auto arguments = readToolValue(state, 2, 0U, budget);
+
+            auto body = ExplorationCallBody{};
+            if (!lua_isnoneornil(state, 3))
+            {
+                if (lua_type(state, 3) != LUA_TFUNCTION)
+                {
+                    raiseTierB(
+                        state,
+                        AutomationErrorKind::InvalidResource,
+                        "an observation's body must be a function"
+                    );
+                }
+                auto const bodyIndex = lua_absindex(state, 3);
+                body = [state, bodyIndex]() -> Status
+                {
+                    lua_pushvalue(state, bodyIndex);
+                    if (lua_pcall(state, 0, 0, 0) == LUA_OK)
+                    {
+                        return ok();
+                    }
+                    // What the body raised, in the words it raised it. A Tier B
+                    // carrier is decoded rather than stringified, because its
+                    // __tostring is the carrier's type name and a reader of
+                    // that cannot tell one refusal from another.
+                    auto message = std::string{"the observation's body failed"};
+                    auto kind    = AutomationErrorKind::ActionRejected;
+                    if (auto const decoded = decodeTierB(state, -1))
+                    {
+                        message = decoded->message;
+                        kind    = decoded->kind;
+                    }
+                    else if (lua_type(state, -1) == LUA_TSTRING)
+                    {
+                        std::size_t size{};
+                        char const* const text = lua_tolstring(state, -1, &size);
+                        message.assign(text, size);
+                    }
+                    lua_pop(state, 1);
+                    return fail(kind, std::move(message));
+                };
+            }
+
+            auto answered = (*p_runtime)(
+                *context,
+                toolName,
+                arguments,
+                std::move(body)
+            );
+            if (!answered)
+            {
+                raiseFromError(state, context, answered.error());
+            }
+            pushToolValue(state, *answered);
+            auto const frozen = script::deepFreeze(state, -1);
+            if (!frozen)
+            {
+                context->markTerminal(AutomationErrorKind::InternalInvariant);
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InternalInvariant,
+                    "cannot freeze a Tool answer"
+                );
+            }
+            return 1;
+        }
+
+        auto buildExplorationSurface(
+            lua_State* state,
+            TaskContext* context,
+            ExplorationToolInvoke* p_runtime
+        ) -> Status
+        {
+            lua_createtable(state, 0, 2);
+            int const surface = lua_gettop(state);
+            lua_pushlightuserdata(state, context);
+            lua_pushlightuserdata(state, p_runtime);
+            lua_pushcclosure(state, &invokeTool, "uf_explore_invoke", 2);
+            lua_setfield(state, surface, "invoke");
             lua_pushstring(state, k_errorType);
             lua_setfield(state, surface, "error_tag");
             UF_TRY(script::deepFreeze(state, surface));
@@ -2294,13 +2031,19 @@ namespace uf::task
         return [](lua_State* /*state*/) -> Status { return ok(); };
     }
 
-    auto annotationPrivateCapabilities(TaskContext& context)
-        -> script::PrivateCapabilityInstaller
+    auto explorationToolCapabilities(
+        TaskContext& context,
+        ExplorationToolInvoke& runtime
+    ) -> script::PrivateCapabilityInstaller
     {
-        TaskContext* const p_context = &context;
-        return [p_context](lua_State* state) -> Status
+        TaskContext* const           p_context = &context;
+        ExplorationToolInvoke* const p_runtime = &runtime;
+        return [p_context, p_runtime](lua_State* state) -> Status
         {
-            return buildAnnotationSurface(state, p_context);
+            // Engine::create invokes this installer synchronously and the table
+            // it builds dies with the VM, which ExplorationSession destroys
+            // before either object this closes over.
+            return buildExplorationSurface(state, p_context, p_runtime);
         };
     }
 }

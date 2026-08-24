@@ -1987,23 +1987,60 @@ namespace uf::operator_runtime
         ));
     }
 
-    TEST_CASE("every Framework Tool is a leaf")
+    // Every Framework Tool but one is a leaf, and the exception is the whole
+    // of what makes an observation able to hold a frame FOR SOMETHING: a
+    // delegation grant is minted only from a parent whose child_tool_names are
+    // non-empty, so the three measuring Tools are children of
+    // framework.screen.observe or they are nothing at all
+    // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
+    TEST_CASE("every Framework Tool but the observation is a leaf")
     {
         auto const catalog = frameworkCatalog();
-        constexpr auto k_frameworkTools = std::array{
+        constexpr auto k_leafTools = std::array{
             std::string_view{"framework.audit.record"},
             std::string_view{"framework.input.deliver"},
             std::string_view{"framework.input.semantic_target"},
-            std::string_view{"framework.screen.observe"},
+            std::string_view{"framework.project.read"},
+            std::string_view{"framework.project.write"},
+            std::string_view{"framework.screen.census_grid"},
+            std::string_view{"framework.screen.probe"},
+            std::string_view{"framework.screen.read_lines"},
             std::string_view{"framework.workflow.status"},
             std::string_view{"framework.workflow.wait"},
         };
-        for (auto const name : k_frameworkTools)
+        for (auto const name : k_leafTools)
         {
             auto const descriptor = catalog.describe(name);
             REQUIRE(descriptor.has_value());
             CHECK(descriptor->childEffects.childToolNames.empty());
             CHECK(descriptor->childEffects.maximumChildCalls == 0U);
         }
+
+        auto const observe = catalog.describe("framework.screen.observe");
+        REQUIRE(observe.has_value());
+        CHECK(
+            observe->childEffects.childToolNames
+            == std::vector<std::string>{
+                "framework.screen.census_grid",
+                "framework.screen.probe",
+                "framework.screen.read_lines",
+            }
+        );
+        CHECK(observe->childEffects.maximumChildCalls == 64U);
+
+        // THE HELD CHILD MEASUREMENTS ARE READ-ONLY, and this is where that is
+        // enforced rather than merely intended. A mutating child under a
+        // read-only root could never be admitted anyway -- an observation
+        // declares no effect bound, so its admitted root envelope is empty --
+        // and declaring the ceiling here is what makes the refusal name the
+        // parent rather than the envelope.
+        CHECK(
+            observe->childEffects.maximumChildMutability
+            == ToolMutability::ReadOnly
+        );
+        CHECK(observe->childEffects.maximumChildRisk == Risk::ReadOnly);
+        CHECK(
+            observe->childEffects.maximumChildSurface == ToolSurface::Privileged
+        );
     }
 }

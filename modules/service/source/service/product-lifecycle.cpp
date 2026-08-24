@@ -20,6 +20,7 @@
 #include <script/scoped-tool-program.hpp>
 
 #include <task/exploration-session.hpp>
+#include <task/pixel-probe.hpp>
 #include <task/platform/confined-file.hpp>
 #include <task/runtime-model-file.hpp>
 #include <task/task-host.hpp>
@@ -110,6 +111,21 @@ namespace uf::service
         };
         constexpr auto k_deliverInputTool = std::string_view{
             "framework.input.deliver"
+        };
+        constexpr auto k_censusGridTool = std::string_view{
+            "framework.screen.census_grid"
+        };
+        constexpr auto k_probeTool = std::string_view{
+            "framework.screen.probe"
+        };
+        constexpr auto k_readLinesTool = std::string_view{
+            "framework.screen.read_lines"
+        };
+        constexpr auto k_projectReadTool = std::string_view{
+            "framework.project.read"
+        };
+        constexpr auto k_projectWriteTool = std::string_view{
+            "framework.project.write"
         };
 
         // How long one minted observation authority may be presented for.
@@ -465,6 +481,74 @@ namespace uf::service
             }
             return std::string{p_member->string()};
         }
+
+        // Every numeric member below was already judged by the Framework Tool
+        // Catalog's own contract -- a surface pixel is a non-negative integer
+        // inside uint32, a colour channel is 0..255, a tolerance is a
+        // non-negative integer -- so this reads the admitted value rather than
+        // re-judging it. A member the catalog did not admit cannot reach here,
+        // which is why the absence is an internal invariant.
+        [[nodiscard]]
+        auto admittedNumber(json::Value const& arguments, std::string_view member)
+            -> double
+        {
+            auto const* const p_member = arguments.find(member);
+            UF_CHECK(p_member != nullptr);
+            return p_member->number();
+        }
+
+        [[nodiscard]]
+        auto admittedPixel(json::Value const& arguments, std::string_view member)
+            -> uint32
+        {
+            return static_cast<uint32>(admittedNumber(arguments, member));
+        }
+
+        [[nodiscard]]
+        auto admittedFlag(json::Value const& arguments, std::string_view member)
+            -> bool
+        {
+            auto const* const p_member = arguments.find(member);
+            UF_CHECK(p_member != nullptr);
+            return p_member->boolean();
+        }
+
+        // The rectangle every measuring Tool names, on the frame its enclosing
+        // observation is holding. PixelRect refuses a zero extent and an origin
+        // that overflows, and that refusal is the Tool's answer rather than an
+        // internal invariant: the catalog bounds each member on its own and
+        // says nothing about the four together.
+        [[nodiscard]]
+        auto admittedRectangle(json::Value const& arguments) -> Result<PixelRect>
+        {
+            return PixelRect::create(
+                admittedPixel(arguments, "x"),
+                admittedPixel(arguments, "y"),
+                admittedPixel(arguments, "width"),
+                admittedPixel(arguments, "height")
+            );
+        }
+
+        [[nodiscard]]
+        auto admittedColourKey(json::Value const& arguments)
+            -> task::ProbeColourKey
+        {
+            return task::ProbeColourKey{
+                .red = static_cast<uint8>(
+                    admittedNumber(arguments, "colour_red")
+                ),
+                .green = static_cast<uint8>(
+                    admittedNumber(arguments, "colour_green")
+                ),
+                .blue = static_cast<uint8>(
+                    admittedNumber(arguments, "colour_blue")
+                ),
+                .tolerance = static_cast<uint32>(
+                    admittedNumber(arguments, "tolerance")
+                ),
+                .removes = admittedFlag(arguments, "removes"),
+            };
+        }
     }
 
     struct ProductLifecycle::Impl final
@@ -717,15 +801,71 @@ namespace uf::service
         [[nodiscard]]
         auto observe(task::TaskContext& context) -> Result<ProductObservation>;
 
+        // What an observation with a BODY carries past the Tool provider
+        // boundary. A provider is handed the immutable call position and
+        // nothing else, so a body -- which is a closure inside the VM that
+        // issued the observe, and which has to be numbered under this call's
+        // own position -- travels beside that boundary rather than through it.
+        //
+        // Both members are borrows of the frame that started the call and
+        // nothing is retained: `request` is the admitted request runAdmitted
+        // holds for the whole dispatch, and `body` is consumed exactly once.
+        struct ObservationBodyContext final
+        {
+            operator_runtime::ToolAdmissionRequest const& request;
+            operator_runtime::ObservationBodyRun&         body;
+        };
+
         [[nodiscard]]
         auto answerFrameworkTool(
-            operator_runtime::ToolCallPositionIdentity const& call
+            operator_runtime::ToolCallPositionIdentity const& call,
+            ObservationBodyContext* p_bodyContext
         ) -> Result<operator_runtime::ToolCallCompletion>;
 
         [[nodiscard]]
         auto answerObserveTool(
+            operator_runtime::ToolCallPositionIdentity const& call,
+            ObservationBodyContext* p_bodyContext
+        ) -> Result<operator_runtime::ToolCallCompletion>;
+
+        // The three measuring Tools. Each binds BY CALL POSITION to the
+        // innermost open observation frame and takes no frame handle at all, so
+        // a call outside every frame is refused by name -- "no open observation
+        // frame" -- rather than silently capturing one of its own, which is the
+        // semantic drift the frame ruling exists to kill
+        // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md
+        // W3).
+        [[nodiscard]]
+        auto answerReadLinesTool(
             operator_runtime::ToolCallPositionIdentity const& call
         ) -> Result<operator_runtime::ToolCallCompletion>;
+
+        [[nodiscard]]
+        auto answerProbeTool(
+            operator_runtime::ToolCallPositionIdentity const& call
+        ) -> Result<operator_runtime::ToolCallCompletion>;
+
+        [[nodiscard]]
+        auto answerCensusGridTool(
+            operator_runtime::ToolCallPositionIdentity const& call
+        ) -> Result<operator_runtime::ToolCallCompletion>;
+
+        // The project's own authoring store, read and written through the
+        // confined root the session was started against.
+        [[nodiscard]]
+        auto answerProjectReadTool(
+            operator_runtime::ToolCallPositionIdentity const& call
+        ) -> Result<operator_runtime::ToolCallCompletion>;
+
+        [[nodiscard]]
+        auto answerProjectWriteTool(
+            operator_runtime::ToolCallPositionIdentity const& call
+        ) -> Result<operator_runtime::ToolCallCompletion>;
+
+        // The frame a measuring call binds to, or the refusal that names why
+        // there is none.
+        [[nodiscard]]
+        auto measuringFrame(std::string_view toolName) -> Result<task::CycleTicket>;
 
         // Everything answerObserveTool does INSIDE the frame it opened. It is a
         // separate function so the frame's close is one unconditional line after
@@ -783,8 +923,62 @@ namespace uf::service
         [[nodiscard]]
         auto runAdmitted(
             operator_runtime::ToolAdmissionRequest const& request,
-            task::TaskContext& context
+            task::TaskContext& context,
+            operator_runtime::ObservationBodyRun body
         ) -> Result<operator_runtime::ToolCallReplay>;
+
+        // One top-of-run Framework call, admitted. It is factored out of
+        // invokeFrameworkTool because the exploration seam needs the ADMITTED
+        // COORDINATE as well as the outcome -- a chunk's answer names the
+        // durable position its call occupied -- and a second translation of one
+        // request envelope would be a second place a caller namespace or a call
+        // ordinal could be stated differently.
+        [[nodiscard]]
+        auto admitFrameworkCall(FrameworkToolCall& request)
+            -> Result<operator_runtime::ToolAdmissionRequest>;
+
+        // One Tool call issued from an exploration chunk.
+        //
+        // Two routes and one rule deciding between them: a call written inside
+        // an observation's body is a CHILD of that observation and goes through
+        // the dispatcher's own child seam, and every other call is issued at the
+        // top of this session's run. Neither is chosen by the chunk -- the chunk
+        // names a Tool and an argument value, and where the call lands is
+        // decided by whether a body is open.
+        [[nodiscard]]
+        auto issueExplorationCall(
+            task::TaskContext& context,
+            std::string_view toolName,
+            json::Value const& arguments,
+            task::ExplorationCallBody body
+        ) -> Result<json::Value>;
+
+        // The observation whose body is running, and how many children it has
+        // issued so far. Both are empty outside a body; the VM is
+        // single-threaded and a nested observation is refused by name, so at
+        // most one body is ever open.
+        std::optional<ContentHash> explorationBodyCall{};
+        uint64                     explorationBodyChildren{};
+
+        // How many top-of-run calls this session's chunks have issued. It names
+        // each one's ROOT REQUEST, so every top-level exploration call is its
+        // own root -- exactly as every CLI verb's single call is.
+        //
+        // ONE ROOT PER CALL RATHER THAN ONE PER SESSION, and the difference is
+        // load-bearing. Positions under one root are a sequence, and admission
+        // refuses a position whose predecessor has no terminal outcome; a call
+        // refused AT admission never reaches one, so a single refused input
+        // would leave every later call in that session refused for a reason
+        // that has nothing to do with it. A human annotating writes independent
+        // acts, and a refusal has to cost exactly the act it refused.
+        uint64 explorationRequests{};
+
+        static constexpr auto k_explorationRequestKeyPrefix = std::string_view{
+            "exploration-"
+        };
+        static constexpr auto k_explorationRootPreimageJcs = std::string_view{
+            R"({"objective":"exploration"})"
+        };
     };
 
     ProductLifecycle::ProductLifecycle(std::unique_ptr<Impl> implementation)
@@ -959,7 +1153,7 @@ namespace uf::service
                 [p_implementation](
                     operator_runtime::ToolCallPositionIdentity const& call
                 ) -> Result<operator_runtime::ToolCallCompletion>
-                { return p_implementation->answerFrameworkTool(call); }
+                { return p_implementation->answerFrameworkTool(call, nullptr); }
             )
         );
         implementation->toolDispatcher.emplace(std::move(dispatcher));
@@ -1098,6 +1292,31 @@ namespace uf::service
             )
         );
 
+        // The seam every verb an exploration chunk writes goes through. It is
+        // bound to the Impl rather than to this handle, on the dispatcher's
+        // provider's terms: Impl is heap-allocated and neither copyable nor
+        // movable, and the session that stores this callable must not outlive
+        // this lifecycle -- which startExplorationSession's contract already
+        // states, because the TaskContext it hands back is bound to the same
+        // object.
+        auto* const p_implementation = m_impl.get();
+        auto toolRuntime = task::ExplorationToolInvoke{
+            [p_implementation](
+                task::TaskContext& callContext,
+                std::string_view toolName,
+                json::Value const& arguments,
+                task::ExplorationCallBody body
+            ) -> Result<json::Value>
+            {
+                return p_implementation->issueExplorationCall(
+                    callContext,
+                    toolName,
+                    arguments,
+                    std::move(body)
+                );
+            }
+        };
+
         return m_impl->operatorHost.host().startExplorationSession(
             m_impl->generation,
             std::move(recorder),
@@ -1113,6 +1332,7 @@ namespace uf::service
                 .projectId            = pinned.deployment,
                 .projectRoot          = pinned.projectDirectory,
                 .tracePath            = std::move(config.tracePath),
+                .toolRuntime          = std::move(toolRuntime),
                 .cancellation         = std::move(cancellation),
                 .maximumReadsPerCycle = config.maximumReadsPerCycle,
                 .maximumCropsPerCycle = config.maximumCropsPerCycle,
@@ -1164,17 +1384,16 @@ namespace uf::service
     }
 
     auto ProductLifecycle::Impl::answerObserveTool(
-        operator_runtime::ToolCallPositionIdentity const& call
+        operator_runtime::ToolCallPositionIdentity const& call,
+        ObservationBodyContext* p_bodyContext
     ) -> Result<operator_runtime::ToolCallCompletion>
     {
         // AN OBSERVE WITH NO BODY IS A FRAME WITH AN EMPTY BODY: open, resolve,
         // close inside this one call
         // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
-        // Every observe is bodyless until the measuring verbs become Tools that
-        // can be written inside one, so this call IS the scope the frame belongs
-        // to, and the close below is that scope exiting. Nothing about the
-        // ownership moves when a body arrives -- only which scope's exit runs
-        // the close.
+        // With a body it is open, resolve, RUN THE BODY, close -- the same call
+        // and the same scope, differing only in whether anything is written
+        // inside it. Nothing about the ownership moves either way.
         //
         // The frame is asked for BEFORE it is taken, so a second concurrent one
         // costs no capture and earns a refusal that names what it refused,
@@ -1197,6 +1416,53 @@ namespace uf::service
         ));
 
         auto answered = observedToolResult(call, *p_context);
+
+        // THE BODY, INSIDE THE FRAME AND INSIDE THIS CALL'S OWN DISPATCH. Both
+        // halves matter: the measuring calls it makes bind by position to the
+        // frame opened above, and a delegation grant can only be minted from a
+        // parent whose durable row is still dispatching -- which this one is,
+        // because a provider runs between the dispatch boundary and the
+        // terminal write.
+        //
+        // It runs only after the state resolved, so a body never measures a
+        // frame the resolution failed on.
+        if (answered.has_value() && p_bodyContext != nullptr)
+        {
+            // The two counters the exploration seam reads to decide that a call
+            // is this observation's child, saved and restored around the body
+            // rather than assigned: they are the frame's, and the frame is this
+            // call's scope. The lambda is consumed inside this same call --
+            // runObservationBody runs it synchronously and returns -- so the
+            // pointer it carries names an object that strictly outlives it.
+            auto* const p_self = this;
+            auto ran = dispatcher().runObservationBody(
+                generationHandle(),
+                p_bodyContext->request.controller,
+                p_bodyContext->request.lease,
+                p_bodyContext->request.root,
+                call,
+                [p_self, frameCall = call.identity(),
+                 inner = std::move(p_bodyContext->body)]() mutable -> Status
+                {
+                    auto const outerCall = std::exchange(
+                        p_self->explorationBodyCall,
+                        std::optional{frameCall}
+                    );
+                    auto const outerChildren = std::exchange(
+                        p_self->explorationBodyChildren,
+                        uint64{0}
+                    );
+                    auto ranBody = inner();
+                    p_self->explorationBodyCall     = outerCall;
+                    p_self->explorationBodyChildren = outerChildren;
+                    return ranBody;
+                }
+            );
+            if (!ran)
+            {
+                answered = std::unexpected{std::move(ran).error()};
+            }
+        }
 
         // Unconditional, and before the answer is looked at. The engage above
         // refused if anything was already open, so what closes here can only be
@@ -1313,6 +1579,286 @@ namespace uf::service
              json::Value::ofString(controller().controlledTargetId())},
             {"installed_generation", counterMember(installedGeneration)},
             {"session_id", json::Value::ofString(sessionId)},
+        }));
+    }
+
+    auto ProductLifecycle::Impl::measuringFrame(std::string_view toolName)
+        -> Result<task::CycleTicket>
+    {
+        auto const held = activeContext().openObservationFrame();
+        if (!held.has_value())
+        {
+            // The specific signal W3 requires, and the reason a measuring Tool
+            // takes no frame handle: a verb that captured a frame of its own
+            // here would answer about a screen nobody measured against, which
+            // is exactly the drift an observation frame exists to delete.
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                std::string{toolName}
+                    + " measures the frame its enclosing observation is "
+                      "holding, and there is no open observation frame; it is "
+                      "callable only inside the body of "
+                    + std::string{k_observeTool}
+            );
+        }
+        return *held;
+    }
+
+    auto ProductLifecycle::Impl::answerReadLinesTool(
+        operator_runtime::ToolCallPositionIdentity const& call
+    ) -> Result<operator_runtime::ToolCallCompletion>
+    {
+        UF_TRY_VALUE(
+            arguments,
+            operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
+        );
+        UF_TRY_VALUE(rect, admittedRectangle(arguments.value()));
+        UF_TRY_VALUE(ticket, measuringFrame(k_readLinesTool));
+
+        // Block layout and never the caller's choice: this Tool exists for the
+        // region nobody can draw a rectangle inside, so a layout argument would
+        // offer the caller the one answer it came here to avoid.
+        UF_TRY_VALUE(
+            lines,
+            activeContext().cycleRead(ticket, rect, ocr::TextLayout::Block)
+        );
+
+        auto rendered = std::vector<json::Value>{};
+        rendered.reserve(lines.size());
+        for (auto const& line : lines)
+        {
+            rendered.emplace_back(json::Value::ofObject({
+                {"confidence",
+                 json::Value::ofNumber(
+                     static_cast<double>(line.confidenceBp) / 10'000.0
+                 )},
+                {"height",
+                 json::Value::ofNumber(static_cast<double>(line.rect.height()))},
+                {"text", json::Value::ofString(line.text)},
+                {"width",
+                 json::Value::ofNumber(static_cast<double>(line.rect.width()))},
+                {"x", json::Value::ofNumber(static_cast<double>(line.rect.x()))},
+                {"y", json::Value::ofNumber(static_cast<double>(line.rect.y()))},
+            }));
+        }
+        return confirmedToolResult(json::Value::ofObject({
+            {"lines", json::Value::ofArray(std::move(rendered))},
+        }));
+    }
+
+    auto ProductLifecycle::Impl::answerProbeTool(
+        operator_runtime::ToolCallPositionIdentity const& call
+    ) -> Result<operator_runtime::ToolCallCompletion>
+    {
+        UF_TRY_VALUE(
+            arguments,
+            operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
+        );
+        UF_TRY_VALUE(rect, admittedRectangle(arguments.value()));
+        auto const key = admittedColourKey(arguments.value());
+        UF_TRY_VALUE(ticket, measuringFrame(k_probeTool));
+
+        // The crop is taken and then measured, and the PNG is DROPPED here: a
+        // measurement crosses the Tool boundary and a frame's pixels never do.
+        // Keeping a piece of the screen is framework.project.write's capture
+        // arm, which is an authoring write and is judged as one.
+        UF_TRY_VALUE(
+            cropped,
+            activeContext().cycleCrop(ticket, rect, std::nullopt)
+        );
+        UF_TRY_VALUE(
+            report,
+            task::probePngRegion(
+                cropped.png,
+                *PixelRect::create(0U, 0U, rect.width(), rect.height()),
+                key
+            )
+        );
+
+        auto members = std::vector<json::Member>{
+            {"distinct_colours",
+             json::Value::ofNumber(static_cast<double>(report.distinctColours))},
+            {"dominant_blue",
+             json::Value::ofNumber(static_cast<double>(report.dominantBlue))},
+            {"dominant_green",
+             json::Value::ofNumber(static_cast<double>(report.dominantGreen))},
+            {"dominant_pixels",
+             json::Value::ofNumber(static_cast<double>(report.dominantPixels))},
+            {"dominant_red",
+             json::Value::ofNumber(static_cast<double>(report.dominantRed))},
+            {"rect_pixels",
+             json::Value::ofNumber(static_cast<double>(report.rectPixels))},
+        };
+        // PixelProbeReport engages the three selection counts together or not
+        // at all, so this asks for exactly what it then reads rather than
+        // reading two of them on the strength of the first.
+        if (
+            report.fullySelectedPixels.has_value()
+            && report.rampSelectedPixels.has_value()
+            && report.selectedWeight.has_value()
+        )
+        {
+            members.emplace_back(
+                "fully_selected_pixels",
+                json::Value::ofNumber(
+                    static_cast<double>(*report.fullySelectedPixels)
+                )
+            );
+            members.emplace_back(
+                "ramp_selected_pixels",
+                json::Value::ofNumber(
+                    static_cast<double>(*report.rampSelectedPixels)
+                )
+            );
+            members.emplace_back(
+                "selected_weight",
+                json::Value::ofNumber(
+                    static_cast<double>(*report.selectedWeight)
+                )
+            );
+        }
+        return confirmedToolResult(json::Value::ofObject(std::move(members)));
+    }
+
+    auto ProductLifecycle::Impl::answerCensusGridTool(
+        operator_runtime::ToolCallPositionIdentity const& call
+    ) -> Result<operator_runtime::ToolCallCompletion>
+    {
+        UF_TRY_VALUE(
+            arguments,
+            operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
+        );
+        UF_TRY_VALUE(rect, admittedRectangle(arguments.value()));
+        auto const key = admittedColourKey(arguments.value());
+        UF_TRY_VALUE(ticket, measuringFrame(k_censusGridTool));
+        UF_TRY_VALUE(
+            report,
+            activeContext().cycleCensusGrid(
+                ticket,
+                rect,
+                admittedPixel(arguments.value(), "cell_width"),
+                admittedPixel(arguments.value(), "cell_height"),
+                key
+            )
+        );
+
+        auto selected = std::vector<json::Value>{};
+        selected.reserve(report.selectedPixels.size());
+        for (auto const count : report.selectedPixels)
+        {
+            selected.emplace_back(
+                json::Value::ofNumber(static_cast<double>(count))
+            );
+        }
+        return confirmedToolResult(json::Value::ofObject({
+            {"cell_height",
+             json::Value::ofNumber(static_cast<double>(report.cellHeight))},
+            {"cell_width",
+             json::Value::ofNumber(static_cast<double>(report.cellWidth))},
+            {"columns",
+             json::Value::ofNumber(static_cast<double>(report.columns))},
+            {"rows", json::Value::ofNumber(static_cast<double>(report.rows))},
+            {"selected_pixels", json::Value::ofArray(std::move(selected))},
+        }));
+    }
+
+    auto ProductLifecycle::Impl::answerProjectReadTool(
+        operator_runtime::ToolCallPositionIdentity const& call
+    ) -> Result<operator_runtime::ToolCallCompletion>
+    {
+        UF_TRY_VALUE(
+            arguments,
+            operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
+        );
+        UF_TRY_VALUE(path, requiredStringArgument(arguments.value(), "path"));
+        UF_TRY_VALUE(bytes, activeContext().projectRead(path));
+
+        auto text = std::string{};
+        text.reserve(bytes.size());
+        for (auto const value : bytes)
+        {
+            text.push_back(
+                static_cast<char>(std::to_integer<unsigned char>(value))
+            );
+        }
+        UF_TRY_VALUE(hash, sha256(bytes));
+        return confirmedToolResult(json::Value::ofObject({
+            {"content", json::Value::ofString(std::move(text))},
+            {"content_hash", json::Value::ofString(hash.hex())},
+            {"path", json::Value::ofString(path)},
+        }));
+    }
+
+    auto ProductLifecycle::Impl::answerProjectWriteTool(
+        operator_runtime::ToolCallPositionIdentity const& call
+    ) -> Result<operator_runtime::ToolCallCompletion>
+    {
+        UF_TRY_VALUE(
+            arguments,
+            operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
+        );
+        auto const& value = arguments.value();
+        UF_TRY_VALUE(action, requiredStringArgument(value, "action"));
+        UF_TRY_VALUE(path, requiredStringArgument(value, "path"));
+
+        // The bytes this call writes, from whichever of the two arms named
+        // them. The capture arm takes its own frame when its caller holds none
+        // -- word for word what an observe with no body and a top-level input
+        // both do -- and posts into the innermost open one when there is one,
+        // so a capture written from inside an observation's body keeps the
+        // frame that body measured.
+        auto& context = activeContext();
+        auto written  = [&]() -> Result<std::vector<std::byte>>
+        {
+            if (action == "text")
+            {
+                UF_TRY_VALUE(content, requiredStringArgument(value, "content"));
+                auto bytes = std::vector<std::byte>{};
+                bytes.reserve(content.size());
+                for (auto const character : content)
+                {
+                    bytes.emplace_back(
+                        static_cast<std::byte>(
+                            static_cast<unsigned char>(character)
+                        )
+                    );
+                }
+                return bytes;
+            }
+            UF_CHECK(action == "capture");
+            UF_TRY_VALUE(rect, admittedRectangle(value));
+            auto const inheritedFrame = context.openObservationFrame();
+            if (!inheritedFrame.has_value())
+            {
+                UF_TRY(context.openCycle());
+            }
+            auto const closeOwnFrame = scopeExit(
+                [&context, owned = !inheritedFrame.has_value()]() noexcept
+                {
+                    if (owned)
+                    {
+                        static_cast<void>(context.sweepOpenCycle());
+                    }
+                }
+            );
+            auto const capturing = context.openObservationFrame();
+            UF_CHECK(capturing.has_value());
+            UF_TRY_VALUE(
+                cropped,
+                context.cycleCrop(*capturing, rect, std::nullopt)
+            );
+            return cropped.png;
+        }();
+        UF_TRY_VALUE(bytes, std::move(written));
+
+        UF_TRY(context.projectWrite(path, bytes));
+        UF_TRY_VALUE(hash, sha256(bytes));
+        return confirmedToolResult(json::Value::ofObject({
+            {"action", json::Value::ofString(action)},
+            {"content_hash", json::Value::ofString(hash.hex())},
+            {"path", json::Value::ofString(path)},
+            {"written_bytes",
+             json::Value::ofNumber(static_cast<double>(bytes.size()))},
         }));
     }
 
@@ -1705,17 +2251,38 @@ namespace uf::service
     }
 
     auto ProductLifecycle::Impl::answerFrameworkTool(
-        operator_runtime::ToolCallPositionIdentity const& call
+        operator_runtime::ToolCallPositionIdentity const& call,
+        ObservationBodyContext* p_bodyContext
     ) -> Result<operator_runtime::ToolCallCompletion>
     {
         auto const& toolName = call.toolName();
         if (toolName == k_observeTool)
         {
-            return answerObserveTool(call);
+            return answerObserveTool(call, p_bodyContext);
         }
         if (toolName == k_statusTool)
         {
             return answerStatusTool();
+        }
+        if (toolName == k_readLinesTool)
+        {
+            return answerReadLinesTool(call);
+        }
+        if (toolName == k_probeTool)
+        {
+            return answerProbeTool(call);
+        }
+        if (toolName == k_censusGridTool)
+        {
+            return answerCensusGridTool(call);
+        }
+        if (toolName == k_projectReadTool)
+        {
+            return answerProjectReadTool(call);
+        }
+        if (toolName == k_projectWriteTool)
+        {
+            return answerProjectWriteTool(call);
         }
         if (toolName == k_semanticInputTool)
         {
@@ -1787,7 +2354,8 @@ namespace uf::service
 
     auto ProductLifecycle::Impl::runAdmitted(
         operator_runtime::ToolAdmissionRequest const& request,
-        task::TaskContext& context
+        task::TaskContext& context,
+        operator_runtime::ObservationBodyRun body
     ) -> Result<operator_runtime::ToolCallReplay>
     {
         auto const active = ActiveContext{*this, context};
@@ -1831,11 +2399,20 @@ namespace uf::service
                 operatorHost.coordinator(),
             };
             auto* const p_self = this;
-            auto provider = [p_self](
+            auto bodyContext = ObservationBodyContext{
+                .request = request,
+                .body    = body,
+            };
+            // The context is offered only when there IS a body: a provider that
+            // received an empty one would have to decide whether an empty body
+            // means "no body" or "a body that does nothing", which is the
+            // absent-means-something reading this repository forbids.
+            auto* const p_bodyContext = body ? &bodyContext : nullptr;
+            auto provider = [p_self, p_bodyContext](
                                 operator_runtime::ToolCallPositionIdentity const&
                                     admittedCall
                             ) -> Result<operator_runtime::ToolCallCompletion>
-            { return p_self->answerFrameworkTool(admittedCall); };
+            { return p_self->answerFrameworkTool(admittedCall, p_bodyContext); };
             return executor.invoke(request, provider);
         }();
 
@@ -1869,6 +2446,17 @@ namespace uf::service
         task::TaskContext& context
     ) -> Result<operator_runtime::ToolCallReplay>
     {
+        UF_TRY_VALUE(admission, m_impl->admitFrameworkCall(request));
+        return m_impl->runAdmitted(
+            admission,
+            context,
+            std::move(request.body)
+        );
+    }
+
+    auto ProductLifecycle::Impl::admitFrameworkCall(FrameworkToolCall& request)
+        -> Result<operator_runtime::ToolAdmissionRequest>
+    {
         UF_TRY_VALUE(
             rootPreimage,
             operator_runtime::CanonicalJson::parseExact(
@@ -1890,7 +2478,7 @@ namespace uf::service
         if (
             invocation.descriptor().mutability
                 == operator_runtime::ToolMutability::Mutating
-            && m_impl->access != LifecycleAccess::Writable
+            && access != LifecycleAccess::Writable
         )
         {
             return fail(
@@ -1907,10 +2495,10 @@ namespace uf::service
         // so this seam cannot state any of them differently from an actor
         // adapter.
         auto const start = operator_runtime::ToolRootStart{
-            .controller      = m_impl->controller(),
-            .lease           = m_impl->controlLease(),
+            .controller      = controller(),
+            .lease           = controlLease(),
             .execution       = request.executionIdentity,
-            .policyAuthority   = m_impl->policyAuthority,
+            .policyAuthority = policyAuthority,
             .invocation      = invocation,
             .requestKey      = std::move(request.requestKey),
             .requestPreimage = std::move(rootPreimage),
@@ -1925,15 +2513,109 @@ namespace uf::service
         // been able to open.
         UF_TRY_VALUE(
             presented,
-            m_impl->observations.presented(invocation.canonicalArgs())
+            observations.presented(invocation.canonicalArgs())
         );
+        return presented.has_value()
+            ? rootProducer.startAgainstObservation(start, *presented)
+            : rootProducer.start(start);
+    }
+
+    auto ProductLifecycle::Impl::issueExplorationCall(
+        task::TaskContext& context,
+        std::string_view toolName,
+        json::Value const& arguments,
+        task::ExplorationCallBody body
+    ) -> Result<json::Value>
+    {
         UF_TRY_VALUE(
-            admission,
-            presented.has_value()
-                ? m_impl->rootProducer.startAgainstObservation(start, *presented)
-                : m_impl->rootProducer.start(start)
+            canonicalArguments,
+            operator_runtime::CanonicalJson::parseExact(
+                json::canonicalBytes(arguments)
+            )
         );
-        return m_impl->runAdmitted(admission, context);
+
+        // INSIDE AN OBSERVATION'S BODY. The call is a child of that observation
+        // and goes through the dispatcher's own child seam, which mints the
+        // delegation grant from the observation's still-dispatching row, judges
+        // the child against what that observation declared it may delegate, and
+        // records the call under it.
+        if (explorationBodyCall.has_value())
+        {
+            if (body)
+            {
+                // Refused here rather than left to the frame's own single-slot
+                // refusal, because a body handed to a child call would be
+                // silently dropped by the seam that carries no body at all --
+                // and a body that did not run is worse than one refused.
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "an observation may not be written inside another "
+                    "observation's body; at most one observation frame may be "
+                    "open, and the call at "
+                        + explorationBodyCall->hex() + " is holding it"
+                );
+            }
+            ++explorationBodyChildren;
+            return dispatcher().toolRuntimeSeam()(
+                toolName,
+                arguments,
+                script::ToolCallCoordinate{
+                    .parentPosition = *explorationBodyCall,
+                    .childIndex     = explorationBodyChildren,
+                },
+                context.cancellation()
+            );
+        }
+
+        // AT THE TOP OF THE RUN. One request envelope, admitted by the same
+        // translation every other top-of-run call goes through.
+        ++explorationRequests;
+        auto call = FrameworkToolCall{
+            .requestKey = std::string{k_explorationRequestKeyPrefix}
+                + std::to_string(explorationRequests),
+            .exactRootRequestPreimageJcs = std::string{
+                k_explorationRootPreimageJcs
+            },
+            .executionIdentity = executionIdentity(),
+            .toolName          = std::string{toolName},
+            .exactArgumentsJcs = std::string{canonicalArguments.bytes()},
+            .body              = std::move(body),
+        };
+        UF_TRY_VALUE(admission, admitFrameworkCall(call));
+        auto const callIdentity = admission.call.identity();
+        UF_TRY_VALUE(
+            replay,
+            runAdmitted(admission, context, std::move(call.body))
+        );
+
+        // The same answer shape a scoped run's Tool call gets, because it is
+        // the same thing: the position the call occupied, its recorded
+        // classification, and the Tool's own result and evidence when the
+        // outcome carries them.
+        auto members = std::vector<json::Member>{};
+        members.emplace_back(
+            "call_identity",
+            json::Value::ofString(callIdentity.hex())
+        );
+        if (replay.evidence)
+        {
+            members.emplace_back("evidence", replay.evidence->value());
+        }
+        if (replay.payload)
+        {
+            members.emplace_back("result", replay.payload->value());
+        }
+        members.emplace_back(
+            "state",
+            json::Value::ofString(
+                std::string{operator_runtime::toolCallStateWireName(replay.state)}
+            )
+        );
+        members.emplace_back(
+            "tool",
+            json::Value::ofString(std::string{toolName})
+        );
+        return json::Value::ofObject(std::move(members));
     }
 
     auto ProductLifecycle::invokeAgentTool(
@@ -1950,7 +2632,7 @@ namespace uf::service
                   .catalog       = m_impl->catalog(),
         };
         UF_TRY_VALUE(admission, m_impl->agentAdapter.translate(run, use));
-        return m_impl->runAdmitted(admission, context);
+        return m_impl->runAdmitted(admission, context, {});
     }
 
     auto ProductLifecycle::invokeHumanTool(
@@ -1967,7 +2649,7 @@ namespace uf::service
                   .catalog       = m_impl->catalog(),
         };
         UF_TRY_VALUE(admission, m_impl->humanAdapter.translate(run, command));
-        return m_impl->runAdmitted(admission, context);
+        return m_impl->runAdmitted(admission, context, {});
     }
 
     auto ProductLifecycle::startProjectAutomation(
@@ -1991,7 +2673,7 @@ namespace uf::service
                 start
             )
         );
-        return m_impl->runAdmitted(admission, context);
+        return m_impl->runAdmitted(admission, context, {});
     }
     auto ProductLifecycle::wait(
         operator_runtime::SubscriptionCursor after,

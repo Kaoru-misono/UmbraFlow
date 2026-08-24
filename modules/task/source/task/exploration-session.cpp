@@ -110,10 +110,12 @@ namespace uf::task
         std::unique_ptr<trace::TraceRecorder> recorder,
         engine::EngineSession session,
         TaskContextConfig contextConfig,
+        ExplorationToolInvoke toolRuntime,
         std::filesystem::path tracePath
     ) noexcept
         : m_recorder{std::move(recorder)}
         , m_context{std::move(session), *m_recorder, std::move(contextConfig)}
+        , m_toolRuntime{std::move(toolRuntime)}
         , m_tracePath{std::move(tracePath)}
     {
     }
@@ -130,6 +132,15 @@ namespace uf::task
                 AutomationErrorKind::InternalInvariant,
                 "an exploration session needs the trace recorder its ledgered "
                 "caller opened; it mints none of its own"
+            );
+        }
+        if (!spec.toolRuntime)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "an exploration session needs the Tool Runtime its ledgered "
+                "caller admitted it under; a chunk has no other way to reach "
+                "the screen, the target or the project"
             );
         }
 
@@ -159,17 +170,17 @@ namespace uf::task
                 .maximumReadsPerCycle = spec.maximumReadsPerCycle,
                 .maximumCropsPerCycle = spec.maximumCropsPerCycle,
             },
+            std::move(spec.toolRuntime),
             std::move(spec.tracePath)
         );
 
-        // The VM is built AFTER the session owns its context, because the private
-        // surface holds the context's address and the context must outlive the VM
-        // (task/script-bindings.hpp). Holding both in one object with the VM
-        // declared last is what makes that ordering structural rather than a rule
-        // each caller has to remember.
+        // The VM is built AFTER the session owns its context and its seam,
+        // because the one native primitive holds both addresses and both must
+        // outlive the VM (task/script-bindings.hpp). Holding all three in one
+        // object with the VM declared last is what makes that ordering
+        // structural rather than a rule each caller has to remember.
         //
-        // This is the only product path that installs Annotation capabilities and
-        // publishes explorationProjectGlobals().
+        // This is the only product path that publishes explorationProjectGlobals().
         //
         // The VM gets no runtime ceiling of its own, on purpose.
         // script::EngineConfig's maxRuntime bounds one chunk rather than the VM's
@@ -185,8 +196,9 @@ namespace uf::task
                 .maxRuntime        = spec.maxScriptRuntime,
                 .frameworkModules  = frameworkScriptModules(),
                 .installHostTables = scriptHostTableInstaller(),
-                .installPrivateCapabilities = annotationPrivateCapabilities(
-                    owned->m_context
+                .installPrivateCapabilities = explorationToolCapabilities(
+                    owned->m_context,
+                    owned->m_toolRuntime
                 ),
                 .projectGlobals          = scriptProjectGlobals(),
                 .frameworkProjectGlobals = explorationProjectGlobals(),
