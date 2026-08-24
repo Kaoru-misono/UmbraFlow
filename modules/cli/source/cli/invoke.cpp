@@ -77,10 +77,10 @@ namespace uf::cli
         {
             operator_runtime::ControllerKind kind{};
 
-            // Where the AgentProfile document is, for the one kind whose
-            // budgets the Operator holds. Absent for the two that stop on
-            // their own, whose sessions the ledger refuses a profile from.
-            std::optional<std::filesystem::path> agentProfile{};
+            // Where the AgentProfile document is. Every principal has one:
+            // the ledger pins no session without a declared budget, whoever
+            // controls it.
+            std::filesystem::path agentProfile{};
         };
 
         [[nodiscard]]
@@ -93,22 +93,22 @@ namespace uf::cli
         }
 
         [[nodiscard]]
-        auto principalOf(HumanToolRequest const&) -> ActorPrincipal
+        auto principalOf(HumanToolRequest const& material) -> ActorPrincipal
         {
             return ActorPrincipal{
                 .kind         = operator_runtime::ControllerKind::Human,
-                .agentProfile = std::nullopt,
+                .agentProfile = material.agentProfileDocument,
             };
         }
 
         // A Project's automation is a program, and a program stops when it
         // ends. Script is the Operator's name for that principal.
         [[nodiscard]]
-        auto principalOf(ProjectAutomationRequest const&) -> ActorPrincipal
+        auto principalOf(ProjectAutomationRequest const& material) -> ActorPrincipal
         {
             return ActorPrincipal{
                 .kind         = operator_runtime::ControllerKind::Script,
-                .agentProfile = std::nullopt,
+                .agentProfile = material.agentProfileDocument,
             };
         }
 
@@ -444,20 +444,14 @@ namespace uf::cli
             );
         }
 
-        // The principal, and with it the profile document the Operator
-        // requires of exactly that principal. Both come off the transport
-        // --actor already chose, so nothing here can name one actor and pin
-        // another.
+        // The principal, and with it the profile document the Operator requires
+        // of every principal. Both come off the transport --actor already
+        // chose, so nothing here can name one actor and pin another.
         auto const principal = actorPrincipal(args.request);
-        auto agentProfileJcs = std::optional<std::string>{};
-        if (principal.agentProfile)
-        {
-            UF_TRY_VALUE(
-                profile,
-                readTransportDocument(*principal.agentProfile, "--agent-profile")
-            );
-            agentProfileJcs.emplace(std::move(profile));
-        }
+        UF_TRY_VALUE(
+            agentProfileJcs,
+            readTransportDocument(principal.agentProfile, "--agent-profile")
+        );
 
         // One invoke process is one run over its target window, so the session
         // observes in a fresh run scope named after that window.

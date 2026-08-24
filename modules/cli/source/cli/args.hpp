@@ -189,13 +189,12 @@ namespace uf::cli
     //
     // The profile is the fourth piece and the only one the transport does not
     // deliver: it is the budget document the session this call runs in is
-    // pinned to. It is held in the agent's own material rather than beside the
-    // flags every actor shares because only an online Agent has one. The
-    // Operator holds the stopping condition of exactly the principal whose
-    // intent it cannot verify in advance, and refuses a budget from the two
-    // that stop on their own, so an agent with no budget document is a session
-    // the ledger will not pin at all. Keeping it here makes that combination
-    // unspellable rather than merely refused.
+    // pinned to. Every actor carries one, because every session spends the
+    // operator's machine and the ledger pins none without a declared budget; a
+    // ceiling the operator chose not to bind is written "unbounded" in that
+    // document rather than left out of it. It sits inside each transport's own
+    // material rather than beside the shared flags so that a transport added
+    // later cannot be spelled without one.
     struct AgentToolRequest final
     {
         std::string           toolName{};
@@ -214,9 +213,10 @@ namespace uf::cli
     // person rather than carrying what they wrote.
     struct HumanToolRequest final
     {
-        std::string toolName{};
-        std::string objectiveText{};
-        std::string argumentsText{};
+        std::string           toolName{};
+        std::string           objectiveText{};
+        std::string           argumentsText{};
+        std::filesystem::path agentProfileDocument{};
 
         auto operator==(HumanToolRequest const&) const -> bool = default;
     };
@@ -231,6 +231,7 @@ namespace uf::cli
         std::string           entryToolName{};
         std::filesystem::path objectiveDocument{};
         std::filesystem::path argumentsDocument{};
+        std::filesystem::path agentProfileDocument{};
 
         auto operator==(ProjectAutomationRequest const&) const -> bool = default;
     };

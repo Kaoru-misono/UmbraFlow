@@ -206,4 +206,41 @@ namespace uf::task
             CHECK(refused.error().message().contains("failed SHA-256 verification"));
         }
     }
+
+    // H_genesis: the artifact every project starts from.
+    //
+    // The point is that the constant, the derived manifest and this module's
+    // own canonical reader agree byte for byte, and that the hash they produce
+    // is a fact about the framework rather than about a project. Two projects
+    // that have annotated nothing pin the SAME hash, which is what gives the
+    // parentage chain a root.
+    TEST_CASE("the genesis RuntimeArtifact loads at H_genesis and carries no asset")
+    {
+        auto const manifest = genesisRuntimeArtifactManifestJcs();
+        REQUIRE(manifest.has_value());
+        auto const rootHash = genesisArtifactRootHash();
+        REQUIRE(rootHash.has_value());
+        CHECK(*rootHash == hash(*manifest));
+
+        auto const first = TemporaryDir{};
+        write(first.path() / k_runtimeModelFileName, k_genesisRuntimeModelToml);
+        write(first.path() / k_runtimeArtifactManifestFileName, *manifest);
+
+        auto const artifact = loadRuntimeArtifact(first.path(), *rootHash);
+        REQUIRE(artifact.has_value());
+        CHECK(artifact->rootHash() == *rootHash);
+        CHECK(artifact->modelHash() == hash(k_genesisRuntimeModelToml));
+        CHECK(artifact->assetPaths().empty());
+        CHECK(artifact->runtimeModelFormat() == k_runtimeModelFormat);
+
+        // The same bytes written somewhere else are the same artifact. Nothing
+        // about a project reaches this hash, so there is one genesis and not
+        // one per directory.
+        auto const second = TemporaryDir{};
+        write(second.path() / k_runtimeModelFileName, k_genesisRuntimeModelToml);
+        write(second.path() / k_runtimeArtifactManifestFileName, *manifest);
+        auto const twin = loadRuntimeArtifact(second.path(), *rootHash);
+        REQUIRE(twin.has_value());
+        CHECK(twin->rootHash() == artifact->rootHash());
+    }
 }

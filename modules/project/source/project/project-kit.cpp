@@ -23,6 +23,8 @@
 
 #include <schema/framework-schema-catalog.hpp>
 
+#include <task/runtime-model-file.hpp>
+
 #include <algorithm>
 #include <bit>
 #include <cstddef>
@@ -3046,10 +3048,31 @@ namespace uf::project
         auto const projectBytes    = jsonDocument(projectDocument);
         UF_TRY(validatedProjectDocument(projectBytes));
 
+        // The genesis RuntimeArtifact, written at initialisation so a starter
+        // project HAS a model to pin from its first session. It declares no
+        // ui target, no binding and no surface, so the session it admits can
+        // do nothing -- which is the honest state of a project nobody has
+        // annotated yet, and the root of its parentage chain. The bytes are
+        // the framework's constant rather than this file's: every project in
+        // the universe starts from the same H_genesis.
+        auto const artifactDirectory =
+            std::filesystem::path{"runtime"} / "artifact";
+        UF_TRY_VALUE(genesisManifest, task::genesisRuntimeArtifactManifestJcs());
+
         auto files = std::vector<ScaffoldFile>{
             {
                 .relativePath = "content/placeholder.txt",
                 .bytes        = "replace this runtime resource\n",
+            },
+            {
+                .relativePath = artifactDirectory
+                    / std::string{task::k_runtimeModelFileName},
+                .bytes = std::string{task::k_genesisRuntimeModelToml},
+            },
+            {
+                .relativePath = artifactDirectory
+                    / std::string{task::k_runtimeArtifactManifestFileName},
+                .bytes = std::move(genesisManifest),
             },
         };
 

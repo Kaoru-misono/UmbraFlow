@@ -10,14 +10,32 @@
 
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <string_view>
 
 namespace uf::operator_runtime
 {
-    // What one online Agent binding may spend before the Operator stops
-    // answering it. The member names are OP:`AgentBudget`'s, because the
-    // Operator protocol schema is the fixed side and a second spelling of one
-    // ceiling is how two of them come to disagree.
+    // What OP:`AgentBudget`'s "unbounded" marker denotes once it is read.
+    //
+    // It is the largest value the ledger's own INTEGER column holds, so a
+    // ceiling that does not bind is still a number the durable row carries,
+    // still charged by the same UPDATE, and still refused by the same CHECK if
+    // anything ever reached it. There is no second code path for an unbounded
+    // session and no nullable column standing for one -- an absence in the row
+    // would be the ledger declining to say what the Operator granted.
+    inline constexpr auto k_unboundedBudget =
+        static_cast<uint64>(std::numeric_limits<int64>::max());
+
+    // What one session may spend before the Operator stops answering it. The
+    // member names are OP:`AgentBudget`'s, because the Operator protocol schema
+    // is the fixed side and a second spelling of one ceiling is how two of them
+    // come to disagree.
+    //
+    // EVERY session declares one, whoever controls it. A script, a human and an
+    // online agent all spend the operator's machine, and a budget that only one
+    // kind carried would be the framework deciding that the other two need no
+    // ceiling. What varies between them is the numbers the operator wrote --
+    // including k_unboundedBudget, which is a number the operator wrote.
     //
     // There is deliberately no no-progress millisecond member. The whole
     // binding already has maximumElapsedMillis, and a second elapsed axis would
@@ -62,6 +80,24 @@ namespace uf::operator_runtime
 
     inline constexpr auto k_agentNoProgressCeiling = uint64{3};
 
+    // The exact canonical bytes of a profile whose every ceiling is the
+    // unbounded marker.
+    //
+    // It exists so that a session the framework itself starts on behalf of the
+    // person at the terminal -- `umbra-flow observe`, `umbra-flow upgrade` --
+    // pins a budget that SAYS what it grants. Nothing here is a default: these
+    // bytes are hashed into the session manifest, so an unbounded grant is
+    // attributable to the run that took it, exactly as a narrow one is. A
+    // session whose budget somebody else chose reads that somebody's bytes
+    // instead.
+    inline constexpr auto k_unboundedAgentProfileJcs = std::string_view{
+        R"({"maximum_elapsed_ms":"unbounded",)"
+        R"("maximum_mutations":"unbounded",)"
+        R"("maximum_observations":"unbounded",)"
+        R"("maximum_risk_units":"unbounded",)"
+        R"("maximum_tool_calls":"unbounded"})"
+    };
+
     // Trusted deployment callback. It parses the exact AgentProfile bytes the
     // session manifest pins and returns the ceilings they state. It is never
     // passed to plugin code or published in a business VM.
@@ -69,8 +105,9 @@ namespace uf::operator_runtime
         Result<AgentBudget>(std::string_view exactProfileJcs)
     >;
 
-    // The ceilings of one Agent session, bound to the exact bytes one
-    // SessionManifest's agent_profile_hash names.
+    // The ceilings of one session, bound to the exact bytes that session's
+    // SessionManifest names in agent_profile_hash. Every session has one; see
+    // AgentBudget for why the controller kind does not vary it.
     //
     // The bytes are required rather than merely referenced, for
     // ProjectToolCatalogSchemaOwner's reason: without them a caller states a

@@ -565,7 +565,12 @@
         "current_cursor": { "$ref": "#/$defs/SubscriptionCursor" }
       }
     },
+    "UnboundedCeiling": {
+      "$comment": "The marker an Operator writes to state that a ceiling does not bind. It is a value the profile carries, never an omitted member and never a number a reader has to recognise as special: an Operator that grants an unbounded session says so in the bytes the session manifest attests to, and a reader that sees no marker is reading a ceiling that binds.",
+      "const": "unbounded"
+    },
     "AgentBudget": {
+      "$comment": "The five ceilings every session declares, whoever controls it. There is no per-controller-kind variation and no absent profile: a session with no declared budget would be a session whose limits nobody chose, and the framework enforces limits it was given rather than limits it invented.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -576,11 +581,36 @@
         "maximum_risk_units"
       ],
       "properties": {
-        "maximum_tool_calls": { "type": "integer", "minimum": 1 },
-        "maximum_mutations": { "type": "integer", "minimum": 0 },
-        "maximum_observations": { "type": "integer", "minimum": 1 },
-        "maximum_elapsed_ms": { "type": "integer", "minimum": 1 },
-        "maximum_risk_units": { "type": "integer", "minimum": 0 }
+        "maximum_tool_calls": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "$ref": "#/$defs/UnboundedCeiling" }
+          ]
+        },
+        "maximum_mutations": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "$ref": "#/$defs/UnboundedCeiling" }
+          ]
+        },
+        "maximum_observations": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "$ref": "#/$defs/UnboundedCeiling" }
+          ]
+        },
+        "maximum_elapsed_ms": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "$ref": "#/$defs/UnboundedCeiling" }
+          ]
+        },
+        "maximum_risk_units": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "$ref": "#/$defs/UnboundedCeiling" }
+          ]
+        }
       }
     }
   }

@@ -31,6 +31,12 @@ namespace uf::operator_runtime
     // path for all three kinds. Approval and takeover eligibility are
     // deliberately absent: they are ControllerCapability entries, and
     // expressing them here as well would be a second spelling.
+    //
+    // The budget is absent for a different reason: it stopped being a per-kind
+    // fact. EVERY session pins an AgentProfile stating five ceilings, whoever
+    // controls it, because every session spends the operator's machine and the
+    // operator is the party who says how much. A kind that carried no budget
+    // would be the framework deciding that some controllers need no ceiling.
     struct ControllerProfile final
     {
         ControllerKind kind{ControllerKind::Agent};
@@ -40,14 +46,6 @@ namespace uf::operator_runtime
         // the surface where every argument is a name the project's model
         // already defines.
         bool semanticToolsOnly{true};
-
-        // For the same reason, an online Agent is the only controller whose
-        // stopping condition the Operator has to hold for it: a Script stops
-        // when its program ends and a Human stops when the human does. The
-        // ceilings come from the AgentProfile the session manifest pins, so
-        // pinSession requires one for exactly the kinds this is true of and
-        // refuses one for the kinds it is not.
-        bool budgetsRequired{true};
 
         // A Script asserting "a human typed" would be fabricating evidence
         // about a third party, so only the human surface may record a finding.
@@ -59,9 +57,9 @@ namespace uf::operator_runtime
     // a reordered or extended enum fails at the first lookup rather than
     // silently answering with the wrong row.
     inline constexpr auto k_controllerProfiles = std::array{
-        ControllerProfile{ControllerKind::Script, false, false, false},
-        ControllerProfile{ControllerKind::Agent, true, true, false},
-        ControllerProfile{ControllerKind::Human, false, false, true},
+        ControllerProfile{ControllerKind::Script, false, false},
+        ControllerProfile{ControllerKind::Agent, true, false},
+        ControllerProfile{ControllerKind::Human, false, true},
     };
 
     [[nodiscard]]

@@ -239,4 +239,42 @@ namespace uf::task
         std::filesystem::path const& artifactRoot,
         ContentHash const& expectedRootHash
     ) -> Result<RuntimeArtifactHandle>;
+
+    // H_genesis: the RuntimeModel that declares nothing, and the artifact that
+    // carries it.
+    //
+    // The published schema admits the empty ui_targets, bindings and surfaces
+    // arrays, so this document is a legal RuntimeModel; the trusted parser
+    // compiles it to a model with no target, no binding and no surface. Every
+    // project in the universe therefore starts from the SAME artifact root
+    // hash, which is what gives the parentage chain a root rather than a
+    // per-project seed.
+    //
+    // base_resolution and base_dpi carry the only values a model declaring
+    // nothing can honestly carry: the smallest legal extent and the reference
+    // DPI. They are geometry about nothing, and no binding exists to be placed
+    // inside them.
+    //
+    // Sealed by construction. A closing record exists to say which session
+    // produced a hash from which parent, and this hash has no parent and no
+    // producing session -- it is a constant of the framework, not the output of
+    // a run, so there is nothing for a record to attest and nothing mutable for
+    // it to be wrong about.
+    inline constexpr auto k_genesisRuntimeModelToml = std::string_view{
+        "schema_version = 3\n"
+        "base_resolution = [1, 1]\n"
+        "base_dpi = [96, 96]\n"
+    };
+
+    // The exact canonical manifest bytes of the genesis artifact, derived from
+    // the document above rather than transcribed beside it. Both formats come
+    // from k_runtimeArtifactFormat and k_runtimeModelFormat, so a format cut
+    // moves H_genesis with it instead of leaving a stale constant behind.
+    [[nodiscard]]
+    auto genesisRuntimeArtifactManifestJcs() -> Result<std::string>;
+
+    // H_genesis itself: the content address of those manifest bytes, on the
+    // same terms every other artifact root hash is derived.
+    [[nodiscard]]
+    auto genesisArtifactRootHash() -> Result<ContentHash>;
 }

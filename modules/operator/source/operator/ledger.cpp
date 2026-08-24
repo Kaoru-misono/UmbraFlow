@@ -5090,16 +5090,16 @@ namespace uf::operator_runtime
             uint64      consecutiveNoProgressSteps{};
         };
 
-        // Whether this session has budgets is ControllerProfile's answer, never
-        // an inference from the absence of a row: a missing row for a kind that
-        // requires one is a broken invariant, not a controller that happens to
-        // run without ceilings.
+        // Every pinned session has a budget row, whoever controls it, so an
+        // absent one is a broken invariant rather than a controller that
+        // happens to run without ceilings. A ceiling the operator declared
+        // unbounded is k_unboundedBudget in that row, which is a number the row
+        // carries and not a hole in it.
         [[nodiscard]]
         auto readAgentBudget(
             sqlite3* database,
-            std::string_view sessionId,
-            ControllerKind kind
-        ) -> Result<std::optional<AgentBudgetState>>
+            std::string_view sessionId
+        ) -> Result<AgentBudgetState>
         {
             UF_TRY_VALUE(
                 query,
@@ -5113,19 +5113,17 @@ namespace uf::operator_runtime
                 )
             );
             UF_TRY(bindText(database, query.get(), 1, sessionId));
-            auto const present = sqlite3_step(query.get()) == SQLITE_ROW;
-            if (present != controllerProfile(kind).budgetsRequired)
+            if (sqlite3_step(query.get()) != SQLITE_ROW)
             {
                 return fail(
                     AutomationErrorKind::InternalInvariant,
-                    "Agent budget row does not match what the controller kind requires"
+                    std::format(
+                        "pinned session {} carries no budget row",
+                        sessionId
+                    )
                 );
             }
-            if (!present)
-            {
-                return std::optional<AgentBudgetState>{};
-            }
-            return std::optional{AgentBudgetState{
+            return AgentBudgetState{
                 .lastStateFingerprint   = columnText(query.get(), 5),
                 .lastCommandFingerprint = columnText(query.get(), 6),
                 .deadlineSteadyMillis   = static_cast<uint64>(
@@ -5146,7 +5144,7 @@ namespace uf::operator_runtime
                 .consecutiveNoProgressSteps = static_cast<uint64>(
                     sqlite3_column_int64(query.get(), 7)
                 ),
-            }};
+            };
         }
 
         // No in-class hash default: every snapshot is content-addressed before
@@ -5160,27 +5158,23 @@ namespace uf::operator_runtime
 
         [[nodiscard]]
         auto toolBudgetSnapshot(
-            std::optional<AgentBudgetState> const& budget
+            AgentBudgetState const& budget
         ) -> Result<ToolBudgetSnapshot>
         {
-            auto bytes = std::string{"null"};
-            if (budget)
-            {
-                bytes = std::format(
-                    "{{\"consecutive_no_progress_steps\":{},"
-                    "\"deadline_steady_millis\":{},"
-                    "\"remaining_mutations\":{},"
-                    "\"remaining_observations\":{},"
-                    "\"remaining_risk_units\":{},"
-                    "\"remaining_tool_calls\":{}}}",
-                    budget->consecutiveNoProgressSteps,
-                    budget->deadlineSteadyMillis,
-                    budget->remainingMutations,
-                    budget->remainingObservations,
-                    budget->remainingRiskUnits,
-                    budget->remainingToolCalls
-                );
-            }
+            auto bytes = std::format(
+                "{{\"consecutive_no_progress_steps\":{},"
+                "\"deadline_steady_millis\":{},"
+                "\"remaining_mutations\":{},"
+                "\"remaining_observations\":{},"
+                "\"remaining_risk_units\":{},"
+                "\"remaining_tool_calls\":{}}}",
+                budget.consecutiveNoProgressSteps,
+                budget.deadlineSteadyMillis,
+                budget.remainingMutations,
+                budget.remainingObservations,
+                budget.remainingRiskUnits,
+                budget.remainingToolCalls
+            );
             UF_TRY_VALUE(hash, sha256(std::as_bytes(std::span{bytes})));
             return ToolBudgetSnapshot{
                 .bytes = std::move(bytes),
@@ -6034,7 +6028,7 @@ namespace uf::operator_runtime
         RuntimeArtifactInstallRequest const& installation,
         SessionPin const& pin,
         SessionManifest const& manifest,
-        std::optional<AgentProfile> const& agentProfile
+        AgentProfile const& agentProfile
     ) -> Status
     {
         UF_TRY_VALUE(predecessor, activeRuntimeArtifactPin());
@@ -6528,7 +6522,7 @@ namespace uf::operator_runtime
     auto OperatorCoordinator::pinSession(
         SessionPin const& pin,
         SessionManifest const& manifest,
-        std::optional<AgentProfile> const& agentProfile
+        AgentProfile const& agentProfile
     ) -> Status
     {
         UF_TRY(requireName(pin.sessionId, "session_id"));
@@ -6548,17 +6542,7 @@ namespace uf::operator_runtime
                 )
             );
         }
-        if (agentProfile.has_value() != controllerProfile(pin.kind).budgetsRequired)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Session controller kind and AgentProfile presence disagree"
-            );
-        }
-        if (
-            agentProfile.has_value()
-            && agentProfile->sessionManifestHash() != manifest.hash()
-        )
+        if (agentProfile.sessionManifestHash() != manifest.hash())
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
@@ -6836,18 +6820,28 @@ namespace uf::operator_runtime
             );
         }
 
-        if (agentProfile.has_value())
         {
-            auto const budget = agentProfile->budget();
+            auto const budget = agentProfile.budget();
             UF_TRY_VALUE(now, steadyMillisecondsNow());
             constexpr auto ceiling = static_cast<uint64>(
                 std::numeric_limits<sqlite3_int64>::max()
             );
-            if (budget.maximumElapsedMillis > ceiling - now)
+
+            // An unbounded elapsed ceiling is a deadline nothing reaches
+            // rather than an arithmetic overflow: it is stored as the largest
+            // instant the column holds, so requireWithinAgentDeadline compares
+            // against it on exactly the same path every bounded session uses.
+            auto const deadline = budget.maximumElapsedMillis == k_unboundedBudget
+                ? k_unboundedBudget
+                : now + budget.maximumElapsedMillis;
+            if (
+                budget.maximumElapsedMillis != k_unboundedBudget
+                && budget.maximumElapsedMillis > ceiling - now
+            )
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "Agent time budget exhausted SQLite's integer range"
+                    "session time budget exhausted SQLite's integer range"
                 );
             }
 
@@ -6873,7 +6867,7 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 budgetInsert.get(),
                 2,
-                now + budget.maximumElapsedMillis
+                deadline
             ));
             UF_TRY(bindInteger(
                 m_impl->database.get(),
@@ -6914,13 +6908,6 @@ namespace uf::operator_runtime
             "authenticated_controller_id"
         ));
         UF_TRY(requireName(resume.controlledTargetId, "controlled_target_id"));
-        if (controllerProfile(resume.kind).budgetsRequired)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "A budgeted Agent session cannot resume across a process epoch"
-            );
-        }
 
         UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
         UF_TRY(requireExecutableRegistration(
@@ -7017,6 +7004,25 @@ namespace uf::operator_runtime
             return databaseFailure(
                 m_impl->database.get(),
                 "could not select a prior session to resume"
+            );
+        }
+
+        // The one thing a process epoch destroys. Every ceiling but the clock
+        // is a durable counter that survives a restart exactly as it stood; the
+        // elapsed ceiling was turned into a steady-clock instant by the process
+        // that pinned it, and no later process can say what that instant means.
+        // So a session whose operator BOUND its time cannot resume, and one
+        // whose operator declared it unbounded has no instant to lose.
+        UF_TRY_VALUE(
+            priorBudget,
+            readAgentBudget(m_impl->database.get(), sessionId)
+        );
+        if (priorBudget.deadlineSteadyMillis != k_unboundedBudget)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "a session whose declared time budget binds cannot resume "
+                "across a process epoch"
             );
         }
 
@@ -7701,20 +7707,17 @@ namespace uf::operator_runtime
         UF_TRY_VALUE(policyHash, parseHashColumn(columnText(sessionQuery.get(), 9)));
         UF_TRY_VALUE(
             snapshotBudget,
-            readAgentBudget(m_impl->database.get(), lease.sessionId, snapshotKind)
+            readAgentBudget(m_impl->database.get(), lease.sessionId)
         );
-        if (snapshotBudget)
-        {
-            UF_TRY(requireWithinAgentDeadline(*snapshotBudget));
-            UF_TRY(chargeAgentBudget(
-                m_impl->database.get(),
-                lease.sessionId,
-                "UPDATE agent_budgets SET remaining_observations = "
-                "remaining_observations - ?2 WHERE session_id=?1",
-                1U,
-                "Agent observation budget is exhausted"
-            ));
-        }
+        UF_TRY(requireWithinAgentDeadline(snapshotBudget));
+        UF_TRY(chargeAgentBudget(
+            m_impl->database.get(),
+            lease.sessionId,
+            "UPDATE agent_budgets SET remaining_observations = "
+            "remaining_observations - ?2 WHERE session_id=?1",
+            1U,
+            "session observation budget is exhausted"
+        ));
 
         UF_TRY_VALUE(
             priorQuery,
@@ -9124,14 +9127,8 @@ namespace uf::operator_runtime
             }
         }
 
-        UF_TRY_VALUE(
-            budget,
-            readAgentBudget(database, controller.sessionId(), controller.kind())
-        );
-        if (budget)
-        {
-            UF_TRY(requireWithinAgentDeadline(*budget));
-        }
+        UF_TRY_VALUE(budget, readAgentBudget(database, controller.sessionId()));
+        UF_TRY(requireWithinAgentDeadline(budget));
         UF_TRY_VALUE(budgetSnapshot, toolBudgetSnapshot(budget));
 
         auto const& execution = call.executionIdentity();
@@ -9661,41 +9658,38 @@ namespace uf::operator_runtime
             }
         }
 
-        if (budget)
+        UF_TRY(chargeAgentBudget(
+            database,
+            controller.sessionId(),
+            "UPDATE agent_budgets SET remaining_tool_calls = "
+            "remaining_tool_calls - ?2 WHERE session_id=?1",
+            1U,
+            "session tool-call budget is exhausted"
+        ));
+        if (requiredMutability == ToolMutability::Mutating)
         {
             UF_TRY(chargeAgentBudget(
                 database,
                 controller.sessionId(),
-                "UPDATE agent_budgets SET remaining_tool_calls = "
-                "remaining_tool_calls - ?2 WHERE session_id=?1",
+                "UPDATE agent_budgets SET remaining_mutations = "
+                "remaining_mutations - ?2 WHERE session_id=?1",
                 1U,
-                "Agent tool-call budget is exhausted"
+                "session mutation budget is exhausted"
             ));
-            if (requiredMutability == ToolMutability::Mutating)
-            {
-                UF_TRY(chargeAgentBudget(
-                    database,
-                    controller.sessionId(),
-                    "UPDATE agent_budgets SET remaining_mutations = "
-                    "remaining_mutations - ?2 WHERE session_id=?1",
-                    1U,
-                    "Agent mutation budget is exhausted"
-                ));
-            }
-            if (
-                std::holds_alternative<FrameworkToolProvider>(call.provider())
-                && call.toolName() == "framework.screen.observe"
-            )
-            {
-                UF_TRY(chargeAgentBudget(
-                    database,
-                    controller.sessionId(),
-                    "UPDATE agent_budgets SET remaining_observations = "
-                    "remaining_observations - ?2 WHERE session_id=?1",
-                    1U,
-                    "Agent observation budget is exhausted"
-                ));
-            }
+        }
+        if (
+            std::holds_alternative<FrameworkToolProvider>(call.provider())
+            && call.toolName() == "framework.screen.observe"
+        )
+        {
+            UF_TRY(chargeAgentBudget(
+                database,
+                controller.sessionId(),
+                "UPDATE agent_budgets SET remaining_observations = "
+                "remaining_observations - ?2 WHERE session_id=?1",
+                1U,
+                "session observation budget is exhausted"
+            ));
         }
 
         UF_TRY_VALUE(
@@ -10349,17 +10343,10 @@ namespace uf::operator_runtime
             }
         }
         UF_TRY_VALUE(
-            kind,
-            parseControllerKind(columnText(authorityQuery.get(), 4))
-        );
-        UF_TRY_VALUE(
             budget,
-            readAgentBudget(database, columnText(authorityQuery.get(), 0), kind)
+            readAgentBudget(database, columnText(authorityQuery.get(), 0))
         );
-        if (budget)
-        {
-            UF_TRY(requireWithinAgentDeadline(*budget));
-        }
+        UF_TRY(requireWithinAgentDeadline(budget));
         UF_TRY_VALUE(
             nextRevision,
             checkedSqlIncrement(
@@ -11455,30 +11442,19 @@ namespace uf::operator_runtime
         UF_TRY(requireLiveBinding(m_impl->database.get(), controller));
         UF_TRY_VALUE(
             budget,
-            readAgentBudget(
-                m_impl->database.get(),
-                controller.sessionId(),
-                controller.kind()
-            )
+            readAgentBudget(m_impl->database.get(), controller.sessionId())
         );
-        if (!budget)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "This controller kind carries no budget to report"
-            );
-        }
         UF_TRY_VALUE(now, steadyMillisecondsNow());
         UF_TRY(transaction.commit());
         return AgentBudgetRemaining{
-            .toolCalls                  = budget->remainingToolCalls,
-            .mutations                  = budget->remainingMutations,
-            .observations               = budget->remainingObservations,
-            .riskUnits                  = budget->remainingRiskUnits,
-            .elapsedMillisRemaining     = now > budget->deadlineSteadyMillis
+            .toolCalls    = budget.remainingToolCalls,
+            .mutations    = budget.remainingMutations,
+            .observations = budget.remainingObservations,
+            .riskUnits    = budget.remainingRiskUnits,
+            .elapsedMillisRemaining     = now > budget.deadlineSteadyMillis
                 ? uint64{0}
-                : budget->deadlineSteadyMillis - now,
-            .consecutiveNoProgressSteps = budget->consecutiveNoProgressSteps,
+                : budget.deadlineSteadyMillis - now,
+            .consecutiveNoProgressSteps = budget.consecutiveNoProgressSteps,
         };
     }
 

@@ -489,6 +489,34 @@ namespace uf::deployment
             : std::string{deployed.error().message()};
         INFO(deploymentDiagnostic);
         REQUIRE(deployed.has_value());
+
+        // The starter tree ships the genesis RuntimeArtifact at the path its
+        // own declaration names, so a project that has annotated nothing still
+        // HAS a model to pin. The bytes are the framework's constant: every
+        // project in the universe starts from the same H_genesis, which is what
+        // makes it the root of the parentage chain rather than a per-project
+        // seed. Deleting the two scaffold files reds this.
+        auto const artifactRoot = workspace.path() / "runtime" / "artifact";
+        CHECK(
+            readText(artifactRoot / task::k_runtimeModelFileName)
+            == task::k_genesisRuntimeModelToml
+        );
+        auto const genesisManifest = task::genesisRuntimeArtifactManifestJcs();
+        REQUIRE(genesisManifest.has_value());
+        CHECK(
+            readText(artifactRoot / task::k_runtimeArtifactManifestFileName)
+            == *genesisManifest
+        );
+
+        auto const genesisHash = task::genesisArtifactRootHash();
+        REQUIRE(genesisHash.has_value());
+        auto const opened = task::loadRuntimeArtifact(artifactRoot, *genesisHash);
+        auto const openDiagnostic = opened.has_value()
+            ? std::string{}
+            : std::string{opened.error().message()};
+        INFO(openDiagnostic);
+        REQUIRE(opened.has_value());
+        CHECK(opened->assetPaths().empty());
     }
 
     // Everything below breaks one thing in this directory, so this case is what

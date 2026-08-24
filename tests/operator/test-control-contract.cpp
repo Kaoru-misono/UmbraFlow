@@ -229,7 +229,9 @@ namespace uf::operator_runtime
             };
         };
         CHECK_FALSE(
-            restarted->pinSession(pin("session-1"), *manifest, std::nullopt).has_value()
+            restarted->pinSession(pin("session-1"), *manifest,
+                test_support::unconstrainedAgentProfile(*manifest)
+            ).has_value()
         );
 
         // There is no binding to present either: the epoch check now lives at
@@ -256,7 +258,9 @@ namespace uf::operator_runtime
         );
 
         REQUIRE(
-            restarted->pinSession(pin("session-2"), *manifest, std::nullopt).has_value()
+            restarted->pinSession(pin("session-2"), *manifest,
+                test_support::unconstrainedAgentProfile(*manifest)
+            ).has_value()
         );
         auto const rebound = restarted->bindController("session-2");
         REQUIRE(rebound.has_value());

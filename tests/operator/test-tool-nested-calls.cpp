@@ -264,7 +264,7 @@ namespace uf::operator_runtime
             auto const manifest = test_support::sessionManifest(
                 project.registration,
                 artifactRootHash,
-                hashOf("agent"),
+                hashOf(test_support::unconstrainedAgentProfileBytes()),
                 policy
             );
             auto const projectGeneration = test_support::loadGeneration(project);
@@ -291,7 +291,7 @@ namespace uf::operator_runtime
                     .worldScope         = *worldScope,
                 },
                 manifest,
-                std::nullopt
+                test_support::unconstrainedAgentProfile(manifest)
             ).has_value());
             auto controller = store.bindController("session-1");
             REQUIRE(controller.has_value());
@@ -366,26 +366,24 @@ namespace uf::operator_runtime
                 projectInstanceKey
             ).has_value());
 
-            auto manifest = prepared.manifest;
-            auto profile  = std::optional<AgentProfile>{};
-            if (budget)
-            {
-                auto const bytes = test_support::agentProfileBytes(*budget);
-                manifest = test_support::sessionManifest(
-                    prepared.project.registration,
-                    prepared.runtimeArtifactRootHash,
-                    hashOf(bytes),
-                    nestedPolicyBytes()
-                );
-                auto verified = AgentProfile::verifyExact(
-                    manifest,
-                    "agent-profile.json",
-                    bytes,
-                    test_support::agentProfileValidator()
-                );
-                REQUIRE(verified.has_value());
-                profile = *std::move(verified);
-            }
+            // Every session pins a budget, so a caller that named none pins
+            // the unconstrained one rather than none at all.
+            auto const bytes = test_support::agentProfileBytes(
+                budget.value_or(test_support::k_unconstrainedAgentBudget)
+            );
+            auto const manifest = test_support::sessionManifest(
+                prepared.project.registration,
+                prepared.runtimeArtifactRootHash,
+                hashOf(bytes),
+                nestedPolicyBytes()
+            );
+            auto const profile = AgentProfile::verifyExact(
+                manifest,
+                "agent-profile.json",
+                bytes,
+                test_support::agentProfileValidator()
+            );
+            REQUIRE(profile.has_value());
             auto const worldScope = ObservedInstanceWorldScope::run(
                 controlledTargetId,
                 1
@@ -406,7 +404,7 @@ namespace uf::operator_runtime
                     .worldScope             = *worldScope,
                 },
                 manifest,
-                profile
+                *profile
             ).has_value());
             auto binding = prepared.store.bindController(sessionId);
             REQUIRE(binding.has_value());

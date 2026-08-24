@@ -19,6 +19,7 @@
 #include <conformance/observation-fixture.hpp>
 #include <conformance/operator-protocol.hpp>
 
+#include <operator/agent-profile.hpp>
 #include <operator/controller.hpp>
 #include <operator/ledger.hpp>
 #include <operator/project-observation.hpp>
@@ -705,7 +706,9 @@ namespace uf::cli
                     // something else is never silently also a case about a
                     // budget.
                     .kind            = operator_runtime::ControllerKind::Human,
-                    .agentProfileJcs = std::nullopt,
+                    .agentProfileJcs = std::string{
+                        operator_runtime::k_unboundedAgentProfileJcs
+                    },
                     .worldScope      = scope,
                 }
             );
@@ -1449,7 +1452,9 @@ namespace uf::cli
                     .controllerCapabilities    = {},
                     .controlledTargetId        = "recorded-target",
                     .kind                      = operator_runtime::ControllerKind::Human,
-                    .agentProfileJcs           = std::nullopt,
+                    .agentProfileJcs           = std::string{
+                        operator_runtime::k_unboundedAgentProfileJcs
+                    },
                     .worldScope                = *scope,
                 }
             );
@@ -1487,7 +1492,9 @@ namespace uf::cli
                     .controllerCapabilities    = {},
                     .controlledTargetId        = "recorded-target",
                     .kind                      = operator_runtime::ControllerKind::Human,
-                    .agentProfileJcs           = std::nullopt,
+                    .agentProfileJcs           = std::string{
+                        operator_runtime::k_unboundedAgentProfileJcs
+                    },
                     .worldScope                = *scope,
                 }
             );

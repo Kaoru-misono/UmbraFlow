@@ -52,15 +52,15 @@ namespace uf::operator_runtime::conformance
         // stale.
         constexpr auto k_runtimeSubdirectory = std::string_view{"production"};
 
-        // Wide enough that no case here reaches a ceiling. A case that IS about
-        // a budget would state its own numbers; none of these are, so meeting
-        // one would mean a case was measuring this table.
+        // No case here is about a budget, so every ceiling is the declared
+        // unbounded one: a case that met a number from this table would be
+        // measuring the table rather than the behaviour it names.
         constexpr auto k_conformanceAgentBudget = AgentBudget{
-            .maximumToolCalls     = 1'000U,
-            .maximumMutations     = 1'000U,
-            .maximumObservations  = 1'000U,
-            .maximumElapsedMillis = 3'600'000U,
-            .maximumRiskUnits     = 1'000'000U,
+            .maximumToolCalls     = k_unboundedBudget,
+            .maximumMutations     = k_unboundedBudget,
+            .maximumObservations  = k_unboundedBudget,
+            .maximumElapsedMillis = k_unboundedBudget,
+            .maximumRiskUnits     = k_unboundedBudget,
         };
 
         [[nodiscard]]
@@ -81,7 +81,19 @@ namespace uf::operator_runtime::conformance
         ) -> std::optional<uint64>
         {
             auto const* const p_ceiling = profile.find(member);
-            if (p_ceiling == nullptr || p_ceiling->kind() != json::ValueKind::Number)
+            if (p_ceiling == nullptr)
+            {
+                return std::nullopt;
+            }
+            // OP:`AgentBudget` admits two spellings of a ceiling: a number, and
+            // the marker for one that does not bind.
+            if (p_ceiling->kind() == json::ValueKind::String)
+            {
+                return p_ceiling->string() == "unbounded"
+                    ? std::optional{k_unboundedBudget}
+                    : std::nullopt;
+            }
+            if (p_ceiling->kind() != json::ValueKind::Number)
             {
                 return std::nullopt;
             }
@@ -304,16 +316,14 @@ namespace uf::operator_runtime::conformance
         // The AgentBudget's own member order, which is also JCS order, so these
         // bytes are exact canonical form rather than a spelling that happens to
         // parse.
-        return std::format(
-            R"({{"maximum_elapsed_ms":{},"maximum_mutations":{},)"
-            R"("maximum_observations":{},"maximum_risk_units":{},)"
-            R"("maximum_tool_calls":{}}})",
-            k_conformanceAgentBudget.maximumElapsedMillis,
-            k_conformanceAgentBudget.maximumMutations,
-            k_conformanceAgentBudget.maximumObservations,
-            k_conformanceAgentBudget.maximumRiskUnits,
-            k_conformanceAgentBudget.maximumToolCalls
-        );
+        // Every ceiling is OP:`UnboundedCeiling`'s marker rather than the
+        // number k_unboundedBudget is, because that number is past what a
+        // canonical JSON number spells exactly.
+        return std::string{
+            R"({"maximum_elapsed_ms":"unbounded","maximum_mutations":"unbounded",)"
+            R"("maximum_observations":"unbounded","maximum_risk_units":"unbounded",)"
+            R"("maximum_tool_calls":"unbounded"})"
+        };
     }
 
     auto agentProfileValidator() -> AgentProfileValidator
@@ -425,6 +435,13 @@ namespace uf::operator_runtime::conformance
             1
         );
         REQUIRE(sessionWorldScope.has_value());
+        auto const sessionProfile = AgentProfile::verifyExact(
+            manifest,
+            "agent-profile.json",
+            agentProfileBytes(),
+            agentProfileValidator()
+        );
+        REQUIRE(sessionProfile.has_value());
         REQUIRE(store.pinSession(
             SessionPin{
                 .sessionId                 = "session-1",
@@ -439,7 +456,7 @@ namespace uf::operator_runtime::conformance
                 .worldScope                = *sessionWorldScope,
             },
             manifest,
-            std::nullopt
+            *sessionProfile
         ).has_value());
 
         auto const controller = store.bindController("session-1");
@@ -617,21 +634,15 @@ namespace uf::operator_runtime::conformance
             std::string{instanceKey}
         ).has_value());
 
-        // Required for exactly the kinds whose ControllerProfile says budgets
-        // are required and refused for the others, so the kind decides this
-        // rather than this function's caller.
-        auto profile = std::optional<AgentProfile>{};
-        if (controllerProfile(kind).budgetsRequired)
-        {
-            auto verified = AgentProfile::verifyExact(
-                prepared.manifest,
-                "agent-profile.json",
-                agentProfileBytes(),
-                agentProfileValidator()
-            );
-            REQUIRE(verified.has_value());
-            profile = *std::move(verified);
-        }
+        // Required for every controller kind: no session is pinned without a
+        // declared budget, so there is nothing here for the kind to vary.
+        auto profile = AgentProfile::verifyExact(
+            prepared.manifest,
+            "agent-profile.json",
+            agentProfileBytes(),
+            agentProfileValidator()
+        );
+        REQUIRE(profile.has_value());
 
         auto const worldScope = ObservedInstanceWorldScope::run(
             prepared.controller.controlledTargetId(),
@@ -652,7 +663,7 @@ namespace uf::operator_runtime::conformance
                 .worldScope                = *worldScope,
             },
             prepared.manifest,
-            profile
+            *profile
         ).has_value());
 
         auto controller = prepared.store.bindController(std::string{sessionId});

@@ -1713,7 +1713,7 @@ namespace uf::operator_runtime
             auto const manifest = sessionManifest(
                 project.registration,
                 installed->rootHash(),
-                hashOf("agent"),
+                hashOf(test_support::unconstrainedAgentProfileBytes()),
                 test_support::policyArtifactBytes()
             );
             auto const projectGeneration = loadGeneration(project);
@@ -1741,7 +1741,7 @@ namespace uf::operator_runtime
                     .worldScope                = *sessionWorldScope,
                 },
                 manifest,
-                std::nullopt
+                test_support::unconstrainedAgentProfile(manifest)
             ).has_value());
             auto controller = store.bindController("session-1");
             REQUIRE(controller.has_value());
@@ -1832,7 +1832,7 @@ namespace uf::operator_runtime
                 sessionManifest(
                     prepared.project.registration,
                     runtimeArtifactRootHash,
-                    hashOf("agent"),
+                    hashOf(test_support::unconstrainedAgentProfileBytes()),
                     test_support::policyArtifactBytes()
                 ),
                 *runtimeModel,
@@ -2026,7 +2026,7 @@ namespace uf::operator_runtime
                     .operatorProtocolSchemaHash   = hashOf("operator"),
                     .projectRegistrationHash      = projectRegistrationHash,
                     .policyArtifactHash           = hashOf("policy"),
-                    .agentProfileHash             = hashOf("agent"),
+                    .agentProfileHash             = hashOf(test_support::unconstrainedAgentProfileBytes()),
                 }
             );
             REQUIRE(manifest.has_value());
@@ -2822,7 +2822,7 @@ namespace uf::operator_runtime
                 .worldScope         = *reopenedScope,
             },
             manifest,
-            std::nullopt
+            test_support::unconstrainedAgentProfile(manifest)
         ).has_value());
         auto controller = reopened.bindController("session-after-reopen");
         REQUIRE(controller.has_value());
@@ -3085,7 +3085,7 @@ namespace uf::operator_runtime
                 .worldScope         = *projectScope,
             },
             prepared.manifest,
-            std::nullopt
+            test_support::unconstrainedAgentProfile(prepared.manifest)
         ).has_value());
         auto projectController = prepared.store.bindController("session-project-2");
         REQUIRE(projectController.has_value());
@@ -3121,7 +3121,7 @@ namespace uf::operator_runtime
         auto foreignManifest = test_support::sessionManifest(
             foreignProject.registration,
             prepared.runtimeArtifactRootHash,
-            hashOf("agent"),
+            hashOf(test_support::unconstrainedAgentProfileBytes()),
             test_support::policyArtifactBytes()
         );
         REQUIRE(prepared.store.registerProject(
@@ -3152,7 +3152,7 @@ namespace uf::operator_runtime
                 .worldScope         = *foreignScope,
             },
             foreignManifest,
-            std::nullopt
+            test_support::unconstrainedAgentProfile(foreignManifest)
         ).has_value());
         auto foreignController = prepared.store.bindController("session-foreign");
         REQUIRE(foreignController.has_value());
@@ -3215,7 +3215,7 @@ namespace uf::operator_runtime
         auto const refused = prepared.store.pinSession(
             sameTuplePin,
             prepared.manifest,
-            std::nullopt
+            test_support::unconstrainedAgentProfile(prepared.manifest)
         );
         REQUIRE_FALSE(refused.has_value());
         CHECK(
@@ -3256,7 +3256,7 @@ namespace uf::operator_runtime
                 .worldScope         = *restoredScope,
             },
             prepared.manifest,
-            std::nullopt
+            test_support::unconstrainedAgentProfile(prepared.manifest)
         ).has_value());
         auto afterRestartController = restarted->bindController("session-after-restart");
         REQUIRE(afterRestartController.has_value());
@@ -7228,7 +7228,7 @@ namespace uf::operator_runtime
                 .worldScope                = *mismatchScope,
             },
             manifest,
-            std::nullopt
+            test_support::unconstrainedAgentProfile(manifest)
         );
         REQUIRE_FALSE(disagreeing.has_value());
         CHECK(
@@ -7271,13 +7271,13 @@ namespace uf::operator_runtime
         auto const manifest = sessionManifest(
             prepared.project.registration,
             candidate.artifactRootHash,
-            hashOf("agent"),
+            hashOf(test_support::unconstrainedAgentProfileBytes()),
             test_support::policyArtifactBytes()
         );
         auto const refused = prepared.store.pinSession(
             pin,
             manifest,
-            std::nullopt
+            test_support::unconstrainedAgentProfile(manifest)
         );
 
         REQUIRE_FALSE_MESSAGE(
@@ -7297,7 +7297,7 @@ namespace uf::operator_runtime
         auto const accepted = prepared.store.pinSession(
             pin,
             manifest,
-            std::nullopt
+            test_support::unconstrainedAgentProfile(manifest)
         );
         CHECK_MESSAGE(
             accepted.has_value(),
@@ -7320,7 +7320,7 @@ namespace uf::operator_runtime
             auto const manifest = sessionManifest(
                 prepared.project.registration,
                 candidate.artifactRootHash,
-                hashOf("agent"),
+                hashOf(test_support::unconstrainedAgentProfileBytes()),
                 test_support::policyArtifactBytes()
             );
             auto const pin = additionalSessionPin(
@@ -7334,7 +7334,7 @@ namespace uf::operator_runtime
                 installRequest(candidate, prepared.installedGeneration),
                 pin,
                 manifest,
-                std::nullopt
+                test_support::unconstrainedAgentProfile(manifest)
             ).has_value());
             auto const active = prepared.store.activeRuntimeArtifactPin();
             REQUIRE(active.has_value());
@@ -7384,7 +7384,7 @@ namespace uf::operator_runtime
                 installRequest(candidate, prepared.installedGeneration),
                 pin,
                 prepared.manifest,
-                std::nullopt
+                test_support::unconstrainedAgentProfile(prepared.manifest)
             );
             REQUIRE_FALSE_MESSAGE(
                 failed.has_value(),
@@ -7437,7 +7437,7 @@ namespace uf::operator_runtime
             auto const manifest = sessionManifest(
                 prepared.project.registration,
                 candidate.artifactRootHash,
-                hashOf("agent"),
+                hashOf(test_support::unconstrainedAgentProfileBytes()),
                 test_support::policyArtifactBytes()
             );
             auto pin = additionalSessionPin(
@@ -7451,7 +7451,7 @@ namespace uf::operator_runtime
                 installRequest(candidate, prepared.installedGeneration),
                 pin,
                 manifest,
-                std::nullopt
+                test_support::unconstrainedAgentProfile(manifest)
             );
             REQUIRE_FALSE_MESSAGE(
                 refused.has_value(),
@@ -7476,7 +7476,7 @@ namespace uf::operator_runtime
                 installRequest(candidate, rolledBack->installedGeneration),
                 pin,
                 manifest,
-                std::nullopt
+                test_support::unconstrainedAgentProfile(manifest)
             ).has_value());
         }
 
@@ -7534,10 +7534,14 @@ namespace uf::operator_runtime
         auto const stored = sessionManifest(
             prepared.project.registration,
             prepared.runtimeArtifactRootHash,
-            hashOf("agent"),
+            hashOf(test_support::unconstrainedAgentProfileBytes()),
             test_support::policyArtifactBytes()
         );
-        REQUIRE(prepared.store.pinSession(samePin, stored, std::nullopt).has_value());
+        REQUIRE(prepared.store.pinSession(
+            samePin,
+            stored,
+            test_support::unconstrainedAgentProfile(stored)
+        ).has_value());
 
         auto movedResult = SessionManifest::create(
             SessionManifestSpec{
@@ -7545,13 +7549,17 @@ namespace uf::operator_runtime
                 .operatorProtocolSchemaHash   = hashOf("operator"),
                 .projectRegistrationHash      = prepared.project.registration.hash(),
                 .policyArtifactHash           = hashOf("a policy this session was not pinned to"),
-                .agentProfileHash             = hashOf("agent"),
+                .agentProfileHash             = hashOf(test_support::unconstrainedAgentProfileBytes()),
             }
         );
         REQUIRE(movedResult.has_value());
         auto const moved = *std::move(movedResult);
         REQUIRE(moved.hash() != stored.hash());
-        auto const refused = prepared.store.pinSession(samePin, moved, std::nullopt);
+        auto const refused = prepared.store.pinSession(
+            samePin,
+            moved,
+            test_support::unconstrainedAgentProfile(moved)
+        );
         REQUIRE_FALSE(refused.has_value());
         CHECK(
             refused.error().message().contains(
@@ -7591,7 +7599,7 @@ namespace uf::operator_runtime
                 .worldScope                = *missingScope,
             },
             manifest,
-            std::nullopt
+            test_support::unconstrainedAgentProfile(manifest)
         );
         REQUIRE_FALSE(missingInstance.has_value());
         CHECK(
@@ -8308,7 +8316,7 @@ namespace uf::operator_runtime
             auto const manifest = sessionManifest(
                 prepared.project.registration,
                 prepared.runtimeArtifactRootHash,
-                hashOf("agent"),
+                hashOf(test_support::unconstrainedAgentProfileBytes()),
                 test_support::policyArtifactBytes()
             );
             REQUIRE(prepared.store.provisionProjectInstance(
@@ -8337,7 +8345,7 @@ namespace uf::operator_runtime
                     .worldScope         = *ambiguousScope,
                 },
                 manifest,
-                std::nullopt
+                test_support::unconstrainedAgentProfile(manifest)
             ).has_value());
             return std::pair{manifest, prepared.runtimeArtifactRootHash};
         }();

@@ -569,9 +569,6 @@ namespace uf::cli
         CHECK(use->toolName == "framework.observe");
         CHECK(use->objectiveDocument == std::filesystem::path{"objective.json"});
         CHECK(use->argumentsDocument == std::filesystem::path{"arguments.json"});
-        // The budget is the agent's own material and nobody else's: the
-        // Operator holds the stopping condition of the one principal whose
-        // intent it cannot verify in advance.
         CHECK(
             use->agentProfileDocument == std::filesystem::path{"budget.json"}
         );
@@ -582,6 +579,7 @@ namespace uf::cli
                 "--tool", "framework.observe",
                 "--objective", "{ \"goal\": \"look\" }",
                 "--arguments", "{}",
+                "--agent-profile", "budget.json",
                 "--capability", "operate",
             })
         );
@@ -599,12 +597,19 @@ namespace uf::cli
         CHECK(command->objectiveText == "{ \"goal\": \"look\" }");
         CHECK(command->argumentsText == "{}");
 
+        // The budget is every principal's material: the ledger pins no session
+        // without a declared one, whoever controls it.
+        CHECK(
+            command->agentProfileDocument == std::filesystem::path{"budget.json"}
+        );
+
         auto const project = parseInvokeArguments(
             invokeArgsWith({
                 "--actor", "project",
                 "--entry", "restock",
                 "--objective-file", "objective.json",
                 "--arguments-file", "arguments.json",
+                "--agent-profile", "budget.json",
             })
         );
         REQUIRE(project.has_value());
@@ -615,6 +620,9 @@ namespace uf::cli
         );
         REQUIRE(start != nullptr);
         CHECK(start->entryToolName == "restock");
+        CHECK(
+            start->agentProfileDocument == std::filesystem::path{"budget.json"}
+        );
     }
 
     // One job, one vehicle. Material belonging to another transport is refused
@@ -633,44 +641,39 @@ namespace uf::cli
         auto const cases = std::vector<MisdirectedMaterial>{
             {
                 "agent",
-                {"--tool", "t", "--objective", "{}", "--arguments-file", "a.json"},
+                {
+                    "--tool", "t", "--objective", "{}",
+                    "--arguments-file", "a.json",
+                    "--agent-profile", "budget.json",
+                },
                 "--objective",
             },
             {
                 "agent",
-                {"--entry", "e", "--objective-file", "o.json", "--arguments-file", "a.json"},
-                "--entry",
-            },
-            {
-                "human",
-                {"--tool", "t", "--objective-file", "o.json", "--arguments", "{}"},
-                "--objective-file",
-            },
-            {
-                "project",
-                {"--tool", "t", "--objective-file", "o.json", "--arguments-file", "a.json"},
-                "--tool",
-            },
-            // A budget presented by a principal that stops on its own. The
-            // ledger refuses an AgentProfile from a Human or a Script pin, so
-            // a front end that carried one this far would be assembling a
-            // session the Operator cannot admit.
-            {
-                "human",
-                {
-                    "--tool", "t", "--objective", "{}", "--arguments", "{}",
-                    "--agent-profile", "budget.json",
-                },
-                "--agent-profile",
-            },
-            {
-                "project",
                 {
                     "--entry", "e", "--objective-file", "o.json",
                     "--arguments-file", "a.json",
                     "--agent-profile", "budget.json",
                 },
-                "--agent-profile",
+                "--entry",
+            },
+            {
+                "human",
+                {
+                    "--tool", "t", "--objective-file", "o.json",
+                    "--arguments", "{}",
+                    "--agent-profile", "budget.json",
+                },
+                "--objective-file",
+            },
+            {
+                "project",
+                {
+                    "--tool", "t", "--objective-file", "o.json",
+                    "--arguments-file", "a.json",
+                    "--agent-profile", "budget.json",
+                },
+                "--tool",
             },
         };
 
@@ -725,22 +728,23 @@ namespace uf::cli
         CHECK(noArguments.error().message().contains("--arguments-file"));
         CHECK(noArguments.error().message().contains("agent"));
 
-        // An agent with no budget document. pinSession refuses an Agent
-        // session that pins no AgentProfile, so the whole material is present
-        // here and the call is still one the Operator would not admit; it is
-        // refused by name at the flag rather than deep inside a lifecycle
-        // start.
+        // A principal with no budget document. pinSession refuses a session
+        // that pins no AgentProfile, whoever controls it, so the whole
+        // transport material is present here and the call is still one the
+        // Operator would not admit; it is refused by name at the flag rather
+        // than deep inside a lifecycle start. The human transport says it,
+        // because the budget stopped being the agent's alone.
         auto const noProfile = parseInvokeArguments(
             invokeArgsWith({
-                "--actor", "agent",
+                "--actor", "human",
                 "--tool", "framework.observe",
-                "--objective-file", "o.json",
-                "--arguments-file", "a.json",
+                "--objective", "{}",
+                "--arguments", "{}",
             })
         );
         REQUIRE_FALSE(noProfile.has_value());
         CHECK(noProfile.error().message().contains("--agent-profile"));
-        CHECK(noProfile.error().message().contains("agent"));
+        CHECK(noProfile.error().message().contains("human"));
 
         // The key the durable root request is idempotent on. A front end that
         // minted one would put a second durable root beside the first on every
@@ -751,6 +755,7 @@ namespace uf::cli
                 "--runtime", "runtime-root", "--ocr-models", "models",
                 "--actor", "human", "--tool", "t",
                 "--objective", "{}", "--arguments", "{}",
+                "--agent-profile", "budget.json",
             }
         );
         REQUIRE_FALSE(noKey.has_value());
@@ -763,6 +768,7 @@ namespace uf::cli
             invokeArgsWith({
                 "--actor", "human", "--tool", "t",
                 "--objective", "{}", "--arguments", "{}",
+                "--agent-profile", "budget.json",
                 "--queue", "queue.jsonl",
             })
         );

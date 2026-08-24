@@ -366,4 +366,41 @@ rejects(function()
     ))
 end)
 
+-- The genesis model: the document that declares nothing.
+--
+-- It compiles, and what it compiles to can do nothing -- no ui target, no
+-- binding, no surface. There is no lower bound on those three collections,
+-- because the only thing one protected was the tautology that a model
+-- declaring nothing declares nothing, while making the state every project
+-- starts from unrepresentable.
+local genesis = project.parse([==[
+schema_version = 3
+base_resolution = [1, 1]
+base_dpi = [96, 96]
+]==])
+assert(#genesis.ui_targets == 0)
+assert(#genesis.bindings == 0)
+assert(#genesis.surfaces == 0)
+assert(#genesis.declared_surface_ids == 0)
+assert(#genesis.declared_ui_target_ids == 0)
+assert(#genesis.declared_action_ids == 0)
+assert(genesis.base_resolution[1] == 1)
+assert(genesis.base_dpi[1] == 96)
+
+-- A model that DOES declare Surfaces still needs a scene, because a stack of
+-- overlays over no scene resolves to nothing. The genesis model has no stack.
+rejects(function()
+    project.parse([==[
+schema_version = 3
+base_resolution = [1, 1]
+base_dpi = [96, 96]
+
+[[surface]]
+id = "overlay.only"
+kind = "overlay"
+covers = []
+identity = []
+]==])
+end, "a model declaring Surfaces still needs at least one scene")
+
 return 1

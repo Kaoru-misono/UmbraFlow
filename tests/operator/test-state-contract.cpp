@@ -681,7 +681,7 @@ namespace uf::operator_runtime
         auto const policyManifest = test_support::sessionManifest(
             availabilityStore.project.registration,
             availabilityStore.runtimeArtifactRootHash,
-            hashOf("agent"),
+            hashOf(test_support::unconstrainedAgentProfileBytes()),
             "policy-variant"
         );
         auto pinSnapshot = [&availabilityStore, &policyManifest](
@@ -714,7 +714,7 @@ namespace uf::operator_runtime
                     .worldScope             = *sessionWorldScope,
                 },
                 policyManifest,
-                std::nullopt
+                test_support::unconstrainedAgentProfile(policyManifest)
             ).has_value());
             auto const controller = availabilityStore.store.bindController(sessionId);
             REQUIRE(controller.has_value());

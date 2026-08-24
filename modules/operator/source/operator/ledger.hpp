@@ -545,7 +545,7 @@ namespace uf::operator_runtime
             RuntimeArtifactInstallRequest const& installation,
             SessionPin const& pin,
             SessionManifest const& manifest,
-            std::optional<AgentProfile> const& agentProfile
+            AgentProfile const& agentProfile
         ) -> Status;
 
         [[nodiscard]]
@@ -580,23 +580,25 @@ namespace uf::operator_runtime
             std::string const& projectInstanceKey
         ) -> Status;
 
-        // The trusted setup door, and the only place an Agent's ceilings are
-        // established. agentProfile is required for exactly the kinds whose
-        // ControllerProfile says budgetsRequired and refused for the others,
-        // and it must be the profile this manifest pins -- so no path that
-        // takes a ControllerBinding can state, raise or refresh a budget.
+        // The trusted setup door, and the only place a session's ceilings are
+        // established. agentProfile is required for every controller kind and
+        // must be the profile this manifest pins, so no path that takes a
+        // ControllerBinding can state, raise or refresh a budget.
         [[nodiscard]]
         auto pinSession(
             SessionPin const& pin,
             SessionManifest const& manifest,
-            std::optional<AgentProfile> const& agentProfile
+            AgentProfile const& agentProfile
         ) -> Status;
 
         // Reactivates the unique most-recent prior session matching these
         // externally known facts and the active installation named by the
-        // manifest. Budgeted Agent sessions are refused because their steady
-        // deadline is process-local; the caller must remain read-only or pin a
-        // new Agent session under newly verified ceilings.
+        // manifest. A session whose declared elapsed ceiling BINDS is refused,
+        // because that deadline is process-local and a resumed one would be
+        // measured from a clock this process never started; the caller must
+        // remain read-only or pin a new session under newly verified ceilings.
+        // A session the operator declared unbounded in time has no such
+        // deadline and resumes.
         [[nodiscard]]
         auto resumeSession(
             SessionResume const& resume,

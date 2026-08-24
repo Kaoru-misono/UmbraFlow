@@ -402,47 +402,44 @@ namespace uf::operator_runtime
             "instance-pins"
         ).has_value());
 
-        // Which kinds carry ceilings is ControllerProfile's answer, and
-        // pinSession holds both directions of it. An Agent without a profile
-        // would be an Agent with no stopping condition; a Script with one would
-        // be a budget nothing ever charges.
-        auto const unconstrained = test_support::agentProfileFor(
-            prepared,
-            test_support::k_unconstrainedAgentBudget
-        );
-        CHECK_FALSE(prepared.store.pinSession(
-            pin("session-unbudgeted", "instance-pins", "target-pins", ControllerKind::Agent),
-            prepared.manifest,
-            std::nullopt
-        ).has_value());
-        CHECK_FALSE(prepared.store.pinSession(
-            pin("session-budgeted", "instance-pins", "target-pins", ControllerKind::Script),
-            unconstrained.manifest,
-            unconstrained.profile
-        ).has_value());
-
         // The ceilings are the exact bytes the manifest attests to. A profile
         // verified against one manifest cannot be presented with another, and
         // bytes that do not hash to agent_profile_hash never become a profile
         // at all.
+        //
+        // What is NOT asserted here any more: that the controller kind decides
+        // whether a session carries ceilings. Every session declares a budget,
+        // whoever controls it, so an unbudgeted session is not a shape the
+        // types can spell and a budgeted Script is an ordinary session rather
+        // than a refusal.
+        auto const narrowed = test_support::agentProfileFor(
+            prepared,
+            AgentBudget{
+                .maximumToolCalls    = 4U,
+                .maximumMutations    = 2U,
+                .maximumObservations = 4U,
+                .maximumElapsedMillis = 60'000U,
+                .maximumRiskUnits     = 32U,
+            }
+        );
         CHECK_FALSE(prepared.store.pinSession(
             pin("session-crossed", "instance-pins", "target-pins", ControllerKind::Agent),
             prepared.manifest,
-            unconstrained.profile
+            narrowed.profile
         ).has_value());
 
-        // The positive control for the three refusals above: the same instance
-        // and the same target, pinned with the profile this manifest attests
-        // to. Without it, three refusals are consistent with an instance
-        // nothing could be pinned to at all.
+        // The positive control for the refusal above: the same instance and
+        // the same target, pinned with the profile this manifest attests to.
+        // Without it, a refusal is consistent with an instance nothing could
+        // be pinned to at all.
         REQUIRE(prepared.store.pinSession(
             pin("session-pins", "instance-pins", "target-pins", ControllerKind::Agent),
-            unconstrained.manifest,
-            unconstrained.profile
+            narrowed.manifest,
+            narrowed.profile
         ).has_value());
 
         CHECK_FALSE(AgentProfile::verifyExact(
-            unconstrained.manifest,
+            narrowed.manifest,
             "agent-profile.json",
             test_support::agentProfileBytes(AgentBudget{
                 .maximumToolCalls     = 999U,

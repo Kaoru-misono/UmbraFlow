@@ -697,21 +697,15 @@ return {
             );
             REQUIRE(worldScope.has_value());
 
-            // A profile is required for exactly the kinds whose
-            // ControllerProfile says budgets are required, and refused for the
-            // others, so the kind decides this rather than the caller.
-            auto profile = std::optional<AgentProfile>{};
-            if (controllerProfile(kind).budgetsRequired)
-            {
-                auto verified = AgentProfile::verifyExact(
-                    manifest,
-                    "agent-profile.json",
-                    agentProfileBytes(),
-                    test_support::agentProfileValidator()
-                );
-                REQUIRE_MESSAGE(verified.has_value(), failureText(verified));
-                profile = *std::move(verified);
-            }
+            // Required for every controller kind: no session is pinned
+            // without a declared budget.
+            auto profile = AgentProfile::verifyExact(
+                manifest,
+                "agent-profile.json",
+                agentProfileBytes(),
+                test_support::agentProfileValidator()
+            );
+            REQUIRE_MESSAGE(profile.has_value(), failureText(profile));
             auto const pinned = store.pinSession(
                 SessionPin{
                     .sessionId                 = std::string{sessionId},
@@ -728,7 +722,7 @@ return {
                     .worldScope         = *worldScope,
                 },
                 manifest,
-                profile
+                *profile
             );
             REQUIRE_MESSAGE(pinned.has_value(), failureText(pinned));
             auto controller = store.bindController(std::string{sessionId});
@@ -1061,6 +1055,66 @@ return {
         CHECK(
             prepared.store.sealToolCallContext(root, context).has_value()
         );
+    }
+
+    // The closure is what a session may call, and every call is measured
+    // against it. The refusal names the Tool AND the closure it was measured
+    // against: a message naming only the Tool leaves the caller guessing which
+    // set it was judged by, and a session's closure is the whole difference
+    // between one session and another now that there is no second kind.
+    //
+    // Rewriting @umbraflow/tools' membership test in tools.call as
+    // `if false then` reds this case.
+    TEST_CASE("a child naming a Tool outside the pinned closure is refused by name")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const registration = verifiedGeneration();
+        auto prepared = firstIncarnation(temporary.path(), registration);
+        auto const log = std::make_shared<RunLog>();
+
+        auto dispatcher = ProjectToolDispatcher::create(
+            prepared.store,
+            prepared.observations,
+            prepared.policyAuthority,
+            frameworkProvider(log)
+        );
+        REQUIRE_MESSAGE(dispatcher.has_value(), failureText(dispatcher));
+        auto registrar = ProjectGenerationRegistrar{};
+        auto const program =
+            loadProgram(registration, registrar, *dispatcher);
+
+        auto const root = rootFor("dispatch-outside-closure");
+        auto const call = rootCall(
+            program,
+            root,
+            R"({"children":["dispatch.project.absent"]})"
+        );
+
+        auto const answered = dispatcher->dispatch(
+            program,
+            ToolAdmissionRequest{
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = root,
+                .call            = call,
+                .policyAuthority = prepared.policyAuthority,
+            },
+            std::stop_token{}
+        );
+        // The call is answered rather than torn down: a handler that raised is
+        // a Tool that ran and failed, and the ledger records what it said.
+        REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
+        CHECK(answered->state == ToolCallState::TerminalFailure);
+
+        auto const recorded = payloadOf(*answered);
+        INFO("recorded: ", recorded);
+        CHECK(recorded.contains("dispatch.project.absent"));
+        CHECK(recorded.contains("outside the closure this session pinned"));
+
+        // Named concretely rather than as "the pinned catalog": the entries
+        // this registration binds are in the refusal, so the caller reads what
+        // it could have called instead.
+        CHECK(recorded.contains(std::string{k_leafTool}));
     }
 
     TEST_CASE("a terminal parent returns its recorded result rather than dispatching again")

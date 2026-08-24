@@ -10,7 +10,12 @@ version = 0.1.0
 
 [dependencies]
 public = core domain operator
-private = image json schema
+# task, because the kit writes the genesis RuntimeArtifact at scaffold
+# time and those bytes are the runtime's constant, not the kit's. It
+# names the two file names, the two format numbers and the genesis
+# document itself, and nothing else: the kit still interprets no
+# RuntimeModel semantics and still links no loader of its own.
+private = image json schema task
 
 # The one thing this module does that is not arithmetic over files: starting a
 # process. `project upgrade` fetches a release through curl and then runs the

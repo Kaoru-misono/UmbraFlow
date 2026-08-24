@@ -49,7 +49,7 @@ namespace uf::operator_runtime
                     .worldScope         = *worldScope,
                 },
                 prepared.manifest,
-                std::nullopt
+                test_support::unconstrainedAgentProfile(prepared.manifest)
             );
             CAPTURE(pinned.has_value() ? std::string{} : pinned.error().message());
             REQUIRE(pinned.has_value());

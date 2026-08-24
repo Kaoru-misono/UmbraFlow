@@ -518,6 +518,7 @@
       }
     },
     "runtime_model": {
+      "$comment": "ui_targets, bindings and surfaces admit the empty array. The model that declares nothing is the genesis model every project starts from, and its content hash is the root of the parentage chain; a lower bound of one made that state unrepresentable and bought only the tautology that a model declaring nothing can do nothing. Whether a model is worth running is the Project's judgement and the operator's policy, not this schema's.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -537,7 +538,7 @@
         "base_dpi": { "$ref": "#/$defs/size" },
         "ui_targets": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 0,
           "items": { "$ref": "#/$defs/ui_target" }
         },
         "locators": {
@@ -550,7 +551,7 @@
         },
         "bindings": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 0,
           "items": { "$ref": "#/$defs/binding" }
         },
         "collections": {
@@ -563,7 +564,7 @@
         },
         "surfaces": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 0,
           "items": { "$ref": "#/$defs/surface" }
         },
         "transitions": {

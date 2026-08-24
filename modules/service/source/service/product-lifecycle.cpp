@@ -55,7 +55,10 @@ namespace uf::service
         constexpr auto k_operatorSchemaPath = std::string_view{
             "schema/umbraflow-operator-v1.schema.json"
         };
-        constexpr auto k_noAgentProfile = std::string_view{"null"};
+        // The one spelling of OP:`UnboundedCeiling`. It is compared against the
+        // bytes rather than re-derived, because the schema already refused
+        // every other string.
+        constexpr auto k_unboundedCeilingMarker = std::string_view{"unbounded"};
 
         // What an AgentProfile refusal names as the bytes' origin. They arrive
         // on the start request rather than as a file this module opens --
@@ -202,13 +205,21 @@ namespace uf::service
         }
 
         // One ceiling out of an AgentBudget document the definition below has
-        // already accepted. Present and integral are settled by then, which is
-        // why neither is re-tested here: the definition requires all five
-        // members and types every one as an integer, so a branch for an absent
-        // one would be a branch nothing could reach. What the definition does
-        // NOT settle is the top -- it bounds only the minimum -- and a
-        // canonical JSON number is a double, so a ceiling past what a uint64
-        // holds is the one thing left to refuse.
+        // already accepted. Present is settled by then, which is why it is not
+        // re-tested here: the definition requires all five members, so a branch
+        // for an absent one would be a branch nothing could reach.
+        //
+        // The definition admits two spellings of a ceiling and this reads both:
+        // an integer, and the "unbounded" marker an Operator writes when it
+        // grants a session that no ceiling binds. The marker is read into
+        // k_unboundedBudget so that the rest of the system sees one number
+        // shape; what it is NOT is an absence, a default, or a number a reader
+        // has to recognise as magic in the bytes.
+        //
+        // What the definition does not settle is the top -- it bounds only the
+        // minimum -- and a canonical JSON number is a double, so a stated
+        // ceiling past what the ledger's own INTEGER column holds is the one
+        // thing left to refuse.
         [[nodiscard]]
         auto budgetCeiling(
             json::Value const& budget,
@@ -218,8 +229,14 @@ namespace uf::service
             auto const* const p_stated = budget.find(member);
             UF_CHECK(p_stated != nullptr);
 
+            if (p_stated->kind() == json::ValueKind::String)
+            {
+                UF_CHECK(p_stated->string() == k_unboundedCeilingMarker);
+                return operator_runtime::k_unboundedBudget;
+            }
+
             auto const ceiling = checkedIntegralCast<uint64>(p_stated->number());
-            if (!ceiling)
+            if (!ceiling || *ceiling > operator_runtime::k_unboundedBudget)
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
@@ -800,14 +817,7 @@ namespace uf::service
         // derived from the bytes rather than stated beside them, which is what
         // makes a widened ceiling change the session identity every later
         // decision is composed against.
-        UF_TRY_VALUE(
-            agentProfileHash,
-            hashOf(
-                start.agentProfileJcs.has_value()
-                    ? std::string_view{*start.agentProfileJcs}
-                    : k_noAgentProfile
-            )
-        );
+        UF_TRY_VALUE(agentProfileHash, hashOf(start.agentProfileJcs));
 
         auto const project = operator_runtime::ProjectIdentity{selected.generation};
         UF_TRY_VALUE(
@@ -824,26 +834,20 @@ namespace uf::service
         );
 
         // Verified against the manifest that just attested to it, before the
-        // pin that needs it. Whether one is required at all is the ledger's
-        // question and not this module's: pinSession refuses a profile whose
-        // presence disagrees with the controller kind, so an agent that
-        // carried no bytes and a human that carried some are both refused
-        // there rather than reasoned about here.
-        auto agentProfile = std::optional<operator_runtime::AgentProfile>{};
-        if (start.agentProfileJcs.has_value())
-        {
-            UF_TRY_VALUE(validate, agentProfileValidator(operatorSchema));
-            UF_TRY_VALUE(
-                verified,
-                operator_runtime::AgentProfile::verifyExact(
-                    sessionManifest,
-                    std::filesystem::path{k_agentProfileOrigin},
-                    *start.agentProfileJcs,
-                    validate
-                )
-            );
-            agentProfile.emplace(std::move(verified));
-        }
+        // pin that needs it. One path for every controller kind: there is no
+        // session without a declared budget, so there is nothing here to branch
+        // on and nothing for the ledger to reconcile between a kind and a
+        // presence.
+        UF_TRY_VALUE(validate, agentProfileValidator(operatorSchema));
+        UF_TRY_VALUE(
+            agentProfile,
+            operator_runtime::AgentProfile::verifyExact(
+                sessionManifest,
+                std::filesystem::path{k_agentProfileOrigin},
+                start.agentProfileJcs,
+                validate
+            )
+        );
         UF_TRY_VALUE(
             policyAuthority,
             operator_runtime::OperatorPolicyAuthority::create(
@@ -1566,7 +1570,17 @@ namespace uf::service
             )
         );
         UF_TRY_VALUE(policyHash, hashOf(policyBytes));
-        UF_TRY_VALUE(noAgentProfileHash, hashOf(k_noAgentProfile));
+
+        // The person who typed `umbra-flow upgrade` is the operator, and this
+        // is the budget they declared by typing it: unbounded, in bytes, hashed
+        // into the manifest this install is recorded under. An upgrade session
+        // makes no Tool call at all -- its Tool Runtime refuses every one --
+        // so what these ceilings bound is nothing; what they do is say so out
+        // loud instead of leaving the grant unstated.
+        UF_TRY_VALUE(
+            upgradeProfileHash,
+            hashOf(operator_runtime::k_unboundedAgentProfileJcs)
+        );
 
         UF_TRY_VALUE(
             sessionManifest,
@@ -1576,7 +1590,7 @@ namespace uf::service
                     .operatorProtocolSchemaHash   = operatorSchemaHash,
                     .projectRegistrationHash      = project.hash(),
                     .policyArtifactHash           = policyHash,
-                    .agentProfileHash             = noAgentProfileHash,
+                    .agentProfileHash             = upgradeProfileHash,
                 }
             )
         );
@@ -1623,19 +1637,28 @@ namespace uf::service
             // deciding that this release goes into this production root; there
             // is no actor flag on that verb and no principal behind it but the
             // operator running it. The kind is load-bearing even here, because
-            // it is what makes the session that records the release one no
-            // Agent budget is required for and one that may stand behind an
-            // approval.
+            // it is what makes the session that records the release one that
+            // may stand behind an approval.
             .kind       = operator_runtime::ControllerKind::Human,
             .worldScope = worldScope,
         };
+        UF_TRY_VALUE(validate, agentProfileValidator(operatorSchema));
+        UF_TRY_VALUE(
+            upgradeProfile,
+            operator_runtime::AgentProfile::verifyExact(
+                sessionManifest,
+                std::filesystem::path{k_agentProfileOrigin},
+                operator_runtime::k_unboundedAgentProfileJcs,
+                validate
+            )
+        );
         if (active)
         {
             UF_TRY(coordinator.upgradeRuntimeArtifactAndPinSession(
                 installation,
                 pin,
                 sessionManifest,
-                std::nullopt
+                upgradeProfile
             ));
         }
         else
@@ -1646,7 +1669,7 @@ namespace uf::service
             // first-install tests use. A pin refusal leaves the install active
             // and no session; re-running the verb then takes the upgrade path.
             UF_TRY(coordinator.installRuntimeArtifact(installation));
-            UF_TRY(coordinator.pinSession(pin, sessionManifest, std::nullopt));
+            UF_TRY(coordinator.pinSession(pin, sessionManifest, upgradeProfile));
         }
         UF_TRY_VALUE(installed, coordinator.activeRuntimeArtifactPin());
         return RuntimeUpgradeResult{

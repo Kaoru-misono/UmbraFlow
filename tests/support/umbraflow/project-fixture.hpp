@@ -627,29 +627,41 @@ namespace uf::operator_runtime::test_support
     // attests to, so the fixture produces bytes and derives the hash from them
     // rather than the other way round.
     [[nodiscard]]
+    inline auto agentProfileCeiling(uint64 ceiling) -> std::string
+    {
+        // A ceiling that does not bind is OP:`UnboundedCeiling`'s marker, not
+        // the number k_unboundedBudget happens to be: that number is past what
+        // a canonical JSON number spells exactly, so writing it would produce
+        // bytes no reader could read back as itself.
+        return ceiling == k_unboundedBudget
+            ? std::string{"\"unbounded\""}
+            : std::to_string(ceiling);
+    }
+
+    [[nodiscard]]
     inline auto agentProfileBytes(AgentBudget const& budget) -> std::string
     {
         return std::format(
             "{{\"maximum_elapsed_ms\":{},\"maximum_mutations\":{},"
             "\"maximum_observations\":{},\"maximum_risk_units\":{},"
             "\"maximum_tool_calls\":{}}}",
-            budget.maximumElapsedMillis,
-            budget.maximumMutations,
-            budget.maximumObservations,
-            budget.maximumRiskUnits,
-            budget.maximumToolCalls
+            agentProfileCeiling(budget.maximumElapsedMillis),
+            agentProfileCeiling(budget.maximumMutations),
+            agentProfileCeiling(budget.maximumObservations),
+            agentProfileCeiling(budget.maximumRiskUnits),
+            agentProfileCeiling(budget.maximumToolCalls)
         );
     }
 
-    // Wide enough that a case which is not about budgets never reaches one. A
-    // case that IS about a budget states its own numbers, so no case is ever
-    // testing a ceiling it did not choose.
+    // The budget a case pins when it is not about budgets: every ceiling is
+    // the declared unbounded one, so nothing here is a number a case could be
+    // measuring by accident. A case that IS about a budget states its own.
     inline constexpr auto k_unconstrainedAgentBudget = AgentBudget{
-        .maximumToolCalls     = 1'000U,
-        .maximumMutations     = 1'000U,
-        .maximumObservations  = 1'000U,
-        .maximumElapsedMillis = 3'600'000U,
-        .maximumRiskUnits     = 1'000'000U,
+        .maximumToolCalls     = k_unboundedBudget,
+        .maximumMutations     = k_unboundedBudget,
+        .maximumObservations  = k_unboundedBudget,
+        .maximumElapsedMillis = k_unboundedBudget,
+        .maximumRiskUnits     = k_unboundedBudget,
     };
 
     [[nodiscard]]
@@ -664,8 +676,12 @@ namespace uf::operator_runtime::test_support
         {
             return std::nullopt;
         }
-        auto const rest  = exactJcs.substr(at + key.size());
-        auto       value = uint64{};
+        auto const rest = exactJcs.substr(at + key.size());
+        if (rest.starts_with("\"unbounded\""))
+        {
+            return k_unboundedBudget;
+        }
+        auto value = uint64{};
         // SAFETY: std::from_chars names its range as a pointer pair, which is
         // the one shape a bounded view cannot express. Both ends come from
         // rest's own extent, so no caller states a bound and the computed
@@ -760,6 +776,30 @@ namespace uf::operator_runtime::test_support
         );
         REQUIRE(result.has_value());
         return *result;
+    }
+
+    // The bytes and the verified profile a case pins when it is not about
+    // budgets. Every session declares one, so a case that states nothing about
+    // ceilings still has to hand over a document; these two keep that from
+    // being written out at each site.
+    [[nodiscard]]
+    inline auto unconstrainedAgentProfileBytes() -> std::string
+    {
+        return agentProfileBytes(k_unconstrainedAgentBudget);
+    }
+
+    [[nodiscard]]
+    inline auto unconstrainedAgentProfile(SessionManifest const& manifest)
+        -> AgentProfile
+    {
+        auto profile = AgentProfile::verifyExact(
+            manifest,
+            "agent-profile.json",
+            unconstrainedAgentProfileBytes(),
+            agentProfileValidator()
+        );
+        REQUIRE(profile.has_value());
+        return *std::move(profile);
     }
 
     inline auto writeFile(
@@ -1227,10 +1267,11 @@ identity = ["fixture.panel.anchor"]
         auto const installedGeneration = installed->installedGeneration();
         auto const project = makeProject(pluginId);
         auto const policyArtifact = policyArtifactBytes(privilegedSurfaceTools);
-        auto const manifest       = sessionManifest(
+        auto const agentProfile = agentProfileBytes(k_unconstrainedAgentBudget);
+        auto const manifest     = sessionManifest(
             project.registration,
             installed->rootHash(),
-            hashOf("agent"),
+            hashOf(agentProfile),
             policyArtifact
         );
         auto const generation = loadGeneration(project);
@@ -1244,6 +1285,13 @@ identity = ["fixture.panel.anchor"]
             1
         );
         REQUIRE(worldScope.has_value());
+        auto const preparedProfile = AgentProfile::verifyExact(
+            manifest,
+            "agent-profile.json",
+            agentProfile,
+            agentProfileValidator()
+        );
+        REQUIRE(preparedProfile.has_value());
         REQUIRE(store.pinSession(
             SessionPin{
                 .sessionId                 = "session-1",
@@ -1258,7 +1306,7 @@ identity = ["fixture.panel.anchor"]
                 .worldScope                = *worldScope,
             },
             manifest,
-            std::nullopt
+            *preparedProfile
         ).has_value());
         auto controller = store.bindController("session-1");
         REQUIRE(controller.has_value());
@@ -1344,14 +1392,14 @@ identity = ["fixture.panel.anchor"]
             projectInstanceKey
         ).has_value());
 
-        auto profile  = std::optional<AgentProfile>{};
-        auto manifest = prepared.manifest;
-        if (budget)
-        {
-            auto const pinned = agentProfileFor(prepared, *budget);
-            manifest = pinned.manifest;
-            profile  = pinned.profile;
-        }
+        // Every session pins a budget, so a caller that named none pins the
+        // fixture's unconstrained one rather than none at all.
+        auto const pinnedProfile = agentProfileFor(
+            prepared,
+            budget.value_or(k_unconstrainedAgentBudget)
+        );
+        auto const& manifest = pinnedProfile.manifest;
+        auto const& profile  = pinnedProfile.profile;
         auto const sessionWorldScope = ObservedInstanceWorldScope::run(
             controlledTargetId,
             1

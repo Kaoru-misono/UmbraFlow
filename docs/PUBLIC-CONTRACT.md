@@ -592,7 +592,7 @@ classification inside the value it answers with.
 | --- | --- | --- |
 | `@umbraflow/audit` | `record`, `recorded` | `59ca9c95641c7582282ea718017f2893f60e0573f9375705048b817eeb497425` |
 | `@umbraflow/screen` | `actions`, `observation`, `observe`, `targets`, `use`, `used` | `d867a61d61d48af242585d4b9e9b5eec24498450997c5870e7ead63a97474de3` |
-| `@umbraflow/tools` | `call`, `call_identity`, `catalog_hash`, `describe`, `evidence`, `knows`, `names`, `result`, `state`, `states`, `tool_name` | `389de89425823a0619fec8a7d90421d126357df3b518fc8ec77adafadb16b207` |
+| `@umbraflow/tools` | `call`, `call_identity`, `catalog_hash`, `describe`, `evidence`, `knows`, `names`, `result`, `state`, `states`, `tool_name` | `cc74c086e6827017b864d4a835bdb4643a2be58afa50941f3dae41d7857c8298` |
 | `@umbraflow/workflow` | `absent`, `child_flow`, `delivered`, `pending`, `recover`, `refused`, `settled`, `status`, `stopped`, `uncertain`, `wait` | `fb9e9e178384ac9c824d74843a6a45839679d7c5b36d60390e9df8ccfee6799d` |
 
 ### 4.2 Identity preimage

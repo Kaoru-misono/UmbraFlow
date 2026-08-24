@@ -2,6 +2,7 @@
 
 #include <service/product-lifecycle.hpp>
 
+#include <operator/agent-profile.hpp>
 #include <operator/controller.hpp>
 
 #include <task/task-context.hpp>
@@ -159,8 +160,16 @@ namespace uf::cli
                     // for one reason -- a Script may not report external input
                     // about a third party, and a person reading a screen is
                     // exactly the party that may.
-                    .kind            = operator_runtime::ControllerKind::Human,
-                    .agentProfileJcs = std::nullopt,
+                    .kind = operator_runtime::ControllerKind::Human,
+
+                    // The person who typed the verb is the operator, and this
+                    // is the budget they declared by typing it. It is written
+                    // out rather than defaulted: the bytes are hashed into the
+                    // SessionManifest, so an unbounded grant is attributable to
+                    // this run exactly as a narrow one would be.
+                    .agentProfileJcs = std::string{
+                        operator_runtime::k_unboundedAgentProfileJcs
+                    },
                     .worldScope      = worldScope,
                 }
             )

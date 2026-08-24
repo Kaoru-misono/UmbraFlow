@@ -856,8 +856,10 @@ function model.compile(value: any): any
         if source.stitched_maps == nil then {} else source.stitched_maps,
         stitchedMap
     )
-    if #uiTargets == 0 then fail("RuntimeModel.ui_targets", "must not be empty") end
-    if #surfaces == 0 then fail("RuntimeModel.surfaces", "must not be empty") end
+    -- No lower bound on ui_targets, bindings or surfaces. The model that
+    -- declares nothing is the genesis model a project starts from, and it
+    -- compiles to a RuntimeModel that can do nothing -- coherent, and whether
+    -- that is useful is the Project's business rather than this parser's.
 
     local targetById = mapById("RuntimeModel.ui_targets", uiTargets)
     local locatorById = mapById("RuntimeModel.locators", locators)
@@ -1080,11 +1082,17 @@ function model.compile(value: any): any
     runtimeModels[runtimeModel] = true
     semanticBytes[runtimeModel] = canonical(semanticModel)
 
+    -- A model that declares Surfaces declares at least one scene, because a
+    -- stack of overlays over no scene resolves to nothing. A model that
+    -- declares no Surface at all has no stack to resolve, so there is nothing
+    -- here for it to violate.
     local sceneCount = 0
     for _, valueSurface in surfaces do
         if valueSurface.kind == "scene" then sceneCount += 1 end
     end
-    if sceneCount == 0 then fail("RuntimeModel.surfaces", "needs at least one scene") end
+    if #surfaces > 0 and sceneCount == 0 then
+        fail("RuntimeModel.surfaces", "needs at least one scene")
+    end
 
     for _, valueTransition in transitions do
         if not model.valid_surface_stack(runtimeModel, valueTransition.from_surfaces) then

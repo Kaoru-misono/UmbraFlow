@@ -183,6 +183,16 @@ function tools.names(): any
     return catalogNames
 end
 
+-- The closure this run may call, rendered for a refusal. A refusal that named
+-- only the Tool leaves the caller guessing which set it was measured against,
+-- and "the pinned catalog" is a phrase rather than a set.
+local function pinnedClosure(): string
+    if #catalogNames == 0 then
+        return "no Tool at all"
+    end
+    return table.concat(catalogNames, ", ")
+end
+
 function tools.knows(name: any): boolean
     if type(name) ~= "string" then
         reject("knows needs a tool name string")
@@ -196,7 +206,12 @@ function tools.describe(name: any): any
     end
     local descriptor = descriptorByName[name]
     if descriptor == nil then
-        reject("describe names a tool the pinned catalog does not declare: " .. name)
+        reject(
+            "describe names a tool outside the closure this session pinned: "
+                .. name
+                .. "; the closure holds "
+                .. pinnedClosure()
+        )
     end
     return descriptor
 end
@@ -216,7 +231,12 @@ function tools.call(name: any, arguments: any): any
         reject("call needs a tool name string")
     end
     if descriptorByName[name] == nil then
-        reject("call names a tool the pinned catalog does not declare: " .. name)
+        reject(
+            "call names a tool outside the closure this session pinned: "
+                .. name
+                .. "; the closure holds "
+                .. pinnedClosure()
+        )
     end
     if type(arguments) ~= "table" then
         reject("call needs an object value for arguments")

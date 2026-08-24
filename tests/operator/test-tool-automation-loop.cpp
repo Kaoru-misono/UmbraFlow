@@ -819,7 +819,7 @@ return {
             auto const manifest = test_support::sessionManifest(
                 registration,
                 artifactRootHash,
-                hashOf("e2-agent-profile"),
+                hashOf(test_support::unconstrainedAgentProfileBytes()),
                 policy
             );
             REQUIRE(store.registerProject(registration).has_value());
@@ -850,7 +850,7 @@ return {
                     .worldScope         = *worldScope,
                 },
                 manifest,
-                std::nullopt
+                test_support::unconstrainedAgentProfile(manifest)
             );
             REQUIRE_MESSAGE(pinned.has_value(), failureText(pinned));
             auto controller = store.bindController(std::string{k_sessionId});

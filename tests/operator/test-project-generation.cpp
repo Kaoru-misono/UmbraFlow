@@ -1223,7 +1223,7 @@ return {
             .operatorProtocolSchemaHash = hashOf("operator"),
             .projectRegistrationHash    = generation.hash(),
             .policyArtifactHash         = hashOf(policyBytes),
-            .agentProfileHash           = hashOf("agent"),
+            .agentProfileHash           = hashOf(test_support::unconstrainedAgentProfileBytes()),
         });
         REQUIRE(manifest.has_value());
 
@@ -1250,7 +1250,11 @@ return {
                 .worldScope                = *worldScope,
             };
             REQUIRE(
-                store->pinSession(pin, *manifest, std::nullopt).has_value()
+                store->pinSession(
+                    pin,
+                    *manifest,
+                    test_support::unconstrainedAgentProfile(*manifest)
+                ).has_value()
             );
 
             // The session chains to the instance and the instance to the
@@ -1285,7 +1289,7 @@ return {
                     .worldScope                = *worldScope,
                 },
                 *manifest,
-                std::nullopt
+                test_support::unconstrainedAgentProfile(*manifest)
             );
             REQUIRE_FALSE(refused.has_value());
             CHECK(refused.error().message().contains(

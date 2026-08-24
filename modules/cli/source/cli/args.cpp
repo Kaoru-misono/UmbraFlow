@@ -293,13 +293,12 @@ namespace uf::cli
         // Exactly the material each actor presents, and the whole of what
         // separates the three on a command line.
         //
-        // The three transports carry three members each. The agent's fourth is
-        // not the transport's: an online Agent is the one principal whose
-        // stopping condition the Operator holds, so its session is pinned to a
-        // budget document and the ledger refuses to pin one without it. It is
-        // listed here because the two rules below are exactly the two this
-        // material needs -- present for the actor that owns it, refused by
-        // name for the two that do not.
+        // Each transport carries three members of its own plus the budget
+        // document, which is not the transport's: it is what the session this
+        // call runs in is pinned to, and the ledger pins no session without
+        // one. Every actor lists it because every actor spends the operator's
+        // machine; an operator that means to bound nothing writes "unbounded"
+        // in the document rather than omitting the flag.
         //
         // One table rather than two lists, because the refusal that names a
         // flag the stated actor does not carry and the requirement that every
@@ -314,11 +313,13 @@ namespace uf::cli
             InvokeFlag::Tool,
             InvokeFlag::Objective,
             InvokeFlag::Arguments,
+            InvokeFlag::AgentProfile,
         };
         constexpr auto k_projectMaterial = std::array{
             InvokeFlag::Entry,
             InvokeFlag::ObjectiveFile,
             InvokeFlag::ArgumentsFile,
+            InvokeFlag::AgentProfile,
         };
 
         struct InvokeActorSpec final
@@ -1283,16 +1284,18 @@ namespace uf::cli
             break;
         case InvokeActor::Human:
             request = HumanToolRequest{
-                .toolName      = *std::move(toolName),
-                .objectiveText = *std::move(objectiveText),
-                .argumentsText = *std::move(argumentsText),
+                .toolName             = *std::move(toolName),
+                .objectiveText        = *std::move(objectiveText),
+                .argumentsText        = *std::move(argumentsText),
+                .agentProfileDocument = *std::move(agentProfile),
             };
             break;
         case InvokeActor::Project:
             request = ProjectAutomationRequest{
-                .entryToolName     = *std::move(entryToolName),
-                .objectiveDocument = *std::move(objectiveFile),
-                .argumentsDocument = *std::move(argumentsFile),
+                .entryToolName        = *std::move(entryToolName),
+                .objectiveDocument    = *std::move(objectiveFile),
+                .argumentsDocument    = *std::move(argumentsFile),
+                .agentProfileDocument = *std::move(agentProfile),
             };
             break;
         }
@@ -1600,23 +1603,24 @@ namespace uf::cli
             "                               a second one\n"
             "  --actor ACTOR                agent, human or project\n"
             "\n"
+            "Required for every actor:\n"
+            "  --agent-profile FILE         The AgentBudget document this\n"
+            "                               session is pinned to. Every session\n"
+            "                               declares one, whoever controls it,\n"
+            "                               because every session spends this\n"
+            "                               machine; a ceiling meant not to bind\n"
+            "                               is written unbounded rather than\n"
+            "                               left out. Its bytes are hashed into\n"
+            "                               the SessionManifest, so a wider\n"
+            "                               ceiling changes every decision this\n"
+            "                               session goes on to record\n"
+            "\n"
             "Required for --actor agent:\n"
             "  --tool NAME                  Tool the model named\n"
             "  --objective-file FILE        JSON document the transport carried\n"
             "                               as the objective\n"
             "  --arguments-file FILE        JSON document of the tool-use\n"
             "                               block's arguments\n"
-            "  --agent-profile FILE         The AgentBudget document this\n"
-            "                               session is pinned to. Only an agent\n"
-            "                               states one: the Operator holds the\n"
-            "                               stopping condition of the one\n"
-            "                               principal whose intent it cannot\n"
-            "                               verify in advance, and refuses to\n"
-            "                               pin an agent session without a\n"
-            "                               budget. Its bytes are hashed into\n"
-            "                               the SessionManifest, so a wider\n"
-            "                               ceiling changes every decision this\n"
-            "                               session goes on to record\n"
             "\n"
             "Required for --actor human:\n"
             "  --tool NAME                  Tool the person named\n"

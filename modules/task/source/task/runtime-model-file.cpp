@@ -851,4 +851,33 @@ namespace uf::task
             std::move(files),
         };
     }
+
+    auto genesisRuntimeArtifactManifestJcs() -> Result<std::string>
+    {
+        UF_TRY_VALUE(
+            modelHash,
+            sha256(std::as_bytes(std::span{k_genesisRuntimeModelToml}))
+        );
+
+        // Written out rather than composed through the JSON module, because
+        // this module already reads these bytes with a hand-written canonical
+        // reader and the two must agree byte for byte. One writer and one
+        // reader of the same literal shape cannot drift; a writer that
+        // rendered a value tree could, and nothing here would catch it.
+        return std::format(
+            R"({{"assets":[],"page_model":{{"path":"{}","sha256":"{}","size":{}}},)"
+            R"("runtime_artifact_format":{},"runtime_model_format":{}}})",
+            k_runtimeModelFileName,
+            modelHash.hex(),
+            k_genesisRuntimeModelToml.size(),
+            k_runtimeArtifactFormat,
+            k_runtimeModelFormat
+        );
+    }
+
+    auto genesisArtifactRootHash() -> Result<ContentHash>
+    {
+        UF_TRY_VALUE(manifest, genesisRuntimeArtifactManifestJcs());
+        return sha256(std::as_bytes(std::span{manifest}));
+    }
 }

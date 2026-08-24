@@ -43,22 +43,20 @@ namespace uf::service
         // Which principal this session is pinned as, and deliberately without
         // a default: the kind is not a label on the controller id beside it,
         // it is the ceiling the whole Operator reads. An Agent reaches only
-        // the semantic Tool surface, must pin an AgentProfile budget, and
-        // cannot bind a read-mode session; only a Human may approve a mutating
-        // Tool or report external input about a third party. A default here
-        // would be this module choosing a principal for a caller that did not
-        // state one, which is exactly how one actor comes to hold another's
-        // powers.
+        // the semantic Tool surface; only a Human may approve a mutating Tool
+        // or report external input about a third party. A default here would be
+        // this module choosing a principal for a caller that did not state one,
+        // which is exactly how one actor comes to hold another's powers.
         operator_runtime::ControllerKind kind;
 
-        // The exact AgentProfile bytes this session is pinned to, present for
-        // the kinds whose budgets the Operator holds and absent for the kinds
-        // that stop on their own. They are bytes rather than a budget value
-        // because their hash IS the manifest's agent_profile_hash: a caller
-        // that stated ceilings instead would be naming a budget no manifest
-        // has to agree with. pinSession refuses a presence that disagrees with
-        // the kind, so this pair is judged by the ledger and never here.
-        std::optional<std::string> agentProfileJcs{};
+        // The exact AgentProfile bytes this session is pinned to. Required for
+        // every kind: every session spends the operator's machine, so every
+        // session declares what it may spend, and a ceiling the operator chose
+        // not to bind is the "unbounded" marker rather than a missing document.
+        // They are bytes rather than a budget value because their hash IS the
+        // manifest's agent_profile_hash: a caller that stated ceilings instead
+        // would be naming a budget no manifest has to agree with.
+        std::string agentProfileJcs{};
 
         // The observed-instance world this session observes in. It is
         // transferred into the session pin unchanged, so the observations this
