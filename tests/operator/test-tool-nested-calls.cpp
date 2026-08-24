@@ -58,7 +58,7 @@ namespace uf::operator_runtime
         };
         constexpr auto k_inputEffectScope = std::string_view{"controlled_target"};
         constexpr auto k_coordinateInputTool = std::string_view{
-            "framework.input.coordinate"
+            "framework.input.deliver"
         };
         constexpr auto k_observeTool = std::string_view{
             "framework.screen.observe"
@@ -1899,7 +1899,7 @@ namespace uf::operator_runtime
         REQUIRE_FALSE(refusedSurface.has_value());
         CHECK(refusedSurface.error().message().contains(
             "may not delegate the privileged surface of "
-            "framework.input.coordinate"
+            "framework.input.deliver"
         ));
 
         auto mutatingChild = handler->context.issue(frameworkInvocation(
@@ -1992,7 +1992,7 @@ namespace uf::operator_runtime
         auto const catalog = frameworkCatalog();
         constexpr auto k_frameworkTools = std::array{
             std::string_view{"framework.audit.record"},
-            std::string_view{"framework.input.coordinate"},
+            std::string_view{"framework.input.deliver"},
             std::string_view{"framework.input.semantic_target"},
             std::string_view{"framework.screen.observe"},
             std::string_view{"framework.workflow.status"},

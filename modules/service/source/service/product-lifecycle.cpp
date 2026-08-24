@@ -92,8 +92,8 @@ namespace uf::service
         constexpr auto k_semanticInputTool = std::string_view{
             "framework.input.semantic_target"
         };
-        constexpr auto k_coordinateInputTool = std::string_view{
-            "framework.input.coordinate"
+        constexpr auto k_deliverInputTool = std::string_view{
+            "framework.input.deliver"
         };
 
         // How long one minted observation authority may be presented for.
@@ -411,27 +411,25 @@ namespace uf::service
             "host_delivery_refused"
         };
 
-        // The verdict a bare-coordinate input records, and it is a decision
-        // rather than a gap.
-        //
-        // The Host posts an input only against a Receipt, and a Receipt is the
-        // Host's proof that the point it posts was MEASURED on the frame it
-        // posts into: its surface, ui target, Binding, variant and proof
-        // locator all come from the trusted resolver, and TaskHost::deliver
-        // joins the ui target it names against the one the ledger reserved. A
-        // bare coordinate has none of those. Minting it a Receipt with those
-        // fields blank would be a proof of nothing, and it would turn that join
-        // into a comparison of one empty string against another -- a check that
-        // cannot fail, standing where the only check on aim is.
-        //
-        // So a bare coordinate posts nothing until it carries something a
-        // Receipt can be about. What that is is the open question, and it is a
-        // question about the Tool rather than about the Host: either the
-        // descriptor gains the frame the point was measured on, or the point is
-        // delivered under a distinct privileged authority that states plainly
-        // that nothing measured it.
-        constexpr auto k_unmeasuredInputVerdict = std::string_view{
-            "coordinate_input_unmeasured"
+        // The verdict a machine-aimed input records when the Framework refused
+        // it BEFORE anything was captured or posted: a point outside the target
+        // surface this registration declares, a key outside the closed set of
+        // names, or a hold with no Tool call to lift it. Every one of them
+        // precedes the capture, so every one of them is proven absence and the
+        // reason names which it was.
+        constexpr auto k_refusedInputVerdict = std::string_view{
+            "input_refused"
+        };
+
+        // The verdict a machine-aimed input records when the delivery path was
+        // entered and could not say what reached the target. It is
+        // task::DeliveryOutcome::TransportUnknown's claim for a path that mints
+        // no Receipt and therefore no HostDeliveryReport: EngineSession fails
+        // before the sink, at the sink, and after the input has landed, and one
+        // Result cannot separate the three, so every failure from the cycle
+        // verb onwards is this and never proven absence.
+        constexpr auto k_unknownInputTransportVerdict = std::string_view{
+            "transport_unknown"
         };
 
         [[nodiscard]]
@@ -722,6 +720,24 @@ namespace uf::service
         // classification the ledger derived from what the Host reported.
         [[nodiscard]]
         auto answerSemanticInputTool(
+            operator_runtime::ToolCallPositionIdentity const& call
+        ) -> Result<operator_runtime::ToolCallCompletion>;
+
+        // The same delivery, aimed in machine terms. It opens an observation of
+        // its own and posts into THAT frame, so the point the caller named is
+        // judged against the surface the input lands on rather than against one
+        // captured earlier: the engine's coordinate gate -- live fingerprint,
+        // lease validity, target-instance revalidation, and the target-surface
+        // bound this run's registration declared -- runs on the frame that is
+        // showing.
+        //
+        // It mints no observation reference and consumes none. A reference is
+        // the authority to act on a target THE FRAMEWORK RESOLVED, and nothing
+        // here resolved anything; what stands in its place is the Privileged
+        // surface and the Operator's own privileged_surface_tools grant, which
+        // is the authority saying plainly that nothing measured this point.
+        [[nodiscard]]
+        auto answerDeliverInputTool(
             operator_runtime::ToolCallPositionIdentity const& call
         ) -> Result<operator_runtime::ToolCallCompletion>;
 
@@ -1207,6 +1223,241 @@ namespace uf::service
         return operator_runtime::toolCallCompletionFor(*delivered);
     }
 
+    auto ProductLifecycle::Impl::answerDeliverInputTool(
+        operator_runtime::ToolCallPositionIdentity const& call
+    ) -> Result<operator_runtime::ToolCallCompletion>
+    {
+        UF_TRY_VALUE(
+            arguments,
+            operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
+        );
+        auto const& value = arguments.value();
+        UF_TRY_VALUE(action, requiredStringArgument(value, "action"));
+
+        // Every member below was already judged by the Framework Tool Catalog's
+        // tagged contract: the tag is one of six, the arm's own members are all
+        // present, a pixel is a non-negative integer inside uint32, and a key
+        // is a non-empty string. What is left to this layer is what the catalog
+        // cannot see -- this run's declared target surface, this run's cycle,
+        // and the delivery layers' own ceilings.
+        auto const integerMember = [&value](std::string_view member) -> int64
+        {
+            auto const* const p_member = value.find(member);
+            UF_CHECK(p_member != nullptr);
+            return static_cast<int64>(p_member->number());
+        };
+        auto const pixelMember = [&integerMember](std::string_view member)
+        {
+            return static_cast<uint32>(integerMember(member));
+        };
+
+        // THE SCOPE OF AN INPUT INJECTION IS THE TARGET SURFACE THIS
+        // REGISTRATION DECLARED, AND NO WIDER
+        // (docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md).
+        // The surface is the RuntimeModel's own base resolution, which the
+        // engine already refuses to act against a live target that does not
+        // match, so a point outside it is a point on no surface this session
+        // can reach.
+        //
+        // It is judged HERE and before the capture rather than at the sink, for
+        // two reasons. The registration is what declares the bound, so this is
+        // the layer that can name it. And a refusal before anything is captured
+        // or posted is PROVEN ABSENCE, where the same refusal taken inside the
+        // delivery path could only be reported as possible -- which would set
+        // the target-wide mutation barrier over an aim that never left this
+        // function.
+        auto const surface    = runtimeModel.fingerprint();
+        auto const offSurface = [this, surface](PixelPoint point)
+            -> std::optional<std::string>
+        {
+            if (point.x() < surface.width() && point.y() < surface.height())
+            {
+                return std::nullopt;
+            }
+            return std::format(
+                "the point ({}, {}) is outside the {}x{} target surface that "
+                "registration {} declares for {}, so no input may be aimed at "
+                "it",
+                point.x(),
+                point.y(),
+                surface.width(),
+                surface.height(),
+                generationHandle().projectRegistrationHash().hex(),
+                controller().controlledTargetId()
+            );
+        };
+
+        // The one or two points this arm aims at, in the order the verb takes
+        // them. An arm that aims at nothing leaves this empty, which is the
+        // whole of what `key` and `scroll` have to say about position.
+        auto aimed = std::vector<PixelPoint>{};
+        if (value.find("x") != nullptr)
+        {
+            aimed.emplace_back(pixelMember("x"), pixelMember("y"));
+        }
+        if (value.find("to_x") != nullptr)
+        {
+            aimed.emplace_back(pixelMember("to_x"), pixelMember("to_y"));
+        }
+        for (auto const& point : aimed)
+        {
+            if (auto refusal = offSurface(point))
+            {
+                return absentInputResult(k_refusedInputVerdict, *refusal);
+            }
+        }
+
+        // A key name outside the closed set is the last refusal that precedes
+        // the capture, and it is KeyName's own: one definition of which names
+        // exist, printing the whole set it refused against.
+        auto key = std::optional<KeyName>{};
+        if (action == "key")
+        {
+            UF_TRY_VALUE(name, requiredStringArgument(value, "key"));
+            auto created = KeyName::create(name);
+            if (!created)
+            {
+                return absentInputResult(
+                    k_refusedInputVerdict,
+                    created.error().message()
+                );
+            }
+            key = *created;
+        }
+
+        auto const holding = action == "hold";
+        auto&      context = activeContext();
+
+        // A HOLD HANDS THE LIFT OVER BEFORE IT PRESSES ANYTHING.
+        //
+        // An engaged hold returns with the button down, so the frame that lifts
+        // it is the Tool call this one was issued from, and that frame has to
+        // exist. Pressing first and asking afterwards would deliver an
+        // unasked-for press-and-release -- a click to the target -- every time
+        // the answer was no. Asking first costs nothing: a run that engages
+        // nothing closes a release that finds nothing engaged and answers ok.
+        //
+        // A top-level hold is what the answer is no for: the dispatcher anchors
+        // no live issuing context on a root position, so there is no frame, and
+        // the refusal names the position it looked for.
+        if (holding)
+        {
+            auto attached = dispatcher().attachHeldInput(
+                call.parentIdentity(),
+                // The release borrows the context, and the backing owner is the
+                // admitted request this call runs inside: runAdmitted holds the
+                // TaskContext for the whole dispatch, the run this is handed to
+                // is erased before that dispatch returns, and the Tool Runtime
+                // is single-threaded by contract. Nothing here outlives that.
+                [p_context = &context]() -> Status
+                {
+                    if (!p_context->inputEngaged())
+                    {
+                        return ok();
+                    }
+                    return p_context->disengageInput().transform([](uint64) {});
+                }
+            );
+            if (!attached)
+            {
+                return absentInputResult(
+                    k_refusedInputVerdict,
+                    attached.error().message()
+                );
+            }
+        }
+
+        // From here the frame is captured and the cycle is spent, so nothing
+        // below can be reported as proven absence.
+        UF_TRY_VALUE(ticket, context.openCycle());
+
+        auto delivered = [&]() -> Status
+        {
+            if (action == "click")
+            {
+                return context.cycleClick(ticket, aimed.front());
+            }
+            if (action == "move")
+            {
+                return context.cycleMove(ticket, aimed.front());
+            }
+            if (action == "scroll")
+            {
+                return context.cycleScroll(
+                    ticket,
+                    static_cast<int32>(integerMember("notches"))
+                );
+            }
+            if (action == "key")
+            {
+                return context.cycleKey(ticket, *key);
+            }
+            if (action == "drag")
+            {
+                return context.cycleDrag(
+                    ticket,
+                    aimed.front(),
+                    aimed.back(),
+                    std::chrono::milliseconds{integerMember("travel_ms")}
+                );
+            }
+
+            // The press. Its lift already belongs to the Tool call above, so
+            // this returns with the button down and the run is what puts it
+            // back up -- on every exit path, including this one failing.
+            UF_CHECK(holding);
+            return context.cycleEngageHold(ticket, aimed.front());
+        }();
+
+        if (!delivered)
+        {
+            UF_TRY_VALUE(
+                payload,
+                operator_runtime::CanonicalJson::parseExact(
+                    json::canonicalBytes(json::Value::ofObject({
+                        {"action", json::Value::ofString(action)},
+                        {"delivered", json::Value::ofBoolean(false)},
+                        {"reason",
+                         json::Value::ofString(
+                             std::string{delivered.error().message()}
+                         )},
+                        {"verdict",
+                         json::Value::ofString(
+                             std::string{k_unknownInputTransportVerdict}
+                         )},
+                    }))
+                )
+            );
+            UF_TRY_VALUE(
+                evidence,
+                operator_runtime::CanonicalJson::parseExact(
+                    json::canonicalBytes(json::Value::ofObject({
+                        {"host_delivery",
+                         json::Value::ofString(
+                             std::string{k_unknownInputTransportVerdict}
+                         )},
+                        {"posted_inputs", json::Value::ofString("unknown")},
+                    }))
+                )
+            );
+            return operator_runtime::ToolCallCompletion::possible(
+                std::move(payload),
+                std::move(evidence)
+            );
+        }
+
+        return confirmedToolResult(json::Value::ofObject({
+            {"action", json::Value::ofString(action)},
+            {"controlled_target_id",
+             json::Value::ofString(controller().controlledTargetId())},
+            {"delivered", json::Value::ofBoolean(true)},
+            // A hold returns with the button still DOWN, and the Tool call this
+            // one was issued from is what lifts it. Every other verb is over
+            // when it answers.
+            {"held", json::Value::ofBoolean(holding)},
+        }));
+    }
+
     auto ProductLifecycle::Impl::answerFrameworkTool(
         operator_runtime::ToolCallPositionIdentity const& call
     ) -> Result<operator_runtime::ToolCallCompletion>
@@ -1223,6 +1474,10 @@ namespace uf::service
         if (toolName == k_semanticInputTool)
         {
             return answerSemanticInputTool(call);
+        }
+        if (toolName == k_deliverInputTool)
+        {
+            return answerDeliverInputTool(call);
         }
         if (toolName == k_waitTool)
         {
@@ -1272,35 +1527,6 @@ namespace uf::service
                  json::Value::ofString(record.contentHash().hex())},
                 {"recorded", json::Value::ofBoolean(true)},
             }));
-        }
-        if (toolName == k_coordinateInputTool)
-        {
-            // Bare coordinates resolve nothing: there is no observation to
-            // present and no semantic target to judge. What keeps them out of
-            // an ordinary actor's hands is the descriptor's Privileged
-            // surface, judged at admission against the controller profile, and
-            // being a Framework Tool does not widen that.
-            UF_TRY_VALUE(
-                coordinateArguments,
-                operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
-            );
-            UF_TRY_VALUE(
-                action,
-                requiredStringArgument(coordinateArguments.value(), "action")
-            );
-            // TODO(cpp-debt): a bare coordinate has no Receipt to present, so
-            // it posts nothing; k_unmeasuredInputVerdict states why and what
-            // the Tool would have to carry for that to change.
-            return absentInputResult(
-                k_unmeasuredInputVerdict,
-                std::format(
-                    "the bare-coordinate action {} on {} reached the delivery "
-                    "boundary, and nothing measured the point it names on the "
-                    "frame it would be posted into",
-                    action,
-                    controller().controlledTargetId()
-                )
-            );
         }
         // Impossible flow rather than a refusal. Every name that reaches here
         // was admitted, and admission validates a `framework.` name against

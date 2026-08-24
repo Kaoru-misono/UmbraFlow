@@ -95,7 +95,7 @@ namespace uf::operator_runtime
         // reaches the world directly. It is the one shape a crash mid-dispatch
         // cannot account for.
         constexpr auto k_inputTool =
-            std::string_view{"framework.input.coordinate"};
+            std::string_view{"framework.input.deliver"};
         constexpr auto k_inputArguments =
             std::string_view{R"({"action":"click","x":1,"y":2})"};
         constexpr auto k_projectEffectType = std::string_view{"dispatch.write"};

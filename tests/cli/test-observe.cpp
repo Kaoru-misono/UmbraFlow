@@ -649,7 +649,7 @@ namespace uf::cli
                     std::string{"framework.input.deliver"},
                 };
                 auto const granted = std::vector<std::string>{
-                    std::string{"framework.input.coordinate"},
+                    std::string{"framework.input.deliver"},
                 };
                 auto const policy =
                     operator_runtime::conformance::policyArtifactBytes(
@@ -770,6 +770,19 @@ namespace uf::cli
             REQUIRE_MESSAGE(p_delivered != nullptr, payload);
             CHECK_FALSE(p_delivered->boolean());
             return std::string{p_verdict->string()};
+        }
+
+        // The other half of a refusal payload: what it says went wrong. A
+        // verdict names the KIND of refusal and the reason names the thing --
+        // the surface an aim was outside of, the key name that is not one.
+        [[nodiscard]]
+        auto inputReason(std::string_view payload) -> std::string
+        {
+            auto const parsed = json::parse(payload);
+            REQUIRE_MESSAGE(parsed.has_value(), payload);
+            auto const* const p_reason = parsed->find("reason");
+            REQUIRE_MESSAGE(p_reason != nullptr, payload);
+            return std::string{p_reason->string()};
         }
     }
 
@@ -1074,23 +1087,84 @@ namespace uf::cli
                     };
                 };
 
-                // Bare coordinates first, and they admit. The lifecycle binds a
-                // Human controller, whose profile is not restricted to semantic
-                // tools, so the Privileged surface is what decides who may
-                // reach this Tool and being a Framework Tool did not widen it.
-                auto const coordinate = issued(
+                // What the Framework Tool Catalog refuses before a durable
+                // coordinate exists at all. The contract is a tagged union over
+                // a CLOSED enumeration, so a verb outside the six and an arm
+                // short one of its own required members are both refusable BY
+                // NAME -- which is the whole reason the free-string action died
+                // (docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md).
+                auto refused = [&](std::string_view exactArgumentsJcs)
+                {
+                    auto const outcome = lifecycle.invokeFrameworkTool(
+                        service::FrameworkToolCall{
+                            .requestKey = "input-root",
+                            .exactRootRequestPreimageJcs =
+                                R"({"objective":"deliver one input"})",
+                            .executionIdentity = executionIdentity,
+                            .toolName          = "framework.input.deliver",
+                            .exactArgumentsJcs =
+                                std::string{exactArgumentsJcs},
+                        },
+                        context
+                    );
+                    REQUIRE_FALSE(outcome.has_value());
+                    return std::string{outcome.error().message()};
+                };
+
+                CHECK(
+                    refused(R"({"action":"tap","x":1,"y":0})")
+                    == "framework.input.deliver action 'tap' is outside the "
+                       "closed set click, drag, hold, key, move, scroll"
+                );
+                CHECK(
+                    refused(R"({"action":"drag","travel_ms":10,"x":1,"y":0})")
+                    == "framework.input.deliver action 'drag' requires exactly "
+                       "action, to_x, to_y, travel_ms, x, y"
+                );
+
+                // The scope of an input injection is the target surface this
+                // registration declared and no wider. The recorded world is 3x1
+                // and x = 3 is off it, so the aim is refused before anything is
+                // captured or posted -- proven absence, naming the surface.
+                auto const offSurface = issued(
                     "input-root",
-                    "framework.input.coordinate",
+                    "framework.input.deliver",
+                    R"({"action":"click","x":3,"y":0})"
+                );
+                CHECK(
+                    offSurface.state
+                    == operator_runtime::ToolCallState::ProvenAbsent
+                );
+                CHECK(inputVerdict(offSurface.payload) == "input_refused");
+                CHECK(
+                    inputReason(offSurface.payload).find("3x1 target surface")
+                    != std::string::npos
+                );
+
+                // The same Tool aimed on the surface DELIVERS. The lifecycle
+                // binds a Human controller, whose profile is not restricted to
+                // semantic tools, so the Privileged surface is what decides who
+                // may reach this Tool and being a Framework Tool did not widen
+                // it.
+                auto const machineAimed = issued(
+                    "input-root",
+                    "framework.input.deliver",
                     R"({"action":"click","x":1,"y":0})"
                 );
                 CHECK(
-                    coordinate.state
-                    == operator_runtime::ToolCallState::ProvenAbsent
+                    machineAimed.state
+                    == operator_runtime::ToolCallState::Confirmed
                 );
-                CHECK(
-                    inputVerdict(coordinate.payload)
-                    == "coordinate_input_unmeasured"
+                auto const machinePayload = json::parse(machineAimed.payload);
+                REQUIRE_MESSAGE(
+                    machinePayload.has_value(),
+                    machineAimed.payload
                 );
+                auto const* const p_machinePosted =
+                    machinePayload->find("delivered");
+                REQUIRE_MESSAGE(p_machinePosted != nullptr, machineAimed.payload);
+                CHECK(p_machinePosted->boolean());
+                CHECK(*delivered == 1U);
 
                 auto const observed = issued(
                     "input-root",
@@ -1254,13 +1328,45 @@ namespace uf::cli
                     std::string{unminted.error().message()}.contains("unminted"),
                     unminted.error().message()
                 );
+
+                // A `hold` presses and returns with the button DOWN, so it
+                // needs a frame to lift it, and that frame is the Tool call it
+                // was issued from. THIS one is issued from the root: the
+                // dispatcher anchors no live issuing context on a root
+                // position, so there is nothing to hand the release to.
+                //
+                // NOTHING IS PRESSED. The lift is handed over before the press,
+                // so a hold with no owner is refused ahead of the capture --
+                // proven absence, naming the position it looked for, and the
+                // sink counter below is what says the target never moved. A
+                // press first and a question afterwards would have delivered an
+                // unasked-for click every time the answer was no.
+                auto const orphanHold = issued(
+                    "input-root",
+                    "framework.input.deliver",
+                    R"({"action":"hold","x":1,"y":0})"
+                );
+                CHECK(
+                    orphanHold.state
+                    == operator_runtime::ToolCallState::ProvenAbsent
+                );
+                CHECK(inputVerdict(orphanHold.payload) == "input_refused");
+                CHECK(
+                    inputReason(orphanHold.payload)
+                        .find("no live issuing context is anchored")
+                    != std::string::npos
+                );
             }
         );
 
-        // Exactly one input reached the sink: the one call entitled to the
-        // authority it presented. Every other row above claims proven absence,
-        // and this is the sink saying the same thing about all of them.
-        CHECK(*delivered == 1U);
+        // Exactly two inputs reached the sink, and no more: the machine-aimed
+        // click on the declared surface, and the one presented call entitled to
+        // the authority it named. Every other row above claims proven absence,
+        // and this is the sink saying the same thing about all of them -- the
+        // aim that was outside the target surface and the hold that had no Tool
+        // call to lift it are recorded as absent precisely because neither ever
+        // got here.
+        CHECK(*delivered == 2U);
     }
 
     TEST_CASE("observe restarts through Coordinator and remains repeatable")

@@ -1,4 +1,5 @@
 #include <operator/snapshot-reference.hpp>
+#include <operator/tool-admission-request.hpp>
 #include <operator/tool-invocation.hpp>
 
 #include <json/value.hpp>
@@ -438,7 +439,7 @@ namespace uf::operator_runtime
                 ToolIdempotency::ReadSafe,
             },
             CatalogExpectation{
-                "framework.input.coordinate",
+                "framework.input.deliver",
                 ToolMutability::Mutating,
                 ToolSurface::Privileged,
                 ToolIdempotency::NonIdempotent,
@@ -506,26 +507,38 @@ namespace uf::operator_runtime
         CHECK(audit->requiredCapabilities.empty());
         CHECK(audit->limits.maximumDispatches == 0U);
 
-        // The two input Tools each declare exactly the one Framework effect,
-        // and the bare-coordinate one admits the higher risk.
+        // The two input Tools declare ONE effect line between them: same type,
+        // same scope, same payload schema and the same highest risk band. An
+        // input that landed is external and irreversible however it was aimed,
+        // and what separates the two Tools is the vocabulary they are stated in
+        // rather than a number in a bound
+        // (docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md).
         auto const semantic = catalog->describe(
             "framework.input.semantic_target"
         );
-        auto const coordinate = catalog->describe("framework.input.coordinate");
+        auto const machine = catalog->describe("framework.input.deliver");
         REQUIRE(semantic.has_value());
-        REQUIRE(coordinate.has_value());
+        REQUIRE(machine.has_value());
         REQUIRE(semantic->effectBounds.size() == 1U);
-        REQUIRE(coordinate->effectBounds.size() == 1U);
+        REQUIRE(machine->effectBounds.size() == 1U);
         CHECK(
             semantic->effectBounds.front().namespacedType
             == "framework.input.deliver"
         );
-        CHECK(semantic->effectBounds.front().maximumRisk == Risk::Medium);
-        CHECK(coordinate->effectBounds.front().maximumRisk == Risk::High);
+        CHECK(semantic->effectBounds.front().maximumRisk == Risk::Critical);
+        CHECK(machine->effectBounds.front().maximumRisk == Risk::Critical);
+        CHECK(
+            semantic->effectBounds.front().scopeKind
+            == machine->effectBounds.front().scopeKind
+        );
         CHECK(
             semantic->effectBounds.front().payloadSchemaHash
-            == coordinate->effectBounds.front().payloadSchemaHash
+            == machine->effectBounds.front().payloadSchemaHash
         );
+        // The one machine-aimed Tool is Privileged and the declared-target one
+        // is not, which is the whole of the difference the catalog states.
+        CHECK(machine->surface == ToolSurface::Privileged);
+        CHECK(semantic->surface == ToolSurface::Semantic);
         CHECK(semantic->timeout.onTimeout == TimeoutAction::Reobserve);
 
         // Observation is the one Tool that spends an observation, and it spends
@@ -534,6 +547,26 @@ namespace uf::operator_runtime
         REQUIRE(observe.has_value());
         CHECK(observe->limits.maximumObservations == 1U);
         CHECK(observe->limits.maximumDispatches == 0U);
+
+        // SCREEN OBSERVATION IS CALLABLE UNDER DENY-ALL, and this is the whole
+        // of what makes it so
+        // (docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md).
+        // A read-only descriptor with no effect bound proposes no mutation, so
+        // proposedToolMutation answers nothing and no policy is consulted at
+        // all -- there is nothing for an artifact whose default is deny to deny.
+        // It is the framework's own verification eating; its risk is zero.
+        CHECK(observe->mutability == ToolMutability::ReadOnly);
+        CHECK(observe->effectBounds.empty());
+        auto arguments = CanonicalJson::parseExact("{}");
+        REQUIRE(arguments.has_value());
+        auto const observeCall = catalog->validate(
+            "framework.screen.observe",
+            std::move(*arguments)
+        );
+        REQUIRE(observeCall.has_value());
+        CHECK_FALSE(
+            proposedToolMutation(*observeCall, "any-target").has_value()
+        );
     }
 
     TEST_CASE("The Framework Tool Catalog identity is pinned to its material")
@@ -546,7 +579,7 @@ namespace uf::operator_runtime
         // hash compared against itself pins nothing.
         CHECK(
             catalog->toolCatalogHash().hex()
-            == "555a56b6c064015f3aa5b6f2feea61ff489356085cb0485310becbce7c9df492"
+            == "9dad1fafebd091b7ee53e0c83378d945ac6461d4f5592d53fe22646059469bc0"
         );
 
         auto material = CanonicalJson::parseExact(catalog->canonicalJcs());
@@ -597,17 +630,87 @@ namespace uf::operator_runtime
                 R"({"observation_reference":{},"semantic_target":"","ui_action":"click"})",
                 false,
             },
+            // One arm per verb, and each arm's members are decided by its own
+            // tag. The six admitted cases below are the whole enumeration; the
+            // refusals under them are the three ways a tagged union can be
+            // wrong -- a tag outside the set, an arm short a member, and an arm
+            // carrying a member that belongs to a different one.
             ArgumentCase{
-                "framework.input.coordinate",
+                "framework.input.deliver",
                 R"({"action":"click","x":10,"y":20})",
                 true,
             },
             ArgumentCase{
-                "framework.input.coordinate",
+                "framework.input.deliver",
+                R"({"action":"hold","x":10,"y":20})",
+                true,
+            },
+            ArgumentCase{
+                "framework.input.deliver",
+                R"({"action":"move","x":10,"y":20})",
+                true,
+            },
+            ArgumentCase{
+                "framework.input.deliver",
+                R"({"action":"drag","to_x":30,"to_y":40,"travel_ms":600,"x":10,"y":20})",
+                true,
+            },
+            ArgumentCase{
+                "framework.input.deliver",
+                R"({"action":"key","key":"Escape"})",
+                true,
+            },
+            ArgumentCase{
+                "framework.input.deliver",
+                R"({"action":"scroll","notches":-3})",
+                true,
+            },
+            ArgumentCase{
+                "framework.input.deliver",
                 R"({"action":"click","x":10.5,"y":20})",
                 false,
             },
-            ArgumentCase{"framework.input.coordinate", R"({"x":10,"y":20})", false},
+            ArgumentCase{"framework.input.deliver", R"({"x":10,"y":20})", false},
+            // The free string is gone: a verb the catalog cannot validate is an
+            // unbound call it cannot refuse by name.
+            ArgumentCase{
+                "framework.input.deliver",
+                R"({"action":"tap","x":10,"y":20})",
+                false,
+            },
+            // Each arm's fields are REQUIRED. A drag without its endpoint and a
+            // hold without a coordinate are not calls with absent members; they
+            // are not that arm at all.
+            ArgumentCase{
+                "framework.input.deliver",
+                R"({"action":"drag","travel_ms":600,"x":10,"y":20})",
+                false,
+            },
+            ArgumentCase{
+                "framework.input.deliver",
+                R"({"action":"hold"})",
+                false,
+            },
+            // x and y descend into the aiming arms and live nowhere else. A key
+            // names no position, and forcing it to carry one would be an
+            // accident dressed as a method.
+            ArgumentCase{
+                "framework.input.deliver",
+                R"({"action":"key","key":"Escape","x":10,"y":20})",
+                false,
+            },
+            ArgumentCase{
+                "framework.input.deliver",
+                R"({"action":"scroll","notches":-3,"x":10,"y":20})",
+                false,
+            },
+            // A pixel is an index into a surface, so a negative one is not a
+            // point the contract can carry at all.
+            ArgumentCase{
+                "framework.input.deliver",
+                R"({"action":"click","x":-1,"y":20})",
+                false,
+            },
         };
 
         for (auto const& argumentCase : k_cases)

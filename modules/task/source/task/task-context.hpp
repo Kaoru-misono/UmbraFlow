@@ -510,10 +510,16 @@ namespace uf::task
         // proof_locator re-measured on this cycle, one receipt per cycle, a
         // freshness lease. That discipline is what makes an action a project
         // plugin asked for trustworthy, and none of it is weakened here,
-        // because none of these verbs is reachable from a plugin environment --
-        // they are installed by buildAnnotationSurface and by nothing else, and
-        // only the exploration VM runs that installer
-        // (task/exploration-session.hpp, task/script-bindings.hpp).
+        // because none of these verbs is reachable from a plugin environment.
+        //
+        // TWO CALLERS REACH THEM, and neither is a Project's own code.
+        // buildAnnotationSurface installs them into the exploration VM, which
+        // only the exploration session runs (task/exploration-session.hpp,
+        // task/script-bindings.hpp); and the Framework's own input Tool answers
+        // through them, which is a call the Operator's policy admitted by name
+        // on a Privileged surface. What both have in common is that the
+        // AUTHORITY is decided above this layer and a bare coordinate is all
+        // that arrives here.
         //
         // An explore chunk is not a plugin. It is code a human or an authoring
         // agent wrote inside an environment that already holds the authoring
@@ -532,10 +538,13 @@ namespace uf::task
         // names a coordinate, and its narrower gate for the two that do not.
         // See engine::EngineSession for which clauses each verb answers to.
         //
-        // Each writes one annotation.*_delivered line naming what the chunk
-        // asked for, so no act on this surface is unrecorded; see
-        // task-context.cpp for why that line is not a second spelling of the
-        // engine's own.
+        // Each writes one input.*_delivered line naming what its caller asked
+        // for, so no act on this surface is unrecorded; see task-context.cpp
+        // for why that line is not a second spelling of the engine's own. The
+        // prefix is `input` rather than `annotation` because these verbs are
+        // not an authoring half of anything: there is one input vocabulary, and
+        // what separates an authoring actor from a production one is the
+        // authority its policy granted rather than which verbs exist.
         [[nodiscard]]
         auto cycleClick(CycleTicket ticket, PixelPoint point) -> Status;
 
@@ -577,6 +586,44 @@ namespace uf::task
         // calls.
         [[nodiscard]]
         auto cycleKey(CycleTicket ticket, KeyName key) -> Status;
+
+        // Engages a hold at `point`, spending the cycle `ticket` names, and
+        // returns with the BUTTON STILL DOWN.
+        //
+        // This is cycleHold's other half and not a variant of it. cycleHold is
+        // the atomic verb a declaration asks for -- press, wait the declared
+        // duration, lift, all inside one call -- and it can let nothing look at
+        // the screen while it lasts. This one presses and hands the press to
+        // whoever called it, so that something CAN look; holding a button while
+        // something observes is the entire capability, and it is why the engine
+        // split engage from disengage
+        // (docs/decisions/2026-08-24-an-authoring-session-is-a-first-class-tool-session.md).
+        //
+        // It takes NO duration, and that absence is the point. A duration this
+        // verb accepted would be a number nothing measures: the press ends when
+        // its owner disengages, and how long that was is measured between the
+        // two and reported by disengageInput. A caller that wants to wait while
+        // the button is down waits -- there is already one spelling of waiting,
+        // and a second inside this verb would be a second answer to how long a
+        // run may spend.
+        //
+        // WHOEVER CALLS THIS OWNS THE RELEASE, on every exit path, including
+        // the path where this call itself failed: a refused engage is not proof
+        // of an unpressed button, because the press lands before the lines that
+        // record it. Ask inputEngaged() and call disengageInput().
+        [[nodiscard]]
+        auto cycleEngageHold(CycleTicket ticket, PixelPoint point) -> Status;
+
+        // Whether an engaged hold is outstanding on this context right now. It
+        // is what lets an owner's teardown be unconditional without also being
+        // a blind second release.
+        [[nodiscard]] auto inputEngaged() const noexcept -> bool;
+
+        // Lifts the engaged hold and reports how long the button was down, in
+        // milliseconds MEASURED between the engage and this call. Refuses when
+        // nothing is engaged, for EngineSession::disengageHold's reason: this
+        // is the verb that completes a hold, not a general-purpose sweep.
+        [[nodiscard]] auto disengageInput() -> Result<uint64>;
 
         // Releases whatever cycle is open and reports whether there was one. NOT
         // a script verb and never installed as a primitive: see

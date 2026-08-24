@@ -185,7 +185,7 @@ namespace uf::task
 
             // No duration to record: the port carries none, because how long
             // the press lasts is the frame that engaged it decides. What the
-            // chunk declared is on the annotation.hold_delivered line instead,
+            // chunk declared is on the input.hold_delivered line instead,
             // which is the only place it was ever the chunk's own number.
             [[nodiscard]]
             auto engageHold(Point<ClientSpace>, ObservationLease const&)
@@ -533,7 +533,7 @@ namespace uf::task
         // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(world.acts().front().key->value() == "F7");
 
-        auto const line = lineNamed(world, "annotation.key_delivered");
+        auto const line = lineNamed(world, "input.key_delivered");
         REQUIRE(line.has_value());
         CHECK(textField(*line, "key") == std::optional<std::string>{"F7"});
     }
@@ -582,12 +582,12 @@ namespace uf::task
 
         auto const types = eventTypes(world);
         auto const expected = std::vector<std::string>{
-            "annotation.click_delivered",
-            "annotation.hold_delivered",
-            "annotation.drag_delivered",
-            "annotation.move_delivered",
-            "annotation.scroll_delivered",
-            "annotation.key_delivered",
+            "input.click_delivered",
+            "input.hold_delivered",
+            "input.drag_delivered",
+            "input.move_delivered",
+            "input.scroll_delivered",
+            "input.key_delivered",
         };
         for (auto const& line : expected)
         {
@@ -600,7 +600,7 @@ namespace uf::task
 
         // The line carries what the CHUNK wrote, in frame pixels, which is what
         // the engine's own client-space line cannot answer.
-        auto const drag = lineNamed(world, "annotation.drag_delivered");
+        auto const drag = lineNamed(world, "input.drag_delivered");
         REQUIRE(drag.has_value());
         CHECK(numberField(*drag, "pixel_x") == std::optional<uint64>{0});
         CHECK(numberField(*drag, "end_pixel_x") == std::optional<uint64>{2});
@@ -609,7 +609,7 @@ namespace uf::task
         // The hold's declared duration is on its own line and nowhere else:
         // the sink is told no duration now, so this line is what carries the
         // chunk's number all the way to a reader.
-        auto const hold = lineNamed(world, "annotation.hold_delivered");
+        auto const hold = lineNamed(world, "input.hold_delivered");
         REQUIRE(hold.has_value());
         CHECK(numberField(*hold, "hold_millis") == std::optional<uint64>{40});
     }
@@ -633,7 +633,7 @@ namespace uf::task
 
         CHECK(world.acts().empty());
         CHECK_FALSE(
-            std::ranges::contains(eventTypes(world), "annotation.hold_delivered")
+            std::ranges::contains(eventTypes(world), "input.hold_delivered")
         );
     }
 

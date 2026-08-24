@@ -65,16 +65,16 @@ namespace uf::task
         // drags and a schema that gains an act cannot acquire a name by
         // defaulting.
         [[nodiscard]]
-        auto annotationActionEvent(
+        auto inputActionEvent(
             std::string_view verb,
             FrameId frame,
             std::vector<trace::TraceField> fields
         ) -> trace::TraceEventSpec
         {
             return trace::TraceEventSpec{
-                .eventType = std::format("annotation.{}_delivered", verb),
+                .eventType = std::format("input.{}_delivered", verb),
                 .audit     = trace::AuditMetadata{
-                    .actor = "annotation",
+                    .actor = "input",
                     .references = {
                         trace::TraceReference{
                             .type = "frame",
@@ -856,7 +856,7 @@ namespace uf::task
             m_session.clickPoint(std::move(observation), point)
         );
         return m_recorder.emit(
-            annotationActionEvent("click", receipt.frameId, pointFields(point))
+            inputActionEvent("click", receipt.frameId, pointFields(point))
         );
     }
 
@@ -896,8 +896,58 @@ namespace uf::task
             }
         );
         return m_recorder.emit(
-            annotationActionEvent("hold", receipt.frameId, std::move(fields))
+            inputActionEvent("hold", receipt.frameId, std::move(fields))
         );
+    }
+
+    auto TaskContext::cycleEngageHold(CycleTicket ticket, PixelPoint point)
+        -> Status
+    {
+        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
+        UF_TRY(m_session.engageHold(std::move(observation), point));
+
+        // The engage line is the engine's own (engine.hold_engaged). There is
+        // deliberately no input.hold_delivered here: the act is not over, and a
+        // delivered line for a press that has not been lifted is the one entry
+        // an auditor must never find. disengageInput writes it.
+        return ok();
+    }
+
+    auto TaskContext::inputEngaged() const noexcept -> bool
+    {
+        return m_session.holdEngaged();
+    }
+
+    auto TaskContext::disengageInput() -> Result<uint64>
+    {
+        UF_TRY_VALUE(receipt, m_session.disengageHold());
+        auto const millis = static_cast<uint64>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(receipt.hold)
+                .count()
+        );
+        // Client coordinates rather than the caller's pixel ones: the press
+        // point is read back off the RECEIPT, which is where the delivery layer
+        // says what it actually pressed, and that is stated in client space.
+        auto fields = std::vector<trace::TraceField>{
+            trace::TraceField{
+                .name  = "client_x",
+                .value = std::format("{}", receipt.pressPoint.x()),
+            },
+            trace::TraceField{
+                .name  = "client_y",
+                .value = std::format("{}", receipt.pressPoint.y()),
+            },
+            trace::TraceField{
+                .name  = "hold_millis",
+                .value = millis,
+            },
+        };
+        UF_TRY(
+            m_recorder.emit(
+                inputActionEvent("hold", receipt.frameId, std::move(fields))
+            )
+        );
+        return millis;
     }
 
     auto TaskContext::cycleDrag(
@@ -941,7 +991,7 @@ namespace uf::task
             }
         );
         return m_recorder.emit(
-            annotationActionEvent("drag", receipt.frameId, std::move(fields))
+            inputActionEvent("drag", receipt.frameId, std::move(fields))
         );
     }
 
@@ -953,7 +1003,7 @@ namespace uf::task
             m_session.movePointer(std::move(observation), point)
         );
         return m_recorder.emit(
-            annotationActionEvent(
+            inputActionEvent(
                 "move",
                 receipt.frameId,
                 pointFields(point)
@@ -968,7 +1018,7 @@ namespace uf::task
 
         // Signed, because direction is half of what was delivered.
         return m_recorder.emit(
-            annotationActionEvent(
+            inputActionEvent(
                 "scroll",
                 receipt.frameId,
                 {
@@ -991,7 +1041,7 @@ namespace uf::task
         // that traced its own input would still say "E" if the chain below it
         // delivered something else.
         return m_recorder.emit(
-            annotationActionEvent(
+            inputActionEvent(
                 "key",
                 receipt.frameId,
                 {

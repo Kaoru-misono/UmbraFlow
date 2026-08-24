@@ -573,9 +573,9 @@ namespace uf::engine
         // It writes engine.action_delivered on every stream. This layer knows
         // which target it posted to and nothing about which front end asked, so
         // it cannot say whether a Binding stood behind the coordinate; the
-        // caller that does know writes that line itself, and on the exploration
-        // stream it is annotation.click_delivered
-        // (task/task-context.cpp, annotationActionEvent).
+        // caller that does know writes that line itself, and for a
+        // bare-coordinate delivery it is input.click_delivered
+        // (task/task-context.cpp, inputActionEvent).
         //
         // It enforces: a requested stop refuses before any sink call, a foreign
         // handle is an InternalInvariant, a consumed handle is StaleObservation,

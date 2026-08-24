@@ -4,6 +4,7 @@
 
 #include <json/value.hpp>
 
+#include <core/error/contracts.hpp>
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 
@@ -25,8 +26,13 @@ namespace uf::operator_runtime
         constexpr auto k_auditTool = std::string_view{
             "framework.audit.record"
         };
-        constexpr auto k_coordinateInputTool = std::string_view{
-            "framework.input.coordinate"
+        // One input Tool, and its name is the act every one of its six arms
+        // performs. `framework.input.coordinate` is gone rather than aliased:
+        // two of the six -- `key` and `scroll` -- name no coordinate at all, so
+        // the old name was false about a third of its own contract. Ruled in
+        // docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md.
+        constexpr auto k_deliverInputTool = std::string_view{
+            "framework.input.deliver"
         };
         constexpr auto k_semanticInputTool = std::string_view{
             "framework.input.semantic_target"
@@ -45,9 +51,12 @@ namespace uf::operator_runtime
         // vocabulary the way a Project owns its own: the type and scope are
         // spelled here, and their bytes reach tool_catalog_hash through the
         // descriptor material, so widening either moves the catalog identity.
-        constexpr auto k_inputEffectType = std::string_view{
-            "framework.input.deliver"
-        };
+        //
+        // The type IS the delivering Tool's name, and deliberately so: one act
+        // gets one spelling. Both input Tools declare it, because both deliver
+        // the same input to the same target and differ only in what they aim
+        // by -- which is what ToolSurface already says about them.
+        constexpr auto k_inputEffectType = k_deliverInputTool;
         constexpr auto k_inputEffectScope = std::string_view{
             "controlled_target"
         };
@@ -200,6 +209,189 @@ namespace uf::operator_runtime
             );
         }
 
+        // What one member of the input contract is allowed to be. The kinds are
+        // named for what the value MEANS rather than for its JSON type, because
+        // two integers can mean different things: a surface pixel is an index
+        // into a frame and cannot be negative, while a notch count is a
+        // direction as much as a magnitude.
+        //
+        // Where a bound belongs to a delivery layer it is NOT restated here.
+        // The notch range is controller::WheelDelta's and the travel ceiling is
+        // task::k_maxDragTravel, each refused once by the layer that owns it;
+        // a second copy inside this contract would be a second answer to one
+        // question, and only one of the two would be inside tool_catalog_hash.
+        enum class InputMemberKind : uint8
+        {
+            Tag,
+            KeyName,
+            SurfacePixel,
+            Milliseconds,
+            SignedCount,
+        };
+
+        struct InputMember final
+        {
+            std::string_view name{};
+            InputMemberKind  kind{InputMemberKind::Tag};
+        };
+
+        // Every member any arm may carry, spelled once. A member name means the
+        // same thing in every arm that carries it, so the kind is a property of
+        // the name rather than of the pair.
+        constexpr auto k_inputMembers = std::array{
+            InputMember{"action", InputMemberKind::Tag},
+            InputMember{"key", InputMemberKind::KeyName},
+            InputMember{"notches", InputMemberKind::SignedCount},
+            InputMember{"to_x", InputMemberKind::SurfacePixel},
+            InputMember{"to_y", InputMemberKind::SurfacePixel},
+            InputMember{"travel_ms", InputMemberKind::Milliseconds},
+            InputMember{"x", InputMemberKind::SurfacePixel},
+            InputMember{"y", InputMemberKind::SurfacePixel},
+        };
+
+        constexpr auto k_clickArmMembers = std::array{
+            std::string_view{"action"},
+            std::string_view{"x"},
+            std::string_view{"y"},
+        };
+        constexpr auto k_dragArmMembers = std::array{
+            std::string_view{"action"},
+            std::string_view{"to_x"},
+            std::string_view{"to_y"},
+            std::string_view{"travel_ms"},
+            std::string_view{"x"},
+            std::string_view{"y"},
+        };
+        constexpr auto k_holdArmMembers = std::array{
+            std::string_view{"action"},
+            std::string_view{"x"},
+            std::string_view{"y"},
+        };
+        constexpr auto k_keyArmMembers = std::array{
+            std::string_view{"action"},
+            std::string_view{"key"},
+        };
+        constexpr auto k_moveArmMembers = std::array{
+            std::string_view{"action"},
+            std::string_view{"x"},
+            std::string_view{"y"},
+        };
+        constexpr auto k_scrollArmMembers = std::array{
+            std::string_view{"action"},
+            std::string_view{"notches"},
+        };
+
+        struct InputArm final
+        {
+            std::string_view                  action{};
+            std::span<std::string_view const> members{};
+        };
+
+        // The CLOSED enumeration of input verbs, and the tagged union over it.
+        // `action` decides the arm and the arm decides the members, all of
+        // which are REQUIRED: this is a sum type, not an object whose absent
+        // members mean an older behaviour.
+        //
+        // `x` and `y` live in the four arms that aim and in no other. A `key`
+        // or a `scroll` names no position -- a wheel lands on whatever the
+        // target already believes is hovered -- so making them carry
+        // coordinates would be an accident dressed as a method.
+        //
+        // Declared in UTF-8 order of the action names, so the rendered contract
+        // material is already sorted and has one spelling rather than one per
+        // declaration order.
+        constexpr auto k_inputArms = std::array{
+            InputArm{"click", k_clickArmMembers},
+            InputArm{"drag", k_dragArmMembers},
+            InputArm{"hold", k_holdArmMembers},
+            InputArm{"key", k_keyArmMembers},
+            InputArm{"move", k_moveArmMembers},
+            InputArm{"scroll", k_scrollArmMembers},
+        };
+
+        [[nodiscard]]
+        auto inputActionNames() -> std::string
+        {
+            auto names = std::string{};
+            for (auto const& arm : k_inputArms)
+            {
+                if (!names.empty())
+                {
+                    names += ", ";
+                }
+                names += arm.action;
+            }
+            return names;
+        }
+
+        [[nodiscard]]
+        auto memberList(std::span<std::string_view const> members) -> std::string
+        {
+            auto rendered = std::string{};
+            for (auto const& member : members)
+            {
+                if (!rendered.empty())
+                {
+                    rendered += ", ";
+                }
+                rendered += member;
+            }
+            return rendered;
+        }
+
+        [[nodiscard]]
+        auto inputArmFor(std::string_view action) -> InputArm const*
+        {
+            auto const found = std::ranges::find(
+                k_inputArms,
+                action,
+                &InputArm::action
+            );
+            return found == k_inputArms.end() ? nullptr : &*found;
+        }
+
+        [[nodiscard]]
+        auto inputMemberKind(std::string_view member) -> InputMemberKind
+        {
+            auto const found = std::ranges::find(
+                k_inputMembers,
+                member,
+                &InputMember::name
+            );
+            // Every name an arm lists is in the table above; an arm naming
+            // anything else would not compile past the table it was written
+            // beside.
+            UF_CHECK(found != k_inputMembers.end());
+            return found->kind;
+        }
+
+        [[nodiscard]]
+        auto inputMemberValid(
+            InputMemberKind kind,
+            json::Value const& value
+        ) -> bool
+        {
+            switch (kind)
+            {
+            case InputMemberKind::Tag:
+            case InputMemberKind::KeyName:
+                return value.kind() == json::ValueKind::String
+                    && !value.string().empty();
+            case InputMemberKind::SurfacePixel:
+                return value.isInteger()
+                    && value.number() >= 0.0
+                    && value.number()
+                        <= static_cast<double>(
+                            std::numeric_limits<uint32>::max()
+                        );
+            case InputMemberKind::Milliseconds:
+                return value.isInteger() && value.number() >= 0.0;
+            case InputMemberKind::SignedCount:
+                return value.isInteger();
+            }
+            UF_UNREACHABLE_MSG("Unknown Framework input member kind");
+        }
+
         // The payload shape a Framework input effect carries. It is rendered
         // here rather than read from a file so that the Framework owns its own
         // effect schema exactly the way it owns its argument contracts, and so
@@ -229,13 +421,27 @@ namespace uf::operator_runtime
             return sha256(std::as_bytes(std::span{bytes}));
         }
 
-        // The bound a Framework input Tool declares for its one effect. Risk is
-        // the caller's argument: a semantic target was resolved against an
-        // observation the Framework minted, while a bare coordinate was named
-        // by the caller and can land anywhere.
+        // The bound BOTH Framework input Tools declare, and there is one of it.
+        //
+        // ONE EFFECT LINE FOR INPUT INJECTION: the effect is a change to the
+        // external world, its scope is the target surface the registration
+        // declares and no wider, and its risk is the highest band there is
+        // because an input that landed is external and irreversible
+        // (docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md).
+        //
+        // Risk is no longer split by how the point was aimed. That split said a
+        // resolved target is a smaller blast radius than a bare coordinate, and
+        // it is not: a click delivered at a declared target and a click
+        // delivered at a measured pixel are the same click to the world. What
+        // separates the two Tools is the vocabulary they are stated in, which
+        // ToolSurface already carries, and what an aim is worth is judged by
+        // the observation authority rather than by a number in a bound.
+        //
+        // The scope is enforced rather than merely declared: an input aimed off
+        // the target surface this registration declares is refused before
+        // anything is captured or posted, naming the surface it was outside of.
         [[nodiscard]]
-        auto inputEffectBounds(Risk maximumRisk)
-            -> Result<std::vector<EffectBound>>
+        auto inputEffectBounds() -> Result<std::vector<EffectBound>>
         {
             UF_TRY_VALUE(payloadSchemaHash, inputEffectPayloadSchemaHash());
             auto bounds = std::vector<EffectBound>{};
@@ -243,7 +449,7 @@ namespace uf::operator_runtime
                 .namespacedType    = std::string{k_inputEffectType},
                 .scopeKind         = std::string{k_inputEffectScope},
                 .payloadSchemaHash = payloadSchemaHash,
-                .maximumRisk       = maximumRisk,
+                .maximumRisk       = Risk::Critical,
             });
             return bounds;
         }
@@ -349,7 +555,7 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto semanticInputDescriptor() -> Result<ToolDescriptor>
         {
-            UF_TRY_VALUE(bounds, inputEffectBounds(Risk::Medium));
+            UF_TRY_VALUE(bounds, inputEffectBounds());
             return ToolDescriptor{
                 .toolVersion          = std::string{k_frameworkToolVersion},
                 .requiredCapabilities = {},
@@ -372,19 +578,24 @@ namespace uf::operator_runtime
             };
         }
 
-        // Bare coordinates. Section 3.2 keeps low-level input a Privileged
-        // surface, so being a Framework Tool does not make it generally
-        // available, and its effect bound admits a higher risk because nothing
-        // resolved the point it lands on.
+        // The whole input vocabulary in machine terms: six verbs, one tagged
+        // contract, and a point measured against the target surface this
+        // registration declared rather than a target the model declared.
+        // Section 3.2 keeps low-level input a Privileged surface, so being a
+        // Framework Tool does not make it generally available -- an Operator
+        // that has not listed it under privileged_surface_tools cannot reach it
+        // at the top of a run at all, and that grant is the "distinct
+        // privileged authority stating plainly that nothing measured it" this
+        // Tool's placeholder verdict was waiting for.
         [[nodiscard]]
-        auto coordinateInputDescriptor() -> Result<ToolDescriptor>
+        auto deliverInputDescriptor() -> Result<ToolDescriptor>
         {
-            UF_TRY_VALUE(bounds, inputEffectBounds(Risk::High));
+            UF_TRY_VALUE(bounds, inputEffectBounds());
             return ToolDescriptor{
                 .toolVersion          = std::string{k_frameworkToolVersion},
                 .requiredCapabilities = {},
                 .effectBounds         = std::move(bounds),
-                .uiActionBounds       = {std::string{k_coordinateInputTool}},
+                .uiActionBounds       = {std::string{k_deliverInputTool}},
                 .limits               = WorkflowLimits{
                     .maximumSteps         = 1U,
                     .maximumDispatches    = 1U,
@@ -522,30 +733,67 @@ namespace uf::operator_runtime
             return ok();
         }
 
+        // The tagged union, judged tag first. Every refusal names what was
+        // wrong: an action outside the enumeration is named against the whole
+        // closed set, and an arm short a member is named against the exact
+        // member list its own tag requires. A verb this Tool cannot validate
+        // would be an unbound call it could not refuse by name, which is the
+        // hole the free string left.
         [[nodiscard]]
-        auto validateCoordinateInputArguments(CanonicalJson const& arguments)
+        auto validateDeliverInputArguments(CanonicalJson const& arguments)
             -> Status
         {
             auto const& value = arguments.value();
+            if (value.kind() != json::ValueKind::Object)
+            {
+                return invalidFrameworkArguments(
+                    std::string{k_deliverInputTool}
+                    + " arguments must be an object"
+                );
+            }
             auto const* const p_action = value.find("action");
-            auto const* const p_x = value.find("x");
-            auto const* const p_y = value.find("y");
             if (
-                value.kind() != json::ValueKind::Object
-                || value.members().size() != 3U
-                || p_action == nullptr
+                p_action == nullptr
                 || p_action->kind() != json::ValueKind::String
-                || p_action->string().empty()
-                || p_x == nullptr
-                || !p_x->isInteger()
-                || p_y == nullptr
-                || !p_y->isInteger()
             )
             {
                 return invalidFrameworkArguments(
-                    "framework.input.coordinate requires a non-empty action "
-                    "and integer x and y"
+                    std::string{k_deliverInputTool}
+                    + " requires an action naming one of " + inputActionNames()
                 );
+            }
+            auto const* const p_arm = inputArmFor(p_action->string());
+            if (p_arm == nullptr)
+            {
+                return invalidFrameworkArguments(
+                    std::string{k_deliverInputTool} + " action '"
+                    + std::string{p_action->string()}
+                    + "' is outside the closed set " + inputActionNames()
+                );
+            }
+            if (value.members().size() != p_arm->members.size())
+            {
+                return invalidFrameworkArguments(
+                    std::string{k_deliverInputTool} + " action '"
+                    + std::string{p_arm->action} + "' requires exactly "
+                    + memberList(p_arm->members)
+                );
+            }
+            for (auto const& member : p_arm->members)
+            {
+                auto const* const p_value = value.find(member);
+                if (
+                    p_value == nullptr
+                    || !inputMemberValid(inputMemberKind(member), *p_value)
+                )
+                {
+                    return invalidFrameworkArguments(
+                        std::string{k_deliverInputTool} + " action '"
+                        + std::string{p_arm->action} + "' requires exactly "
+                        + memberList(p_arm->members) + ", and '"
+                        + std::string{member} + "' is missing or malformed"
+                    );
+                }
             }
             return ok();
         }
@@ -613,13 +861,37 @@ namespace uf::operator_runtime
             });
         }
 
+        // The tagged union as catalog material. The tag and every arm's exact
+        // member list are inside tool_catalog_hash, so widening one arm or
+        // adding a seventh verb moves the recorded identity of every call --
+        // which is the whole reason the enumeration is closed.
         [[nodiscard]]
-        auto coordinateInputArgumentMaterial() -> json::Value
+        auto deliverInputArgumentMaterial() -> json::Value
         {
-            return requiredMembersMaterial({
-                json::Value::ofString("action"),
-                json::Value::ofString("x"),
-                json::Value::ofString("y"),
+            auto arms = std::vector<json::Member>{};
+            arms.reserve(k_inputArms.size());
+            for (auto const& arm : k_inputArms)
+            {
+                auto required = std::vector<json::Value>{};
+                required.reserve(arm.members.size());
+                for (auto const& member : arm.members)
+                {
+                    required.emplace_back(
+                        json::Value::ofString(std::string{member})
+                    );
+                }
+                arms.emplace_back(
+                    std::string{arm.action},
+                    json::Value::ofObject({
+                        {"required", json::Value::ofArray(std::move(required))},
+                    })
+                );
+            }
+            return json::Value::ofObject({
+                {"additional_properties", json::Value::ofBoolean(false)},
+                {"arms", json::Value::ofObject(std::move(arms))},
+                {"tag", json::Value::ofString("action")},
+                {"type", json::Value::ofString("object")},
             });
         }
 
@@ -651,10 +923,10 @@ namespace uf::operator_runtime
                 &auditArgumentMaterial,
             },
             FrameworkToolDefinition{
-                k_coordinateInputTool,
-                &coordinateInputDescriptor,
-                &validateCoordinateInputArguments,
-                &coordinateInputArgumentMaterial,
+                k_deliverInputTool,
+                &deliverInputDescriptor,
+                &validateDeliverInputArguments,
+                &deliverInputArgumentMaterial,
             },
             FrameworkToolDefinition{
                 k_semanticInputTool,
