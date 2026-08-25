@@ -5,10 +5,10 @@ says what **broke** and what each removed member *was*. The reasoning lives in
 `docs/decisions/`, dated by ruling; the published surface is
 [`docs/PUBLIC-CONTRACT.md`](../PUBLIC-CONTRACT.md).
 
-The release is `2026-08-25-one-tool-vocabulary`. Thirty-five commits, eighteen
-of them breaking. The name is a date and what the build did, not a milestone
-tier: this project declares no milestone until the first game is stably
-automated end to end.
+The release is `2026-08-25-one-tool-vocabulary`. Thirty-nine commits, twenty of
+them breaking. The name is a date and what the build did, not a milestone tier:
+this project declares no milestone until the first game is stably automated end
+to end.
 
 ## What this release is
 
@@ -30,18 +30,14 @@ project build              # materialise, then check again
 umbra-flow open --project .
 ```
 
-One warning about that loop, measured on the only existing consumer while
-writing this note: **`project check` does not parse your RuntimeModel.** Two of
-the breaks below are in `runtime-model.toml`, and `check`, `build` and
-`umbra-flow open` all pass with a model the trusted resolver will refuse.
-
-Where it refuses instead: the parse runs in exactly one place,
-`TaskHost::bootTrustedRuntime`, which evaluates `project.load_project()` when a
-live session opens. So a model missing one of the members below costs you a
-window handle, an Operator root and an elevated target before it says a word,
-and it fails at session startup rather than at the collection that needed the
-member. Read the RuntimeModel section and edit the file; nothing offline will
-tell you to.
+That loop is now worth more than it was, because **`check` parses your
+RuntimeModel**. Until this release nothing offline did: the parse ran only in
+the trusted VM a live session boots, so a model the parser refuses passed
+`check`, `build` and `open` alike and failed only once you had a window handle,
+an Operator root and an elevated target. Two of the breaks below are in
+`runtime-model.toml`, and before this release neither was visible until then.
+The last section of this note says what changed and what it will find in your
+project.
 
 ## Every Tool declaration gains a required `body`
 
@@ -379,3 +375,61 @@ directories to sweep — genesis is layout, so nothing sweeps it.
 Nothing is asked of a project author here. Genesis grants nothing: an empty
 model can do nothing under the deny-all an absent policy artifact means, which
 is why pinning it decides nothing on anyone's behalf.
+
+## `project check` and `project build` parse your RuntimeModel
+
+The warning at the top of this note described this release's own defect, and it
+is fixed in the same release. Until now the RuntimeModel was parsed in exactly
+one place — the trusted VM a live session boots — so `project check`, `project
+build` and `umbra-flow open` all exited 0 against a model the parser refuses,
+and the refusal arrived only once you had a window handle, an Operator root and
+an elevated target.
+
+`check` and `build` now run **that same parser**, not a second one. There is no
+C++ TOML reader and no schema over the model: the kit executes the one
+interpreter and relays its refusal verbatim, which is falsified by changing the
+wording inside `model.luau` and watching what `project check` prints change with
+it. `freeze` inherits the check.
+
+`umbra-flow open` runs it too, and its report gains a line:
+
+```text
+model semantics 9eb7dcd7…  (parsed by this binary)
+```
+
+The old `model format 3 (accepted by this binary)` line remains and still means
+what it always meant — the *manifest's* declared format number. It is the new
+line that says the model itself was read.
+
+**What this will do to you.** Two things, and both are the defect surfacing
+rather than a new rule:
+
+- A model that was already invalid now fails at `project check` instead of at
+  your first session. The only existing consumer had two such defects; one had
+  gone unnoticed for days because nothing offline read the file.
+- `runtime_artifact` is **required** by the project schema, so the parse is
+  unconditional and a declared-but-absent RuntimeArtifact is refused rather than
+  ignored. If your project declares one it never wrote, it will say so now.
+
+The refusal names the member, in the parser's own words:
+
+```text
+script error: [string "model"]:56:
+RuntimeModel.collections[1].placement.slots.maximum_slots must be a finite number
+```
+
+## Two smaller repairs
+
+- **The install no longer fails on a long path it could live at.** A staged
+  file sat under `runtime-artifacts\.staging\<64 hex>\` while its final home was
+  `runtime-artifacts\<64 hex>\`, so staging was nine characters longer than the
+  destination and a 144-character Operator root failed partway through an
+  install. The staging leaf is 54 characters now, one shorter than the
+  destination, so the destination is always the binding constraint: whatever
+  root the artifact can live in, it can be installed into.
+- **A confined-file failure says which one, where and why.** All twenty-eight
+  reported one line number and none carried the operating system's error. They
+  now carry the platform's own sentence and code, the real call site, and — for
+  a path — the path and its character count. Windows reports "cannot find the
+  path specified" for a path over `MAX_PATH`, so the count is what tells the
+  truth: `(273 characters)` against a 260 limit.
