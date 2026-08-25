@@ -10,9 +10,11 @@
 #include <format>
 #include <memory>
 #include <optional>
+#include <source_location>
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -39,17 +41,115 @@ namespace uf::task_platform
         // link in it.
         constexpr auto k_maximumRemovalDepth = uint32{32};
 
+        // Both helpers forward the CALLER'S source location. fail() defaults it
+        // to std::source_location::current(), which without this parameter is
+        // the line inside the helper -- so every refusal in this file reported
+        // one line number and a reader could not tell which of the operations
+        // below had failed.
         [[nodiscard]]
-        auto refuse(std::string message) -> std::unexpected<Error>
+        auto refuse(
+            std::string          message,
+            std::source_location location = std::source_location::current()
+        ) -> std::unexpected<Error>
         {
-            return fail(AutomationErrorKind::InvalidResource, std::move(message));
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::move(message),
+                {},
+                location
+            );
         }
 
+        // A failure this code decided on its own: a buffer that would not hold
+        // what the platform reported, a size that cannot be represented. There
+        // is no operating-system error to carry, and attaching a stale one
+        // would name a cause that is not the cause.
         [[nodiscard]]
-        auto ioFailure(std::string message) -> std::unexpected<Error>
+        auto ioFailure(
+            std::string          message,
+            std::source_location location = std::source_location::current()
+        ) -> std::unexpected<Error>
         {
-            return fail(AutomationErrorKind::IoFailure, std::move(message));
+            return fail(
+                AutomationErrorKind::IoFailure,
+                std::move(message),
+                {},
+                location
+            );
         }
+
+        // The error the platform is holding right now, read immediately after
+        // the call that failed and before anything else can overwrite it.
+        [[nodiscard]]
+        auto lastError() noexcept -> std::error_code
+        {
+#if defined(_WIN32)
+            // SAFETY: GetLastError reads this thread's own last-error value and
+            // takes no argument; the cast is to the signed type error_code
+            // stores, and Win32 error codes are well inside its range.
+            return std::error_code{
+                static_cast<int>(::GetLastError()),
+                std::system_category()
+            };
+#else
+            return std::error_code{errno, std::generic_category()};
+#endif
+        }
+
+        // A failure an operating-system call reported.
+        //
+        // The platform's own sentence goes into the message and its code goes
+        // into the Error's native code, because the two answer different
+        // readers: "The filename or extension is too long." is what tells a
+        // person which limit they hit, while the number is what a caller can
+        // match on. Naming only the operation -- which is what this file did --
+        // reports that something failed and nothing about why.
+        [[nodiscard]]
+        auto osFailure(
+            std::string_view     operation,
+            std::source_location location = std::source_location::current()
+        ) -> std::unexpected<Error>
+        {
+            auto const code = lastError();
+            return fail(
+                AutomationErrorKind::IoFailure,
+                std::format("{}: {}", operation, code.message()),
+                code,
+                location
+            );
+        }
+
+#if defined(_WIN32)
+        // The same, for a call that failed against a path worth naming. Paths
+        // are the subject of most failures here, and a length limit in
+        // particular is unreadable without the path that exceeded it, so the
+        // character count is stated beside it rather than left to be counted.
+        //
+        // Windows only: the POSIX walk below opens each component against a
+        // directory descriptor and never holds a whole path to report.
+        [[nodiscard]]
+        auto osFailure(
+            std::string_view     operation,
+            std::wstring_view    path,
+            std::source_location location = std::source_location::current()
+        ) -> std::unexpected<Error>
+        {
+            auto const code    = lastError();
+            auto const encoded = std::filesystem::path{path}.u8string();
+            return fail(
+                AutomationErrorKind::IoFailure,
+                std::format(
+                    "{} \"{}\" ({} characters): {}",
+                    operation,
+                    std::string{encoded.begin(), encoded.end()},
+                    path.size(),
+                    code.message()
+                ),
+                code,
+                location
+            );
+        }
+#endif
 
         // A child name must name a child. These are the shapes that would
         // otherwise leave the directory this root was opened on.
@@ -237,7 +337,7 @@ namespace uf::task_platform
                 {
                     return std::optional<OpenedNode>{};
                 }
-                return ioFailure("cannot open a confined path");
+                return osFailure("cannot open a confined path", path);
             }
 
             auto information = BY_HANDLE_FILE_INFORMATION{};
@@ -245,7 +345,7 @@ namespace uf::task_platform
             // fills completely on success.
             if (::GetFileInformationByHandle(handle.get(), &information) == 0)
             {
-                return ioFailure("cannot inspect a confined path");
+                return osFailure("cannot inspect a confined path");
             }
             auto const attributes = information.dwFileAttributes;
             if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0U)
@@ -274,7 +374,7 @@ namespace uf::task_platform
             UF_TRY_VALUE(opened, openNode(path, access));
             if (!opened)
             {
-                return ioFailure("cannot open a confined path");
+                return osFailure("cannot open a confined path", path);
             }
             if (opened->directory != (kind == OpenKind::Directory))
             {
@@ -297,7 +397,7 @@ namespace uf::task_platform
             // completely on success.
             if (::GetFileInformationByHandle(handle.get(), &information) == 0)
             {
-                return ioFailure("cannot identify a confined root");
+                return osFailure("cannot identify a confined root");
             }
             auto index = static_cast<uint64>(information.nFileIndexHigh) << 32U;
             index |= static_cast<uint64>(information.nFileIndexLow);
@@ -338,7 +438,7 @@ namespace uf::task_platform
                     {
                         return names;
                     }
-                    return ioFailure("cannot enumerate a confined directory");
+                    return osFailure("cannot enumerate a confined directory");
                 }
 
                 auto offset = std::size_t{};
@@ -431,7 +531,7 @@ namespace uf::task_platform
             );
             if (marked == 0)
             {
-                return ioFailure("cannot remove a confined path");
+                return osFailure("cannot remove a confined path");
             }
             return ok();
         }
@@ -447,7 +547,7 @@ namespace uf::task_platform
             // API fills on success.
             if (::GetFileSizeEx(handle.get(), &size) == 0)
             {
-                return ioFailure("cannot measure a confined file");
+                return osFailure("cannot measure a confined file");
             }
             if (size.QuadPart < 0)
             {
@@ -475,7 +575,7 @@ namespace uf::task_platform
                 auto read = DWORD{};
                 if (::ReadFile(handle.get(), window.data(), *remaining, &read, nullptr) == 0)
                 {
-                    return ioFailure("cannot read a confined file");
+                    return osFailure("cannot read a confined file");
                 }
                 if (read == 0U)
                 {
@@ -564,14 +664,14 @@ namespace uf::task_platform
             auto const duplicate = ::dup(directory);
             if (duplicate < 0)
             {
-                return ioFailure("cannot enumerate a confined directory");
+                return osFailure("cannot enumerate a confined directory");
             }
             auto stream = DirectoryStream{::fdopendir(duplicate)};
             if (stream == nullptr)
             {
                 // SAFETY: the duplicate is still ours because fdopendir failed.
                 static_cast<void>(::close(duplicate));
-                return ioFailure("cannot enumerate a confined directory");
+                return osFailure("cannot enumerate a confined directory");
             }
 
             auto names = std::vector<std::string>{};
@@ -621,7 +721,7 @@ namespace uf::task_platform
                 {
                     return ok();
                 }
-                return ioFailure("cannot inspect a confined path");
+                return osFailure("cannot inspect a confined path");
             }
             if (S_ISLNK(metadata.st_mode))
             {
@@ -651,7 +751,7 @@ namespace uf::task_platform
                 // null-terminated for the duration of the call.
                 if (::unlinkat(parent, name.c_str(), AT_REMOVEDIR) != 0)
                 {
-                    return ioFailure("cannot remove a confined directory");
+                    return osFailure("cannot remove a confined directory");
                 }
                 return ok();
             }
@@ -660,7 +760,7 @@ namespace uf::task_platform
             // for the duration of the call; unlinkat never follows a link.
             if (::unlinkat(parent, name.c_str(), 0) != 0)
             {
-                return ioFailure("cannot remove a confined file");
+                return osFailure("cannot remove a confined file");
             }
             return ok();
         }
@@ -809,7 +909,7 @@ namespace uf::task_platform
         };
         if (!file.valid())
         {
-            return ioFailure("cannot create a confined file");
+            return osFailure("cannot create a confined file", path);
         }
 
         auto written = std::size_t{};
@@ -825,7 +925,7 @@ namespace uf::task_platform
             // written < bytes.size(), and the count is the remaining distance.
             if (::WriteFile(file.get(), bytes.data() + written, *remaining, &wrote, nullptr) == 0)
             {
-                return ioFailure("cannot write a confined file");
+                return osFailure("cannot write a confined file");
             }
             if (wrote == 0U)
             {
@@ -837,7 +937,7 @@ namespace uf::task_platform
         // what makes the staged bytes durable for the verification that follows.
         if (::FlushFileBuffers(file.get()) == 0)
         {
-            return ioFailure("cannot flush a confined file");
+            return osFailure("cannot flush a confined file");
         }
         return ok();
     }
@@ -887,7 +987,7 @@ namespace uf::task_platform
         };
         if (!descriptor.valid())
         {
-            return ioFailure("cannot open a confined root");
+            return osFailure("cannot open a confined root");
         }
         auto implementation = std::make_unique<Impl>();
         implementation->root = std::move(descriptor);
@@ -958,7 +1058,7 @@ namespace uf::task_platform
             auto const read = ::read(file.get(), remaining.data(), remaining.size());
             if (read <= 0 || static_cast<std::size_t>(read) > remaining.size())
             {
-                return ioFailure("cannot read a confined file");
+                return osFailure("cannot read a confined file");
             }
             remaining = remaining.subspan(static_cast<std::size_t>(read));
         }
@@ -1019,13 +1119,13 @@ namespace uf::task_platform
             auto const wrote = ::write(file.get(), remaining.data(), remaining.size());
             if (wrote <= 0 || static_cast<std::size_t>(wrote) > remaining.size())
             {
-                return ioFailure("cannot write a confined file");
+                return osFailure("cannot write a confined file");
             }
             remaining = remaining.subspan(static_cast<std::size_t>(wrote));
         }
         if (::fsync(file.get()) != 0)
         {
-            return ioFailure("cannot flush a confined file");
+            return osFailure("cannot flush a confined file");
         }
         return ok();
     }
