@@ -194,7 +194,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--release",
         required=True,
-        help="milestone name, e.g. m0-acceptance; not semver while no packaged release exists",
+        help=(
+            "release name, e.g. 2026-08-25-one-tool-vocabulary. Not semver, "
+            "because nothing is packaged for anyone outside this repository, "
+            "and NOT a milestone tier: this project declares no milestone "
+            "until the first game is stably automated end to end, so an "
+            "m<N>- name here would assert a tier that does not exist. Name "
+            "the build for its date and what it did"
+        ),
     )
     parser.add_argument(
         "--output",

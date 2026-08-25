@@ -5,8 +5,10 @@ says what **broke** and what each removed member *was*. The reasoning lives in
 `docs/decisions/`, dated by ruling; the published surface is
 [`docs/PUBLIC-CONTRACT.md`](../PUBLIC-CONTRACT.md).
 
-The release is `m2-one-tool-vocabulary`. Thirty-one commits, twelve of them
-breaking.
+The release is `2026-08-25-one-tool-vocabulary`. Thirty-five commits, eighteen
+of them breaking. The name is a date and what the build did, not a milestone
+tier: this project declares no milestone until the first game is stably
+automated end to end.
 
 ## What this release is
 
@@ -344,3 +346,36 @@ Still not closed: `umbra-flow upgrade` remains absent from
 `docs/PUBLIC-CONTRACT.md`, so its usage text is read from `--help` rather than
 from the outward document. That is now a documentation gap rather than a
 missing producer.
+
+## Generation 0 is the genesis generation, not "nothing is installed"
+
+`H_genesis` is the content hash of the empty RuntimeModel — `base_resolution
+= [1, 1]`, no Bindings, no Locators, no Readers. The framework has always called
+it "sealed by construction: a constant of the framework, not the output of a
+run", and `project init` has always scaffolded it into a project directory. **No
+Operator code had ever heard of it.** A freshly created root pinned no
+generation, so a first session had nothing to bind, so `init` then `explore
+--runtime DIR` — which a ruling of 2026-08-24 states as the path from nothing to
+a first session — could not work for a project with no artifact of its own.
+
+Every Operator root now materialises genesis as part of its layout, beside the
+directories, the staging root and the database that `OperatorCoordinator::open`
+already creates. **Generation 0 stops meaning "nothing is installed" and starts
+meaning the genesis generation**: it names a real artifact root, so a first
+session binds `H_genesis` at generation 0. A root whose generation 0 pins any
+other artifact root is refused by name.
+
+What does not change: a first real installation still lands at **generation 1**
+and still compares against the same number it always did, and the
+capability-expansion rule is untouched — a first install carrying
+`--capability` is not refused as an expansion.
+
+**A root written before this release gains genesis the next time anything opens
+it**, through a ledger migration rather than a branch, without disturbing what
+it already holds. Measured on the only existing root: it gained genesis, its
+installed generation 1 was untouched, and `reclaim` counted zero artifact
+directories to sweep — genesis is layout, so nothing sweeps it.
+
+Nothing is asked of a project author here. Genesis grants nothing: an empty
+model can do nothing under the deny-all an absent policy artifact means, which
+is why pinning it decides nothing on anyone's behalf.
