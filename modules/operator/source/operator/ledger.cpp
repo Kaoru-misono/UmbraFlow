@@ -5786,23 +5786,23 @@ namespace uf::operator_runtime
         // to remove once nothing else does either.
         UF_TRY_VALUE(stagingToken, randomToken(m_impl->database.get()));
         UF_TRY_VALUE(
-            release,
-            detail::readRuntimeRelease(
+            source,
+            detail::readRuntimeArtifactSource(
                 m_impl->runtimeArtifactRoot,
-                request.handoffRoot,
-                request.expectedReleaseManifestHash
+                request.artifactDirectory,
+                request.artifactRootHash
             )
         );
 
         UF_TRY(registerArtifactRoot(
             m_impl->database.get(),
-            release.artifactRootHash.hex()
+            request.artifactRootHash.hex()
         ));
         UF_TRY_VALUE(
             artifact,
             detail::publishRuntimeArtifact(
                 m_impl->runtimeArtifactRoot,
-                release,
+                source,
                 stagingToken
             )
         );
@@ -5833,7 +5833,7 @@ namespace uf::operator_runtime
                 "RuntimeArtifact installed-generation compare-and-swap failed"
             );
         }
-        if (currentRoot == release.artifactRootHash.hex())
+        if (currentRoot == request.artifactRootHash.hex())
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
@@ -5863,7 +5863,7 @@ namespace uf::operator_runtime
             m_impl->database.get(),
             installationInsert.get(),
             2,
-            release.artifactRootHash.hex()
+            request.artifactRootHash.hex()
         ));
         UF_TRY(expectDone(m_impl->database.get(), installationInsert.get()));
 
@@ -5881,7 +5881,7 @@ namespace uf::operator_runtime
             m_impl->database.get(),
             update.get(),
             2,
-            release.artifactRootHash.hex()
+            request.artifactRootHash.hex()
         ));
         UF_TRY(bindInteger(
             m_impl->database.get(),

@@ -82,10 +82,15 @@ namespace uf::operator_runtime
         ControllerKind kind{ControllerKind::Agent};
     };
 
+    // What one installation states: the RuntimeArtifact directory the operator
+    // supplied, the root hash that same operator stated it hashes to, and the
+    // generation the activation compare-and-swaps against. The hash is the
+    // whole of the trust: the directory is held against it before a byte is
+    // written under the production root.
     struct RuntimeArtifactInstallRequest final
     {
-        std::filesystem::path handoffRoot;
-        ContentHash           expectedReleaseManifestHash;
+        std::filesystem::path artifactDirectory;
+        ContentHash           artifactRootHash;
         uint64                expectedInstalledGeneration{};
     };
 

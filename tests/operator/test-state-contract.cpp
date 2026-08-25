@@ -304,7 +304,7 @@ namespace uf::operator_runtime
         CHECK(foreignReading.artifactRootHash() == reading.artifactRootHash());
 
         auto const otherRelease = conformance::observationRelease(
-            foreignTemporary.path() / "other-handoff",
+            foreignTemporary.path() / "other-source",
             conformance::ProjectRuntimeArtifact{
                 .model  = test_support::ambiguousRuntimeModel(),
                 .assets = test_support::umbraflowRuntimeAssets(),
@@ -313,8 +313,8 @@ namespace uf::operator_runtime
         CHECK(otherRelease.artifactRootHash != reading.artifactRootHash());
         auto otherInstalled = foreignPrepared.store.installRuntimeArtifact(
             RuntimeArtifactInstallRequest{
-                .handoffRoot                 = otherRelease.handoffRoot,
-                .expectedReleaseManifestHash = otherRelease.releaseManifestHash,
+                .artifactDirectory           = otherRelease.artifactDirectory,
+                .artifactRootHash            = otherRelease.artifactRootHash,
                 .expectedInstalledGeneration = 1U,
             }
         );

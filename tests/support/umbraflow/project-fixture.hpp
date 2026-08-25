@@ -139,7 +139,7 @@ namespace uf::operator_runtime::conformance
         return observationHash(manifest);
     }
 
-    // The same handoff shape observationRelease builds from a published
+    // The same source shape observationRelease builds from a published
     // directory, for an artifact that has no directory to be published from.
     [[nodiscard]]
     inline auto observationRelease(
@@ -147,28 +147,15 @@ namespace uf::operator_runtime::conformance
         ProjectRuntimeArtifact const& artifact
     ) -> ObservationRelease
     {
-        auto const handoff          = root / "release";
+        auto const source           = root / "artifact";
         auto const artifactRootHash = publishRuntimeArtifact(
-            handoff / "runtime-artifact",
+            source,
             artifact.model,
             artifact.assets
         );
-        auto const releaseManifest = std::format(
-            R"({{"annotation_workspace_format":{},)"
-            R"("candidate_id":"candidate-1","candidate_revision":1,)"
-            R"("generation":1,"predecessor_publication_id":null,)"
-            R"("replay_gate_hash":"{}","runtime_artifact_root_hash":"{}",)"
-            R"("workspace_sqlite_revision":{}}})",
-            detail::k_annotationWorkspaceFormat,
-            observationHash("replay-gate").hex(),
-            artifactRootHash.hex(),
-            detail::k_workspaceSqliteRevision
-        );
-        writeArtifactFile(handoff / "release.manifest.json", releaseManifest);
         return ObservationRelease{
-            .handoffRoot         = handoff,
-            .releaseManifestHash = observationHash(releaseManifest),
-            .artifactRootHash    = artifactRootHash,
+            .artifactDirectory = source,
+            .artifactRootHash  = artifactRootHash,
         };
     }
 }
@@ -1246,7 +1233,7 @@ identity = ["fixture.panel.anchor"]
         std::span<std::string const> privilegedSurfaceTools = {}
     ) -> PreparedStore
     {
-        auto const release = runtimeRelease(path / "session-handoff");
+        auto const release = runtimeRelease(path / "session-source");
         auto storeResult = OperatorCoordinator::open(path / "production");
         auto const storeMessage = storeResult.has_value()
             ? std::string{}
@@ -1255,8 +1242,8 @@ identity = ["fixture.panel.anchor"]
         auto store = *std::move(storeResult);
         auto installed = store.installRuntimeArtifact(
             RuntimeArtifactInstallRequest{
-                .handoffRoot                 = release.handoffRoot,
-                .expectedReleaseManifestHash = release.releaseManifestHash,
+                .artifactDirectory           = release.artifactDirectory,
+                .artifactRootHash            = release.artifactRootHash,
                 .expectedInstalledGeneration = 0U,
             }
         );

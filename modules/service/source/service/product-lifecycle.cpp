@@ -2901,8 +2901,8 @@ namespace uf::service
             )
         );
         auto const installation = operator_runtime::RuntimeArtifactInstallRequest{
-            .handoffRoot                 = upgrade.handoffRoot,
-            .expectedReleaseManifestHash = upgrade.expectedReleaseManifestHash,
+            .artifactDirectory           = upgrade.artifactDirectory,
+            .artifactRootHash            = upgrade.artifactRootHash,
             .expectedInstalledGeneration = expectedInstalledGeneration,
         };
         auto const pin = operator_runtime::SessionPin{

@@ -282,20 +282,16 @@ namespace uf::service
     // The production door for a RuntimeArtifact release upgrade: what a caller
     // states, in the order the ledger consumes it.
     //
-    // The two hashes are both stated because the ledger's two reads cannot be
-    // derived from one another from this module's side of the boundary.
-    // expectedReleaseManifestHash is what installRuntimeArtifact compares the
-    // handoff's release.manifest.json against, and artifactRootHash is the root
-    // that manifest declares -- which is what the session the upgrade pins
-    // binds its SessionManifest to. The ledger itself proves them consistent:
-    // the pin is refused unless the manifest's root is the installed one, and
-    // the installed root is the one the trusted release manifest named.
+    // One directory and one hash, because there is one read. artifactRootHash
+    // is what the install holds artifactDirectory's own manifest bytes against
+    // AND what the session the upgrade pins binds its SessionManifest to; the
+    // ledger proves the two uses agree by refusing a pin whose manifest names
+    // a root that was not installed.
     struct RuntimeUpgradeStart final
     {
         std::filesystem::path    projectDirectory{};
         std::filesystem::path    runtimeDirectory{};
-        std::filesystem::path    handoffRoot{};
-        ContentHash              expectedReleaseManifestHash;
+        std::filesystem::path    artifactDirectory{};
         ContentHash              artifactRootHash;
         std::vector<std::string> controllerCapabilities{};
     };
@@ -307,8 +303,9 @@ namespace uf::service
         std::string sessionId{};
     };
 
-    // Publishes the handoff into the Operator root at runtimeDirectory and
-    // pins the session that records the release. The project at
+    // Publishes the RuntimeArtifact at artifactDirectory into the Operator
+    // root at runtimeDirectory and pins the session that records the release.
+    // The project at
     // projectDirectory names the deployment the upgrade session registers and
     // pins itself to, and the SessionManifest is derived exactly as
     // ProductLifecycle::start derives it -- same published schema, same policy

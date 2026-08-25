@@ -1216,14 +1216,14 @@ return {
     {
         auto const directory = test_support::TemporaryDirectory{};
         auto const release   = test_support::runtimeRelease(
-            directory.path() / "session-handoff"
+            directory.path() / "session-source"
         );
         auto store = OperatorCoordinator::open(directory.path() / "production");
         REQUIRE(store.has_value());
         auto const installed = store->installRuntimeArtifact(
             RuntimeArtifactInstallRequest{
-                .handoffRoot                 = release.handoffRoot,
-                .expectedReleaseManifestHash = release.releaseManifestHash,
+                .artifactDirectory           = release.artifactDirectory,
+                .artifactRootHash            = release.artifactRootHash,
                 .expectedInstalledGeneration = 0U,
             }
         );

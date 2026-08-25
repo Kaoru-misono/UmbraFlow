@@ -795,8 +795,8 @@ return {
             auto store     = *std::move(storeResult);
             auto installed = store.installRuntimeArtifact(
                 RuntimeArtifactInstallRequest{
-                    .handoffRoot                 = release.handoffRoot,
-                    .expectedReleaseManifestHash = release.releaseManifestHash,
+                    .artifactDirectory           = release.artifactDirectory,
+                    .artifactRootHash            = release.artifactRootHash,
                     .expectedInstalledGeneration = 0U,
                 }
             );

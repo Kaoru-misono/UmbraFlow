@@ -16,19 +16,18 @@ namespace uf::cli
             upgraded,
             service::upgradeRuntimeArtifactAndPinSession(
                 service::RuntimeUpgradeStart{
-                    .projectDirectory            = args.project,
-                    .runtimeDirectory            = args.runtime,
-                    .handoffRoot                 = args.handoff,
-                    .expectedReleaseManifestHash = args.releaseManifestHash,
-                    .artifactRootHash            = args.artifactRootHash,
-                    .controllerCapabilities      = args.capabilities,
+                    .projectDirectory       = args.project,
+                    .runtimeDirectory       = args.runtime,
+                    .artifactDirectory      = args.artifact,
+                    .artifactRootHash       = args.artifactRootHash,
+                    .controllerCapabilities = args.capabilities,
                 }
             )
         );
         return UpgradedRuntime{
             .project             = args.project,
             .runtime             = args.runtime,
-            .handoff             = args.handoff,
+            .artifact            = args.artifact,
             .installedGeneration = upgraded.installedGeneration,
             .artifactRootHash    = upgraded.artifactRootHash.hex(),
             .sessionId           = std::move(upgraded.sessionId),
@@ -48,8 +47,8 @@ namespace uf::cli
             upgraded.project.string(),
             "runtime root",
             upgraded.runtime.string(),
-            "handoff",
-            upgraded.handoff.string(),
+            "source artifact",
+            upgraded.artifact.string(),
             "artifact root hash",
             upgraded.artifactRootHash,
             "installed generation",

@@ -245,15 +245,15 @@ namespace uf::operator_runtime
         {
             auto const policy  = nestedPolicyBytes();
             auto const release = test_support::runtimeRelease(
-                path / "session-handoff"
+                path / "session-source"
             );
             auto storeResult = OperatorCoordinator::open(path / "production");
             REQUIRE_MESSAGE(storeResult.has_value(), failureText(storeResult));
             auto store     = *std::move(storeResult);
             auto installed = store.installRuntimeArtifact(
                 RuntimeArtifactInstallRequest{
-                    .handoffRoot                 = release.handoffRoot,
-                    .expectedReleaseManifestHash = release.releaseManifestHash,
+                    .artifactDirectory           = release.artifactDirectory,
+                    .artifactRootHash            = release.artifactRootHash,
                     .expectedInstalledGeneration = 0U,
                 }
             );

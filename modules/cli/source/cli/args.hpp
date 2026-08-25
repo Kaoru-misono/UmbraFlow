@@ -332,23 +332,21 @@ namespace uf::cli
 
     // The two verbs that publish a RuntimeArtifact release into an Operator
     // production root and record who authorised a capability expansion onto a
-    // release. Both hashes are stated as the canonical spelling ContentHash
+    // release. Every hash is stated as the canonical spelling ContentHash
     // reads, `sha256:` followed by 64 lowercase hex digits.
     //
     // upgrade names the project the upgrade session registers against, the
-    // Operator root that receives the release, the release handoff, and the
-    // two hashes that make the handoff trustworthy: the digest of the
-    // handoff's release.manifest.json, and the artifact root hash that
-    // manifest declares. The ledger proves the second equals the first by
-    // refusing to pin a session whose manifest names a root that was not
-    // installed.
+    // Operator root that receives the release, the RuntimeArtifact directory
+    // to install, and the root hash the operator states that directory hashes
+    // to. That one hash is the whole of the trust: the install holds the
+    // directory's own manifest bytes against it, and the session the upgrade
+    // pins binds its SessionManifest to it.
     struct UpgradeArgs final
     {
         std::filesystem::path project{};
         std::filesystem::path runtime{};
-        std::filesystem::path handoff{};
+        std::filesystem::path artifact{};
 
-        ContentHash releaseManifestHash;
         ContentHash artifactRootHash;
 
         // The capability set the upgrade session pins. Empty is the ordinary

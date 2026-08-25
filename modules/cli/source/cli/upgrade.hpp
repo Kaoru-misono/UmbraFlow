@@ -26,7 +26,7 @@ namespace uf::cli
     {
         std::filesystem::path project{};
         std::filesystem::path runtime{};
-        std::filesystem::path handoff{};
+        std::filesystem::path artifact{};
 
         uint64      installedGeneration{};
         std::string artifactRootHash{};
@@ -35,8 +35,8 @@ namespace uf::cli
         auto operator==(UpgradedRuntime const&) const -> bool = default;
     };
 
-    // Publishes the release handoff and pins its session through the one
-    // production door.
+    // Publishes the RuntimeArtifact directory and pins its session through the
+    // one production door.
     [[nodiscard]]
     auto upgradeProduct(UpgradeArgs const& args) -> Result<UpgradedRuntime>;
 

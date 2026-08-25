@@ -3,7 +3,6 @@
 #include "host-delivery-fixture.hpp"
 
 #include <operator/ledger.hpp>
-#include <operator/runtime-installation.hpp>
 
 #include <task/host-delivery.hpp>
 #include <task/runtime-model-file.hpp>
@@ -131,35 +130,36 @@ namespace uf::operator_runtime::conformance
         return bytes;
     }
 
-    // A release handoff the Operator's installer accepts, carrying the project's
+    // A RuntimeArtifact the Operator's installer accepts, carrying the project's
     // own RuntimeArtifact rather than a placeholder or a model of the suite's:
     // the Host has to parse those bytes and match their locators before an
     // observation exists at all.
     struct ObservationRelease final
     {
-        std::filesystem::path handoffRoot;
-        ContentHash           releaseManifestHash;
+        std::filesystem::path artifactDirectory;
         ContentHash           artifactRootHash;
     };
 
-    // Wraps the RuntimeArtifact a project already published in the handoff shape
-    // the installer takes. Nothing here writes an artifact: the manifest naming
-    // every file in it is the project's own, and its bytes are what the root
-    // hash is of, so a suite that re-serialized one would install an artifact no
-    // project ever published and pin sessions to a hash no project can restate.
+    // Copies the RuntimeArtifact a project already published into a source
+    // directory of its own, so a case that edits what it installed does not
+    // edit the project's copy. Nothing here writes an artifact: the manifest
+    // naming every file in it is the project's own, and its bytes are what the
+    // root hash is of, so a suite that re-serialized one would install an
+    // artifact no project ever published and pin sessions to a hash no project
+    // can restate.
     [[nodiscard]]
     inline auto observationRelease(
         std::filesystem::path const& root,
         std::filesystem::path const& artifactDirectory
     ) -> ObservationRelease
     {
-        auto const handoff = root / "release";
-        auto error         = std::error_code{};
-        std::filesystem::create_directories(handoff, error);
+        auto const source = root / "artifact";
+        auto error        = std::error_code{};
+        std::filesystem::create_directories(root, error);
         REQUIRE_FALSE(error);
         std::filesystem::copy(
             artifactDirectory,
-            handoff / "runtime-artifact",
+            source,
             std::filesystem::copy_options::recursive
                 | std::filesystem::copy_options::overwrite_existing,
             error
@@ -170,22 +170,9 @@ namespace uf::operator_runtime::conformance
             artifactDirectory
             / std::filesystem::path{task::k_runtimeArtifactManifestFileName}
         ));
-        auto const releaseManifest = std::format(
-            R"({{"annotation_workspace_format":{},)"
-            R"("candidate_id":"candidate-1","candidate_revision":1,)"
-            R"("generation":1,"predecessor_publication_id":null,)"
-            R"("replay_gate_hash":"{}","runtime_artifact_root_hash":"{}",)"
-            R"("workspace_sqlite_revision":{}}})",
-            detail::k_annotationWorkspaceFormat,
-            observationHash("replay-gate").hex(),
-            artifactRootHash.hex(),
-            detail::k_workspaceSqliteRevision
-        );
-        writeArtifactFile(handoff / "release.manifest.json", releaseManifest);
         return ObservationRelease{
-            .handoffRoot         = handoff,
-            .releaseManifestHash = observationHash(releaseManifest),
-            .artifactRootHash    = artifactRootHash,
+            .artifactDirectory = source,
+            .artifactRootHash  = artifactRootHash,
         };
     }
 

@@ -739,7 +739,7 @@ if(TARGET ${PROJECT_NAME}_operator)
     # beside it.
     uf_shard_doctest_gates(
         TARGET test-operator
-        TOTAL_CASES 169
+        TOTAL_CASES 168
         SHARDS 6
     )
 
@@ -1150,8 +1150,8 @@ endif()
 set(UPGRADE_FIXTURE "${UF_UPGRADE_TEST_ROOT}")
 set(UPGRADE_PROJECT "${UPGRADE_FIXTURE}/project")
 set(UPGRADE_RUNTIME "${UPGRADE_FIXTURE}/runtime")
-set(UPGRADE_HANDOFF_1 "${UPGRADE_FIXTURE}/handoff-1")
-set(UPGRADE_HANDOFF_2 "${UPGRADE_FIXTURE}/handoff-2")
+set(UPGRADE_ARTIFACT_1 "${UPGRADE_FIXTURE}/artifact-1")
+set(UPGRADE_ARTIFACT_2 "${UPGRADE_FIXTURE}/artifact-2")
 set(UPGRADE_LEDGER "${UPGRADE_RUNTIME}/operator-runtime.sqlite")
 
 # The project fixture is the shipped exemplar, copied so the Operator root the
@@ -1160,52 +1160,38 @@ file(REMOVE_RECURSE "${UPGRADE_FIXTURE}")
 file(MAKE_DIRECTORY "${UPGRADE_FIXTURE}")
 file(COPY "${UF_UPGRADE_PROJECT_FIXTURE}/" DESTINATION "${UPGRADE_PROJECT}")
 
-# Handoff 1 is the exemplar's own artifact, byte for byte: its root hash is
-# this binary's arithmetic over the manifest it carries, and the release
-# manifest is written here with the exact canonical field order the trusted
-# reader consumes.
+# Artifact 1 is the exemplar's own artifact, byte for byte: its root hash is
+# this binary's arithmetic over the manifest it carries, and that hash is the
+# only thing the operator states about it.
 file(COPY
     "${UPGRADE_PROJECT}/runtime/artifact/"
-    DESTINATION "${UPGRADE_HANDOFF_1}/runtime-artifact"
+    DESTINATION "${UPGRADE_ARTIFACT_1}"
 )
 file(SHA256
-    "${UPGRADE_HANDOFF_1}/runtime-artifact/runtime-artifact.manifest.json"
+    "${UPGRADE_ARTIFACT_1}/runtime-artifact.manifest.json"
     ARTIFACT_MANIFEST_HASH_1
 )
 
-function(write_release_manifest HANDOFF ROOT_HASH)
-    file(WRITE "${HANDOFF}/release.manifest.json"
-        "{\"annotation_workspace_format\":2,\"candidate_id\":\"cli-fixture\","
-        "\"candidate_revision\":1,\"generation\":1,"
-        "\"predecessor_publication_id\":null,"
-        "\"replay_gate_hash\":\"${UF_UPGRADE_REPLAY_GATE_HASH}\","
-        "\"runtime_artifact_root_hash\":\"${ROOT_HASH}\","
-        "\"workspace_sqlite_revision\":2}")
-endfunction()
-
-write_release_manifest("${UPGRADE_HANDOFF_1}" "${ARTIFACT_MANIFEST_HASH_1}")
-file(SHA256 "${UPGRADE_HANDOFF_1}/release.manifest.json" RELEASE_MANIFEST_HASH_1)
-
-# Handoff 2 is a second release over a changed model: the model bytes differ,
+# Artifact 2 is a second release over a changed model: the model bytes differ,
 # so the page_model entry and the artifact root hash differ. The rest of the
 # artifact is copied unchanged, which is exactly what a compatible upgrade is.
 file(COPY
-    "${UPGRADE_HANDOFF_1}/runtime-artifact/"
-    DESTINATION "${UPGRADE_HANDOFF_2}/runtime-artifact"
+    "${UPGRADE_ARTIFACT_1}/"
+    DESTINATION "${UPGRADE_ARTIFACT_2}"
 )
-file(APPEND "${UPGRADE_HANDOFF_2}/runtime-artifact/runtime-model.toml"
+file(APPEND "${UPGRADE_ARTIFACT_2}/runtime-model.toml"
     "# second release of the fixture model\n"
 )
 file(SHA256
-    "${UPGRADE_HANDOFF_2}/runtime-artifact/runtime-model.toml"
+    "${UPGRADE_ARTIFACT_2}/runtime-model.toml"
     MODEL_HASH_2
 )
 file(SIZE
-    "${UPGRADE_HANDOFF_2}/runtime-artifact/runtime-model.toml"
+    "${UPGRADE_ARTIFACT_2}/runtime-model.toml"
     MODEL_SIZE_2
 )
 file(READ
-    "${UPGRADE_HANDOFF_2}/runtime-artifact/runtime-artifact.manifest.json"
+    "${UPGRADE_ARTIFACT_2}/runtime-artifact.manifest.json"
     ARTIFACT_MANIFEST_2
 )
 string(REGEX REPLACE
@@ -1214,22 +1200,19 @@ string(REGEX REPLACE
     ARTIFACT_MANIFEST_2_REVISED "${ARTIFACT_MANIFEST_2}"
 )
 file(WRITE
-    "${UPGRADE_HANDOFF_2}/runtime-artifact/runtime-artifact.manifest.json"
+    "${UPGRADE_ARTIFACT_2}/runtime-artifact.manifest.json"
     "${ARTIFACT_MANIFEST_2_REVISED}"
 )
 file(SHA256
-    "${UPGRADE_HANDOFF_2}/runtime-artifact/runtime-artifact.manifest.json"
+    "${UPGRADE_ARTIFACT_2}/runtime-artifact.manifest.json"
     ARTIFACT_MANIFEST_HASH_2
 )
-write_release_manifest("${UPGRADE_HANDOFF_2}" "${ARTIFACT_MANIFEST_HASH_2}")
-file(SHA256 "${UPGRADE_HANDOFF_2}/release.manifest.json" RELEASE_MANIFEST_HASH_2)
 
-function(run_upgrade OUTPUT_VARIABLE HANDOFF ROOT_HASH RELEASE_HASH)
+function(run_upgrade OUTPUT_VARIABLE ARTIFACT ROOT_HASH)
     execute_process(
         COMMAND "${UF_CLI_EXECUTABLE}" upgrade
             --project "${UPGRADE_PROJECT}" --runtime "${UPGRADE_RUNTIME}"
-            --handoff "${HANDOFF}"
-            --release-manifest-hash "sha256:${RELEASE_HASH}"
+            --artifact "${ARTIFACT}"
             --artifact-root-hash "sha256:${ROOT_HASH}"
             ${ARGN}
         OUTPUT_VARIABLE UPGRADED
@@ -1255,10 +1238,7 @@ endfunction()
 # The bootstrap upgrade on a fresh root. The ledger the Coordinator creates is
 # the evidence the verb reached the Operator rather than reporting over a root
 # it never opened.
-run_upgrade(
-    FIRST_REPORT
-    "${UPGRADE_HANDOFF_1}" "${ARTIFACT_MANIFEST_HASH_1}" "${RELEASE_MANIFEST_HASH_1}"
-)
+run_upgrade(FIRST_REPORT "${UPGRADE_ARTIFACT_1}" "${ARTIFACT_MANIFEST_HASH_1}")
 if(NOT EXISTS "${UPGRADE_LEDGER}")
     message(FATAL_ERROR
         "upgrade reported without opening an Operator ledger at ${UPGRADE_LEDGER}"
@@ -1276,8 +1256,7 @@ endif()
 execute_process(
     COMMAND "${UF_CLI_EXECUTABLE}" upgrade
         --project "${UPGRADE_PROJECT}" --runtime "${UPGRADE_RUNTIME}"
-        --handoff "${UPGRADE_HANDOFF_2}"
-        --release-manifest-hash "sha256:${RELEASE_MANIFEST_HASH_2}"
+        --artifact "${UPGRADE_ARTIFACT_2}"
         --artifact-root-hash "sha256:${ARTIFACT_MANIFEST_HASH_2}"
         --capability operate
     OUTPUT_VARIABLE REFUSED_OUTPUT
@@ -1325,7 +1304,7 @@ endif()
 # this one. A CAS that compared against a stale generation would red here.
 run_upgrade(
     THIRD_REPORT
-    "${UPGRADE_HANDOFF_2}" "${ARTIFACT_MANIFEST_HASH_2}" "${RELEASE_MANIFEST_HASH_2}"
+    "${UPGRADE_ARTIFACT_2}" "${ARTIFACT_MANIFEST_HASH_2}"
     --capability operate
 )
 installed_generation("${THIRD_REPORT}" THIRD_GENERATION)
@@ -1353,7 +1332,6 @@ add_test(
         -DUF_CLI_EXECUTABLE=$<TARGET_FILE:${PROJECT_NAME}>
         -DUF_UPGRADE_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/upgrade-cli-fixture
         -DUF_UPGRADE_PROJECT_FIXTURE=${UF_STAGED_UMBRAFLOW_PROJECT}
-        -DUF_UPGRADE_REPLAY_GATE_HASH=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
         -DUF_UPGRADE_EVIDENCE_HASH=00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
         -P "${CLI_UPGRADE_DRIVER}"
 )

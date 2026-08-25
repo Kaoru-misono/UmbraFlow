@@ -412,7 +412,7 @@ namespace uf::cli
                 }
 
                 auto const release = operator_runtime::conformance::observationRelease(
-                    m_root / "handoff",
+                    m_root / "source",
                     m_project / "runtime" / "artifact"
                 );
 
@@ -422,8 +422,8 @@ namespace uf::cli
                 REQUIRE(store.has_value());
                 auto const installed = store->installRuntimeArtifact(
                     operator_runtime::RuntimeArtifactInstallRequest{
-                        .handoffRoot                 = release.handoffRoot,
-                        .expectedReleaseManifestHash = release.releaseManifestHash,
+                        .artifactDirectory           = release.artifactDirectory,
+                        .artifactRootHash            = release.artifactRootHash,
                         .expectedInstalledGeneration = 0U,
                     }
                 );

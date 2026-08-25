@@ -87,8 +87,7 @@ namespace uf::cli
         {
             Project,
             Runtime,
-            Handoff,
-            ReleaseManifestHash,
+            Artifact,
             ArtifactRootHash,
             Capability,
         };
@@ -102,11 +101,7 @@ namespace uf::cli
         constexpr auto k_upgradeFlags = std::array{
             UpgradeFlagSpec{"--project", UpgradeFlag::Project},
             UpgradeFlagSpec{"--runtime", UpgradeFlag::Runtime},
-            UpgradeFlagSpec{"--handoff", UpgradeFlag::Handoff},
-            UpgradeFlagSpec{
-                "--release-manifest-hash",
-                UpgradeFlag::ReleaseManifestHash,
-            },
+            UpgradeFlagSpec{"--artifact", UpgradeFlag::Artifact},
             UpgradeFlagSpec{"--artifact-root-hash", UpgradeFlag::ArtifactRootHash},
             UpgradeFlagSpec{"--capability", UpgradeFlag::Capability},
         };
@@ -833,12 +828,11 @@ namespace uf::cli
         std::span<std::string const> raw
     ) -> Result<UpgradeArgs>
     {
-        auto project             = std::optional<std::filesystem::path>{};
-        auto runtime             = std::optional<std::filesystem::path>{};
-        auto handoff             = std::optional<std::filesystem::path>{};
-        auto releaseManifestHash = std::optional<ContentHash>{};
-        auto artifactRootHash    = std::optional<ContentHash>{};
-        auto capabilities        = std::vector<std::string>{};
+        auto project          = std::optional<std::filesystem::path>{};
+        auto runtime          = std::optional<std::filesystem::path>{};
+        auto artifact         = std::optional<std::filesystem::path>{};
+        auto artifactRootHash = std::optional<ContentHash>{};
+        auto capabilities     = std::vector<std::string>{};
 
         auto index = std::size_t{0};
         while (index < raw.size())
@@ -863,18 +857,9 @@ namespace uf::cli
             case UpgradeFlag::Runtime:
                 runtime = std::filesystem::path{value};
                 break;
-            case UpgradeFlag::Handoff:
-                handoff = std::filesystem::path{value};
+            case UpgradeFlag::Artifact:
+                artifact = std::filesystem::path{value};
                 break;
-            case UpgradeFlag::ReleaseManifestHash:
-            {
-                UF_TRY_VALUE(
-                    parsed,
-                    parseContentHash(value, name)
-                );
-                releaseManifestHash = parsed;
-                break;
-            }
             case UpgradeFlag::ArtifactRootHash:
             {
                 UF_TRY_VALUE(
@@ -893,23 +878,21 @@ namespace uf::cli
 
         UF_TRY_VALUE(requiredProject, requirePath(std::move(project), "--project"));
         UF_TRY_VALUE(requiredRuntime, requirePath(std::move(runtime), "--runtime"));
-        UF_TRY_VALUE(requiredHandoff, requirePath(std::move(handoff), "--handoff"));
-        if (!releaseManifestHash)
-        {
-            return invalid("missing required argument --release-manifest-hash");
-        }
+        UF_TRY_VALUE(
+            requiredArtifact,
+            requirePath(std::move(artifact), "--artifact")
+        );
         if (!artifactRootHash)
         {
             return invalid("missing required argument --artifact-root-hash");
         }
 
         return UpgradeArgs{
-            .project             = std::move(requiredProject),
-            .runtime             = std::move(requiredRuntime),
-            .handoff             = std::move(requiredHandoff),
-            .releaseManifestHash = *releaseManifestHash,
-            .artifactRootHash    = *artifactRootHash,
-            .capabilities        = std::move(capabilities),
+            .project          = std::move(requiredProject),
+            .runtime          = std::move(requiredRuntime),
+            .artifact         = std::move(requiredArtifact),
+            .artifactRootHash = *artifactRootHash,
+            .capabilities     = std::move(capabilities),
         };
     }
 
@@ -1716,23 +1699,23 @@ namespace uf::cli
     {
         return
             "Usage:\n"
-            "  umbra-flow upgrade --project DIR --runtime DIR --handoff DIR\n"
-            "                     --release-manifest-hash HASH\n"
+            "  umbra-flow upgrade --project DIR --runtime DIR --artifact DIR\n"
             "                     --artifact-root-hash HASH "
             "[--capability NAME]...\n"
             "\n"
-            "Publishes a RuntimeArtifact release handoff into the Operator\n"
-            "production root at --runtime and pins the session that records\n"
-            "the release. It loads the project at --project, registers its\n"
-            "primary deployment, and derives the SessionManifest the same way\n"
-            "the production session path does, with the candidate\n"
+            "Publishes the RuntimeArtifact directory at --artifact into the\n"
+            "Operator production root at --runtime and pins the session that\n"
+            "records the release. It loads the project at --project, registers\n"
+            "its primary deployment, and derives the SessionManifest the same\n"
+            "way the production session path does, with the candidate\n"
             "--artifact-root-hash where the installed root would go.\n"
             "\n"
-            "The handoff at --handoff must hold exactly release.manifest.json\n"
-            "and runtime-artifact/, and --release-manifest-hash must be the\n"
-            "sha256 digest of that manifest. The ledger refuses to pin a\n"
-            "session whose manifest names an artifact root that was not\n"
-            "installed, which is what proves the two hashes agree.\n"
+            "--artifact-root-hash is the sha256 digest of the artifact's own\n"
+            "runtime-artifact.manifest.json, and the directory is refused\n"
+            "unless every byte it carries is the one that digest covers. That\n"
+            "one hash is the whole of the trust: nothing else travels with\n"
+            "the artifact, and the ledger refuses to pin a session whose\n"
+            "manifest names a root that was not installed.\n"
             "\n"
             "A first release installs at generation 1. A later upgrade whose\n"
             "session pins a wider --capability set than the release it\n"
@@ -1748,15 +1731,12 @@ namespace uf::cli
             "                               umbraflow-project.json\n"
             "  --runtime DIR                Operator production root receiving\n"
             "                               the release\n"
-            "  --handoff DIR                Release handoff holding\n"
-            "                               release.manifest.json and\n"
-            "                               runtime-artifact/\n"
-            "  --release-manifest-hash HASH sha256: followed by 64 lowercase\n"
-            "                               hex digits, the digest of the\n"
-            "                               handoff's release.manifest.json\n"
+            "  --artifact DIR               RuntimeArtifact directory to\n"
+            "                               install, disjoint from --runtime\n"
             "  --artifact-root-hash HASH    sha256: followed by 64 lowercase\n"
-            "                               hex digits, the artifact root the\n"
-            "                               release manifest declares\n"
+            "                               hex digits, the digest of that\n"
+            "                               directory's\n"
+            "                               runtime-artifact.manifest.json\n"
             "\n"
             "Options:\n"
             "  --capability NAME            Capability of the pinned session;\n"

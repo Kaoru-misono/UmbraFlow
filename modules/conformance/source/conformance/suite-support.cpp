@@ -3,7 +3,6 @@
 #include <deployment/project-directory.hpp>
 
 #include <operator/project-generation.hpp>
-#include <operator/runtime-installation.hpp>
 
 #include <script/scoped-tool-program.hpp>
 
@@ -408,7 +407,7 @@ namespace uf::operator_runtime::conformance
         auto const& vocabulary   = vocabularyFor(project, ProjectRole::UnderTest);
 
         auto const release = observationRelease(
-            root / "session-handoff",
+            root / "session-source",
             project.loaded.runtimeArtifactRoot
         );
         auto storeResult   = OperatorCoordinator::open(root / k_runtimeSubdirectory);
@@ -416,8 +415,8 @@ namespace uf::operator_runtime::conformance
         auto store     = *std::move(storeResult);
         auto installed = store.installRuntimeArtifact(
             RuntimeArtifactInstallRequest{
-                .handoffRoot                 = release.handoffRoot,
-                .expectedReleaseManifestHash = release.releaseManifestHash,
+                .artifactDirectory           = release.artifactDirectory,
+                .artifactRootHash            = release.artifactRootHash,
                 .expectedInstalledGeneration = 0U,
             }
         );

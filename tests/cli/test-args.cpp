@@ -430,10 +430,8 @@ namespace uf::cli
                 "project-root",
                 "--runtime",
                 "runtime-root",
-                "--handoff",
-                "handoff-root",
-                "--release-manifest-hash",
-                "sha256:" + std::string(64, 'a'),
+                "--artifact",
+                "artifact-root",
                 "--artifact-root-hash",
                 "sha256:" + std::string(64, 'b'),
                 "--capability",
@@ -445,8 +443,7 @@ namespace uf::cli
         REQUIRE(result.has_value());
         CHECK(result->project == std::filesystem::path{"project-root"});
         CHECK(result->runtime == std::filesystem::path{"runtime-root"});
-        CHECK(result->handoff == std::filesystem::path{"handoff-root"});
-        CHECK(result->releaseManifestHash.hex() == std::string(64, 'a'));
+        CHECK(result->artifact == std::filesystem::path{"artifact-root"});
         CHECK(result->artifactRootHash.hex() == std::string(64, 'b'));
         REQUIRE(result->capabilities.size() == 2U);
         CHECK(result->capabilities[0] == "operate");
@@ -455,44 +452,40 @@ namespace uf::cli
 
     TEST_CASE("parseUpgradeArguments requires every authority-bearing locator")
     {
-        auto const noHandoff = parseUpgradeArguments(
+        auto const noArtifact = parseUpgradeArguments(
             std::vector<std::string>{
                 "--project", "p", "--runtime", "r",
-                "--release-manifest-hash", "sha256:" + std::string(64, 'a'),
                 "--artifact-root-hash", "sha256:" + std::string(64, 'b'),
             }
         );
-        REQUIRE_FALSE(noHandoff.has_value());
-        CHECK(noHandoff.error().message().contains("--handoff"));
+        REQUIRE_FALSE(noArtifact.has_value());
+        CHECK(noArtifact.error().message().contains("--artifact"));
 
         // A hash the ledger could never match is refused at the boundary,
         // naming the flag that was wrong rather than the format alone.
         auto const badHash = parseUpgradeArguments(
             std::vector<std::string>{
-                "--project", "p", "--runtime", "r", "--handoff", "h",
-                "--release-manifest-hash", "not-a-hash",
-                "--artifact-root-hash", "sha256:" + std::string(64, 'b'),
+                "--project", "p", "--runtime", "r", "--artifact", "a",
+                "--artifact-root-hash", "not-a-hash",
             }
         );
         REQUIRE_FALSE(badHash.has_value());
-        CHECK(badHash.error().message().contains("--release-manifest-hash"));
+        CHECK(badHash.error().message().contains("--artifact-root-hash"));
 
         auto const missingHash = parseUpgradeArguments(
             std::vector<std::string>{
-                "--project", "p", "--runtime", "r", "--handoff", "h",
-                "--artifact-root-hash", "sha256:" + std::string(64, 'b'),
+                "--project", "p", "--runtime", "r", "--artifact", "a",
             }
         );
         REQUIRE_FALSE(missingHash.has_value());
-        CHECK(missingHash.error().message().contains("--release-manifest-hash"));
+        CHECK(missingHash.error().message().contains("--artifact-root-hash"));
 
         // A flag `explore` takes, refused rather than accepted and ignored:
         // this verb binds no window, so a caller that named one is running the
         // wrong command.
         auto const foreign = parseUpgradeArguments(
             std::vector<std::string>{
-                "--project", "p", "--runtime", "r", "--handoff", "h",
-                "--release-manifest-hash", "sha256:" + std::string(64, 'a'),
+                "--project", "p", "--runtime", "r", "--artifact", "a",
                 "--artifact-root-hash", "sha256:" + std::string(64, 'b'),
                 "--hwnd", "0x20",
             }

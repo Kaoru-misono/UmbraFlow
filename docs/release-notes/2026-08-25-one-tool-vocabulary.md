@@ -297,17 +297,50 @@ has both already.
 Two published schemas also stopped requiring a revision member that no longer
 exists, so a document written against the old requirement is refused.
 
-## What this release still does not give a project author
+## The install door takes the artifact itself
 
 `umbra-flow explore`, `observe` and `invoke` all require `--runtime DIR`, an
 Operator production root holding an installed generation, and refuse a root that
 holds none rather than bootstrapping one. The verb that installs one is
-`umbra-flow upgrade --handoff DIR`, and the handoff it requires — a directory
-holding exactly `release.manifest.json` and `runtime-artifact/` — is **described
-nowhere in `docs/PUBLIC-CONTRACT.md` and produced by no shipped verb.** A
-project author who has never had an Operator root therefore cannot make one
-without reading this repository's own tests.
+`umbra-flow upgrade`, and until this release it demanded a *release handoff*: a
+directory holding exactly `release.manifest.json` and `runtime-artifact/`, where
+that manifest was a document from the retired annotation publication pipeline —
+`candidate_id`, `candidate_revision`, `replay_gate_hash`,
+`predecessor_publication_id`, an annotation workspace format and a workspace
+SQLite revision. Eight members were parsed byte for byte and **one** was used:
+the artifact root hash. The other seven were shape-checked and thrown away.
 
-That is a gap in this release, stated rather than omitted. It is not new here,
-and nothing in this release made it worse; it is written down because it is the
-one thing standing between a correctly adapted project and a session that runs.
+That document is the annotation phase surviving as a required file. Production
+could not install an artifact without a receipt from a pipeline no shipped verb
+runs, and the framework's own fixtures forged one to get past the door.
+
+**The handoff and `release.manifest.json` are deleted.** `umbra-flow upgrade`
+now takes the RuntimeArtifact directory itself:
+
+```
+umbra-flow upgrade --project DIR --runtime DIR --artifact DIR \
+                   --artifact-root-hash sha256:... [--capability NAME]...
+```
+
+`--artifact-root-hash` was already required, so nothing new is asked of the
+caller — the manifest was a courier for a value the operator states anyway.
+There is one read now: the install holds the directory's own
+`runtime-artifact.manifest.json` against that hash through
+`task::loadRuntimeArtifact`, and the session the upgrade pins binds its
+`SessionManifest` to the same hash. The ledger proves the two uses agree by
+refusing to pin a session whose manifest names a root that was not installed.
+
+`--handoff` and `--release-manifest-hash` are gone. Both were required, so a
+caller written against them is refused by name rather than silently ignored.
+
+What a project supplies is the directory it already declares as
+`runtime_artifact` in `umbraflow-project.json` — `runtime/artifact` in both
+shipped exemplars — and the sha256 of the `runtime-artifact.manifest.json`
+inside it. The `--artifact` directory must be disjoint from `--runtime`: the
+production root is content-addressed storage the installer owns, and a source
+nested in it would make the copy read and write one tree.
+
+Still not closed: `umbra-flow upgrade` remains absent from
+`docs/PUBLIC-CONTRACT.md`, so its usage text is read from `--help` rather than
+from the outward document. That is now a documentation gap rather than a
+missing producer.

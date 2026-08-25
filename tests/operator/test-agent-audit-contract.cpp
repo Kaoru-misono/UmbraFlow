@@ -935,32 +935,37 @@ namespace uf::operator_runtime
 
         auto temporary = TemporaryDirectory{};
         auto const release = test_support::runtimeRelease(
-            temporary.path() / "session-handoff"
+            temporary.path() / "session-source"
         );
         auto store = OperatorCoordinator::open(temporary.path() / "production");
         REQUIRE(store.has_value());
-        auto const install = [&release](ContentHash const& expected)
+        auto const install = [&release](ContentHash const& stated)
         {
             return RuntimeArtifactInstallRequest{
-                .handoffRoot                 = release.handoffRoot,
-                .expectedReleaseManifestHash = expected,
+                .artifactDirectory           = release.artifactDirectory,
+                .artifactRootHash            = stated,
                 .expectedInstalledGeneration = 0U,
             };
         };
 
-        // The deployment principal re-verifies the release against trusted
-        // metadata; it does not take the handoff's word for what it is.
-        CHECK_FALSE(
-            store->installRuntimeArtifact(install(hashOf("other-release"))).has_value()
-        );
+        // The deployment principal holds the directory against the root hash
+        // the operator stated; it does not take the directory's word for what
+        // it is.
+        auto const misstated =
+            store->installRuntimeArtifact(install(hashOf("other-artifact")));
+        REQUIRE_FALSE(misstated.has_value());
+        CHECK(misstated.error().message().contains(
+            "runtime artifact manifest does not match the deployment root hash"
+        ));
 
         // Three of the four authoring capability roots may never travel with a
         // release, so production has no path to the workspace database, the
         // evidence blobs or the replay bundles. The fourth is the exception the
         // schema pins deliberately: publication copies the committed
-        // RuntimeArtifact out of candidate_workspace_root into the handoff file
-        // by file, so that root's contents travel as a verified copy while the
-        // root itself does not.
+        // RuntimeArtifact into the directory this installs file by file, so
+        // that root's contents travel as a verified copy while the root itself
+        // does not. The artifact manifest names a closed set, so a byte beside
+        // it is refused naming the path that carried it.
         auto const authoringRoots = std::array{
             std::filesystem::path{"workspace.sqlite"},
             std::filesystem::path{"evidence"} / "blob-1.png",
@@ -969,43 +974,52 @@ namespace uf::operator_runtime
         for (auto const& authoringPath : authoringRoots)
         {
             test_support::writeFile(
-                release.handoffRoot / authoringPath,
+                release.artifactDirectory / authoringPath,
                 "authoring bytes"
             );
-            CHECK_FALSE(
-                store->installRuntimeArtifact(
-                    install(release.releaseManifestHash)
-                ).has_value()
+            auto const smuggled = store->installRuntimeArtifact(
+                install(release.artifactRootHash)
             );
+            REQUIRE_FALSE(smuggled.has_value());
+            CHECK(smuggled.error().message().contains(
+                authoringPath.begin()->generic_string()
+            ));
             auto error = std::error_code{};
             static_cast<void>(std::filesystem::remove_all(
-                release.handoffRoot / *authoringPath.begin(),
+                release.artifactDirectory / *authoringPath.begin(),
                 error
             ));
             REQUIRE_FALSE(error);
         }
 
         // With nothing but the manifest-listed runtime files left, the same
-        // handoff installs.
+        // directory installs.
         auto const installed = store->installRuntimeArtifact(
-            install(release.releaseManifestHash)
+            install(release.artifactRootHash)
         );
         REQUIRE(installed.has_value());
         CHECK(installed->rootHash() == release.artifactRootHash);
 
         // The authoring side and the production side are also separate stores:
-        // a handoff that sits inside the production root is refused rather than
-        // read across the boundary.
+        // a source artifact that sits inside the content-addressed store this
+        // installer owns is refused rather than copied within one tree. It
+        // must be inside runtime-artifacts/ rather than merely beside the
+        // ledger, because that store is the root the installer canonicalizes
+        // against.
         auto const nested = test_support::runtimeRelease(
-            temporary.path() / "production" / "nested-handoff"
+            temporary.path() / "production" / "runtime-artifacts" / "nested-source"
         );
-        CHECK_FALSE(store->installRuntimeArtifact(
+        auto const crossed = store->installRuntimeArtifact(
             RuntimeArtifactInstallRequest{
-                .handoffRoot                 = nested.handoffRoot,
-                .expectedReleaseManifestHash = nested.releaseManifestHash,
+                .artifactDirectory           = nested.artifactDirectory,
+                .artifactRootHash            = nested.artifactRootHash,
                 .expectedInstalledGeneration = 1U,
             }
-        ).has_value());
+        );
+        REQUIRE_FALSE(crossed.has_value());
+        CHECK(crossed.error().message().contains(
+            "source RuntimeArtifact and production RuntimeArtifact roots must be disjoint"
+        ));
     }
 
     TEST_CASE("schema-agent-a07")

@@ -104,8 +104,9 @@ RETIRED_COMMANDS = frozenset({"check", "replay", "run"})
 # capture and post no input, so they cannot reach a window. What they reach is
 # the RuntimeArtifact release door the ledger publishes and the approval
 # evidence row it keys by root hash -- the production entry points U6 demanded
-# and that had none until 2026-08-18. upgrade publishes a handoff release and
-# pins the session that records it, and the ledger itself bounds the blast:
+# and that had none until 2026-08-18. upgrade publishes the RuntimeArtifact
+# directory it was handed and pins the session that records it, and the ledger
+# itself bounds the blast:
 # install compare-and-swaps against the active generation, a pin refusal
 # restores the predecessor at a new monotonic generation, and the whole
 # sequence is refused while any other session owns the root. approve records

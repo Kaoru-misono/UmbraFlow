@@ -1688,7 +1688,7 @@ namespace uf::operator_runtime
             std::string_view argumentSchema = test_support::k_toolArgumentSchema
         ) -> PreparedStore
         {
-            auto const release = test_support::runtimeRelease(path / "session-handoff");
+            auto const release = test_support::runtimeRelease(path / "session-source");
             auto storeResult = OperatorCoordinator::open(path / "production");
             REQUIRE_MESSAGE(
                 storeResult.has_value(),
@@ -1698,8 +1698,8 @@ namespace uf::operator_runtime
             auto store = *std::move(storeResult);
             auto installed = store.installRuntimeArtifact(
                 RuntimeArtifactInstallRequest{
-                    .handoffRoot                 = release.handoffRoot,
-                    .expectedReleaseManifestHash = release.releaseManifestHash,
+                    .artifactDirectory           = release.artifactDirectory,
+                    .artifactRootHash            = release.artifactRootHash,
                     .expectedInstalledGeneration = 0U,
                 }
             );
@@ -1844,62 +1844,13 @@ namespace uf::operator_runtime
         // test_support::runtimeRelease always writes the same page model, so
         // every release it builds has the same content hash and shares one
         // production directory. Reclamation needs two that do not.
-        // Builds a handoff whose release manifest declares the two generations
-        // given, so a case can move exactly one of them off the number this
-        // deployment principal reads.
-        [[nodiscard]]
-        auto releaseWithFormats(
-            std::filesystem::path const& root,
-            uint64 annotationWorkspaceFormat,
-            uint64 workspaceSqliteRevision
-        ) -> conformance::ObservationRelease
-        {
-            auto const handoff  = root / "release";
-            auto const artifact = handoff / "runtime-artifact";
-            auto const model    = std::string_view{"a page model\r\n"};
-            test_support::writeFile(artifact / task::k_runtimeModelFileName, model);
-            auto const manifest = std::format(
-                "{{\"assets\":[],"
-                "\"page_model\":{{\"path\":\"runtime-model.toml\",\"sha256\":\"{}\","
-                "\"size\":{}}},\"runtime_artifact_format\":{},"
-                "\"runtime_model_format\":{}}}",
-                hashOf(model).hex(),
-                model.size(),
-                task::k_runtimeArtifactFormat,
-                task::k_runtimeModelFormat
-            );
-            test_support::writeFile(
-                artifact / task::k_runtimeArtifactManifestFileName,
-                manifest
-            );
-            auto const artifactRootHash = hashOf(manifest);
-            auto const releaseManifest = std::format(
-                "{{\"annotation_workspace_format\":{},"
-                "\"candidate_id\":\"candidate-1\",\"candidate_revision\":1,"
-                "\"generation\":1,\"predecessor_publication_id\":null,"
-                "\"replay_gate_hash\":\"{}\",\"runtime_artifact_root_hash\":\"{}\","
-                "\"workspace_sqlite_revision\":{}}}",
-                annotationWorkspaceFormat,
-                hashOf("replay-gate").hex(),
-                artifactRootHash.hex(),
-                workspaceSqliteRevision
-            );
-            test_support::writeFile(handoff / "release.manifest.json", releaseManifest);
-            return conformance::ObservationRelease{
-                .handoffRoot         = handoff,
-                .releaseManifestHash = hashOf(releaseManifest),
-                .artifactRootHash    = artifactRootHash,
-            };
-        }
-
         [[nodiscard]]
         auto releaseWithModel(
             std::filesystem::path const& root,
             std::string_view model
         ) -> conformance::ObservationRelease
         {
-            auto const handoff  = root / "release";
-            auto const artifact = handoff / "runtime-artifact";
+            auto const artifact = root / "artifact";
             test_support::writeFile(artifact / task::k_runtimeModelFileName, model);
             auto const manifest = std::format(
                 "{{\"assets\":[],"
@@ -1915,23 +1866,9 @@ namespace uf::operator_runtime
                 artifact / task::k_runtimeArtifactManifestFileName,
                 manifest
             );
-            auto const artifactRootHash = hashOf(manifest);
-            auto const releaseManifest = std::format(
-                "{{\"annotation_workspace_format\":{},"
-                "\"candidate_id\":\"candidate-1\",\"candidate_revision\":1,"
-                "\"generation\":1,\"predecessor_publication_id\":null,"
-                "\"replay_gate_hash\":\"{}\",\"runtime_artifact_root_hash\":\"{}\","
-                "\"workspace_sqlite_revision\":{}}}",
-                detail::k_annotationWorkspaceFormat,
-                hashOf("replay-gate").hex(),
-                artifactRootHash.hex(),
-                detail::k_workspaceSqliteRevision
-            );
-            test_support::writeFile(handoff / "release.manifest.json", releaseManifest);
             return conformance::ObservationRelease{
-                .handoffRoot         = handoff,
-                .releaseManifestHash = hashOf(releaseManifest),
-                .artifactRootHash    = artifactRootHash,
+                .artifactDirectory = artifact,
+                .artifactRootHash  = hashOf(manifest),
             };
         }
 
@@ -1942,8 +1879,8 @@ namespace uf::operator_runtime
         ) -> RuntimeArtifactInstallRequest
         {
             return RuntimeArtifactInstallRequest{
-                .handoffRoot                 = release.handoffRoot,
-                .expectedReleaseManifestHash = release.releaseManifestHash,
+                .artifactDirectory           = release.artifactDirectory,
+                .artifactRootHash            = release.artifactRootHash,
                 .expectedInstalledGeneration = expectedInstalledGeneration,
             };
         }
@@ -1999,14 +1936,14 @@ namespace uf::operator_runtime
             -> std::pair<OperatorCoordinator, ContentHash>
         {
             auto const release =
-                test_support::runtimeRelease(path / "session-handoff");
+                test_support::runtimeRelease(path / "session-source");
             auto storeResult = OperatorCoordinator::open(path / "production");
             REQUIRE(storeResult.has_value());
             auto store = *std::move(storeResult);
             auto installed = store.installRuntimeArtifact(
                 RuntimeArtifactInstallRequest{
-                    .handoffRoot                 = release.handoffRoot,
-                    .expectedReleaseManifestHash = release.releaseManifestHash,
+                    .artifactDirectory           = release.artifactDirectory,
+                    .artifactRootHash            = release.artifactRootHash,
                     .expectedInstalledGeneration = 0U,
                 }
             );
@@ -7390,6 +7327,13 @@ namespace uf::operator_runtime
                 failed.has_value(),
                 "the manifest mismatch must inject a failure after publication and before pin"
             );
+            CHECK_MESSAGE(
+                failed.error().message().contains(
+                    "SessionManifest RuntimeArtifact is not production-installed"
+                ),
+                "a pin whose manifest names an artifact root that was not "
+                "installed must be refused by that name"
+            );
             auto const active = prepared.store.activeRuntimeArtifactPin();
             REQUIRE_MESSAGE(
                 active.has_value(),
@@ -7615,78 +7559,6 @@ namespace uf::operator_runtime
         );
     }
 
-    TEST_CASE("installation refuses a release manifest from a generation it cannot read")
-    {
-        // Both numbers are the deployment principal's half of a cross-boundary
-        // agreement: the authoring side declares which generation of the
-        // annotation contract and of the workspace database produced the
-        // release, and this side decides whether it reads them. The refusal
-        // has to name both, because a publisher told only "unsupported" cannot
-        // tell which generation to move to -- and because a message naming
-        // neither would let a comparison against the wrong constant pass.
-        auto temporary = TemporaryDirectory{};
-        auto const production = temporary.path() / "production";
-        auto coordinator = OperatorCoordinator::open(production);
-        REQUIRE(coordinator.has_value());
-
-        SUBCASE("the workspace SQLite revision must be the one this build reads")
-        {
-            auto const supplied = detail::k_workspaceSqliteRevision + 1U;
-            auto const release  = releaseWithFormats(
-                temporary.path() / "wrong-sqlite",
-                detail::k_annotationWorkspaceFormat,
-                supplied
-            );
-            auto const refused =
-                coordinator->installRuntimeArtifact(installRequest(release, 0U));
-            REQUIRE_FALSE(refused.has_value());
-            CHECK(refused.error().message().contains(
-                std::format("states workspace SQLite revision {}", supplied)
-            ));
-            CHECK(refused.error().message().contains(
-                std::format(
-                    "this Host reads revision {}",
-                    detail::k_workspaceSqliteRevision
-                )
-            ));
-        }
-
-        SUBCASE("the annotation workspace format must be too")
-        {
-            auto const supplied = detail::k_annotationWorkspaceFormat + 1U;
-            auto const release  = releaseWithFormats(
-                temporary.path() / "wrong-annotation",
-                supplied,
-                detail::k_workspaceSqliteRevision
-            );
-            auto const refused =
-                coordinator->installRuntimeArtifact(installRequest(release, 0U));
-            REQUIRE_FALSE(refused.has_value());
-            CHECK(refused.error().message().contains(
-                std::format("states annotation workspace format {}", supplied)
-            ));
-            CHECK(refused.error().message().contains(
-                std::format(
-                    "this Host reads format {}",
-                    detail::k_annotationWorkspaceFormat
-                )
-            ));
-        }
-
-        SUBCASE("both at the generations this build reads install")
-        {
-            auto const release = releaseWithFormats(
-                temporary.path() / "correct",
-                detail::k_annotationWorkspaceFormat,
-                detail::k_workspaceSqliteRevision
-            );
-            CHECK(
-                coordinator->installRuntimeArtifact(installRequest(release, 0U))
-                    .has_value()
-            );
-        }
-    }
-
     TEST_CASE("a second coordinator is refused while the first holds the directory")
     {
         auto temporary = TemporaryDirectory{};
@@ -7719,8 +7591,8 @@ namespace uf::operator_runtime
 
         auto installed = coordinator->installRuntimeArtifact(
             RuntimeArtifactInstallRequest{
-                .handoffRoot                 = release.handoffRoot,
-                .expectedReleaseManifestHash = release.releaseManifestHash,
+                .artifactDirectory           = release.artifactDirectory,
+                .artifactRootHash            = release.artifactRootHash,
                 .expectedInstalledGeneration = 0U,
             }
         );
@@ -7730,15 +7602,15 @@ namespace uf::operator_runtime
 
         CHECK_FALSE(coordinator->installRuntimeArtifact(
             RuntimeArtifactInstallRequest{
-                .handoffRoot                 = release.handoffRoot,
-                .expectedReleaseManifestHash = release.releaseManifestHash,
+                .artifactDirectory           = release.artifactDirectory,
+                .artifactRootHash            = release.artifactRootHash,
                 .expectedInstalledGeneration = 0U,
             }
         ).has_value());
 
         test_support::writeFile(
-            release.handoffRoot / "runtime-artifact" / task::k_runtimeModelFileName,
-            "authoring handoff changed"
+            release.artifactDirectory / task::k_runtimeModelFileName,
+            "the authoring source changed"
         );
         auto reopened = coordinator->openInstalledRuntimeArtifact(
             1U,
