@@ -31,9 +31,15 @@ umbra-flow open --project .
 One warning about that loop, measured on the only existing consumer while
 writing this note: **`project check` does not parse your RuntimeModel.** Two of
 the breaks below are in `runtime-model.toml`, and `check`, `build` and
-`umbra-flow open` all pass with a model the trusted resolver will refuse the
-first time a collection resolves. Read the RuntimeModel section and edit the
-file; nothing offline will tell you to.
+`umbra-flow open` all pass with a model the trusted resolver will refuse.
+
+Where it refuses instead: the parse runs in exactly one place,
+`TaskHost::bootTrustedRuntime`, which evaluates `project.load_project()` when a
+live session opens. So a model missing one of the members below costs you a
+window handle, an Operator root and an elevated target before it says a word,
+and it fails at session startup rather than at the collection that needed the
+member. Read the RuntimeModel section and edit the file; nothing offline will
+tell you to.
 
 ## Every Tool declaration gains a required `body`
 
