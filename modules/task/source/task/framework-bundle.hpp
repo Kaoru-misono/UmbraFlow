@@ -79,10 +79,10 @@ namespace uf::task
     // a registration whose derived identity differs. It says nothing about the
     // modules a Project can never resolve. This digest is release-build
     // identity: it covers all four tiers of the embedded bundle, including the
-    // trusted-only authoring and runtime modules and the four scoped facades,
-    // neither of which enters any registration-level digest today. A change to
-    // `explore.luau`, or to the alias of `@umbraflow/internal/observe`, moves
-    // this and moves nothing else in the tree.
+    // trusted-only RuntimeModel modules and the four scoped facades, neither of
+    // which enters any registration-level digest today. A change to the alias
+    // of `@umbraflow/internal/observe` moves this and moves nothing else in the
+    // tree.
     //
     // It stamps a trace so one run is attributable to an exact framework build,
     // and catches a bundle that went accidentally stale. It is NOT a security
@@ -118,11 +118,12 @@ namespace uf::task
     auto pureFrameworkScriptModules()
         -> Result<std::vector<script::FrameworkModule>>;
 
-    // The Framework closure a script::ScopedToolProgram admits: the whole pure
-    // SDK plus the four scoped facades under their reserved names. The scoped
-    // four are project-visible because ScopedToolProgram refuses a catalog whose
-    // modules a Project module cannot resolve -- a scoped facade nothing can
-    // require is a native seam with no caller.
+    // The Framework closure a script::ScopedToolProgram or
+    // script::ScopedToolSession admits: the whole pure SDK plus the four scoped
+    // facades under their reserved names. The scoped four are project-visible
+    // because both program shapes refuse a catalog whose modules Project code
+    // cannot resolve -- a scoped facade nothing can require is a native seam
+    // with no caller.
     //
     // Deliberately NOT a superset that any other environment may take: this list
     // is the only place the four are admitted, and pureFrameworkScriptModules()
@@ -146,29 +147,11 @@ namespace uf::task
     [[nodiscard]]
     auto frameworkProjectGlobals() -> std::vector<std::string>;
 
-    // The exploration VM publishes only `explore`, and the module is Luau sugar
-    // over ONE seam: every verb it offers -- observing, measuring inside an
-    // observation's body, input, waiting, and reading or writing the project --
-    // is a call of a Tool from the same framework catalog a production session
-    // holds. No raw native table enters the project environment, and there is
-    // no authoring surface behind this list to enter it with
-    // (docs/decisions/2026-08-24-there-is-no-annotation-phase.md).
-    [[nodiscard]]
-    auto explorationProjectGlobals() -> std::vector<std::string>;
-
-    // What the Host's trusted Runtime VM publishes: the modules that read a
-    // RuntimeModel and resolve a state, and nothing that acts.
-    //
-    // It is a function beside the other two rather than a literal at the boot
-    // site so the three whitelists can be compared against each other. `explore`
-    // is in exactly one of them, and that is what a test can read.
-    //
-    // It is MODULE WIRING and not a permission boundary. The two private
-    // surfaces are built by different functions and neither environment is
-    // handed the other's, which keeps a Runtime VM from resolving a Tool call
-    // and an exploration VM from finalizing a model -- but what an exploration
-    // chunk may DO is the Operator policy's answer about a Tool call, exactly as
-    // it is for every other caller. There is no trust split here to protect.
+    // What the Host's trusted RuntimeModel resolver publishes: the modules that
+    // read a pinned model and resolve a state, and nothing that acts. This is
+    // module wiring rather than an explore/runtime authority split: interactive
+    // code never boots this environment, and the resolver has no Tool Runtime
+    // primitive to call.
     [[nodiscard]]
     auto runtimeProjectGlobals() -> std::vector<std::string>;
 

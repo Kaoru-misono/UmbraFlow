@@ -38,9 +38,9 @@
 
 namespace uf::task
 {
-    // The longest a single explore.settle may declare. Beyond it is a project
-    // error the author can catch -- a Tier B InvalidResource, not an invariant
-    // failure.
+    // The longest a single framework.workflow.wait call may declare. Beyond it
+    // is a project error the caller can catch -- a Tier B InvalidResource, not
+    // an invariant failure.
     // CALIBRATION: thirty seconds is a placeholder, far above any settle a UI
     // transition needs and far below the max-runtime budget. A longer wait is
     // written as settles with an observation between them, which is the only
@@ -207,12 +207,10 @@ namespace uf::task
             std::string warning{};
         };
 
-        // What one cycleCrop produced: the PNG a script holds, and the content
-        // hash of exactly those bytes. The hash comes back because the caller
-        // needs it to NAME the file it is about to write -- a template asset
-        // lives at assets/templates/<hex>.png and the sandbox gives Luau no hash
-        // function, so recomputing it in the script layer is impossible rather
-        // than merely wasteful.
+        // What one cycleCrop produced: host-owned PNG bytes and their exact
+        // content hash. Tool providers either measure and drop the bytes or write
+        // them through framework.project.write's capture arm; pixels never enter
+        // a canonical Tool result.
         struct CroppedBlob final
         {
             std::vector<std::byte> png{};
@@ -454,16 +452,14 @@ namespace uf::task
         // Copies `rect` of the frame `ticket`'s cycle retains, encodes it as a
         // PNG, and hands back the bytes with their content hash. It writes
         // annotation.region_saved -- the rect, the byte size and hash, and the
-        // frame identity -- which is the whole record of the crop, because the
-        // bytes themselves go to the agent rather than into the stream.
+        // frame identity -- which is the whole trace record of the crop, because
+        // the bytes themselves stay in the host rather than entering the stream.
         //
-        // Only the exploration environment may reach it: it hands raw pixels to
-        // the script layer, and a business script holding pixels could decide
-        // something no trace evidence could falsify. It is not installed on a run
-        // VM's private surface at all, which makes the rule structural
-        // (docs/archive/plans/2026-08-01-three-layers-and-agent-operator.md 2).
-        // cycleCensusGrid is on the same shelf for a sharper reason than its
-        // counts-only answer suggests; see its declaration.
+        // No script environment reaches this method or its bytes directly. The
+        // Framework Tool providers call it inside the host and publish only a
+        // bounded measurement or a write receipt. That keeps pixel-derived
+        // decisions on the auditable Tool path without placing pixels in the
+        // durable call ledger.
         //
         // It does NOT spend the cycle -- reading pixels changes nothing on the
         // target. The crop budget bounds it instead, and exhaustion fails
@@ -487,21 +483,12 @@ namespace uf::task
         // `cellWidth` by `cellHeight` and reports, per cell, how many pixels
         // `key` takes at full weight and how far the cell moved between frames.
         //
-        // EXPLORATION ONLY, on cycleCrop's shelf. "Counts over a grid the
-        // caller drew, never a pixel" does not survive the cell size being the
-        // caller's too: at one-by-one cells a count is one pixel's membership
-        // of one colour, k_maximumColourGridCells still allows 32768 of them
-        // per call, and no budget bounds how many calls a cycle may make -- so a
-        // caller that varies the key recovers the region's pixels. It is a
-        // pixel read with an extra step, and it belongs where cycleCrop is.
-        //
-        // Nothing is lost by that. The Runtime surface takes no caller-drawn
-        // geometry at all: a plugin measures the Locators and Readers its model
-        // declared and reads evidence records, so this verb has no shape to take
-        // there. What it buys the exploration front end is the whole reason it
-        // exists -- a chunk measuring a region cropped a PNG and probed it once
-        // per rectangle, paying a whole-blob decode per probe, where one call
-        // answers for every cell of the rect at once.
+        // This host primitive is exposed only through
+        // framework.screen.census_grid. "Counts over a caller-drawn grid, never
+        // a pixel" does not survive one-by-one cells: a caller that varies the
+        // key can reconstruct colour membership. It therefore remains a scoped
+        // Tool call under the observation frame and its descriptor-declared
+        // limits, never a RuntimeModel-resolver primitive.
         //
         // It does NOT spend the cycle and charges no per-cycle budget. The crop
         // pool exists to bound an encode and the read pool to bound inference,
@@ -542,24 +529,11 @@ namespace uf::task
         // plugin asked for trustworthy, and none of it is weakened here,
         // because none of these verbs is reachable from a plugin environment.
         //
-        // TWO CALLERS REACH THEM, and neither is a Project's own code.
-        // buildAnnotationSurface installs them into the exploration VM, which
-        // only the exploration session runs (task/exploration-session.hpp,
-        // task/script-bindings.hpp); and the Framework's own input Tool answers
-        // through them, which is a call the Operator's policy admitted by name
-        // on a Privileged surface. What both have in common is that the
-        // AUTHORITY is decided above this layer and a bare coordinate is all
-        // that arrives here.
-        //
-        // An explore chunk is not a plugin. It is code a human or an authoring
-        // agent wrote inside an environment that already holds the authoring
-        // private surface, and requiring it to name a Binding is not a safety
-        // property but a chicken-and-egg: an agent must REACH a screen before it
-        // can model one, so a front end that can only act on screens already
-        // modelled can never model the first screen. The verbs below are how the
-        // model gets written in the first place; the Receipt path is how the
-        // model is later acted on in production, and neither is a way into the
-        // other.
+        // Only the Framework's input Tool provider reaches these C++ methods.
+        // Interactive chunks and registered Project handlers both reach that
+        // provider through the ordinary Tool Runtime; neither receives a private
+        // native input surface. The Operator admits the Tool by name on its
+        // Privileged surface before a bare coordinate arrives here.
         //
         // What still fences them is everything about the FRAME. The ledger
         // hands the observation over here, so the ticket dies before delivery;
@@ -573,8 +547,8 @@ namespace uf::task
         // for why that line is not a second spelling of the engine's own. The
         // prefix is `input` rather than `annotation` because these verbs are
         // not an authoring half of anything: there is one input vocabulary, and
-        // what separates an authoring actor from a production one is the
-        // authority its policy granted rather than which verbs exist.
+        // what separates callers is the authority their policy granted rather
+        // than which verbs exist.
         [[nodiscard]]
         auto cycleClick(CycleTicket ticket, PixelPoint point) -> Status;
 
@@ -658,7 +632,7 @@ namespace uf::task
         // Releases whatever cycle is open and reports whether there was one. NOT
         // a script verb and never installed as a primitive: see
         // CycleLedger::closeOpen for who may call it, which is a host closing a
-        // bracket it owns -- the exploration session between two agent-supplied
+        // bracket it owns -- the interactive session between two agent-supplied
         // chunks, and TaskHost::observe after it has read the frame identity its
         // own trusted chunk left open.
         auto sweepOpenCycle() noexcept -> bool;
@@ -682,8 +656,9 @@ namespace uf::task
             std::span<std::byte const> pngBytes
         ) -> Result<TemplateTicket>;
 
-        // Reads and writes one file inside the privileged annotation directory.
-        // Production RuntimeArtifact bytes never pass through this authoring seam.
+        // Reads and writes one file inside the policy-granted project directory.
+        // Installed RuntimeArtifact bytes never pass through this project-write
+        // seam.
         [[nodiscard]]
         auto projectRead(std::string_view name) -> Result<std::vector<std::byte>>;
 

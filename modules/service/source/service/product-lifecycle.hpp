@@ -118,7 +118,7 @@ namespace uf::service
     // and every later call under the same root is stamped with what the
     // context holds.
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
-    struct FrameworkToolCall final
+    struct ToolRootCall final
     {
         std::string                             requestKey{};
         std::string                             exactRootRequestPreimageJcs{};
@@ -204,8 +204,10 @@ namespace uf::service
             std::stop_token cancellation
         ) -> Result<std::unique_ptr<task::ExplorationSession>>;
 
-        // Runs a Framework-owned Tool through the same durable Tool Runtime
-        // seam every actor adapter uses. Exact terminal replay returns without
+        // Runs a Tool through the same durable Tool Runtime seam every actor
+        // adapter uses. Namespace ownership selects the Framework or Project
+        // catalog; the caller does not select a dispatch path. Exact terminal
+        // replay returns without
         // recapturing, waiting, delivering, or consulting provider code.
         //
         // A mutating descriptor carries a mutation proposal built from the
@@ -216,8 +218,8 @@ namespace uf::service
         // so a call consuming an observation this run never produced is refused
         // before it can occupy a durable coordinate at all.
         [[nodiscard]]
-        auto invokeFrameworkTool(
-            FrameworkToolCall request,
+        auto invokeTool(
+            ToolRootCall request,
             task::TaskContext& context
         ) -> Result<operator_runtime::ToolCallReplay>;
 

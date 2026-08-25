@@ -1,6 +1,7 @@
 #include "../support/runtime-v3-fixture.hpp"
 
 #include <task/exploration-session.hpp>
+#include <task/framework-bundle.hpp>
 #include <task/host-delivery.hpp>
 #include <task/runtime-model-file.hpp>
 #include <task/task-context.hpp>
@@ -624,6 +625,23 @@ identity = ["screen.anchor"]
             };
         }
 
+        [[nodiscard]]
+        auto explorationCatalogResource()
+            -> script::PureDataProgram::Resource
+        {
+            constexpr auto tools = std::string_view{
+                R"([{"argument_contract":{},"body":{"arms":{"click":false,"drag":false,"hold":true,"key":false,"move":false,"scroll":false},"tag":"action"},"child_effects":{"maximum_child_calls":1},"name":"framework.input.deliver","tool_version":"1"},{"argument_contract":{},"body":true,"child_effects":{"maximum_child_calls":1},"name":"framework.screen.observe","tool_version":"1"},{"argument_contract":{},"body":false,"child_effects":{"maximum_child_calls":0},"name":"framework.screen.read_lines","tool_version":"1"}])"
+            };
+            auto digest = sha256(std::as_bytes(std::span{tools}));
+            REQUIRE(digest.has_value());
+            return script::PureDataProgram::Resource{
+                .kind = script::PureDataProgram::ResourceKind::Json,
+                .name = std::string{scopedToolCatalogResourceName()},
+                .bytes = R"({"catalog_hash":")" + digest->hex()
+                    + R"(","tools":)" + std::string{tools} + "}",
+            };
+        }
+
         // What service::ProductLifecycle::startExplorationSession composes in
         // production, composed here instead: the recorder, the engine session
         // and the Tool Runtime are the ledgered caller's to build, so a test
@@ -676,10 +694,11 @@ identity = ["screen.anchor"]
                 std::move(recorder),
                 *std::move(session),
                 ExplorationSessionSpec{
-                    .projectId       = "exploration-fixture",
-                    .projectRoot     = projectRoot,
-                    .tracePath       = std::move(tracePath),
-                    .bindToolRuntime = recordingToolRuntime(std::move(issued)),
+                    .projectId           = "exploration-fixture",
+                    .projectRoot         = projectRoot,
+                    .tracePath           = std::move(tracePath),
+                    .bindToolRuntime     = recordingToolRuntime(std::move(issued)),
+                    .toolCatalogResource = explorationCatalogResource(),
                 }
             );
         }
@@ -1767,10 +1786,21 @@ identity = ["screen.anchor"]
         // (docs/decisions/2026-08-24-there-is-no-annotation-phase.md).
         auto authoringSurface = (*session)->evaluate(
             R"lua(
-                explore.observe(function(frame)
-                    frame:read_lines(0, 0, 1, 1)
+                local screen = require("@umbraflow/screen")
+                local tools = require("@umbraflow/tools")
+                screen.observe(function()
+                    tools.call("framework.screen.read_lines", {
+                        x = 0,
+                        y = 0,
+                        width = 1,
+                        height = 1,
+                    })
                 end)
-                explore.click(0, 0)
+                tools.call("framework.input.deliver", {
+                    action = "click",
+                    x = 0,
+                    y = 0,
+                })
                 return "issued"
             )lua",
             "authoring-boundary"

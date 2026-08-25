@@ -8,8 +8,9 @@
 -- Tool Runtime through `tools.call`, so argument shaping, catalog checking and
 -- answer validation exist once rather than four times.
 --
--- The chunk argument is the private capability table ScopedToolProgram builds
--- for one run and then drops. It carries exactly one primitive,
+-- The chunk argument is the private capability table a scoped Tool program or
+-- interactive scoped Tool session builds for one run and then drops. It carries
+-- exactly one primitive,
 -- `invoke(toolName, argumentsValue, body)`, which runs the Tool to completion and
 -- answers one frozen decoded JSON value. Two facts about it shape everything
 -- below. It is synchronous, so nothing here yields, polls in the background, or

@@ -174,6 +174,28 @@ that is a project declaring no Tool, stated rather than omitted. A tool
 declares its own `mutability`, so a project that publishes no *mutating*
 tool is expressible: every tool declares `read_only`.
 
+Every Tool member below is mandatory:
+
+| Required member |
+| --- |
+| `argument_schema` |
+| `body` |
+| `child_effects` |
+| `effect_bounds` |
+| `idempotency` |
+| `mutability` |
+| `name` |
+| `required_capabilities` |
+| `surface` |
+| `timeout_policy` |
+| `ui_action_bounds` |
+| `version` |
+| `workflow_limits` |
+
+A Project Tool declares `body: false`: Project entry points take only
+their arguments and cannot receive a caller-supplied body. Framework
+built-ins declare their own body shape separately.
+
 Each entry carries `argument_schema` as a mandatory member whose value
 is either the string `unchecked` or an inline JSON Schema object. The
 two mean different things: `unchecked` is the project declining
@@ -591,8 +613,8 @@ classification inside the value it answers with.
 | Reserved scoped module | Exports | Source SHA-256 |
 | --- | --- | --- |
 | `@umbraflow/audit` | `record`, `recorded` | `59ca9c95641c7582282ea718017f2893f60e0573f9375705048b817eeb497425` |
-| `@umbraflow/screen` | `actions`, `observation`, `observe`, `targets`, `use`, `used` | `d867a61d61d48af242585d4b9e9b5eec24498450997c5870e7ead63a97474de3` |
-| `@umbraflow/tools` | `call`, `call_identity`, `catalog_hash`, `describe`, `evidence`, `knows`, `names`, `result`, `state`, `states`, `tool_name` | `cc74c086e6827017b864d4a835bdb4643a2be58afa50941f3dae41d7857c8298` |
+| `@umbraflow/screen` | `actions`, `observation`, `observe`, `targets`, `use`, `used` | `cf8f228a71108300ac4f2421c9cbaf631e931e6af6a8daba902c8aa47c7fd718` |
+| `@umbraflow/tools` | `call`, `call_identity`, `catalog_hash`, `describe`, `evidence`, `knows`, `names`, `result`, `state`, `states`, `tool_name` | `c64a623869a21f16f50a35505b52ec66570f08c89b5d88dd5947c6a969869ecd` |
 | `@umbraflow/workflow` | `absent`, `child_flow`, `delivered`, `pending`, `recover`, `refused`, `settled`, `status`, `stopped`, `uncertain`, `wait` | `fb9e9e178384ac9c824d74843a6a45839679d7c5b36d60390e9df8ccfee6799d` |
 
 ### 4.2 Identity preimage

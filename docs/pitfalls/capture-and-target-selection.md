@@ -326,40 +326,27 @@ posted messages — none of which a hand-rolled `PostMessageW` does.
 
 ### Fix
 
-Deliver through a session the product owns. Two surfaces do it, both binding one
-target and answering every queue line on a results file: `umbra-flow drive` for
-an operator issuing single commands, `umbra-flow explore` for the annotation
-loop.
+Deliver through a session the product owns. `umbra-flow explore` binds one
+target and answers every queue line on a results file; each line carries a Luau
+chunk rather than a scalar command (`{"id":"...","chunk":"..."}`,
+`modules/cli/source/cli/explore-protocol.hpp`).
 
 > Retired 2026-08-01 with `entry/input-agent` (`a80ea07`). The
 > `umbra-input-agent` binary this entry used to prescribe — and the
 > `m0-demo input-agent` spelling before it — no longer exist, and no redirect
 > stub survives them, so a stale script fails as an unknown program rather than
-> at its first queue line.
+> at its first queue line. The scalar `umbra-flow drive` queue that replaced it
+> went the same way on 2026-08-03 (`eafc273`), so there is one interactive
+> transport rather than an operator one and an annotation one.
 
-`drive` carries scalars only, one JSON object per line, and its verb set is
-`cycle_open`, `cycle_close`, `key`, `settle`, `deadline`, `wait`, `quit`
-(`entry/cli/drive-protocol.cpp`). There is no `click` and no `capture`: a
-keystroke names no position, and the composing verbs that named a page retired
-with the C++ page model.
-
-```json
-{"op":"cycle_open"}
-{"op":"key","cycle":1,"key":"E"}
-{"op":"settle","ms":1500}
-{"op":"quit"}
-```
-
-A click needs a coordinate or a hit, so it lives on the exploration surface,
-whose queue line carries a Luau chunk instead
-(`{"id":"...","chunk":"..."}`, `entry/cli/explore-protocol.cpp`). Coordinates are
-client pixels:
+A chunk names Tools; there is no private input verb. Every act on the target is
+an arm of `framework.input.deliver`, and coordinates are client pixels:
 
 ```json
-{"id":"tap-menu","chunk":"local c = ctx:cycle_open() explore.click_point(c, 1447, 247)"}
+{"id":"tap-menu","chunk":"local tools = require('@umbraflow/tools') return tools.call('framework.input.deliver', { action = 'click', x = 1447, y = 247 })"}
 ```
 
-Two operational notes: both sessions are long-running, so launch them detached
+Two operational notes: the session is long-running, so launch it detached
 (`Start-Process`) — a PowerShell `Start-Job` dies with the session that created
 it — and `--results` must not already exist.
 
@@ -413,27 +400,25 @@ screen did not change, and all of them dissolved by one click before the wheel.
 
 Deliver a pointer message over the region you intend to scroll, then scroll.
 
-The primitive that says exactly that is `ctx:cycle_move_pointer(ticket, x, y)`,
-on both the run and the exploration surface since 2026-08-03. It posts one
-pointer message at the coordinate and presses nothing, which is the whole
+The arm that says exactly that is `framework.input.deliver`'s `move`. It posts
+one pointer message at the coordinate and presses nothing, which is the whole
 difference from the click that used to stand in for it:
 
 ```lua
-local cycle = ctx:cycle_open()
-ctx:cycle_move_pointer(cycle, gridX, gridY)
-local scrolling = ctx:cycle_open()
-ctx:cycle_scroll(scrolling, -5)
+local tools = require("@umbraflow/tools")
+tools.call("framework.input.deliver", { action = "move", x = gridX, y = gridY })
+tools.call("framework.input.deliver", { action = "scroll", notches = -5 })
 ```
 
-Two cycles, because every delivered input spends its frame — the move changes
+Two calls, because every delivered input spends its frame — the move changes
 what the target believes is hovered, so the frame that authorised it no longer
-describes the screen.
+describes the screen. Each call opens and closes its own frame, so the ordering
+is structural rather than something the author remembers.
 
-The earlier workaround — a bare `explore.click_point` into a gutter between
-cards, chosen only because a click was the one pointer message a script could
-deliver — is no longer needed and should be replaced wherever it survives. It
-was never safe: it depended on finding a point inside the scrollable region that
-activated nothing.
+The earlier workaround — a bare click into a gutter between cards, chosen only
+because a click was the one pointer message a script could deliver — is no
+longer needed and should be replaced wherever it survives. It was never safe: it
+depended on finding a point inside the scrollable region that activated nothing.
 
 ### Regression check
 

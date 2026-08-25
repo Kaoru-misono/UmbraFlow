@@ -1289,11 +1289,17 @@ def render(root: Path) -> str:
     closure_definition = definition(directory_schema, "Closure")
     module_definition = definition(directory_schema, "Module")
     resource_definition = definition(directory_schema, "Resource")
+    tool_definition = definition(directory_schema, "Tool")
     module_name_definition = definition(directory_schema, "ModuleName")
     resource_kind_definition = definition(directory_schema, "ResourceKind")
     script_contract = script_runtime_contract(root)
     authorities = deployment_authorities(root)
     tool_maximum = tool_declaration_bound(root)
+    project_tool_body = tool_definition["properties"]["body"].get("const")
+    if project_tool_body is not False:
+        raise SystemExit(
+            f"{PROJECT_DIRECTORY_SCHEMA}: Project Tool body must be pinned false"
+        )
     proposal = json.loads(read(root, OBSERVATION_PROPOSAL_SCHEMA))
     observation = json.loads(read(root, OBSERVATION_SCHEMA))
     authority_tag, authority_members = authority_input_members(root)
@@ -1589,6 +1595,20 @@ def render(root: Path) -> str:
             "that is a project declaring no Tool, stated rather than omitted. A tool",
             "declares its own `mutability`, so a project that publishes no *mutating*",
             "tool is expressible: every tool declares `read_only`.",
+            "",
+            "Every Tool member below is mandatory:",
+            "",
+            *table(
+                ["Required member"],
+                [
+                    [f"`{member}`"]
+                    for member in sorted(tool_definition["required"])
+                ],
+            ),
+            "",
+            "A Project Tool declares `body: false`: Project entry points take only",
+            "their arguments and cannot receive a caller-supplied body. Framework",
+            "built-ins declare their own body shape separately.",
             "",
             "Each entry carries `argument_schema` as a mandatory member whose value",
             "is either the string `unchecked` or an inline JSON Schema object. The",

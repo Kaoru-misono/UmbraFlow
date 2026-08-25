@@ -101,8 +101,8 @@ language gave it.
 ### Regression check
 
 `tests/task/test-framework-bundle.cpp`, case `loading the framework publishes no
-trusted global`, checks every entry of `frameworkProjectGlobals()`,
-`explorationProjectGlobals()` and `runtimeProjectGlobals()` against
+trusted global`, checks every entry of `frameworkProjectGlobals()` and
+`runtimeProjectGlobals()` against
 `script::projectStandardGlobals()`, and in the same case asserts that the
 trusted VM's global set is byte-identical before and after Framework loading —
 which is the property that keeps this hazard confined to the projection:

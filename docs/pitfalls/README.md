@@ -27,11 +27,15 @@ Each entry should contain the symptom, root cause, fix, and a regression check. 
   under `examples/` is invisible until CMake reconfigures. All three fail by
   looking like success.
 - [Cross-platform CI toolchain diagnostics](cross-platform-ci-toolchains.md)
-- [Capture and target selection](capture-and-target-selection.md)
+- [Capture and target selection](capture-and-target-selection.md) — which window
+  of the hundred a game owns is the real one, why a hand-rolled click path wakes
+  the HUD and presses nothing, and why a posted wheel scrolls somewhere else.
 - [Page modeling and multi-step flows](page-modeling-and-multi-step.md)
 - [Element choice and thresholds](element-choice-and-thresholds.md) — what to
   annotate and what number to give it; start here before drawing a rectangle.
-- [Colour-key annotation](colour-key-annotation.md)
+- [Colour-key annotation](colour-key-annotation.md) — measured colour-key
+  failures. Its invocation spellings are historical by design; the thresholds
+  and failure shapes are not.
 - [Luau patterns and long strings](luau-patterns-and-long-strings.md) — a
   regex-style optional group never matches, and TOML `[[section]]` closes a
   level-0 long string; both fail quietly.

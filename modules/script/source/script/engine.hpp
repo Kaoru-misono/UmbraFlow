@@ -237,10 +237,10 @@ namespace uf::script
         // call -- measured on the monotonic clock by the interrupt callback. The
         // framework boot runs under its own window of the same length.
         //
-        // Per unit of script and NOT per VM: an exploration session answers an
-        // agent chunk by chunk with the agent's own thinking time in between,
-        // and a chunk that will not finish is still stopped by this clock,
-        // whether it is the VM's first or its fortieth.
+        // Per unit of script and NOT per VM: a caller may invoke the same trusted
+        // Engine more than once, and each run still receives a fresh clock.
+        // Interactive chunks do not use Engine; ScopedToolSession gives each one
+        // a fresh scoped VM under the same duration type.
         //
         // A ceiling the clock cannot represent saturates to the farthest instant
         // it can name rather than wrapping into the past; one below zero expires
@@ -302,12 +302,9 @@ namespace uf::script
     [[nodiscard]]
     auto projectStandardGlobals() noexcept -> std::span<std::string_view const>;
 
-    // Owns one embedded Luau VM (lua_State) for one generation. How many units
-    // of script that generation runs is the front end's business: a task run
-    // runs one script and destroys the VM, an exploration session feeds one VM
-    // chunk after chunk (see EngineConfig::maxRuntime for why that distinction
-    // is load-bearing). A lua_State is never reused across generations, and the
-    // project environment is rebuilt per run, so globals one unit of script
+    // Owns one embedded Luau VM (lua_State) for one trusted generation. A
+    // lua_State is never reused across generations, and the project environment
+    // is rebuilt per run, so globals one unit of script
     // writes never reach the next. RAII, no Luau types in this header, and NOT
     // thread-safe: every call runs on the owning thread, and an external
     // watchdog may only set the atomic behind EngineConfig::cancellation.

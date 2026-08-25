@@ -1,7 +1,6 @@
 #include "exploration-session.hpp"
 
 #include <task/framework-bundle.hpp>
-#include <task/script-bindings.hpp>
 #include <task/task-context.hpp>
 #include <task/task-host.hpp>
 #include <task/runtime-version.hpp>
@@ -14,7 +13,7 @@
 
 #include <engine/session.hpp>
 
-#include <script/engine.hpp>
+#include <script/scoped-tool-program.hpp>
 
 #include <trace/event.hpp>
 #include <trace/recorder.hpp>
@@ -34,8 +33,7 @@ namespace uf::task
         // The opening line of an exploration session's run bracket.
         //
         // The framework version, the bundle hash and the Luau compiler version are
-        // all named here: a trusted Luau framework DOES run in this session, and
-        // an agent's chunk calls into `explore`.
+        // all named here: each chunk executes the release-owned scoped modules.
         //
         // The task name and the source hash stay empty, and both absences are
         // accurate: a session is a sequence of chunks the agent wrote as it went,
@@ -150,8 +148,8 @@ namespace uf::task
 
         // No run.resources_validated line. That event records the closure of uf
         // references a task SOURCE was validated against before its VM existed;
-        // an agent's chunks arrive one at a time after the VM is up, so an empty
-        // line would report a pass that never ran.
+        // an agent's chunks arrive one at a time and are compiled into fresh VMs,
+        // so an empty line would report a pass that never ran.
         auto owned = std::make_unique<ExplorationSession>(
             CreateTag{},
             std::move(recorder),
@@ -165,8 +163,8 @@ namespace uf::task
             std::move(spec.tracePath)
         );
 
-        owned->m_toolRuntime = spec.bindToolRuntime(owned->m_context);
-        if (!owned->m_toolRuntime)
+        auto toolRuntime = spec.bindToolRuntime(owned->m_context);
+        if (!toolRuntime)
         {
             return fail(
                 AutomationErrorKind::InternalInvariant,
@@ -179,42 +177,23 @@ namespace uf::task
             )
         );
 
-        // The VM is built AFTER the session owns its context and its seam,
-        // because the one native primitive holds both addresses and both must
-        // outlive the VM (task/script-bindings.hpp). Holding all three in one
-        // object with the VM declared last is what makes that ordering
-        // structural rather than a rule each caller has to remember.
-        //
-        // This is the only product path that publishes explorationProjectGlobals().
-        //
-        // The VM gets no runtime ceiling of its own, on purpose.
-        // script::EngineConfig's maxRuntime bounds one chunk rather than the VM's
-        // age, so an agent session lives as long as the agent keeps working and a
-        // chunk that will not finish is still stopped, under exactly the ceiling a
-        // task run answers to. What ends an ABANDONED session is `explore
-        // --idle-timeout`, which measures the gap between chunks and is the only
-        // clock that can tell an idle session from a busy one.
-        auto vm = script::Engine::create(
-            script::EngineConfig{
-                .cancellation      = spec.cancellation,
-                .memoryQuotaBytes  = spec.memoryQuotaBytes,
-                .maxRuntime        = spec.maxScriptRuntime,
-                .frameworkModules  = frameworkScriptModules(),
-                .installHostTables = scriptHostTableInstaller(),
-                .installPrivateCapabilities = explorationToolCapabilities(
-                    owned->m_context,
-                    owned->m_toolRuntime
-                ),
-                .projectGlobals          = scriptProjectGlobals(),
-                .frameworkProjectGlobals = explorationProjectGlobals(),
-                .classifyRaisedError     = scriptRaisedErrorClassifier(),
-            }
+        UF_TRY_VALUE(scopedModules, scopedFrameworkScriptModules());
+        auto frameworkResources =
+            std::vector<script::PureDataProgram::Resource>{};
+        frameworkResources.emplace_back(std::move(spec.toolCatalogResource));
+        auto program = script::ScopedToolSession::create(
+            std::move(scopedModules),
+            std::move(frameworkResources),
+            std::move(toolRuntime),
+            spec.cancellation,
+            spec.maxScriptRuntime,
+            spec.memoryQuotaBytes
         );
-        if (!vm)
+        if (!program)
         {
-            return std::unexpected{std::move(vm).error()};
+            return std::unexpected{std::move(program).error()};
         }
-        owned->m_vm = *std::move(vm);
+        owned->m_program = *std::move(program);
         return owned;
     }
 
@@ -223,23 +202,23 @@ namespace uf::task
         std::string_view chunkName
     ) -> Result<script::ScriptValue>
     {
-        if (!m_vm.has_value())
+        if (!m_program.has_value())
         {
             return fail(
                 AutomationErrorKind::InternalInvariant,
-                "this exploration session has no VM; create() reports the reason "
+                "this exploration session has no scoped program; create() reports the reason "
                 "a session could not be built rather than handing one back"
             );
         }
 
-        auto result = m_vm->runValue(chunk, chunkName);
+        auto result = m_program->evaluate(chunk, chunkName);
 
         // Read the ledger BEFORE anything reclaims. A chunk that died for want
         // of memory is only recognisable at this instant: Luau raises a bare
         // "not enough memory" naming neither figure, and by the time the
         // collection below has run `used` is back at the live set, so the
         // evidence that the ceiling was involved would be gone.
-        auto const atOutcome = m_vm->heapUsage();
+        auto const atOutcome = m_program->outcomeHeapUsage();
 
         // Sweep whatever cycle the chunk left open, WHETHER OR NOT it failed. A
         // chunk is one agent-written line, and an agent that raised between
@@ -250,21 +229,6 @@ namespace uf::task
         // swept cycle spent is never reissued, so a ticket the chunk kept stays
         // dead.
         static_cast<void>(m_context.sweepOpenCycle());
-
-        // Reclaim the chunk, on the same reasoning that sweeps its cycle. Nothing
-        // is supposed to survive one except the project files on disk -- the
-        // environment is rebuilt per chunk, the thread is discarded, and every
-        // host object the chunk held is either swept above or dead with it -- so a
-        // full collection here cannot reclaim anything the next chunk needs.
-        //
-        // It has to be here rather than in the allocator because there is no
-        // emergency-GC seam to put it in: Luau throws LUA_ERRMEM the instant
-        // frealloc returns null and never retries, and a retry would re-enter the
-        // collector from inside the allocator callback, which that callback also
-        // runs UNDER. The ceiling is therefore measured against live bytes plus
-        // whatever the incremental collector has not reached, and this is where
-        // the host fixes that.
-        m_vm->collectGarbage();
 
         // A failure with the ledger against the ceiling has to SAY so. Luau's own
         // sentence is "not enough memory" and nothing else -- no figure, no hint
@@ -303,7 +267,7 @@ namespace uf::task
         {
             return latched;
         }
-        if (m_vm.has_value() && m_vm->generationSpent())
+        if (m_program.has_value() && m_program->generationSpent())
         {
             return AutomationErrorKind::Cancelled;
         }
@@ -312,7 +276,9 @@ namespace uf::task
 
     auto ExplorationSession::heapUsage() const noexcept -> script::HeapUsage
     {
-        return m_vm.has_value() ? m_vm->heapUsage() : script::HeapUsage{};
+        return m_program.has_value()
+            ? m_program->heapUsage()
+            : script::HeapUsage{};
     }
 
     auto ExplorationSession::finish(std::optional<Error> failure) -> TaskRunReport
@@ -320,10 +286,9 @@ namespace uf::task
         // Asked BEFORE the VM dies, because one of the two latches lives in it.
         auto const terminal = terminalKind();
 
-        // The VM dies before the closing line, so no chunk can still be running
-        // when the bracket closes and nothing the VM holds outlives the context
-        // it borrows.
-        m_vm.reset();
+        // The scoped program and its Tool Runtime die before the closing line,
+        // so no chunk can still run against the context after the bracket closes.
+        m_program.reset();
 
         return closeRunBracket(
             *m_recorder,

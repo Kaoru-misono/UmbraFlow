@@ -101,18 +101,21 @@ No build, check, freeze or run path reaches the transport.
   closing record seals that artifact's hash. An unsealed one is a directory
   somebody is still editing, and `installBinding` refuses it, so no
   `RuntimeModelBinding` ever attests to bytes nothing sealed. There is no
-  annotation phase and no runtime phase; what a session may do is its
-  `tool_closure`'s answer
-  (`docs/decisions/2026-08-24-there-is-no-annotation-phase.md`). `cancel()`
-  requests
+  annotation phase and no runtime phase. Registered handlers and interactive
+  chunks execute the same scoped SDK modules and reach the same Tool Runtime;
+  exact descriptor bounds and Operator policy decide what each call may do
+  ([the phase ruling](decisions/2026-08-24-there-is-no-annotation-phase.md),
+  [the interactive-program ruling](decisions/2026-08-25-interactive-code-is-a-scoped-tool-program.md)).
+  `cancel()` requests
   stop; there is no generation-retirement or quiescence operation. That is
   sufficient while the Host dies with one `ProductLifecycle`, not for a future
   resident Host that reloads generations in place.
 - `EngineSession` owns its frame, action and optional OCR providers but borrows
   one stable `TraceRecorder`. `ExplorationSession` makes that relation safe by
-  owning the recorder before the context and VM, keeping it behind `unique_ptr`
-  and forbidding moves. Other composition roots must preserve the documented
-  declaration order until a single aggregate owns this relationship.
+  owning the recorder before its context and scoped program, keeping it behind
+  `unique_ptr` and forbidding moves. Each chunk's VM dies before evaluate()
+  returns. Other composition roots must preserve the documented declaration
+  order until a single aggregate owns this relationship.
 - `ExplorationSession::finish()` is the reporting close for `run.finished`; its
   destructor is only structural cleanup. The sole production loop reaches
   `finish()` on one exit path, but the type does not yet enforce that protocol if
@@ -182,6 +185,9 @@ part of this file that cannot be recovered from anywhere else.
   deployment staging both resolve once, through held handles that refuse a
   reparse point by attribute;
 - no direct run/check/replay production action path;
+- no `explore` Luau global, module, capability table or VM mode. `explore` is the
+  interactive CLI transport; its chunks are root scoped Tool programs over the
+  same pinned Framework/Project catalog registered handlers use;
 - no compatibility alias, fallback, dual spelling or dual write;
 - no consumer-specific branch in Host, Runtime or Operator;
 - no game entity, tool name, state field or content schema in this

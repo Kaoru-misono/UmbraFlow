@@ -18,11 +18,6 @@ namespace uf::task
 {
     namespace
     {
-        // The only framework export reachable by project-authored source before
-        // Operator exists. Explore owns its capture bracket and receives the
-        // authoring-only native surface privately.
-        constexpr auto k_exploreModule = "explore";
-
         struct PureModuleBinding final
         {
             std::string_view privateName;
@@ -57,11 +52,12 @@ namespace uf::task
 
         // A release-owned module that is publicly nameable but reaches the world
         // through one native seam, so it loads only inside a
-        // script::ScopedToolProgram. It is deliberately absent from every
-        // trusted Engine VM and from the pure closure: those environments build
-        // no Tool Runtime capability table, and a scoped module that loaded
-        // without one would either fail the whole generation or -- far worse --
-        // grow a branch that pretends a Tool call can be skipped.
+        // script::ScopedToolProgram or script::ScopedToolSession. It is
+        // deliberately absent from every trusted Engine VM and from the pure
+        // closure: those environments build no Tool Runtime capability table,
+        // and a scoped module that loaded without one would either fail the
+        // whole generation or -- far worse -- grow a branch that pretends a Tool
+        // call can be skipped.
         struct ScopedModuleBinding final
         {
             std::string_view privateName;
@@ -121,7 +117,6 @@ namespace uf::task
 
         constexpr auto k_trustedModuleBindings = std::array{
             TrustedModuleBinding{"evidence", "@umbraflow/internal/evidence", 0U},
-            TrustedModuleBinding{"explore", "@umbraflow/internal/explore", 0U},
             TrustedModuleBinding{"model", "@umbraflow/internal/model", 0U},
             TrustedModuleBinding{"observe", "@umbraflow/internal/observe", 2U},
             TrustedModuleBinding{"project", "@umbraflow/internal/project", 1U},
@@ -133,7 +128,8 @@ namespace uf::task
         };
 
         // The four scoped facades, in the exact order and under the exact names
-        // script::ScopedToolProgram::scopedModuleNames() states. A name that
+        // script::ScopedToolProgram::scopedModuleNames() states. Both registered
+        // handlers and interactive chunks validate this same list. A name that
         // moved here without moving there is a program that cannot compile, and
         // a test binds the two lists to each other.
         //
@@ -294,9 +290,9 @@ namespace uf::task
                 // A scoped facade never loads in a trusted Engine VM: that VM
                 // builds no Tool Runtime capability table, so the module would
                 // refuse at load and take the whole Framework generation with
-                // it. Excluding it here is what keeps the authoring and runtime
-                // environments free of it, and the exclusion is asserted rather
-                // than assumed.
+                // it. Excluding it here is what keeps the trusted RuntimeModel
+                // environment free of it; scoped handlers and interactive chunks
+                // receive it through scopedFrameworkScriptModules() instead.
                 if (scopedModuleBinding(entry.name) != nullptr)
                 {
                     continue;
@@ -431,13 +427,6 @@ namespace uf::task
         // the mechanism: loading the trusted framework publishes no Runtime or
         // Receipt closure.
         return {};
-    }
-
-    auto explorationProjectGlobals() -> std::vector<std::string>
-    {
-        return std::vector<std::string>{
-            std::string{k_exploreModule},
-        };
     }
 
     auto runtimeProjectGlobals() -> std::vector<std::string>

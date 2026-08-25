@@ -10,6 +10,7 @@
 #include <operator/project-generation.hpp>
 #include <operator/project-plugin.hpp>
 #include <operator/project-tool-dispatch.hpp>
+#include <operator/project-tool-program.hpp>
 #include <operator/snapshot-reference.hpp>
 #include <operator/tool-actor-adapters.hpp>
 #include <operator/tool-admission-request.hpp>
@@ -928,17 +929,17 @@ namespace uf::service
             operator_runtime::ToolBodyRun body
         ) -> Result<operator_runtime::ToolCallReplay>;
 
-        // One top-of-run Framework call, admitted. It is factored out of
-        // invokeFrameworkTool because the exploration seam needs the ADMITTED
+        // One top-of-run Tool call, admitted. It is factored out of invokeTool
+        // because the interactive seam needs the ADMITTED
         // COORDINATE as well as the outcome -- a chunk's answer names the
         // durable position its call occupied -- and a second translation of one
         // request envelope would be a second place a caller namespace or a call
         // ordinal could be stated differently.
         [[nodiscard]]
-        auto admitFrameworkCall(FrameworkToolCall& request)
+        auto admitRootCall(ToolRootCall& request)
             -> Result<operator_runtime::ToolAdmissionRequest>;
 
-        // One Tool call issued from an exploration chunk.
+        // One Tool call issued from an interactive chunk.
         //
         // Two routes and one rule deciding between them: a call written inside
         // a Tool body is a CHILD of that body-taking call and goes through
@@ -948,7 +949,7 @@ namespace uf::service
         // names a Tool and an argument value, and where the call lands is
         // decided by whether a body is open.
         [[nodiscard]]
-        auto issueExplorationCall(
+        auto issueInteractiveCall(
             task::TaskContext& context,
             std::string_view toolName,
             json::Value const& arguments,
@@ -959,11 +960,11 @@ namespace uf::service
         // body has issued. Each nested body saves and restores the outer pair,
         // so depth is represented only by the ledger's call tree and carries no
         // framework depth constant.
-        std::optional<ContentHash> explorationBodyCall{};
-        uint64                     explorationBodyChildren{};
+        std::optional<ContentHash> interactiveBodyCall{};
+        uint64                     interactiveBodyChildren{};
 
         // How many top-of-run calls this session's chunks have issued. It names
-        // each one's ROOT REQUEST, so every top-level exploration call is its
+        // each one's ROOT REQUEST, so every top-level interactive call is its
         // own root -- exactly as every CLI verb's single call is.
         //
         // ONE ROOT PER CALL RATHER THAN ONE PER SESSION, and the difference is
@@ -973,13 +974,13 @@ namespace uf::service
         // would leave every later call in that session refused for a reason
         // that has nothing to do with it. A human annotating writes independent
         // acts, and a refusal has to cost exactly the act it refused.
-        uint64 explorationRequests{};
+        uint64 interactiveRequests{};
 
-        static constexpr auto k_explorationRequestKeyPrefix = std::string_view{
-            "exploration-"
+        static constexpr auto k_interactiveRequestKeyPrefix = std::string_view{
+            "interactive-"
         };
-        static constexpr auto k_explorationRootPreimageJcs = std::string_view{
-            R"({"objective":"exploration"})"
+        static constexpr auto k_interactiveRootPreimageJcs = std::string_view{
+            R"({"objective":"interactive"})"
         };
     };
 
@@ -1304,7 +1305,7 @@ namespace uf::service
             )
         );
 
-        // The seam every verb an exploration chunk writes goes through. It is
+        // The seam every Tool call an interactive chunk issues goes through. It is
         // bound to the Impl rather than to this handle, on the dispatcher's
         // provider's terms: Impl is heap-allocated and neither copyable nor
         // movable, and the session that stores this callable must not outlive
@@ -1322,7 +1323,7 @@ namespace uf::service
                            script::ToolCallBody body
                        ) -> Result<json::Value>
                 {
-                    return p_implementation->issueExplorationCall(
+                    return p_implementation->issueInteractiveCall(
                         *p_context,
                         toolName,
                         arguments,
@@ -1331,6 +1332,18 @@ namespace uf::service
                 };
             }
         };
+
+        UF_TRY_VALUE(
+            frameworkCatalog,
+            operator_runtime::FrameworkToolCatalogOwner::create()
+        );
+        UF_TRY_VALUE(
+            toolCatalogResource,
+            operator_runtime::pinnedToolCatalogResource(
+                frameworkCatalog,
+                m_impl->generationHandle().catalog()
+            )
+        );
 
         return m_impl->operatorHost.host().startExplorationSession(
             m_impl->generation,
@@ -1348,6 +1361,7 @@ namespace uf::service
                 .projectRoot          = pinned.projectDirectory,
                 .tracePath            = std::move(config.tracePath),
                 .bindToolRuntime      = std::move(bindToolRuntime),
+                .toolCatalogResource  = std::move(toolCatalogResource),
                 .cancellation         = std::move(cancellation),
                 .maximumReadsPerCycle = config.maximumReadsPerCycle,
                 .maximumCropsPerCycle = config.maximumCropsPerCycle,
@@ -2504,12 +2518,12 @@ namespace uf::service
         return replay;
     }
 
-    auto ProductLifecycle::invokeFrameworkTool(
-        FrameworkToolCall request,
+    auto ProductLifecycle::invokeTool(
+        ToolRootCall request,
         task::TaskContext& context
     ) -> Result<operator_runtime::ToolCallReplay>
     {
-        UF_TRY_VALUE(admission, m_impl->admitFrameworkCall(request));
+        UF_TRY_VALUE(admission, m_impl->admitRootCall(request));
         return m_impl->runAdmitted(
             admission,
             context,
@@ -2517,7 +2531,7 @@ namespace uf::service
         );
     }
 
-    auto ProductLifecycle::Impl::admitFrameworkCall(FrameworkToolCall& request)
+    auto ProductLifecycle::Impl::admitRootCall(ToolRootCall& request)
         -> Result<operator_runtime::ToolAdmissionRequest>
     {
         UF_TRY_VALUE(
@@ -2532,10 +2546,9 @@ namespace uf::service
                 std::move(request.exactArgumentsJcs)
             )
         );
-        UF_TRY_VALUE(catalog, operator_runtime::FrameworkToolCatalogOwner::create());
         UF_TRY_VALUE(
             invocation,
-            catalog.validate(std::move(request.toolName), std::move(arguments))
+            catalog().validate(std::move(request.toolName), std::move(arguments))
         );
 
         if (
@@ -2583,7 +2596,7 @@ namespace uf::service
             : rootProducer.start(start);
     }
 
-    auto ProductLifecycle::Impl::issueExplorationCall(
+    auto ProductLifecycle::Impl::issueInteractiveCall(
         task::TaskContext& context,
         std::string_view toolName,
         json::Value const& arguments,
@@ -2605,18 +2618,18 @@ namespace uf::service
                 ) mutable -> Status
                 {
                     auto const outerCall = std::exchange(
-                        explorationBodyCall,
+                        interactiveBodyCall,
                         std::optional{owningCall}
                     );
                     auto const outerChildren = std::exchange(
-                        explorationBodyChildren,
+                        interactiveBodyChildren,
                         uint64{0}
                     );
                     auto const restore = scopeExit(
                         [this, outerCall, outerChildren]() noexcept
                         {
-                            explorationBodyCall     = outerCall;
-                            explorationBodyChildren = outerChildren;
+                            interactiveBodyCall     = outerCall;
+                            interactiveBodyChildren = outerChildren;
                         }
                     );
                     return inner(owningCall);
@@ -2629,15 +2642,15 @@ namespace uf::service
         // delegation grant from the observation's still-dispatching row, judges
         // the child against what that observation declared it may delegate, and
         // records the call under it.
-        if (explorationBodyCall.has_value())
+        if (interactiveBodyCall.has_value())
         {
-            ++explorationBodyChildren;
+            ++interactiveBodyChildren;
             return dispatcher().toolRuntimeDispatch()(
                 toolName,
                 arguments,
                 script::ToolCallCoordinate{
-                    .parentPosition = *explorationBodyCall,
-                    .childIndex     = explorationBodyChildren,
+                    .parentPosition = *interactiveBodyCall,
+                    .childIndex     = interactiveBodyChildren,
                 },
                 context.cancellation(),
                 std::move(body)
@@ -2646,19 +2659,19 @@ namespace uf::service
 
         // AT THE TOP OF THE RUN. One request envelope, admitted by the same
         // translation every other top-of-run call goes through.
-        ++explorationRequests;
-        auto call = FrameworkToolCall{
-            .requestKey = std::string{k_explorationRequestKeyPrefix}
-                + std::to_string(explorationRequests),
+        ++interactiveRequests;
+        auto call = ToolRootCall{
+            .requestKey = std::string{k_interactiveRequestKeyPrefix}
+                + std::to_string(interactiveRequests),
             .exactRootRequestPreimageJcs = std::string{
-                k_explorationRootPreimageJcs
+                k_interactiveRootPreimageJcs
             },
             .executionIdentity = executionIdentity(),
             .toolName          = std::string{toolName},
             .exactArgumentsJcs = std::string{canonicalArguments.bytes()},
             .body              = std::move(body),
         };
-        UF_TRY_VALUE(admission, admitFrameworkCall(call));
+        UF_TRY_VALUE(admission, admitRootCall(call));
         auto const callIdentity = admission.call.identity();
         UF_TRY_VALUE(
             replay,

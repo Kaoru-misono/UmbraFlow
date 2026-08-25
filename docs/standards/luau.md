@@ -39,9 +39,10 @@ line-count threshold measures design.
 One embedded source can be admitted into more than one closure, and which
 closure admits it is a C++ declaration rather than a property of the file.
 `modules/task/source/task/framework-bundle.cpp` emits three lists over the same
-bundle: `frameworkScriptModules()` for the trusted Engine, `pureFrameworkScriptModules()`
-for `script::PureDataProgram`, and `scopedFrameworkScriptModules()` for
-`script::ScopedToolProgram`. The four scoped facades — `audit.luau`,
+bundle: `frameworkScriptModules()` for the trusted RuntimeModel Engine,
+`pureFrameworkScriptModules()` for `script::PureDataProgram`, and
+`scopedFrameworkScriptModules()` for `script::ScopedToolProgram` and
+`script::ScopedToolSession`. The four scoped facades — `audit.luau`,
 `screen.luau`, `tools.luau`, `workflow.luau` — are in the recursive tree the
 reader collects but are admitted by the third list alone, so neither the trusted
 Engine nor a pure program can name one, and the refusal names the module. Do not read

@@ -354,7 +354,9 @@ return {
         // on it.
         explicit QuotaBoundVm(
             MonotonicInstant::Duration runtimeCeiling,
-            std::stop_token cancellation
+            std::stop_token cancellation,
+            std::size_t memoryQuotaBytes = PureDataProgram::k_memoryQuotaBytes,
+            uint64 interruptBudgetTicks = k_interruptBudgetTicks
         );
 
         QuotaBoundVm(QuotaBoundVm const&)                    = delete;
@@ -368,6 +370,12 @@ return {
 
         // The interrupt ledger, mutated by the run that owns this VM.
         [[nodiscard]] auto control() noexcept UF_LIFETIME_BOUND -> InterruptState&;
+
+        // Whether this VM's accounting allocator refused a growth because it
+        // crossed the configured ceiling. A program front end uses this to name
+        // its own owning budget instead of leaking this shared runtime's generic
+        // diagnostic.
+        [[nodiscard]] auto memoryCeilingRefused() const noexcept -> bool;
 
         // Anchor this run's wall-clock window. Called once, after the interrupt
         // callback is installed and before any script executes.

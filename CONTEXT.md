@@ -525,94 +525,49 @@ script may CLICK and excluded the identify-only ones that do the recognising),
 the rename touched only this script root, never the product names `UmbraFlow` and
 `umbra-flow` or any schema id), `bot` (superseded draft wording).
 
-**Project globals** — what a project script may name. Five lists reach a project
-environment and they differ: `k_projectStandardGlobals`
-(`modules/script/source/script/ffi/environment.cpp`) is the deterministic
-standard-library floor every environment gets; `scriptProjectGlobals()` returns
-`{}`, so no host table is published; and of the three framework whitelists in
-`modules/task/source/task/framework-bundle.cpp`, `frameworkProjectGlobals()`
-returns `{}` on purpose so business execution publishes nothing,
-`explorationProjectGlobals()` returns `{"explore"}`, and
-`runtimeProjectGlobals()` returns `{"jcs", "observe", "project"}` for the trusted
-runtime VM `TaskHost::bootTrustedRuntime` boots. The first two framework lists
-are asserted in `tests/task/test-framework-bundle.cpp`, which also proves `ctx`,
-`explore`, `model`, `observe`, `project`, `navigation`, `input` and `receipt` are
-all nil in a business VM. All five, and every boot site that assigns one, are
-read by `published_global_errors` in `tests/test-runtime-surface.py`.
+**Project globals** — the deliberately small set a project environment may name
+without `require`. The sandbox standard-library projection and every host or
+Framework projection are audited by `published_global_errors` in
+`tests/test-runtime-surface.py`; the collision matrix lives in
+`tests/task/test-framework-bundle.cpp`. Interactive chunks publish no special
+global: they import the scoped SDK modules by reserved name. The trusted
+RuntimeModel resolver keeps its own projected modules because it is a pure
+resolution program, not an interactive or Tool-handler environment.
+_Avoid_: `explore` as a Luau global, "exploration project globals", counting the
+projection lists in prose.
 
-**Private capability surface** — the host-built table of primitives only trusted
-Luau can reach. What makes it private is that it has no name in either
-environment: the host builds it, `installSandbox`
-(`modules/script/source/script/ffi/sandbox.cpp`) hands it to the framework bundle
-as its chunk argument, then drops its own reference, so the only way to reach it
-afterwards is a closure it was handed to. There are three of them and no key
-set is guessable:
-- exploration, `buildExplorationSurface` — `invoke`, plus the one non-capability
-  field `error_tag` carrying `"uf.error"`. `invoke(toolName, arguments, body?)`
-  issues one Tool call through `script::ToolRuntimeInvoke`, the same VM-facing
-  protocol a scoped Project VM receives. The session composition binds that
-  protocol to its own `TaskContext` once; no caller selects an exploration
-  variant. `body` is the one structured closure a descriptor-declared Tool
-  scope runs. Today `framework.screen.observe`
-  declares it per Tool and `framework.input.deliver` declares it per tagged arm,
-  with only `hold` accepting one.
-  An empty pointer-hold is refused as the `click` arm's second spelling. The
-  frozen 2026-08-25 ruling says `key` in that one sentence, but its own closed
-  contracts define `hold`/`click` over pointer coordinates and `key` over a
-  keyboard key name; the implementation follows the typed contract rather than
-  crossing those two arms.
-- scoped Project code, `ScopedToolProgram` — `invoke` with the same name,
-  argument and body shape. Its coordinate/cancellation-bearing
-  `ToolRuntimeDispatch` is a host adapter, not a script-visible second seam.
-  A body re-enters synchronously only through framework structured child
-  dispatch: its children are parented under the body-taking call, while yield,
-  suspension and an escaping callback remain refused. One fresh Project Tool
-  VM owns all memory and elapsed time spent by its handler and nested body
-  re-entry; the memory ceiling is registration-pinned and the duration is the
-  outer Project Tool registration's `timeout.maximum_elapsed_ms`. Nested child
-  Tools still receive their own descriptor timeout enforcement.
-- trusted runtime, `RuntimeNativeState::install` — `runtime_model_bytes`,
+**Private capability surface** — a host-built table of primitives only the
+release-owned module closure can reach. It has no global name: the host gives it
+to the closure at boot and drops its own script-visible reference.
+
+- scoped Tool code — `ScopedToolProgram` for a registered Project handler and
+  `ScopedToolSession` for an interactive chunk install the same `invoke` native
+  primitive. The former adapts calls to a handler coordinate; the latter adapts
+  them to the session's root admission door. Neither difference is visible to
+  Luau. A structured body re-enters synchronously through the same adapter, so
+  child calls are parented under their body-taking Tool; yield, suspension and
+  an escaping callback remain refused. Each handler invocation or interactive
+  chunk owns one fresh VM and its own execution window.
+- trusted RuntimeModel resolution, `RuntimeNativeState::install` —
+  `runtime_model_bytes`,
   `runtime_semantic_hash`, `runtime_model_finalize`, `runtime_asset`,
   `runtime_cycle_open`, `runtime_cycle_current`, `runtime_match`, `runtime_read`,
   `runtime_receipt`, `runtime_cycle_close`.
-All three are deep-frozen at the end of the build. **None carries a click, a key
+Both are deep-frozen at the end of the build. **Neither carries a click, a key
 press or any other input primitive**, and `math.random`/`math.randomseed` are
 nilled outright by `installSandbox` rather than offered here.
 
-> **Corrected 2026-08-24 by the natives-to-Tools cut, and the previous entry was
-> two breaks out of date in both directions.** It listed seven exploration keys
-> where `buildAnnotationSurface` installed sixteen — the four measuring verbs,
-> the six acting verbs, the cycle bracket, confined project read and write,
-> `explore_settle` and `explore_terminal` — so the sentence beginning "Neither
-> carries a click" was false of the table it named: `explore_click`,
-> `explore_key`, `explore_drag`, `explore_hold`, `explore_move` and
-> `explore_scroll` all stood on it, and an input delivered through them reached
-> the engine with no Receipt and left no ledger row. All sixteen are gone.
-> `explore_cycle_open`/`explore_cycle_close` are the observation Tool's own
-> bracket now and no longer natives; the measuring four are
-> `framework.screen.read_lines`, `framework.screen.probe` and
-> `framework.screen.census_grid` (there is no crop Tool — see below); the acting
-> six are arms of `framework.input.deliver`; project read and write are
-> `framework.project.read` and `framework.project.write`; `explore_settle` is
-> `framework.workflow.wait`; and `explore_terminal` is deleted, because whether
-> the generation was spent is the session's outcome rather than a verb.
-> The sentence is now true of both tables as written.
-> _Avoid_: `buildAnnotationSurface`, `annotationPrivateCapabilities` (the
-> spelling until this cut; the exploration installer is
-> `task::explorationToolCapabilities`), "the authoring private surface", "the
-> annotation surface" — there is no authoring surface and no trust split between
-> an exploration VM and a production one
-> ([the ruling](docs/decisions/2026-08-24-there-is-no-annotation-phase.md)).
-> **There is deliberately no `framework.screen.crop`**: a crop's answer is a
-> frame's pixels and a Tool result is canonical JSON inside a durable row, so a
-> cropping Tool would put pixels inside a hashed record — the
-> `framework.screen.capture` Tool this design deleted, under another name.
-> Keeping a piece of the screen is an authoring write and is spelled as one, on
-> `framework.project.write`'s `capture` arm.
-_Avoid_: native driver, private native surface, raw verbs, "never a key of any
-table" (a 2026-07-29 draft wording, replaced: the primitives are exactly the keys
-of the private table — read literally the old phrasing said the code violates its
-own design).
+**There is deliberately no `framework.screen.crop`.** A crop's answer is a
+frame's pixels, and a Tool result is canonical JSON inside a durable ledger row,
+so a cropping Tool would put pixels inside a hashed record — which is the
+`framework.screen.capture` Tool this design deleted, under another name. Keeping
+a piece of the screen is an authoring write and is spelled as one, on
+`framework.project.write`'s `capture` arm: the host encodes the PNG through
+`TaskContext::cycleCrop` (`modules/task/source/task/task-context.hpp`) and the
+call answers with the file's content hash, never its pixels.
+_Avoid_: `buildExplorationSurface`, `explorationToolCapabilities`,
+`buildAnnotationSurface`, `annotationPrivateCapabilities`, "the authoring
+private surface", "the exploration VM", native driver, raw verbs.
 
 **Framework environment** — the writable globals table the trusted Luau
 framework's modules load under, and the only environment whose metatable chains
@@ -733,37 +688,26 @@ honest line is `annotation.region_saved`, written by
 `modules/task/source/task/task-context.cpp`, which is the layer that also knows
 the encoded bytes and their hash.
 
-## Exploration
+## Interactive code
 
-**Exploration environment (`explore`)** — the privileged authoring-only Luau
-surface, `modules/task/runtime/explore.luau`, published as the single project
-global of an `ExplorationSession` and never of a business VM. Its top-level verbs
-are `explore.cycle`, `explore.probe`, `explore.read`, `explore.write` and
-`explore.terminal`. Pixels come out through `view:crop(...)`, a method on the
-frozen view object `explore.cycle` passes to its callback — **not** a top-level
-`explore.crop`. `explore.cycle` clears its own `live` flag before closing, so a
-view kept past the callback refuses rather than cropping a frame that is gone.
-
-Input is on that same view object and nowhere else: `view:click_point`,
-`view:long_press`, `view:drag`, `view:move_pointer`, `view:scroll` and
-`view:key`, all in `modules/task/runtime/explore.luau`. A bare coordinate is
-nameable **here and only here**, which is the point rather than an oversight:
-this surface is authoring-only and is never published to a business VM, so a
-click with no binding and no surface behind it stays where the vocabulary can
-afford to be that blunt. A business Tool reaches input through
-`framework.input.semantic_target`, which the framework can tie back to what it
-observed.
-_Avoid_: handing a business task raw pixels or a bare click, "operator mode" (the
-`drive` front-end was a separate consumer with no model access at all; it was
-retired into this one on 2026-08-03 in `eafc273`, so the phrase now names
-nothing)
+**Interactive scoped Tool session (`explore` CLI)** — the chunk-at-a-time
+transport used when a caller needs to inspect a result before composing its next
+piece of code. `explore` names the CLI and queue protocol only. Each chunk is a
+root `ScopedToolSession` program, imports `@umbraflow/tools`,
+`@umbraflow/screen`, `@umbraflow/workflow` or `@umbraflow/audit`, and may call
+any Framework or Project Tool in the session's pinned combined catalog. The
+Operator's policy, not the transport name, decides which calls are admitted.
+Host state and ledger identity survive between chunks; Luau globals and module
+state do not.
+_Avoid_: exploration environment, explore mode, runtime mode, `explore` Luau
+global or module, authoring-only capability surface.
 
 **CLI verbs** — the command table in `entry/cli/main.cpp` is the list; read it
 there rather than here, because a count copied into prose is the fact this
-document already got wrong once. Two of them are the authoring pair `explore`
-and `targets`; the rest reach production. `check`, `replay` and `run` are
-retired and enforced as such by `RETIRED_COMMANDS` and `ALLOWED_COMMANDS` in
-`tests/test-runtime-surface.py`.
+document already got wrong once. `check`, `replay` and `run` are retired and
+enforced as such by `RETIRED_COMMANDS` and `ALLOWED_COMMANDS` in
+`tests/test-runtime-surface.py`. `explore` is the interactive transport, not an
+authority class shared by everything invoked through it.
 
 ## Retired vocabulary
 
@@ -781,11 +725,9 @@ declaring a type named `Element`, `Hit`, `Page` or `UFR`
 (`RETIRED_TYPE_DECLARATION_PATTERN`); the `check`/`replay`/`run` CLI verbs and
 their argument and dispatch symbols (`RETIRED_CLI_*`); and every name in
 `FORBIDDEN_PROJECT_GLOBALS` — `ctx`, `click`, `model` and `receipt` among them —
-as a project global in any of the five lists that publish one, except that
-`explore`, `observe` and `project` are each allowed in the one list that
-publishes them today (`PUBLISHED_GLOBAL_AUTHORITIES`). The rule reads a binding
-and not a table's members, so `key`, `drag` and `scroll` remain legal as methods
-of the cycle view `explore` hands out.
+as a project global in any publication list, except for the explicitly audited
+trusted RuntimeModel projection (`PUBLISHED_GLOBAL_AUTHORITIES`). `explore` has
+no allowance and therefore cannot return as a Luau global unnoticed.
 
 **Retired schema ids.** `umbraflow-authoring/v4`, `umbraflow-annotations/v3`,
 every earlier spelling of both, and the constants that carried them,
@@ -833,8 +775,7 @@ of these is a type anywhere in the tree:
   transition.
 - `oracle`, `regress`, `cycle_match`, `oracle.Expectation`, the falsification
   matrix and the `umbra-flow check` / `umbra-authoring check` verbs that walked
-  it. `modules/task/runtime/` holds exactly `evidence`, `explore`, `jcs`,
-  `model`, `observe`, `project`, `resolution`. The rules worth re-deriving if
+  it. The rules worth re-deriving if
   measurement returns: never record measurements back into the file as
   expectations, never read an undeclared page as "the same page as the other
   one", and never require that a screen resolve NO other surface — an overlay

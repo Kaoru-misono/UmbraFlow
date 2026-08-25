@@ -114,11 +114,8 @@ RETIRED_COMMANDS = frozenset({"check", "replay", "run"})
 # target, binds a session and may post real input, because it is the
 # production entry point for a Tool run -- the acting half of the invariant
 # open's entry calls "a binary whose whole invariant is acting on a real
-# window". Until 2026-08-23 that half had no shipped caller at all: explore
-# acts only in the authoring environment without an Operator, observe may not
-# act by composition, and ProductLifecycle's three actor transports had no
-# caller anywhere in the repository. What invoke adds is a transport, never an
-# authority: --actor names the principal, start pins that kind, and every
+# window". What invoke adds is a transport, never an authority: --actor names
+# the principal, start pins that kind, and every
 # power the principal has is granted or refused by the ledger it is pinned
 # into. An agent must present an AgentProfile verified against the
 # SessionManifest and cannot bind a read-mode session; an agent reaches only
@@ -150,17 +147,10 @@ ALLOWED_COMMANDS = frozenset(
 # (script/ffi/environment.cpp, installProjectEnvironmentPrototype). Every list
 # is read below, from its own definition, in every environment -- and NOTHING
 # ELSE IS. A global is a table, and this rule says nothing about that table's
-# members: `key`, `drag`, `scroll`, `hold` and `move` are methods
-# of the cycle view `explore` hands out (modules/task/runtime/explore.luau) and
-# are legal there, which is why they appear below and the gate is green. What
-# the rule forbids is any of these names becoming a BINDING a project script can
-# reach without going through the module that owns it.
-#
-# Three of these names are published on purpose, each by exactly one list, so
-# each is allowed there by PUBLISHED_GLOBAL_AUTHORITIES and nowhere else. That
-# is the property worth having: `explore` in the exploration environment is the
-# authoring surface, and `explore` in any other list is business execution
-# opening without an Operator.
+# members. What the rule forbids is any of these names becoming a BINDING a
+# project script can reach without going through the module or Tool that owns
+# it. Interactive chunks are covered too: they use the scoped module resolver
+# and publish no `explore` global.
 FORBIDDEN_PROJECT_GLOBALS = frozenset(
     {
         "action",
@@ -196,14 +186,13 @@ FORBIDDEN_PROJECT_GLOBALS = frozenset(
 # stops exercising is a failure too, so a retired publication cannot leave a
 # licence behind for the next one.
 #
-# `kind` picks the definition's spelling: "function" for the four whitelist
+# `kind` picks the definition's spelling: "function" for the whitelist
 # functions, "array" for the standard-library table environment.cpp holds as a
 # constant. Both are read from the single first-party definition of that name.
 PUBLISHED_GLOBAL_AUTHORITIES = (
     ("k_projectStandardGlobals", "array", frozenset()),
     ("frameworkProjectGlobals", "function", frozenset()),
     ("scriptProjectGlobals", "function", frozenset()),
-    ("explorationProjectGlobals", "function", frozenset({"explore"})),
     ("runtimeProjectGlobals", "function", frozenset({"observe", "project"})),
 )
 

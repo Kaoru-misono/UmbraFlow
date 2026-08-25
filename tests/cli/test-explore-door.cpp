@@ -619,7 +619,7 @@ namespace uf::cli
         auto explorationCall(
             std::string_view toolName,
             std::string_view exactArgumentsJcs
-        ) -> service::FrameworkToolCall
+        ) -> service::ToolRootCall
         {
             auto const identity = [](std::string_view material)
             {
@@ -627,7 +627,7 @@ namespace uf::cli
                 REQUIRE(hashed.has_value());
                 return *hashed;
             };
-            return service::FrameworkToolCall{
+            return service::ToolRootCall{
                 .requestKey                  = "annotation-under-deny-all",
                 .exactRootRequestPreimageJcs = R"({"objective":"annotate"})",
                 .executionIdentity = operator_runtime::ToolExecutionIdentity{
@@ -703,15 +703,20 @@ namespace uf::cli
         // V4).
         auto const measured = (*session)->evaluate(
             R"lua(
-                local resolved = explore.observe(function(frame)
-                    local report = frame:probe(0, 0, 1, 1, {
-                        red = 0, green = 0, blue = 0, removes = false,
+                local screen = require("@umbraflow/screen")
+                local tools = require("@umbraflow/tools")
+                local resolved = screen.observe(function()
+                    local answer = tools.call("framework.screen.probe", {
+                        x = 0, y = 0, width = 1, height = 1,
+                        colour_red = 0, colour_green = 0, colour_blue = 0,
+                        tolerance = 12, removes = false,
                     })
+                    local report = rawget(answer, "result")
                     if report.rect_pixels ~= 1 then
                         error("probe measured " .. tostring(report.rect_pixels))
                     end
                 end)
-                return resolved.state_resolution ~= nil
+                return tools.state(resolved) == "confirmed"
             )lua",
             "annotation-observation-body"
         );
@@ -721,31 +726,51 @@ namespace uf::cli
         REQUIRE_MESSAGE(measured.has_value(), measuredWhy);
         CHECK(measured->boolean() == std::optional<bool>{true});
 
+        // A Project Tool is in the same pinned catalog and reaches the same
+        // root admission door. The interactive transport does not select a
+        // Framework-only catalog or a second dispatcher.
+        auto const projectTool = (*session)->evaluate(
+            R"lua(
+                local tools = require("@umbraflow/tools")
+                local answer = tools.call("fixture.alpha.observe-1", {
+                    value = 1,
+                })
+                return rawget(rawget(answer, "result"), "outcome")
+            )lua",
+            "interactive-project-tool"
+        );
+        auto const projectToolWhy = projectTool.has_value()
+            ? std::string{}
+            : std::string{projectTool.error().message()};
+        REQUIRE_MESSAGE(projectTool.has_value(), projectToolWhy);
+        REQUIRE(projectTool->text() != nullptr);
+        CHECK(*projectTool->text() == "observe-1");
+
         // The same session's input, refused by name from inside a chunk rather
         // than through the adapter below. The refusal reaches the chunk as the
         // Operator's own sentence, which is what an annotator has to read.
         auto const refused = (*session)->evaluate(
             R"lua(
-                local ok, err = pcall(function() explore.click(0, 0) end)
-                if ok then return "delivered" end
-                if type(err) == "userdata" then return err.message end
-                return tostring(err)
+                local tools = require("@umbraflow/tools")
+                tools.call("framework.input.deliver", {
+                    action = "click", x = 0, y = 0,
+                })
+                return "delivered"
             )lua",
             "annotation-input-under-deny-all"
         );
-        REQUIRE(refused.has_value());
-        REQUIRE(refused->text() != nullptr);
+        REQUIRE_FALSE(refused.has_value());
         CHECK_MESSAGE(
-            std::string_view{*refused->text()}.find(k_privilegedRefusal)
+            std::string_view{refused.error().message()}.find(k_privilegedRefusal)
                 != std::string_view::npos,
             "a chunk's input was not refused by the Operator's own sentence: ",
-            *refused->text()
+            refused.error().message()
         );
 
         // Read-only screen observation carries no effect bounds, so deny-all
         // admits it. This is the half that would be lost if annotation answered
         // deny-all by refusing the session outright.
-        auto const observed = lifecycle->invokeFrameworkTool(
+        auto const observed = lifecycle->invokeTool(
             explorationCall(k_observeTool, "{}"),
             context
         );
@@ -761,7 +786,7 @@ namespace uf::cli
 
         // And the half the whole four-step order exists to repay: an injection
         // is refused at admission, by name, before the sink is reached.
-        auto const injected = lifecycle->invokeFrameworkTool(
+        auto const injected = lifecycle->invokeTool(
             explorationCall(
                 k_deliverInputTool,
                 R"({"action":"click","x":0,"y":0})"
@@ -897,8 +922,11 @@ namespace uf::cli
 
             auto const clicked = (*session)->evaluate(
                 R"lua(
-                    local answer = explore.click(0, 0)
-                    return answer.delivered == true
+                    local tools = require("@umbraflow/tools")
+                    local answer = tools.call("framework.input.deliver", {
+                        action = "click", x = 0, y = 0,
+                    })
+                    return rawget(rawget(answer, "result"), "delivered") == true
                 )lua",
                 "annotation-input"
             );
@@ -985,7 +1013,8 @@ namespace uf::cli
             // and it says so rather than capturing one of its own.
             auto const stray = (*session)->evaluate(
                 R"lua(
-                    local answer = explore.call(
+                    local tools = require("@umbraflow/tools")
+                    local answer = tools.call(
                         "framework.screen.read_lines",
                         { x = 0, y = 0, width = 1, height = 1 }
                     )
@@ -1007,10 +1036,16 @@ namespace uf::cli
             auto const before = *captures;
             auto const bodied = (*session)->evaluate(
                 R"lua(
-                    explore.observe(function(frame)
-                        frame:read_lines(0, 0, 1, 1)
-                        frame:probe(0, 0, 1, 1, {
-                            red = 0, green = 0, blue = 0, removes = false,
+                    local screen = require("@umbraflow/screen")
+                    local tools = require("@umbraflow/tools")
+                    screen.observe(function()
+                        tools.call("framework.screen.read_lines", {
+                            x = 0, y = 0, width = 1, height = 1,
+                        })
+                        tools.call("framework.screen.probe", {
+                            x = 0, y = 0, width = 1, height = 1,
+                            colour_red = 0, colour_green = 0,
+                            colour_blue = 0, tolerance = 12, removes = false,
                         })
                     end)
                     return true
@@ -1126,11 +1161,19 @@ namespace uf::cli
             auto const before = *captures;
             auto const observed = (*session)->evaluate(
             R"lua(
-                explore.hold(0, 0, function()
-                    explore.observe(function(frame)
-                        frame:read_lines(0, 0, 1, 1)
-                        frame:probe(0, 0, 1, 1, {
-                            red = 0, green = 0, blue = 0, removes = false,
+                local screen = require("@umbraflow/screen")
+                local tools = require("@umbraflow/tools")
+                tools.call("framework.input.deliver", {
+                    action = "hold", x = 0, y = 0,
+                }, function()
+                    screen.observe(function()
+                        tools.call("framework.screen.read_lines", {
+                            x = 0, y = 0, width = 1, height = 1,
+                        })
+                        tools.call("framework.screen.probe", {
+                            x = 0, y = 0, width = 1, height = 1,
+                            colour_red = 0, colour_green = 0,
+                            colour_blue = 0, tolerance = 12, removes = false,
                         })
                     end)
                 end)
@@ -1155,21 +1198,23 @@ namespace uf::cli
         {
             auto const raised = (*session)->evaluate(
             R"lua(
-                local ok, err = pcall(function()
-                    explore.hold(0, 0, function()
-                        error("the hold body raised")
-                    end)
+                local tools = require("@umbraflow/tools")
+                local answer = tools.call("framework.input.deliver", {
+                    action = "hold", x = 0, y = 0,
+                }, function()
+                    error("the hold body raised")
                 end)
-                if ok then return "hold unexpectedly confirmed" end
-                if type(err) == "userdata" then return err.message end
-                return tostring(err)
+                local result = rawget(answer, "result")
+                return tostring(rawget(result, "reason") or rawget(result, "message"))
             )lua",
             "hold-body-raises"
         );
             REQUIRE(raised.has_value());
             REQUIRE(raised->text() != nullptr);
             CHECK(
-                std::string_view{*raised->text()}.contains("the hold body raised")
+                std::string_view{*raised->text()}.contains(
+                    "the hold body raised"
+                )
             );
             CHECK(held->engaged == 1U);
             CHECK(held->released == 1U);
@@ -1180,12 +1225,12 @@ namespace uf::cli
         {
             auto const empty = (*session)->evaluate(
             R"lua(
-                local ok, err = pcall(function()
-                    explore.hold(0, 0, function() end)
-                end)
-                if ok then return "hold unexpectedly confirmed" end
-                if type(err) == "userdata" then return err.message end
-                return tostring(err)
+                local tools = require("@umbraflow/tools")
+                local answer = tools.call("framework.input.deliver", {
+                    action = "hold", x = 0, y = 0,
+                }, function() end)
+                local result = rawget(answer, "result")
+                return tostring(rawget(result, "reason") or rawget(result, "message"))
             )lua",
             "empty-hold-body"
         );
@@ -1205,14 +1250,15 @@ namespace uf::cli
         {
             auto const refused = (*session)->evaluate(
             R"lua(
-                local ok, err = pcall(function()
-                    explore.hold(999, 999, function()
-                        explore.observe(function() end)
-                    end)
+                local screen = require("@umbraflow/screen")
+                local tools = require("@umbraflow/tools")
+                local answer = tools.call("framework.input.deliver", {
+                    action = "hold", x = 999, y = 999,
+                }, function()
+                    screen.observe(function() end)
                 end)
-                if ok then return "hold unexpectedly confirmed" end
-                if type(err) == "userdata" then return err.message end
-                return tostring(err)
+                local result = rawget(answer, "result")
+                return tostring(rawget(result, "reason") or rawget(result, "message"))
             )lua",
             "refused-hold-body"
         );
@@ -1224,10 +1270,14 @@ namespace uf::cli
                 )
             );
             CHECK(
-                std::string_view{*refused->text()}.contains("target surface")
+                std::string_view{*refused->text()}.contains(
+                    "target surface"
+                )
             );
             CHECK_FALSE(
-                std::string_view{*refused->text()}.contains("hold body is empty")
+                std::string_view{*refused->text()}.contains(
+                    "hold body is empty"
+                )
             );
             CHECK(held->engaged == 0U);
             CHECK(held->released == 0U);
@@ -1238,21 +1288,21 @@ namespace uf::cli
         {
             auto const refused = (*session)->evaluate(
                 R"lua(
-                    local ok, err = pcall(function()
-                        explore.observe(function()
-                            explore.click(0, 0)
-                        end)
+                    local screen = require("@umbraflow/screen")
+                    local tools = require("@umbraflow/tools")
+                    local answer = screen.observe(function()
+                        tools.call("framework.input.deliver", {
+                            action = "click", x = 0, y = 0,
+                        })
                     end)
-                    if ok then return "input unexpectedly admitted" end
-                    if type(err) == "userdata" then return err.message end
-                    return tostring(err)
+                    local result = rawget(answer, "result")
+                    return tostring(rawget(result, "reason") or rawget(result, "message"))
                 )lua",
                 "observe-mutating-child"
             );
-            REQUIRE(refused.has_value());
-            REQUIRE(refused->text() != nullptr);
+            REQUIRE_FALSE(refused.has_value());
             CHECK(
-                std::string_view{*refused->text()}.contains(
+                std::string_view{refused.error().message()}.contains(
                     "Parent Tool framework.screen.observe declares no child "
                     "effect for framework.input.deliver"
                 )
@@ -1308,18 +1358,28 @@ namespace uf::cli
             REQUIRE(session.has_value());
             auto const written = (*session)->evaluate(
                 R"lua(
-                    local ok, err = pcall(function()
-                        explore.write("runtime/annotation.txt", "a stroke")
-                    end)
-                    if ok then return "written" end
-                    if type(err) == "userdata" then return err.message end
-                    return tostring(err)
+                    local tools = require("@umbraflow/tools")
+                    local answer = tools.call("framework.project.write", {
+                        action = "text",
+                        path = "runtime/annotation.txt",
+                        content = "a stroke",
+                    })
+                    return if tools.state(answer) == "confirmed"
+                        then "written"
+                        else tostring(rawget(rawget(answer, "result"), "reason"))
                 )lua",
                 "annotation-authoring-write"
             );
-            REQUIRE(written.has_value());
-            REQUIRE(written->text() != nullptr);
-            auto const answer = std::string{*written->text()};
+            auto answer = std::string{};
+            if (written.has_value())
+            {
+                REQUIRE(written->text() != nullptr);
+                answer = *written->text();
+            }
+            else
+            {
+                answer = written.error().message();
+            }
             session->reset();
             CHECK(lifecycle->shutdown().has_value());
             return answer;

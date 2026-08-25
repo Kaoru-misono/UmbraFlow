@@ -1,5 +1,24 @@
 # Colour-key annotation
 
+> **Every invocation spelling in this file is historical, and deliberately left
+> that way.** The verbs these failures were recorded against died in three
+> separate cuts: `page create` / `page add` and the C++ page model with
+> `a80ea07` (2026-08-01), the whole `umbra-authoring` binary on 2026-08-02, and
+> `explore.crop` / `explore.probe` / `scribe.measure` when the sixteen private
+> natives became catalogued Tools in `d6e772f` (2026-08-24). The `explore` Luau
+> module followed on 2026-08-25.
+>
+> Today a chunk calls `framework.screen.probe` inside a `framework.screen.observe`
+> body, and keeping a rectangle of the screen is `framework.project.write`'s
+> `capture` arm.
+>
+> **What still transfers: everything except the spellings.** Every threshold,
+> every measured mean-grey figure, every failure shape and every rule below was
+> measured against a real target and is independent of which verb carried it.
+> Rewriting the examples would cost the evidence its provenance and buy nothing,
+> so read the sections for what was measured and the current Tool declarations
+> for how to invoke.
+
 Failures in authoring a colour-keyed template. All three below share a shape: the
 tool accepts the element, and the mistake surfaces either much later or never.
 

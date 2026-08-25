@@ -139,6 +139,83 @@ namespace uf::script
         ) const -> Result<json::Value>;
     };
 
+    // The chunk-at-a-time front end to the same scoped environment. It is a
+    // transport shape, not another capability set: every chunk resolves the
+    // modules scopedModuleNames() states and reaches the same one
+    // ToolRuntimeInvoke primitive a registered Project handler reaches.
+    //
+    // Each evaluate() owns one fresh VM and one elapsed-time window. The
+    // release-owned Framework module views must outlive this object; the task
+    // bundle satisfies that with generated string literals. Framework resources
+    // and the Tool Runtime are owned here.
+    class ScopedToolSession final
+    {
+        std::vector<FrameworkModule>           m_frameworkModules;
+        std::vector<PureDataProgram::Resource> m_frameworkResources;
+        ToolRuntimeInvoke                      m_invokeTool;
+        std::stop_token                        m_cancellation;
+        MonotonicInstant::Duration             m_maximumRuntime;
+        std::size_t                            m_memoryQuotaBytes;
+        HeapUsage                              m_outcomeHeapUsage{};
+        HeapUsage                              m_heapUsage{};
+        bool                                   m_generationSpent{};
+
+        ScopedToolSession(
+            std::vector<FrameworkModule> frameworkModules,
+            std::vector<PureDataProgram::Resource> frameworkResources,
+            ToolRuntimeInvoke invokeTool,
+            std::stop_token cancellation,
+            MonotonicInstant::Duration maximumRuntime,
+            std::size_t memoryQuotaBytes
+        ) noexcept;
+
+    public:
+        ScopedToolSession(ScopedToolSession const&) = delete;
+        auto operator=(ScopedToolSession const&) -> ScopedToolSession& = delete;
+        ScopedToolSession(ScopedToolSession&&) noexcept                = default;
+        auto operator=(ScopedToolSession&&) noexcept
+            -> ScopedToolSession& = default;
+        ~ScopedToolSession() = default;
+
+        // Validates the scoped Framework closure and pinned catalog before a
+        // session is handed back. Zero memoryQuotaBytes has the same explicit
+        // meaning EngineConfig gives it: no allocator ceiling.
+        [[nodiscard]]
+        static auto create(
+            std::vector<FrameworkModule> frameworkModules,
+            std::vector<PureDataProgram::Resource> frameworkResources,
+            ToolRuntimeInvoke invokeTool,
+            std::stop_token cancellation,
+            MonotonicInstant::Duration maximumRuntime,
+            uint64 memoryQuotaBytes
+        ) -> Result<ScopedToolSession>;
+
+        // Compiles and runs one source chunk as the body of a generated scoped
+        // entry point. A chunk returns the same scalar transport values Engine
+        // carried: absent, boolean, number or string. Tables are refused rather
+        // than silently erased.
+        [[nodiscard]]
+        auto evaluate(
+            std::string_view source,
+            std::string_view chunkName
+        ) -> Result<ScriptValue>;
+
+        // The pre-reclamation heap reading for the last chunk. It exists so a
+        // caller can identify a failure that met the configured ceiling before
+        // the chunk VM is collected and destroyed.
+        [[nodiscard]] auto outcomeHeapUsage() const noexcept -> HeapUsage;
+
+        // The last chunk VM's reading after full collection. Module and global
+        // state never cross into the next chunk; the high-water mark remains a
+        // useful diagnostic for the result line.
+        [[nodiscard]] auto heapUsage() const noexcept -> HeapUsage;
+
+        // A deadline, instruction budget or stop token spends the interactive
+        // generation. An ordinary compile/runtime failure spends only its
+        // chunk, whose fresh VM is already gone.
+        [[nodiscard]] auto generationSpent() const noexcept -> bool;
+    };
+
     // The exact scoped environment bytes scopedToolEnvironmentHash is taken
     // over: everything the pure environment attests to, plus the scoped module
     // catalog, the Tool Runtime facade contract and the ceilings only this

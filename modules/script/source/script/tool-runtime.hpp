@@ -23,7 +23,7 @@ namespace uf::script
         std::move_only_function<Status(ContentHash const& owningCall)>;
 
     // The single VM-facing Tool Runtime protocol: canonical data and one
-    // optional structured body in, canonical data out. Both exploration and
+    // optional structured body in, canonical data out. Both interactive and
     // scoped Project code call this exact type.
     //
     // Synchronous and blocking by contract. No yield, coroutine suspension or

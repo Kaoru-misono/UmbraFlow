@@ -52,8 +52,9 @@ declares no effect bound, so its envelope is empty, so **no mutating Tool can
 ever be a child of an observation**. Giving observe an effect bound to fix that
 would make it a mutating call a deny-all artifact refuses, which would take
 read-only screen observation away from the session that has no policy yet. So a
-body holds read-only measurements only, and an input or an authoring write is
-issued at the top of the run instead — which is what `explore.luau` spells.
+body holds read-only measurements only, and an input or project write is issued
+as an independent root Tool call instead. Registered handlers and interactive
+chunks use the same structured-body adapter; neither has a private spelling.
 
 ## A frame that spans the enclosing run breaks polling loops
 
@@ -100,8 +101,8 @@ a refusal must cost exactly the act it refused.
 
 ### Fix
 
-One ROOT REQUEST per top-level exploration call rather than one per session:
-`ProductLifecycle::Impl::issueExplorationCall` numbers its request key from
-`explorationRequests`, so every top-of-run call is its own root — exactly as
+One ROOT REQUEST per top-level interactive call rather than one per session:
+`ProductLifecycle::Impl::issueInteractiveCall` numbers its request key from
+`interactiveRequests`, so every top-of-run call is its own root — exactly as
 every CLI verb's single call is. Calls inside an observation's body are
 unaffected; they are children of that observation and are numbered under it.

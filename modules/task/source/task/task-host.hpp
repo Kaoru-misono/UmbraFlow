@@ -22,6 +22,7 @@
 #include <ocr/engine.hpp>
 
 #include <script/engine.hpp>
+#include <script/pure-data-program.hpp>
 #include <script/tool-runtime.hpp>
 
 #include <trace/recorder.hpp>
@@ -75,7 +76,7 @@ namespace uf::task
         MonotonicInstant::Duration maximumReceiptAge{k_defaultMaxActionFrameAge};
     };
 
-    // The live ports one exploration front end drives, and the ceilings it
+    // The live ports one interactive front end drives, and the ceilings it
     // drives them under.
     struct TaskRunConfig final
     {
@@ -97,22 +98,22 @@ namespace uf::task
 
     // Composition binds the one VM-facing Tool Runtime to this session's own
     // context exactly once. This factory is not a dispatch seam: callers never
-    // choose between protocols, and both exploration and scoped Project VMs
+    // choose between protocols, and both interactive and scoped Project VMs
     // receive script::ToolRuntimeInvoke.
     using ToolRuntimeBinder =
         std::move_only_function<script::ToolRuntimeInvoke(TaskContext&)>;
 
-    // What one exploration session needs that is a property neither of the
+    // What one interactive session needs that is a property neither of the
     // desktop nor of the ledgered session it runs inside: the Tool Runtime its
-    // chunks call through, where its authoring writes may land, when it stops,
+    // chunks call through, where its policy-granted project writes may land, when it stops,
     // and the ceilings its VM answers to.
     //
     // `projectRoot` is stated rather than read off the generation, and that is
     // one of the two reasons this type exists. A generation opened from an
     // installed RuntimeArtifact is rooted at the Operator's content-addressed
-    // store, while an exploration session's project reads and writes are
+    // store, while an interactive session's project reads and writes are
     // confined to the PROJECT directory it is editing; taking the generation's
-    // root would point authoring writes at the CAS.
+    // root would point project writes at the CAS.
     //
     // `bindToolRuntime` is the other. A session that could not reach a Tool Runtime
     // could do nothing at all, so it is required rather than optional, and it
@@ -130,6 +131,12 @@ namespace uf::task
         std::filesystem::path tracePath{};
 
         ToolRuntimeBinder bindToolRuntime{};
+
+        // The exact combined Framework/Project catalog this session was
+        // admitted with, under the reserved resource name the scoped SDK owns.
+        // It is required data, not a discovery callback: descriptions cannot
+        // move under a chunk mid-session.
+        script::PureDataProgram::Resource toolCatalogResource{};
 
         std::stop_token cancellation{};
 

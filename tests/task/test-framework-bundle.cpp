@@ -35,10 +35,6 @@ namespace uf::task
     TEST_CASE("business framework publication is fail closed")
     {
         CHECK(frameworkProjectGlobals().empty());
-        CHECK(
-            explorationProjectGlobals()
-            == std::vector<std::string>{"explore"}
-        );
 
         auto modules = frameworkScriptModules();
         auto const positionOf = [&modules](std::string_view name)
@@ -243,7 +239,6 @@ return {
         auto const standard = script::projectStandardGlobals();
         auto const whitelists = std::array{
             frameworkProjectGlobals(),
-            explorationProjectGlobals(),
             runtimeProjectGlobals(),
         };
         for (auto const& whitelist : whitelists)
@@ -265,7 +260,7 @@ return {
     // installer's own `projectGlobals`, and the framework projection. A name
     // carried by two of them is not refused; it is silently overwritten, and
     // whichever source is copied later wins. The assertion above bound only the
-    // third source against the first, which left the host source -- written by
+        // Framework source against the first, which left the host source -- written by
     // exactly the same lua_rawsetfield into exactly the same table -- covered by
     // nothing.
     TEST_CASE("no two sources may bind one project-environment name")
@@ -286,12 +281,11 @@ return {
             NameSource{"standard library", std::move(standardNames)},
             NameSource{"host installer", scriptProjectGlobals()},
             NameSource{"framework release", frameworkProjectGlobals()},
-            NameSource{"framework exploration", explorationProjectGlobals()},
             NameSource{"framework runtime", runtimeProjectGlobals()},
         };
 
         // The whole matrix, not just framework-against-standard: any two of the
-        // five colliding is one project global with two authors.
+        // four colliding is one project global with two authors.
         for (auto left = std::size_t{}; left < sources.size(); ++left)
         {
             for (auto right = left + 1U; right < sources.size(); ++right)

@@ -859,7 +859,7 @@ namespace uf::cli
                                        std::string_view exactArgumentsJcs
                                    )
         {
-            return service::FrameworkToolCall{
+            return service::ToolRootCall{
                 .requestKey                 = "recorded-observe-and-wait",
                 .exactRootRequestPreimageJcs =
                     R"({"objective":"observe and wait"})",
@@ -894,7 +894,7 @@ namespace uf::cli
                                       std::string_view exactArgumentsJcs
                                   )
                     {
-                        auto const replay = lifecycle.invokeFrameworkTool(
+                        auto const replay = lifecycle.invokeTool(
                             frameworkCall(toolName, exactArgumentsJcs),
                             context
                         );
@@ -1065,8 +1065,8 @@ namespace uf::cli
                                   std::string_view toolName,
                                   std::string_view exactArgumentsJcs)
                 {
-                    auto const replay = lifecycle.invokeFrameworkTool(
-                        service::FrameworkToolCall{
+                    auto const replay = lifecycle.invokeTool(
+                        service::ToolRootCall{
                             .requestKey = std::string{requestKey},
                             .exactRootRequestPreimageJcs =
                                 R"({"objective":"deliver one input"})",
@@ -1095,8 +1095,8 @@ namespace uf::cli
                 // (docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md).
                 auto refused = [&](std::string_view exactArgumentsJcs)
                 {
-                    auto const outcome = lifecycle.invokeFrameworkTool(
-                        service::FrameworkToolCall{
+                    auto const outcome = lifecycle.invokeTool(
+                        service::ToolRootCall{
                             .requestKey = "input-root",
                             .exactRootRequestPreimageJcs =
                                 R"({"objective":"deliver one input"})",
@@ -1309,8 +1309,8 @@ namespace uf::cli
                     R"({"schema":"framework.observation_reference/1"})"
                 };
                 REQUIRE(forged != reference);
-                auto const unminted = lifecycle.invokeFrameworkTool(
-                    service::FrameworkToolCall{
+                auto const unminted = lifecycle.invokeTool(
+                    service::ToolRootCall{
                         .requestKey = "input-root",
                         .exactRootRequestPreimageJcs =
                             R"({"objective":"deliver one input"})",

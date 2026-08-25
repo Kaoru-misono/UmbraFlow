@@ -326,7 +326,7 @@ namespace uf::task
         }
 
         // The trusted bundle list every Engine VM boots: the authoring and
-        // exploration VM and the Host's runtime VM both take exactly this list,
+        // interactive scoped VMs and registered handler VMs take exactly this list,
         // so absence here is absence from both.
         auto const trusted = frameworkScriptModules();
         for (auto const stem : k_scopedStems)
@@ -355,7 +355,6 @@ namespace uf::task
         // script.
         auto const whitelists = std::array{
             frameworkProjectGlobals(),
-            explorationProjectGlobals(),
             runtimeProjectGlobals(),
         };
         for (auto const& whitelist : whitelists)

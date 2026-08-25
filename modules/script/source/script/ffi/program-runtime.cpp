@@ -1552,13 +1552,15 @@ namespace uf::script::detail
 
     QuotaBoundVm::QuotaBoundVm(
         MonotonicInstant::Duration runtimeCeiling,
-        std::stop_token cancellation
+        std::stop_token cancellation,
+        std::size_t memoryQuotaBytes,
+        uint64 interruptBudgetTicks
     )
         : m_runtimeCeiling{runtimeCeiling}
-        , m_quota{.limitBytes = PureDataProgram::k_memoryQuotaBytes}
+        , m_quota{.limitBytes = memoryQuotaBytes}
         , m_control{
               .cancellation = std::move(cancellation),
-              .budgetTicks  = k_interruptBudgetTicks,
+              .budgetTicks  = interruptBudgetTicks,
           }
         , m_state{createStateWithQuota(&m_quota)}
     {
@@ -1580,6 +1582,11 @@ namespace uf::script::detail
     auto QuotaBoundVm::control() noexcept -> InterruptState&
     {
         return m_control;
+    }
+
+    auto QuotaBoundVm::memoryCeilingRefused() const noexcept -> bool
+    {
+        return m_quota.ceilingRefused;
     }
 
     auto QuotaBoundVm::beginUnitOfScript() noexcept -> void
