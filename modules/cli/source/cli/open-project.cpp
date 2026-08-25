@@ -9,8 +9,8 @@
 
 #include <script/scoped-tool-program.hpp>
 
-#include <task/platform/confined-file.hpp>
 #include <task/runtime-model-file.hpp>
+#include <task/task-host.hpp>
 
 #include <core/error/result.hpp>
 
@@ -91,30 +91,29 @@ namespace uf::cli
         }
 
         // The RuntimeArtifact the project names, opened the way the installer
-        // opens it: both schema digests against this binary's pins, page_model
+        // opens it -- both schema digests against this binary's pins, the model
         // at its fixed name and non-empty, the directory's file closure, and
-        // every declared size and sha256.
+        // every declared size and sha256 -- and then PARSED, through the same
+        // seam `project check` runs offline.
         //
-        // The expected root hash is the digest of the manifest read here,
-        // because no project document states a prior commitment to it. Reading
-        // those bytes twice is safe in the only direction that matters: a
-        // manifest swapped between the two reads mismatches and is refused, and
-        // no swap can turn a refusal into an acceptance.
+        // The parse is why this reports a semantic hash. Verifying the artifact
+        // says the bytes are the bytes the manifest promised; only the parser
+        // can say they are a RuntimeModel, and until this verb ran it, an
+        // artifact holding a model no session could load opened here without
+        // complaint.
+        //
+        // The expected root hash is the digest of the manifest the seam reads,
+        // because no project document states a prior commitment to it. That is
+        // safe in the only direction that matters: a manifest swapped mid-read
+        // mismatches and is refused, and no swap can turn a refusal into an
+        // acceptance.
         [[nodiscard]]
         auto verifiedArtifact(
             std::filesystem::path const& artifactRoot
         ) -> Result<OpenedArtifact>
         {
-            UF_TRY_VALUE(root, task_platform::ConfinedRoot::open(artifactRoot));
-            UF_TRY_VALUE(
-                manifestBytes,
-                root.readFile(
-                    task::k_runtimeArtifactManifestFileName,
-                    task::k_maximumRuntimeManifestBytes
-                )
-            );
-            UF_TRY_VALUE(rootHash, sha256(manifestBytes));
-            UF_TRY_VALUE(verified, task::loadRuntimeArtifact(artifactRoot, rootHash));
+            UF_TRY_VALUE(parsed, task::parseRuntimeArtifact(artifactRoot));
+            auto const& verified = *parsed.artifact;
 
             return OpenedArtifact{
                 .rootHash              = verified.rootHash().hex(),
@@ -122,6 +121,7 @@ namespace uf::cli
                 .runtimeModelFormat    = verified.runtimeModelFormat(),
                 .modelBytes            = verified.modelBytes().size(),
                 .assets                = verified.assetPaths().size(),
+                .semanticHash          = parsed.semanticHash.hex(),
             };
         }
 
@@ -184,7 +184,8 @@ namespace uf::cli
             "  {:<16}{} (accepted by this binary)\n"
             "  {:<16}{} (accepted by this binary)\n"
             "  {:<16}{} bytes\n"
-            "  {:<16}{}\n",
+            "  {:<16}{}\n"
+            "  {:<16}{} (parsed by this binary)\n",
             opened.runtimeArtifactRoot.string(),
             "root hash",
             opened.artifact.rootHash,
@@ -195,7 +196,9 @@ namespace uf::cli
             "model",
             opened.artifact.modelBytes,
             "assets",
-            opened.artifact.assets
+            opened.artifact.assets,
+            "model semantics",
+            opened.artifact.semanticHash
         );
 
         for (auto const& one : opened.deployments)

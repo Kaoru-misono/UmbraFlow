@@ -624,10 +624,12 @@ namespace uf::task
         return p_vm->runValue(source, chunkName);
     }
 
-    auto TaskHost::bootTrustedRuntime(GenerationId generation) -> Status
+    auto TaskHost::createTrustedRuntimeVm(
+        GenerationId generation
+    ) -> Result<script::Engine>
     {
         UF_TRY_VALUE(p_generation, requireGeneration(generation));
-        auto vm = script::Engine::create(
+        return script::Engine::create(
             script::EngineConfig{
                 .cancellation      = p_generation->cancellation(),
                 .frameworkModules           = frameworkScriptModules(),
@@ -638,13 +640,15 @@ namespace uf::task
                 .classifyRaisedError        = scriptRaisedErrorClassifier(),
             }
         );
-        if (!vm)
-        {
-            return std::unexpected{std::move(vm).error()};
-        }
+    }
+
+    auto TaskHost::bootTrustedRuntime(GenerationId generation) -> Status
+    {
+        UF_TRY_VALUE(p_generation, requireGeneration(generation));
+        UF_TRY_VALUE(vm, createTrustedRuntimeVm(generation));
         UF_TRY_VALUE(
             loaded,
-            vm->runNumber("project.load_project(); return 1", "runtime-artifact-finalize")
+            vm.runNumber("project.load_project(); return 1", "runtime-artifact-finalize")
         );
         if (loaded != 1.0 || !p_generation->binding())
         {
@@ -653,7 +657,51 @@ namespace uf::task
                 "trusted Runtime parser returned without finalizing its artifact"
             );
         }
-        return p_generation->installRuntimeVm(*std::move(vm));
+        return p_generation->installRuntimeVm(std::move(vm));
+    }
+
+    auto TaskHost::runtimeModelSemanticHash(
+        GenerationId generation
+    ) -> Result<ContentHash>
+    {
+        UF_TRY_VALUE(vm, createTrustedRuntimeVm(generation));
+        UF_TRY_VALUE(
+            parsed,
+            vm.runValue("return project.model_semantics()", "runtime-model-parse")
+        );
+        // The parser answers with the hex digest its own canonical_bytes
+        // produced, so an answer of another shape is a broken build rather than
+        // a bad model, and says so.
+        auto const* const p_digest = parsed.text();
+        if (p_digest == nullptr)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "trusted Runtime parser returned no RuntimeModel semantic hash"
+            );
+        }
+        return ContentHash::parse("sha256:" + *p_digest);
+    }
+
+    auto parseRuntimeArtifact(
+        std::filesystem::path const& artifactRoot
+    ) -> Result<ParsedRuntimeModel>
+    {
+        // The artifact directory is its own root here. openUnsealedProject
+        // takes a project root because a SESSION over a generation reads the
+        // project's tree; a parse reads nothing outside the artifact, so there
+        // is no second directory for this seam to be told about.
+        auto host = TaskHost{};
+        UF_TRY_VALUE(
+            generation,
+            host.openUnsealedProject(artifactRoot, artifactRoot)
+        );
+        UF_TRY_VALUE(semanticHash, host.runtimeModelSemanticHash(generation));
+        UF_TRY_VALUE(p_generation, host.requireGeneration(generation));
+        return ParsedRuntimeModel{
+            .artifact     = p_generation->artifact(),
+            .semanticHash = semanticHash,
+        };
     }
 
     auto TaskHost::mintReceipt(

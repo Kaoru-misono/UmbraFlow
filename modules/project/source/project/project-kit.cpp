@@ -24,6 +24,7 @@
 #include <schema/framework-schema-catalog.hpp>
 
 #include <task/runtime-model-file.hpp>
+#include <task/task-host.hpp>
 
 #include <algorithm>
 #include <bit>
@@ -147,6 +148,13 @@ namespace uf::project
             std::vector<std::string>                  inputs{};
             std::vector<ProjectTemplateCutSpec>       templateCuts{};
             std::vector<ProjectRegistrationBuildSpec> registrations{};
+
+            // The RuntimeArtifact directory the declaration names, relative to
+            // the source tree. It is not one of the inputs above and never
+            // becomes one: an input is a file this build reads to produce
+            // something, and these bytes produce nothing -- they are read so
+            // the trusted parser can judge them.
+            std::string runtimeArtifact{};
         };
 
         struct GeneratedArtifact final
@@ -1235,10 +1243,19 @@ namespace uf::project
             UF_TRY_VALUE(document, readProjectRootDocument(sourceDirectory));
             UF_TRY_VALUE(inputs, derivedInputs(sourceDirectory, document));
             UF_TRY_VALUE(templateCuts, declaredTemplateCuts(document));
+            UF_TRY_VALUE(
+                runtimeArtifact,
+                normalizeInputPath(
+                    std::filesystem::path{
+                        member(document, "runtime_artifact").string()
+                    }
+                )
+            );
             return ProjectManifest{
-                .inputs        = std::move(inputs),
-                .templateCuts  = std::move(templateCuts),
-                .registrations = declaredRegistrations(document),
+                .inputs          = std::move(inputs),
+                .templateCuts    = std::move(templateCuts),
+                .registrations   = declaredRegistrations(document),
+                .runtimeArtifact = std::move(runtimeArtifact),
             };
         }
 
@@ -1886,19 +1903,40 @@ namespace uf::project
         [[nodiscard]]
         auto generatedProjectBuild(
             ProjectBuildSpec const& spec,
-            std::vector<std::string> const& inputs,
-            std::vector<ProjectTemplateCutSpec> const& templateCuts,
-            std::vector<ProjectRegistrationBuildSpec> const& registrations,
+            ProjectManifest const& declaration,
             TemplateSourceResolver const& resolveTemplateSource
         ) -> Result<GeneratedProjectBuild>
         {
+            auto const& inputs = declaration.inputs;
+
+            // The trusted RuntimeModel parse, and the first thing every verb
+            // that judges a project does. It runs the framework's own embedded
+            // parser over the artifact this declaration names, so a model a
+            // live session would refuse is refused here, in the parser's
+            // words, by a command that reaches no window and no Operator root.
+            //
+            // First rather than last, because it must not depend on a build
+            // directory: `project check` judges the generated tree afterwards,
+            // and a model refusal that could be reached only through a fresh
+            // build would be a refusal an author cannot get to.
+            UF_TRY_CONTEXT(
+                task::parseRuntimeArtifact(
+                    spec.sourceDirectory
+                    / std::filesystem::path{declaration.runtimeArtifact}
+                ),
+                std::format(
+                    "the RuntimeArtifact this project declares at \"{}\"",
+                    declaration.runtimeArtifact
+                )
+            );
+
             UF_TRY_VALUE(
                 adapters,
                 generatedAdapters(spec.sourceDirectory, inputs)
             );
             UF_TRY_VALUE(
                 templates,
-                generatedTemplates(templateCuts, resolveTemplateSource)
+                generatedTemplates(declaration.templateCuts, resolveTemplateSource)
             );
             UF_TRY_VALUE(
                 closureFamilies,
@@ -1906,7 +1944,7 @@ namespace uf::project
                     spec.sourceDirectory,
                     inputs,
                     adapters,
-                    registrations
+                    declaration.registrations
                 )
             );
 
@@ -3206,13 +3244,7 @@ namespace uf::project
         auto const& inputs = projectManifest.inputs;
         UF_TRY_VALUE(
             generated,
-            generatedProjectBuild(
-                spec,
-                inputs,
-                projectManifest.templateCuts,
-                projectManifest.registrations,
-                resolveTemplateSource
-            )
+            generatedProjectBuild(spec, projectManifest, resolveTemplateSource)
         );
         UF_TRY(ensureBuildDirectory(spec.buildDirectory));
         UF_TRY(writeGeneratedProjectBuild(spec.buildDirectory, generated));
@@ -3251,13 +3283,7 @@ namespace uf::project
         auto const& inputs = projectManifest.inputs;
         UF_TRY_VALUE(
             generated,
-            generatedProjectBuild(
-                spec,
-                inputs,
-                projectManifest.templateCuts,
-                projectManifest.registrations,
-                resolveTemplateSource
-            )
+            generatedProjectBuild(spec, projectManifest, resolveTemplateSource)
         );
         UF_TRY(validateGeneratedProjectBuild(spec.buildDirectory, generated));
 

@@ -1,6 +1,8 @@
 #include <project/project-kit.hpp>
 #include <project/declarative-workflow-tool.hpp>
 
+#include <task/runtime-model-file.hpp>
+
 #include <script/pure-data-program.hpp>
 
 #include <json/value.hpp>
@@ -19,6 +21,7 @@
 #include <array>
 #include <cstddef>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <ios>
 #include <map>
@@ -33,6 +36,38 @@ namespace uf::project
 {
     namespace
     {
+        auto writeFile(
+            std::filesystem::path const& path,
+            std::string_view text
+        ) -> void;
+
+        // Every fixture below declares "runtime_artifact": "runtime/artifact"
+        // and, until `project check` read one, none of them wrote it. That was
+        // not a shortcut the fixtures were entitled to: the member is required
+        // by schema/umbraflow-project-v3.schema.json, so a source tree without
+        // those bytes is a project whose declaration names an artifact that is
+        // not there, and every one of these workspaces would have been refused
+        // at a live door.
+        //
+        // H_genesis is what they get: the RuntimeModel that declares no ui
+        // target, no binding and no surface. It parses, which is all any case
+        // here needs, and it is the same document `project scaffold` writes.
+        auto writeGenesisArtifact(std::filesystem::path const& sourceDirectory)
+            -> void
+        {
+            auto const artifact = sourceDirectory / "runtime" / "artifact";
+            auto const manifest = task::genesisRuntimeArtifactManifestJcs();
+            REQUIRE(manifest.has_value());
+            writeFile(
+                artifact / std::string{task::k_runtimeModelFileName},
+                task::k_genesisRuntimeModelToml
+            );
+            writeFile(
+                artifact / std::string{task::k_runtimeArtifactManifestFileName},
+                *manifest
+            );
+        }
+
         class TemporaryWorkspace final
         {
             std::filesystem::path m_path;
@@ -44,6 +79,7 @@ namespace uf::project
                 auto error = std::error_code{};
                 std::filesystem::remove_all(m_path, error);
                 REQUIRE(std::filesystem::create_directories(source(), error));
+                writeGenesisArtifact(source());
             }
 
             TemporaryWorkspace(TemporaryWorkspace const&)                    = delete;
@@ -95,6 +131,27 @@ namespace uf::project
                 return m_path / "releases";
             }
         };
+
+        // What a refusal was carried under, which is where the kit names the
+        // directory the parser was pointed at. The `project` command line
+        // prints message() alone, so this is a fact about the Result rather
+        // than about anything an author sees today.
+        template <typename Value>
+        [[nodiscard]]
+        auto contextOf(Result<Value> const& result) -> std::string
+        {
+            if (result.has_value())
+            {
+                return std::string{};
+            }
+            auto joined = std::string{};
+            for (auto const& entry : result.error().context())
+            {
+                joined += entry;
+                joined.push_back('\n');
+            }
+            return joined;
+        }
 
         template <typename Value>
         [[nodiscard]]
@@ -268,6 +325,95 @@ namespace uf::project
         ) -> void
         {
             writeFile(workspace.source() / k_deploymentManifestInput, manifest);
+        }
+
+        // One RuntimeModel with one detected collection, with the slots block
+        // spliced in so a case can leave a member out of it. Nothing about this
+        // document is the kit's business: it is a model, and only
+        // modules/task/runtime/model.luau knows what any member of it means.
+        [[nodiscard]]
+        auto collectionModel(std::string_view slots) -> std::string
+        {
+            return std::string{R"toml(schema_version = 3
+    base_resolution = [1920, 1080]
+    base_dpi = [96, 96]
+
+    [[ui_target]]
+    id = "header"
+    kind = "region"
+
+    [[locator]]
+    id = "header.template"
+    kind = "template"
+    asset_path = "assets/header.png"
+    threshold = 0.9
+
+    [[reader]]
+    id = "options.text"
+    kind = "text"
+    confidence_floor = 0.8
+    layout = "block"
+    normalization = "trim"
+
+    [[binding]]
+    id = "settings.header"
+    surface = "settings"
+    ui_target = "header"
+    placement = { kind = "fixed", rect = [40, 30, 600, 80] }
+    variants = [{ name = "default", detector = { all = [{ kind = "locator_present", locator = "header.template" }], any = [], none = [] } }]
+    actions = []
+
+    [[collection]]
+    id = "options"
+    surface = "settings"
+    placement = { kind = "detected", search_rect = [120, 300, 1680, 300], reader = "options.text", order = "left_to_right", slots = { )toml"}
+                + std::string{slots}
+                + R"toml( } }
+    actions = []
+    reads = []
+
+    [[surface]]
+    id = "settings"
+    kind = "scene"
+    covers = []
+    identity = ["settings.header"]
+    )toml";
+        }
+
+        // Puts `model` in the place this project's declaration names, under a
+        // manifest that closes over it and nothing else.
+        //
+        // The manifest is written out in the shape genesisRuntimeArtifactManifestJcs
+        // writes -- and for its stated reason: these bytes are read back by a
+        // hand-written canonical reader in uf::task, so a fixture that rendered a
+        // value tree could drift from that reader without either side noticing.
+        // No asset is published because none is needed: the parser reads the
+        // model's asset_path as a name, and the closure the artifact declares is
+        // held against the parser's list only where a binding is finalized, which
+        // is a live door rather than this one.
+        auto publishRuntimeModel(
+            std::filesystem::path const& artifactRoot,
+            std::string_view model
+        ) -> void
+        {
+            auto const digest = sha256(std::as_bytes(std::span{model}));
+            REQUIRE(digest.has_value());
+            writeFile(
+                artifactRoot / std::string{task::k_runtimeModelFileName},
+                model
+            );
+            writeFile(
+                artifactRoot / std::string{task::k_runtimeArtifactManifestFileName},
+                std::format(
+                    R"({{"assets":[],"page_model":{{"path":"{}","sha256":"{}","size":{}}},)"
+                    R"("runtime_artifact_format":{},"runtime_model_format":{}}})",
+                    task::k_runtimeModelFileName,
+                    digest->hex(),
+                    model.size(),
+                    task::k_runtimeArtifactFormat,
+                    task::k_runtimeModelFormat
+                )
+            );
         }
 
         [[nodiscard]]
@@ -531,6 +677,14 @@ namespace uf::project
                     : "uf-project-scaffold-hand-written"
             );
             auto const workspace = TemporaryWorkspace{label};
+            // The one case that starts from nothing. Every other workspace is
+            // handed the genesis artifact because its declaration is written
+            // by hand and names one; here `project scaffold` writes both the
+            // declaration and the artifact, and refuses a directory that
+            // already holds a file it is about to author.
+            auto error = std::error_code{};
+            std::filesystem::remove_all(workspace.source() / "runtime", error);
+            REQUIRE_FALSE(error);
             auto const scaffolded = scaffoldProject(ProjectScaffoldSpec{
                 .sourceDirectory = workspace.source(),
                 .pluginId        = "chaos.project",
@@ -1524,6 +1678,96 @@ namespace uf::project
             ) != std::string::npos,
             "modified-release refusal must name the altered file"
         );
+    }
+
+    // The offline half of the live door. `project check` and `project build`
+    // run the framework's one embedded RuntimeModel parser over the artifact
+    // the declaration names, so a model that could never open a session is
+    // refused by a command that reaches no window and no Operator root.
+    //
+    // Every assertion below quotes the PARSER's own words. That is the point of
+    // the case and not a convenience: change "must be a finite number" or the
+    // "collections[1].placement.slots.maximum_slots" path inside
+    // modules/task/runtime/model.luau and this case goes red, which is what
+    // says the kit relays one authority instead of holding a second reading of
+    // its own.
+    TEST_CASE("project check and build run the trusted RuntimeModel parse")
+    {
+        auto const workspace = TemporaryWorkspace{"uf-project-model-parse"};
+        auto const initialized = initializedDeploymentWorkspace(
+            workspace,
+            acceptedDeploymentManifest()
+        );
+        REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+        auto const spec = ProjectBuildSpec{
+            .sourceDirectory = workspace.source(),
+            .buildDirectory  = workspace.build(),
+        };
+        auto const artifact = workspace.source() / "runtime" / "artifact";
+
+        // The model the workspace was handed declares nothing at all -- no ui
+        // target, no binding, no surface. It is a legal RuntimeModel, and a
+        // project that has never been annotated is not a project this refuses.
+        REQUIRE_MESSAGE(buildProject(spec, {}).has_value(), "genesis must build");
+        REQUIRE_MESSAGE(checkProject(spec, {}).has_value(), "genesis must check");
+
+        constexpr auto completeSlots = std::string_view{
+            "origin = 631, pitch = 316, extent = 1080, tolerance = 2, "
+            "maximum_slots = 8"
+        };
+        publishRuntimeModel(artifact, collectionModel(completeSlots));
+        REQUIRE_MESSAGE(
+            buildProject(spec, {}).has_value(),
+            messageOf(buildProject(spec, {}))
+        );
+        REQUIRE_MESSAGE(
+            checkProject(spec, {}).has_value(),
+            messageOf(checkProject(spec, {}))
+        );
+
+        // The defect that reached a downstream project: a slots block with one
+        // member missing. The parser refuses it; nothing in the kit knows what
+        // a slot is, so if this refusal appears at all it came from model.luau.
+        constexpr auto missingMaximum = std::string_view{
+            "origin = 631, pitch = 316, extent = 1080, tolerance = 2"
+        };
+        publishRuntimeModel(artifact, collectionModel(missingMaximum));
+
+        auto const rebuilt = buildProject(spec, {});
+        REQUIRE_FALSE_MESSAGE(
+            rebuilt.has_value(),
+            "project build must refuse a RuntimeModel the parser refuses"
+        );
+        auto const buildRefusal = messageOf(rebuilt);
+        INFO("build refusal: ", buildRefusal);
+        CHECK(buildRefusal.contains(
+            "collections[1].placement.slots.maximum_slots"
+        ));
+        CHECK(buildRefusal.contains("must be a finite number"));
+        CHECK(contextOf(rebuilt).contains("runtime/artifact"));
+
+        // `project check` is the verb an author re-runs after every edit, and
+        // it must answer this without a build having succeeded first: the
+        // build directory here still holds the artifacts of the model two
+        // paragraphs up, and a model refusal reachable only through a fresh
+        // build is a refusal nobody can get to.
+        auto const checked = checkProject(spec, {});
+        REQUIRE_FALSE_MESSAGE(
+            checked.has_value(),
+            "project check must refuse a RuntimeModel the parser refuses"
+        );
+        auto const checkRefusal = messageOf(checked);
+        INFO("check refusal: ", checkRefusal);
+        CHECK(checkRefusal.contains(
+            "collections[1].placement.slots.maximum_slots"
+        ));
+        CHECK(checkRefusal.contains("must be a finite number"));
+        CHECK(contextOf(checked).contains("runtime/artifact"));
+
+        // One authority, stated as an equality rather than as two similar
+        // sentences: both verbs run the same parse over the same bytes, so
+        // there is no room for one of them to be the weaker reader.
+        CHECK(buildRefusal == checkRefusal);
     }
 
     TEST_CASE("project check names a declared input removed after build")

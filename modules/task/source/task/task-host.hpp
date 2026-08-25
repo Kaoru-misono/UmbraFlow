@@ -169,6 +169,18 @@ namespace uf::task
         bool runtimeModelBound{};
     };
 
+    // What the trusted parser made of one artifact directory, short of binding
+    // anything to it: the verified artifact, and the semantic hash the parser
+    // derived from the model it compiled.
+    //
+    // The artifact is shared rather than owned outright because the Host that
+    // ran the parse held it too and is gone by the time this is read.
+    struct ParsedRuntimeModel final
+    {
+        std::shared_ptr<RuntimeArtifactHandle const> artifact{};
+        ContentHash                                  semanticHash;
+    };
+
     // One kind of generation. Every one carries a verified RuntimeArtifact and
     // the project root that artifact was opened from; what varies between two
     // generations is whether the artifact's hash is SEALED -- whether a closing
@@ -326,6 +338,13 @@ namespace uf::task
         friend struct TaskHostTestAccess;
         friend class operator_runtime::OperatorTaskHost;
 
+        // The offline seam. It owns a Host of its own for the length of one
+        // parse, so it reaches requireGeneration and runtimeModelSemanticHash
+        // below, which no other caller may.
+        friend auto parseRuntimeArtifact(
+            std::filesystem::path const& artifactRoot
+        ) -> Result<ParsedRuntimeModel>;
+
         class Generation;
         class RuntimeNativeState;
 
@@ -373,7 +392,26 @@ namespace uf::task
             std::string_view chunkName
         ) -> Result<script::ScriptValue>;
 
+        // The one trusted RuntimeModel environment, built in one place. Both
+        // entries below take it: the boot that finalizes a binding, and the
+        // parse that stops short of one. A second config here would be a second
+        // set of admitted modules, which is a second parser in all but name.
+        [[nodiscard]]
+        auto createTrustedRuntimeVm(GenerationId generation)
+            -> Result<script::Engine>;
+
         [[nodiscard]] auto bootTrustedRuntime(GenerationId generation) -> Status;
+
+        // bootTrustedRuntime minus the binding: it runs the same embedded
+        // parser over this generation's model bytes and reports the semantic
+        // hash the parser itself derived, finalizing nothing and installing no
+        // Runtime VM. That is why it accepts the unsealed generation
+        // openUnsealedProject makes and the boot path does not -- nothing here
+        // attests to anything, so there is nothing for a closing record to
+        // stand behind.
+        [[nodiscard]]
+        auto runtimeModelSemanticHash(GenerationId generation)
+            -> Result<ContentHash>;
 
         [[nodiscard]]
         auto mintReceipt(
@@ -580,4 +618,23 @@ namespace uf::task
         [[nodiscard]] auto resume(GenerationId generation) -> Status;
         [[nodiscard]] auto subscribeEvents(ITaskEventSink& sink) -> Status;
     };
+
+    // Runs the trusted RuntimeModel parser over the artifact a directory holds
+    // and reports what it made of it, or relays the parser's refusal in the
+    // parser's own words.
+    //
+    // The parser is modules/task/runtime/model.luau reached through
+    // project.model_semantics(), which is the boot path minus the binding, so
+    // this is not a second reading of a RuntimeModel -- it is the ONE reading,
+    // run somewhere a live session has not started. That is what lets `project
+    // check` refuse offline exactly what a session would refuse at the door,
+    // and why no caller of this may add a rule of its own on top.
+    //
+    // Nothing is sealed and nothing is attested: the root hash is derived from
+    // the manifest bytes on disk at this instant, so it names what is there and
+    // says nothing about what will be there next.
+    [[nodiscard]]
+    auto parseRuntimeArtifact(
+        std::filesystem::path const& artifactRoot
+    ) -> Result<ParsedRuntimeModel>;
 }

@@ -81,6 +81,15 @@ file(WRITE "${SOURCE_DIRECTORY}/umbraflow-project.json" [=[{
     }
   ]
 }]=])
+# The RuntimeArtifact that declaration names. Every verb below runs the trusted
+# RuntimeModel parser over it, so a fixture that declared one and wrote none was
+# declaring an artifact no live door would have found. The bytes are a real
+# artifact this repository already ships rather than a hand-written stand-in,
+# because the manifest carries a digest for every file it lists and a
+# transcription of one goes stale silently.
+file(COPY "${UF_PROJECT_TEST_ARTIFACT}"
+    DESTINATION "${SOURCE_DIRECTORY}/runtime"
+)
 file(MAKE_DIRECTORY "${SOURCE_DIRECTORY}/content")
 file(WRITE "${SOURCE_DIRECTORY}/content/facts.txt" "declared facts\n")
 file(WRITE "${DECLARATIVE_PATH}" [=[{
@@ -399,6 +408,11 @@ file(MAKE_DIRECTORY
     "${CUT_LYING_CORPUS}"
 )
 
+# The same RuntimeArtifact this fixture's first source tree gets, for the same
+# reason: this declaration names one, and every verb run against it parses it.
+file(COPY "${UF_PROJECT_TEST_ARTIFACT}"
+    DESTINATION "${CUT_SOURCE}/runtime"
+)
 file(WRITE "${CUT_SOURCE}/plugin/dream.luau" [=[return {
     plugin_id = "chaos.dream",
 }

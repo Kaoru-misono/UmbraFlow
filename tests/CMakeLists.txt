@@ -876,12 +876,16 @@ if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
     cpp_stage_runtime_libraries(test-cli ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
 endif()
 
+# task is linked so the fixtures can write the genesis RuntimeArtifact every
+# project declaration names. The kit's own verbs now RUN the trusted parser
+# over that directory, so a workspace without it is a project no verb accepts.
 cpp_add_test(
     NAME test-project
     SOURCES
         project/test-project-kit.cpp
     LIBS
         ${PROJECT_NAME}_project
+        ${PROJECT_NAME}_task
         ${PROJECT_NAME}_script
         ${PROJECT_NAME}_json
         ${PROJECT_NAME}_domain
@@ -900,6 +904,7 @@ cpp_add_test(
     LIBS
         ${PROJECT_NAME}_project
         ${PROJECT_NAME}_deployment
+        ${PROJECT_NAME}_task
 )
 if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
     cpp_stage_runtime_libraries(
@@ -966,6 +971,10 @@ add_test(
         # project declares one.
         -DUF_PROJECT_TEST_FRAME=${PROJECT_SOURCE_DIR}/examples/umbraflow/runtime/probe-frame.png
         -DUF_PROJECT_TEST_OTHER_FRAME=${PROJECT_SOURCE_DIR}/examples/umbraflow/runtime/artifact/assets/fixture-anchor.png
+        # The RuntimeArtifact the fixture's declaration names. `project check`
+        # parses it, so the fixture needs real artifact bytes rather than a
+        # declaration pointing at nothing.
+        -DUF_PROJECT_TEST_ARTIFACT=${PROJECT_SOURCE_DIR}/examples/umbraflow/runtime/artifact
         -P ${CMAKE_CURRENT_SOURCE_DIR}/project/test-project-cli.cmake
 )
 set_tests_properties(test-project-cli PROPERTIES

@@ -24,11 +24,15 @@ namespace uf::project
     };
 
     // The one document a project directory holds at its root, and the one
-    // statement of its shape. The kit reads no RuntimeModel and loads no
-    // deployment, so the shape lives in neither of them: it is published under
-    // schema/ and reaches every reader through the framework schema catalog
-    // this module already embeds. There is no second, narrower reading of this
-    // document here.
+    // statement of its shape. The kit interprets no RuntimeModel semantics of
+    // its own and loads no deployment, so the shape lives in neither of them:
+    // it is published under schema/ and reaches every reader through the
+    // framework schema catalog this module already embeds. There is no second,
+    // narrower reading of this document here.
+    //
+    // The kit does READ the RuntimeModel the document names, by running the
+    // framework's one embedded parser over it (task::parseRuntimeArtifact). It
+    // executes that interpreter; it does not restate it.
     inline constexpr auto k_projectManifestName = std::string_view{
         "umbraflow-project.json"
     };

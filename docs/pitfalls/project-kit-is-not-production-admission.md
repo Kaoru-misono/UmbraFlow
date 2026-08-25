@@ -44,11 +44,26 @@ hard way: a real migration passed `project check` and then met
 `Tool name chaos.get_current_event is outside the namespace chaos.dream its
 registrant owns` from `umbra-flow open`.
 
+Amended 2026-08-25: `project check` and `project build` also run the trusted
+RuntimeModel parse over the artifact the declaration names, through
+`task::parseRuntimeArtifact` — the framework's one embedded `model.luau`,
+reached by `project.model_semantics()`, which is the boot path minus the
+binding. This too was found the hard way: a downstream project's
+`runtime/artifact/runtime-model.toml` was missing two members of its `slots`
+block, and `project check`, `project build` and `umbra-flow open` all exited 0
+against it. All three refuse it now, in the parser's own words. The kit's
+declaration therefore names an artifact that must be THERE and must PARSE; a
+source tree that declares `runtime_artifact` and writes none is refused.
+
 What the kit still does **not** do is compile the project's inline schemas,
 derive the registration root, require every declared Tool to be bound, or
 compile the closure and compare its actual exports against what the declaration
 states — those are the loader's, and a build can faithfully record a
-declaration whose remaining semantic joins do not hold.
+declaration whose remaining semantic joins do not hold. It also stops short of
+the two joins a RuntimeModel binding makes — the parser's asset closure against
+the artifact manifest, and the parser's format number against the artifact's —
+because both live behind `finalizeRuntimeModel`, which only a sealed generation
+reaches.
 
 The unbound-Tool rule is the one deliberately left out rather than merely
 unimplemented. The framework's own `project init --plugin generated` scaffold
@@ -100,6 +115,10 @@ A release-facing consumer test must include these independent cases:
    `umbra-flow open` must fail.
 3. After changing a RuntimeArtifact model or asset without regenerating its
    manifest, `umbra-flow open` must fail and name the mismatched file or row.
+   After changing the model to one the trusted parser refuses — and
+   regenerating the manifest so the closure is intact — `project check`,
+   `project build` and `umbra-flow open` must all fail with the SAME sentence,
+   which is the parser's.
 4. After valid regeneration, a registration member change moves the production
    registration hash, and a RuntimeArtifact change moves its root hash. Neither
    assertion should require the Project Kit bundle root to move unless that

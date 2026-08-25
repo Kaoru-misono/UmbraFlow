@@ -307,10 +307,29 @@ local function requireNative(name: string): any
     return native[name]
 end
 
+-- The parse, and the identity that parse yields. Both entries below start
+-- here: a booting Runtime, which goes on to bind, and an offline reader, which
+-- stops. It is factored rather than restated so the two cannot come to
+-- different conclusions about the same bytes.
+local function parseHostedModel(): (any, string)
+    local runtimeModel = project.parse(requireNative("runtime_model_bytes")())
+    return runtimeModel,
+        requireNative("runtime_semantic_hash")(model.canonical_bytes(runtimeModel))
+end
+
+-- load_project without the binding: what these artifact bytes compile to,
+-- named by the model's own semantic hash, with nothing finalized and nothing
+-- attested. `project check` runs this over a source tree, so a model a live
+-- session would refuse is refused offline -- and refused in these words,
+-- because this IS the parse a live session runs.
+function project.model_semantics(): string
+    local _, semanticHash = parseHostedModel()
+    return semanticHash
+end
+
 function project.load_project(): any
     if loadedModel ~= nil then return loadedModel end
-    local runtimeModel = project.parse(requireNative("runtime_model_bytes")())
-    local semanticHash = requireNative("runtime_semantic_hash")(model.canonical_bytes(runtimeModel))
+    local runtimeModel, semanticHash = parseHostedModel()
     local binding = requireNative("runtime_model_finalize")(
         model.format,
         semanticHash,

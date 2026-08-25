@@ -20,6 +20,8 @@
 
 #include <deployment/project-directory.hpp>
 
+#include <task/runtime-model-file.hpp>
+
 #include <core/error/result.hpp>
 
 #include <doctest/doctest.h>
@@ -260,6 +262,23 @@ namespace uf::project
             auto const build     = workspace.path() / "build";
             writeFile(source / k_handWrittenTool, "return {}\n");
             writeFile(source / "umbraflow-project.json", manifest);
+
+            // The RuntimeArtifact every document below declares. The kit runs
+            // the trusted parser over it, so a source tree without one is
+            // refused for a reason that has nothing to do with the manifest
+            // shape these cases measure. H_genesis is the smallest artifact
+            // that parses.
+            auto const artifact = source / "runtime" / "artifact";
+            auto const genesis  = task::genesisRuntimeArtifactManifestJcs();
+            REQUIRE(genesis.has_value());
+            writeFile(
+                artifact / std::string{task::k_runtimeModelFileName},
+                task::k_genesisRuntimeModelToml
+            );
+            writeFile(
+                artifact / std::string{task::k_runtimeArtifactManifestFileName},
+                *genesis
+            );
 
             if (manifest.contains(k_generatedTool))
             {

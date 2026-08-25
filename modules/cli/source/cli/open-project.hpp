@@ -62,6 +62,13 @@ namespace uf::cli
         // manifest declared, each at the size and digest it declared.
         std::size_t modelBytes{};
         std::size_t assets{};
+
+        // What the trusted parser made of those model bytes, and the only
+        // field here that says the MODEL was read rather than the artifact
+        // around it. Without it this verb reported a byte count and a format
+        // number out of the manifest and left a reader to infer a parse that
+        // had not happened.
+        std::string semanticHash{};
     };
 
     struct OpenedProject final

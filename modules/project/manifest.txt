@@ -11,10 +11,12 @@ version = 0.1.0
 [dependencies]
 public = core domain operator
 # task, because the kit writes the genesis RuntimeArtifact at scaffold
-# time and those bytes are the runtime's constant, not the kit's. It
-# names the two file names, the two format numbers and the genesis
-# document itself, and nothing else: the kit still interprets no
-# RuntimeModel semantics and still links no loader of its own.
+# time and RUNS the trusted RuntimeModel parser at check and build time.
+# Both are the runtime's own bytes rather than the kit's: the file names,
+# the format numbers, the genesis document, and the one embedded parser
+# `project check` executes so that a model a live session would refuse is
+# refused offline. The kit still interprets no RuntimeModel semantics in
+# C++ of its own -- it calls the interpreter instead of restating it.
 private = image json schema task
 
 # The one thing this module does that is not arithmetic over files: starting a
