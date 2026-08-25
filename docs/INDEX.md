@@ -36,6 +36,8 @@ could only be kept true by hand.
   what the removed member *was*, not only what is new: a note that describes a
   new capability and omits the deletion it replaced sends a consumer into a wall
   its own release notes never mentioned.
+  - [2026-08-25 — One Tool vocabulary](release-notes/2026-08-25-one-tool-vocabulary.md)
+  - [2026-08-23 — The Project-side upgrade path](release-notes/2026-08-23-project-upgrade-path.md)
   - [2026-08-23 — Project state interpretation removed](release-notes/2026-08-23-project-state-interpretation-removed.md)
 
 ## Two rules about the consumer repository
