@@ -2816,15 +2816,13 @@ namespace uf::service
             operator_runtime::OperatorCoordinator::open(upgrade.runtimeDirectory)
         );
 
-        // The generation the install compare-and-swaps against.
-        // activeRuntimeArtifactPin fails exactly when no release is active,
-        // and that absence is the bootstrap case the schema spells as
-        // generation 0 -- the same reading the ledger's own first-install
-        // tests use.
-        auto const active = coordinator.activeRuntimeArtifactPin();
-        auto const expectedInstalledGeneration = (
-            active ? active->installedGeneration : uint64{0}
-        );
+        // The generation the install compare-and-swaps against. Every Operator
+        // root holds an active pin from its first open -- the genesis
+        // generation is part of its layout -- so a root that has never been
+        // upgraded reads generation 0 here rather than failing, and the first
+        // real installation lands at 1.
+        UF_TRY_VALUE(active, coordinator.activeRuntimeArtifactPin());
+        auto const expectedInstalledGeneration = active.installedGeneration;
 
         auto const project = operator_runtime::ProjectIdentity{selected.generation};
         auto registrar = operator_runtime::ProjectGenerationRegistrar{};
@@ -2934,25 +2932,12 @@ namespace uf::service
                 validate
             )
         );
-        if (active)
-        {
-            UF_TRY(coordinator.upgradeRuntimeArtifactAndPinSession(
-                installation,
-                pin,
-                sessionManifest,
-                upgradeProfile
-            ));
-        }
-        else
-        {
-            // A root with no release is the bootstrap: there is no predecessor
-            // for the ledger's refusal rollback to restore, so the first
-            // install goes through the same two public doors the ledger's own
-            // first-install tests use. A pin refusal leaves the install active
-            // and no session; re-running the verb then takes the upgrade path.
-            UF_TRY(coordinator.installRuntimeArtifact(installation));
-            UF_TRY(coordinator.pinSession(pin, sessionManifest, upgradeProfile));
-        }
+        UF_TRY(coordinator.upgradeRuntimeArtifactAndPinSession(
+            installation,
+            pin,
+            sessionManifest,
+            upgradeProfile
+        ));
         UF_TRY_VALUE(installed, coordinator.activeRuntimeArtifactPin());
         return RuntimeUpgradeResult{
             .installedGeneration = installed.installedGeneration,

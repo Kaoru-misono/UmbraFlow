@@ -11,6 +11,7 @@
 #include <format>
 #include <memory>
 #include <string>
+#include <span>
 #include <string_view>
 #include <system_error>
 #include <thread>
@@ -20,6 +21,14 @@ namespace uf::operator_runtime::detail
 {
     namespace
     {
+        // The staging leaf the genesis artifact lands through. It is a fixed
+        // short name rather than a CSPRNG token because only one Coordinator
+        // may hold a root at a time, so there is no second publisher to
+        // collide with -- and because a name shorter than the 64-character
+        // destination cannot be what pushes a path past a platform limit the
+        // destination itself fits under.
+        constexpr auto k_genesisStagingName = std::string_view{"genesis"};
+
         constexpr auto k_publishRetryDelays = std::array{
             std::chrono::milliseconds{5},
             std::chrono::milliseconds{10},
@@ -119,16 +128,16 @@ namespace uf::operator_runtime::detail
             auto release() noexcept -> void { m_active = false; }
         };
 
+        // Whether the content-addressed destination already holds a directory.
+        // A path that exists and is not a plain one is refused rather than
+        // reported absent: a link there would redirect every later read out of
+        // the production root.
         [[nodiscard]]
-        auto materialize(
-            std::filesystem::path const& productionRoot,
-            task::RuntimeArtifactHandle const& source,
-            std::string_view stagingToken
-        ) -> Result<std::filesystem::path>
+        auto alreadyPublished(std::filesystem::path const& destination)
+            -> Result<bool>
         {
-            auto destination = productionRoot / source.rootHash().hex();
-            auto error       = std::error_code{};
-            auto status      = std::filesystem::symlink_status(destination, error);
+            auto error        = std::error_code{};
+            auto const status = std::filesystem::symlink_status(destination, error);
             if (!error && std::filesystem::exists(status))
             {
                 if (
@@ -138,12 +147,73 @@ namespace uf::operator_runtime::detail
                 {
                     return refuse("production RuntimeArtifact object path is not a directory");
                 }
-                return destination;
+                return true;
             }
             if (error && error != std::errc::no_such_file_or_directory)
             {
                 return ioFailure("inspect", destination, error);
             }
+            return false;
+        }
+
+        // Publication itself: one rename, and true when it was OUR staging
+        // directory that landed. False means the destination was already
+        // there -- a second publisher of identical content won the race -- and
+        // the caller must let its staging directory be removed rather than
+        // released.
+        [[nodiscard]]
+        auto renameIntoPlace(
+            std::filesystem::path const& staging,
+            std::filesystem::path const& destination
+        ) -> Result<bool>
+        {
+            auto error = std::error_code{};
+            for (auto attempt = std::size_t{}; ; ++attempt)
+            {
+                error.clear();
+                std::filesystem::rename(staging, destination, error);
+                if (!error)
+                {
+                    return true;
+                }
+
+                // A second publisher of identical content may have won the
+                // destination between the first inspection and this rename.
+                // Keep the rename error separate: alreadyPublished writes its
+                // own error_code and must not erase the failure we report.
+                auto const publishError = error;
+                UF_TRY_VALUE(published, alreadyPublished(destination));
+                if (published)
+                {
+                    return false;
+                }
+                if (attempt == k_publishRetryDelays.size())
+                {
+                    return ioFailure("publish", destination, publishError);
+                }
+
+                // Windows virus scanners and indexing filters can retain a
+                // just-closed directory handle briefly. Publication remains
+                // one atomic rename; only that boundary is retried, for a
+                // fixed total well below one second.
+                std::this_thread::sleep_for(k_publishRetryDelays[attempt]);
+            }
+        }
+
+        [[nodiscard]]
+        auto materialize(
+            std::filesystem::path const& productionRoot,
+            task::RuntimeArtifactHandle const& source,
+            std::string_view stagingToken
+        ) -> Result<std::filesystem::path>
+        {
+            auto destination = productionRoot / source.rootHash().hex();
+            UF_TRY_VALUE(published, alreadyPublished(destination));
+            if (published)
+            {
+                return destination;
+            }
+            auto error = std::error_code{};
 
             // The staging root belongs to the production layout, which
             // OperatorCoordinator::open creates and verifies; creating it here
@@ -184,56 +254,12 @@ namespace uf::operator_runtime::detail
                 }
             }
             UF_TRY(task::loadRuntimeArtifact(staging, source.rootHash()));
-
-            for (auto attempt = std::size_t{}; ; ++attempt)
+            UF_TRY_VALUE(renamed, renameIntoPlace(staging, destination));
+            if (renamed)
             {
-                error.clear();
-                std::filesystem::rename(staging, destination, error);
-                if (!error)
-                {
-                    cleanup.release();
-                    return destination;
-                }
-
-                // A second publisher of identical content may have won the
-                // destination between the first inspection and this rename.
-                // Keep the rename error separate: symlink_status writes its
-                // own error_code and must not erase the failure we report.
-                auto const publishError = error;
-                auto statusError        = std::error_code{};
-                auto const destinationStatus =
-                    std::filesystem::symlink_status(destination, statusError);
-                if (!statusError && std::filesystem::exists(destinationStatus))
-                {
-                    if (
-                        !std::filesystem::is_directory(destinationStatus)
-                        || std::filesystem::is_symlink(destinationStatus)
-                    )
-                    {
-                        return refuse(
-                            "production RuntimeArtifact object path is not a directory"
-                        );
-                    }
-                    return destination;
-                }
-                if (
-                    statusError
-                    && statusError != std::errc::no_such_file_or_directory
-                )
-                {
-                    return ioFailure("inspect", destination, statusError);
-                }
-                if (attempt == k_publishRetryDelays.size())
-                {
-                    return ioFailure("publish", destination, publishError);
-                }
-
-                // Windows virus scanners and indexing filters can retain a
-                // just-closed directory handle briefly. Publication remains
-                // one atomic rename; only that boundary is retried, for a
-                // fixed total well below one second.
-                std::this_thread::sleep_for(k_publishRetryDelays[attempt]);
+                cleanup.release();
             }
+            return destination;
         }
     }
 
@@ -295,6 +321,72 @@ namespace uf::operator_runtime::detail
         return std::make_shared<task::RuntimeArtifactHandle const>(
             std::move(installed)
         );
+    }
+
+    auto ensureGenesisRuntimeArtifact(
+        std::filesystem::path const& productionRoot
+    ) -> Result<ContentHash>
+    {
+        UF_TRY(requirePlainDirectory(productionRoot));
+        UF_TRY_VALUE(rootHash, task::genesisArtifactRootHash());
+        auto const destination = productionRoot / rootHash.hex();
+        UF_TRY_VALUE(published, alreadyPublished(destination));
+        if (!published)
+        {
+            UF_TRY_VALUE(manifest, task::genesisRuntimeArtifactManifestJcs());
+            auto const stagingRoot = productionRoot / k_stagingDirectoryName;
+            UF_TRY(requirePlainDirectory(stagingRoot));
+            auto const staging = stagingRoot / std::string{k_genesisStagingName};
+
+            // An attempt that died between the create and the rename left this
+            // directory behind. Reclamation already sweeps every child of
+            // .staging wholesale, so removing this one by name takes nothing a
+            // later sweep would have kept.
+            auto error = std::error_code{};
+            std::filesystem::remove_all(staging, error);
+            if (error)
+            {
+                return ioFailure("clear", staging, error);
+            }
+            error.clear();
+            if (!std::filesystem::create_directory(staging, error) || error)
+            {
+                return ioFailure("create", staging, error);
+            }
+            auto cleanup = StagingDirectory{staging};
+
+            // The same confinement the installer stages through, for the same
+            // reason: the directories above the leaf are ours to make, and a
+            // link planted at one of them between the create and the write
+            // would redirect the write out of the production root.
+            {
+                UF_TRY_VALUE(
+                    confinedStaging,
+                    task_platform::ConfinedRoot::open(staging)
+                );
+                UF_TRY(confinedStaging.writeNewFile(
+                    task::k_runtimeArtifactManifestFileName,
+                    std::as_bytes(std::span{manifest})
+                ));
+                UF_TRY(confinedStaging.writeNewFile(
+                    task::k_runtimeModelFileName,
+                    std::as_bytes(std::span{task::k_genesisRuntimeModelToml})
+                ));
+            }
+            UF_TRY(task::loadRuntimeArtifact(staging, rootHash));
+            UF_TRY_VALUE(renamed, renameIntoPlace(staging, destination));
+            if (renamed)
+            {
+                cleanup.release();
+            }
+        }
+
+        // Verified on every open, whether it was written just now or has been
+        // there since the root was created. H_genesis is a compile-time
+        // constant, so exactly one byte sequence is legal at this address and
+        // anything else is named rather than accepted.
+        UF_TRY(task::loadRuntimeArtifact(destination, rootHash));
+        return rootHash;
     }
 
     auto openProductionRuntimeArtifact(

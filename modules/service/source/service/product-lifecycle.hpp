@@ -313,10 +313,11 @@ namespace uf::service
     // start would put the installed root's.
     //
     // The generation the install compare-and-swaps against is read from the
-    // root's active pin, and a root with no active release is the bootstrap
-    // case: there is nothing to compare against but the absence of anything,
-    // which is what generation 0 spells (the schema's first installation
-    // starts at 1).
+    // root's active pin. Every Operator root holds one from its first open:
+    // the genesis generation is part of its layout, and it is generation 0.
+    // A root that has never been upgraded therefore compares against 0 and
+    // its first real installation lands at 1 -- genesis is layout, not a
+    // release, and never consumes that first number.
     [[nodiscard]]
     auto upgradeRuntimeArtifactAndPinSession(RuntimeUpgradeStart const& upgrade)
         -> Result<RuntimeUpgradeResult>;

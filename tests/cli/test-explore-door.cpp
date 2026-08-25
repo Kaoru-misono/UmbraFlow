@@ -642,6 +642,252 @@ namespace uf::cli
                 .exactArgumentsJcs = std::string{exactArgumentsJcs},
             };
         }
+
+        // A project that has annotated nothing, against an Operator root that
+        // does not exist yet. Between them they hold no file anybody wrote by
+        // hand.
+        //
+        // The project's declared artifact is replaced by the genesis one --
+        // exactly the two files `project init` scaffolds and nothing else,
+        // because the artifact's file closure admits the manifest and the page
+        // model alone. The runtime directory is deliberately NOT created here:
+        // what creates it is ProductLifecycle::start, and the genesis
+        // generation it materializes as layout is the case's whole subject.
+        class GenesisDoorWorld final
+        {
+            std::filesystem::path  m_root{};
+            std::filesystem::path  m_project{};
+            std::filesystem::path  m_runtime{};
+            std::vector<std::byte> m_probe{};
+
+        public:
+            GenesisDoorWorld()
+            {
+                m_root = (
+                    std::filesystem::temp_directory_path()
+                    / std::filesystem::path{
+                        "uf-genesis-door-"
+                            + std::to_string(std::random_device{}()),
+                    }
+                );
+                m_project = m_root / "project";
+                m_runtime = m_root / "production";
+                std::filesystem::remove_all(m_root);
+                std::filesystem::create_directories(m_root);
+                std::filesystem::copy(
+                    std::filesystem::path{UF_STAGED_UMBRAFLOW_PROJECT},
+                    m_project,
+                    std::filesystem::copy_options::recursive
+                );
+                m_probe = readAll(m_project / "runtime" / "probe-frame.png");
+
+                auto const artifact = m_project / "runtime" / "artifact";
+                std::filesystem::remove_all(artifact);
+                std::filesystem::create_directories(artifact);
+                auto const manifest = task::genesisRuntimeArtifactManifestJcs();
+                REQUIRE(manifest.has_value());
+                writeExact(
+                    artifact / std::string{task::k_runtimeModelFileName},
+                    task::k_genesisRuntimeModelToml
+                );
+                writeExact(
+                    artifact
+                        / std::string{task::k_runtimeArtifactManifestFileName},
+                    *manifest
+                );
+            }
+
+            GenesisDoorWorld(GenesisDoorWorld const&)                    = delete;
+            GenesisDoorWorld(GenesisDoorWorld&&)                         = delete;
+            auto operator=(GenesisDoorWorld const&) -> GenesisDoorWorld& = delete;
+            auto operator=(GenesisDoorWorld&&) -> GenesisDoorWorld&      = delete;
+
+            ~GenesisDoorWorld()
+            {
+                auto discarded = std::error_code{};
+                std::filesystem::remove_all(m_root, discarded);
+            }
+
+            [[nodiscard]] auto project() const -> std::filesystem::path const&
+            {
+                return m_project;
+            }
+
+            [[nodiscard]] auto runtime() const -> std::filesystem::path const&
+            {
+                return m_runtime;
+            }
+
+            // Genesis declares the smallest legal extent at the reference DPI,
+            // which is the only geometry a model declaring nothing can carry.
+            // The recorded frame beside it is never captured by the case below
+            // and is here because a run configuration always names its ports.
+            [[nodiscard]]
+            auto ports(std::string_view trace) const -> task::TaskRunConfig
+            {
+                auto const fingerprint = ProjectFingerprint::create(
+                    1U,
+                    1U,
+                    k_recordedDpi,
+                    k_recordedDpi
+                );
+                REQUIRE(fingerprint.has_value());
+                return task::TaskRunConfig{
+                    .frameSource = std::make_unique<CountingFrameSource>(
+                        operator_runtime::conformance::observationFrame(
+                            m_probe,
+                            FrameId{5001}
+                        ),
+                        std::make_shared<uint32>(),
+                        std::make_shared<HeldInputLog>()
+                    ),
+                    .actionSink = std::make_unique<CountingActionSink>(
+                        std::make_shared<uint32>(),
+                        std::make_shared<HeldInputLog>()
+                    ),
+                    .ocrEngine               = std::make_unique<SilentReader>(),
+                    .liveFingerprint         = *fingerprint,
+                    .maximumPixelComparisons = k_defaultPixelComparisonBudget,
+                    .recognitionTimeout      = k_defaultRecognitionTimeout,
+                    .tracePath               = m_root / std::filesystem::path{trace},
+                };
+            }
+
+        private:
+            [[nodiscard]]
+            static auto readAll(std::filesystem::path const& file)
+                -> std::vector<std::byte>
+            {
+                auto stream = std::ifstream{file, std::ios::binary};
+                REQUIRE(stream.good());
+                auto const text = std::string{
+                    std::istreambuf_iterator<char>{stream},
+                    std::istreambuf_iterator<char>{},
+                };
+                auto bytes = std::vector<std::byte>{};
+                bytes.reserve(text.size());
+                for (auto const value : text)
+                {
+                    bytes.emplace_back(
+                        static_cast<std::byte>(static_cast<unsigned char>(value))
+                    );
+                }
+                return bytes;
+            }
+
+            static auto writeExact(
+                std::filesystem::path const& file,
+                std::string_view bytes
+            ) -> void
+            {
+                auto stream = std::ofstream{
+                    file,
+                    std::ios::binary | std::ios::trunc,
+                };
+                stream.write(
+                    bytes.data(),
+                    static_cast<std::streamsize>(bytes.size())
+                );
+                stream.flush();
+                REQUIRE(stream.good());
+            }
+        };
+    }
+
+    // The corrected onboarding claim, executed:
+    //
+    //   "From nothing to a first exploration session is still `init` then
+    //    `explore --runtime <root>`, with zero project-authored files -- and in
+    //    fact zero hand-written files by anyone: the genesis runtime artifact
+    //    gives the session its pin, the absent policy resolves to deny-all, and
+    //    deny-all still admits read-only screen observation. What deny-all does
+    //    not admit is input injection or an authoring write."
+    //    -- docs/decisions/2026-08-24-the-annotation-policy-is-the-operators.md
+    //
+    // Nothing installs anything into the Operator root here, and the root does
+    // not exist when the case starts. OperatorCoordinator::open creates it, and
+    // the genesis generation is part of what it creates -- which is what gives
+    // this session something to pin. Deleting the ensureGenesisGeneration call
+    // from open reds this at the first REQUIRE.
+    TEST_CASE(
+        "a first exploration session binds H_genesis against a root that holds "
+        "only it"
+    )
+    {
+        auto const world       = GenesisDoorWorld{};
+        auto const genesisHash = task::genesisArtifactRootHash();
+        REQUIRE(genesisHash.has_value());
+        REQUIRE_FALSE(std::filesystem::exists(world.runtime()));
+
+        auto const scope = operator_runtime::ObservedInstanceWorldScope::run(
+            "window-0",
+            1
+        );
+        REQUIRE(scope.has_value());
+
+        // Exactly the ProductStart cli::exploreProject builds. There is one
+        // door, and a project with no model of its own reaches the same one.
+        auto lifecycle = service::ProductLifecycle::start(
+            service::ProductStart{
+                .projectDirectory          = world.project(),
+                .runtimeDirectory          = world.runtime(),
+                .authenticatedControllerId = "umbra-flow-explore",
+                .controllerCapabilities    = {},
+                .controlledTargetId        = "window-0",
+                .kind                      = operator_runtime::ControllerKind::Human,
+                .agentProfileJcs = std::string{
+                    operator_runtime::k_unboundedAgentProfileJcs
+                },
+                .worldScope = *scope,
+            }
+        );
+        auto const lifecycleWhy = lifecycle.has_value()
+            ? std::string{}
+            : std::string{lifecycle.error().message()};
+        REQUIRE_MESSAGE(
+            lifecycle.has_value(),
+            "a session opens against a root that holds only genesis: ",
+            lifecycleWhy
+        );
+
+        auto const identity = lifecycle->identity();
+        CHECK_MESSAGE(
+            identity.runtimeModel.artifactRootHash() == *genesisHash,
+            "the session binds H_genesis"
+        );
+        CHECK_MESSAGE(
+            identity.installedGeneration == 0U,
+            "H_genesis is bound at the genesis generation, which is 0"
+        );
+
+        auto session = lifecycle->startExplorationSession(
+            world.ports("genesis-trace.jsonl"),
+            std::stop_token{}
+        );
+        auto const sessionWhy = session.has_value()
+            ? std::string{}
+            : std::string{session.error().message()};
+        REQUIRE_MESSAGE(session.has_value(), sessionWhy);
+
+        // Read-only under deny-all. The Operator wrote no policy artifact into
+        // this root -- there was no root to write one into until a moment ago --
+        // so the resolution is deny-all, and deny-all refuses the injection by
+        // naming the grant that was never made.
+        REQUIRE_FALSE(std::filesystem::exists(
+            world.runtime() / "policy-artifact.json"
+        ));
+        auto const injected = lifecycle->invokeTool(
+            explorationCall(
+                k_deliverInputTool,
+                R"({"action":"click","x":0,"y":0})"
+            ),
+            (*session)->context()
+        );
+        REQUIRE_FALSE(injected.has_value());
+        CHECK_MESSAGE(
+            injected.error().message() == k_privilegedRefusal,
+            "a session pinned to genesis runs read-only under deny-all"
+        );
     }
 
     // The guarantee, stated as one case because the two halves are one rule:

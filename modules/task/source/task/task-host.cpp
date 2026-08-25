@@ -1085,7 +1085,13 @@ namespace uf::task
                 "Host Receipt freshness bound must not be negative"
             );
         }
-        if (!installed.m_artifact || installed.m_installedGeneration == 0U)
+        // Generation 0 is the genesis generation, not "nothing is installed".
+        // Every Operator root materialises H_genesis as part of its layout, so
+        // the handle alone says whether an artifact arrived; the number says
+        // which one, and 0 is as real an answer as any other. A root whose
+        // generation 0 pins something other than genesis is refused where that
+        // rule lives, in the ledger, rather than by a second reading here.
+        if (!installed.m_artifact)
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
@@ -1093,6 +1099,10 @@ namespace uf::task
             );
         }
         auto artifact = std::move(installed.m_artifact);
+
+        // Sealedness is carried by the optional being engaged, never by the
+        // value being non-zero, which is what lets genesis be sealed by
+        // construction at generation 0.
         auto const sealedAt = installed.m_installedGeneration;
         auto const id = GenerationId{m_nextGenerationValue};
         ++m_nextGenerationValue;

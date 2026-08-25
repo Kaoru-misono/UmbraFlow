@@ -51,6 +51,13 @@ namespace uf::operator_runtime
         // moves whenever the stored DDL does, and sixteen hand-copies were
         // sixteen places to forget.
         constexpr auto k_targetSchemaIdentity = std::string_view{
+            "sha256:045925eefabef97b964f6a21db0da81cdc6a2c293c21e7f495011fe3d1b9277f"
+        };
+
+        // The identity the generation immediately before the genesis
+        // generation created, and the source of its pair. A root written by
+        // that generation is what every Operator root on disk today is.
+        constexpr auto k_genesisGenerationSourceIdentity = std::string_view{
             "sha256:5ed5e558e04f24347a97a0de03550eaa02f6e48ddb64c29bf09e05c50e55d194"
         };
 
@@ -525,6 +532,42 @@ namespace uf::operator_runtime
             return rows.front().front();
         }
 
+        // The stored CREATE INDEX text for one index, read back the same way.
+        [[nodiscard]]
+        auto storedCreateIndex(
+            test_support::OperatorDatabaseProbe& database,
+            std::string_view index
+        ) -> std::string
+        {
+            auto const rows = database.readRows(
+                "SELECT sql FROM sqlite_schema WHERE type='index' AND name='"
+                + std::string{index} + "'"
+            );
+            REQUIRE(rows.size() == 1U);
+            REQUIRE(rows.front().size() == 1U);
+            return rows.front().front();
+        }
+
+        // The stored CREATE with the installed-generation CHECK wound back to
+        // the positive form the generation before the genesis generation
+        // stored. Exactly one occurrence per table, and the REQUIRE is what
+        // says so.
+        [[nodiscard]]
+        auto positiveGenerationCheck(std::string prior) -> std::string
+        {
+            constexpr auto relaxed = std::string_view{
+                "CHECK(installed_generation >= 0)"
+            };
+            constexpr auto positive = std::string_view{
+                "CHECK(installed_generation > 0)"
+            };
+            auto const at = prior.find(relaxed);
+            REQUIRE(at != std::string::npos);
+            REQUIRE(prior.find(relaxed, at + relaxed.size()) == std::string::npos);
+            prior.replace(at, relaxed.size(), positive);
+            return prior;
+        }
+
         // The same, with one declared column removed.
         [[nodiscard]]
         auto storedCreateWithout(
@@ -572,6 +615,76 @@ namespace uf::operator_runtime
             REQUIRE(at != std::string::npos);
             prior.insert(at, removedColumn);
             return prior;
+        }
+
+        // The generation before generation 0 named the genesis RuntimeArtifact:
+        // both installed_generation CHECKs demanded a positive value, and no
+        // root held a generation-0 row.
+        //
+        // Both tables are derived from their own surviving text rather than
+        // pasted, for the reason storedCreate states -- undoing the one byte
+        // this generation changed cannot drift, and a hand-copy can. The
+        // runtime_installations text is byte-identical either way because the
+        // constant it now comes from reproduces the block the prior generation
+        // created it inside, closing brace included.
+        //
+        // The rows go with the CHECK. A wind-back that left the generation-0
+        // row behind would be reproducing a database that generation could
+        // never have written, and the restricted CHECK would refuse to carry
+        // the row across anyway.
+        //
+        // It must run FIRST in every wind-back: admitTheGenesisGeneration is
+        // the last step of every registered migration, so undoing it is the
+        // first thing a fixture that reproduces the source generation does.
+        auto restoreGenesisGenerationSchema(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void
+        {
+            auto const priorInstallations = positiveGenerationCheck(
+                storedCreate(database, "runtime_installations")
+            );
+            auto const priorSessions = positiveGenerationCheck(
+                storedCreate(database, "sessions")
+            );
+            auto const priorIndex = storedCreateIndex(
+                database,
+                "one_active_write_session_per_instance"
+            );
+
+            database.execute("PRAGMA foreign_keys=OFF");
+            database.execute(
+                "DELETE FROM runtime_installations WHERE installed_generation=0"
+            );
+            database.execute(
+                "UPDATE runtime_state SET active_runtime_artifact_root_hash=NULL "
+                "WHERE singleton=1 AND installed_generation=0"
+            );
+            database.execute(
+                "DELETE FROM runtime_artifacts WHERE artifact_root_hash NOT IN "
+                "(SELECT artifact_root_hash FROM runtime_installations) AND "
+                "artifact_root_hash NOT IN (SELECT active_runtime_artifact_root_hash "
+                "FROM runtime_state WHERE active_runtime_artifact_root_hash IS NOT NULL)"
+            );
+
+            database.execute(
+                "CREATE TABLE carried_runtime_installations AS "
+                "SELECT * FROM runtime_installations"
+            );
+            database.execute("DROP TABLE runtime_installations");
+            database.execute(priorInstallations);
+            database.execute(
+                "INSERT INTO runtime_installations SELECT * FROM "
+                "carried_runtime_installations"
+            );
+            database.execute("DROP TABLE carried_runtime_installations");
+
+            database.execute("CREATE TABLE carried_sessions AS SELECT * FROM sessions");
+            database.execute("DROP TABLE sessions");
+            database.execute(priorSessions);
+            database.execute("INSERT INTO sessions SELECT * FROM carried_sessions");
+            database.execute("DROP TABLE carried_sessions");
+            database.execute(priorIndex);
+            database.execute("PRAGMA foreign_keys=ON");
         }
 
         // The one nullable reference into `operations` that journal_events and
@@ -3836,6 +3949,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreGenesisGenerationSchema(prior);
             restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
@@ -5246,6 +5360,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreGenesisGenerationSchema(prior);
             restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
@@ -5448,6 +5563,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior   = test_support::OperatorDatabaseProbe{databasePath};
+            restoreGenesisGenerationSchema(prior);
             restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
@@ -5577,6 +5693,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreGenesisGenerationSchema(prior);
             restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
@@ -5674,6 +5791,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreGenesisGenerationSchema(prior);
             restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
@@ -5817,6 +5935,7 @@ namespace uf::operator_runtime
         auto historyRows    = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreGenesisGenerationSchema(prior);
             restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
@@ -5934,6 +6053,7 @@ namespace uf::operator_runtime
         auto eventRows      = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreGenesisGenerationSchema(prior);
             restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
@@ -6044,6 +6164,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreGenesisGenerationSchema(prior);
             restoreProjectStateInterpretationSchema(prior);
             instanceRows = prior.readRows(
                 "SELECT plugin_id, project_instance_key, "
@@ -6177,6 +6298,7 @@ namespace uf::operator_runtime
         auto eventRows      = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreGenesisGenerationSchema(prior);
             restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             rootRows = prior.readRows(
@@ -6295,6 +6417,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior  = test_support::OperatorDatabaseProbe{databasePath};
+            restoreGenesisGenerationSchema(prior);
             restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
@@ -6388,6 +6511,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreGenesisGenerationSchema(prior);
             restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
@@ -6459,6 +6583,7 @@ namespace uf::operator_runtime
         auto historicalRows = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreGenesisGenerationSchema(prior);
             restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
@@ -6566,6 +6691,7 @@ namespace uf::operator_runtime
         auto replayBefore   = std::vector<std::vector<std::string>>{};
         {
             auto source = test_support::OperatorDatabaseProbe{databasePath};
+            restoreGenesisGenerationSchema(source);
             restoreProjectStateInterpretationSchema(source);
             restoreOperationSurfaceSchema(source);
             restoreOperationDispatchSchema(source);
@@ -6644,6 +6770,7 @@ namespace uf::operator_runtime
         auto sessionRows    = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreGenesisGenerationSchema(prior);
             restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
@@ -6752,6 +6879,7 @@ namespace uf::operator_runtime
         auto bindingRows    = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreGenesisGenerationSchema(prior);
             restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
@@ -6843,6 +6971,7 @@ namespace uf::operator_runtime
         auto registrationRows = std::vector<std::vector<std::string>>{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreGenesisGenerationSchema(prior);
             restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
@@ -6909,6 +7038,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreGenesisGenerationSchema(prior);
             restoreProjectStateInterpretationSchema(prior);
             restoreOperationSurfaceSchema(prior);
             restorePriorToolRunSchema(prior);
@@ -7014,6 +7144,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto priorSchema = test_support::OperatorDatabaseProbe{databasePath};
+            restoreGenesisGenerationSchema(priorSchema);
             restoreProjectStateInterpretationSchema(priorSchema);
             restoreOperationSurfaceSchema(priorSchema);
             restoreOperationDispatchSchema(priorSchema);
@@ -7580,6 +7711,253 @@ namespace uf::operator_runtime
         first = fail(AutomationErrorKind::Cancelled, "closed");
         auto const reopened = OperatorCoordinator::open(production);
         CHECK(reopened.has_value());
+    }
+
+    // Genesis is part of an Operator root's layout, beside the directories, the
+    // staging root and the empty database OperatorCoordinator::open already
+    // creates. That is the whole of what makes "init then explore --runtime
+    // <root>" reach a first session: a root nobody has upgraded still HAS a
+    // RuntimeArtifact to pin, and it grants nothing, because a model that
+    // declares nothing can do nothing.
+    //
+    // Deleting the ensureGenesisGeneration call from open reds this.
+    TEST_CASE("a created Operator root holds the genesis RuntimeArtifact")
+    {
+        auto const temporary   = TemporaryDirectory{};
+        auto const production  = temporary.path() / "production";
+        auto const genesisHash = task::genesisArtifactRootHash();
+        REQUIRE(genesisHash.has_value());
+
+        auto coordinator = OperatorCoordinator::open(production);
+        auto const openWhy = coordinator.has_value()
+            ? std::string{}
+            : std::string{coordinator.error().message()};
+        REQUIRE_MESSAGE(coordinator.has_value(), openWhy);
+
+        auto const genesisDirectory =
+            production / "runtime-artifacts" / genesisHash->hex();
+        CHECK_MESSAGE(
+            std::filesystem::is_directory(genesisDirectory),
+            "a created Operator root holds the genesis artifact at "
+            "<root>/runtime-artifacts/<H_genesis hex>"
+        );
+
+        // The bytes, not the name. loadRuntimeArtifact hashes the manifest it
+        // reads and compares it against the hash handed in, then checks the
+        // directory's file closure and every declared size and digest under it.
+        auto const opened = task::loadRuntimeArtifact(
+            genesisDirectory,
+            *genesisHash
+        );
+        CHECK_MESSAGE(
+            opened.has_value(),
+            "the genesis artifact's bytes verify against H_genesis"
+        );
+
+        // Pinned, and pinned at generation 0 -- the number a first real
+        // installation compares against.
+        auto const active = coordinator->activeRuntimeArtifactPin();
+        REQUIRE(active.has_value());
+        CHECK_MESSAGE(
+            active->installedGeneration == 0U,
+            "the genesis generation is generation 0"
+        );
+        CHECK(active->artifactRootHash == *genesisHash);
+    }
+
+    // Genesis is layout, not a release, and the number that says so is 0. An
+    // upgrade into a root that has never had one still compares against the
+    // absence of any release and still lands on 1.
+    //
+    // Pinning genesis at generation 1 instead reds this.
+    TEST_CASE("the first real installation into a genesis root is generation 1")
+    {
+        auto const temporary   = TemporaryDirectory{};
+        auto const release     = test_support::runtimeRelease(temporary.path());
+        auto const genesisHash = task::genesisArtifactRootHash();
+        REQUIRE(genesisHash.has_value());
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+
+        {
+            auto coordinator = OperatorCoordinator::open(production);
+            REQUIRE(coordinator.has_value());
+
+            auto const baseline = coordinator->activeRuntimeArtifactPin();
+            REQUIRE(baseline.has_value());
+            REQUIRE(baseline->artifactRootHash == *genesisHash);
+
+            auto const installed = coordinator->installRuntimeArtifact(
+                RuntimeArtifactInstallRequest{
+                    .artifactDirectory = release.artifactDirectory,
+                    .artifactRootHash  = release.artifactRootHash,
+                    .expectedInstalledGeneration = baseline->installedGeneration,
+                }
+            );
+            auto const installWhy = installed.has_value()
+                ? std::string{}
+                : std::string{installed.error().message()};
+            REQUIRE_MESSAGE(installed.has_value(), installWhy);
+            CHECK_MESSAGE(
+                installed->installedGeneration() == 1U,
+                "genesis did not consume the bootstrap baseline: the first real "
+                "installation is generation 1"
+            );
+        }
+
+        auto probe = test_support::OperatorDatabaseProbe{databasePath};
+        auto const expectedGenerations = std::vector<std::vector<std::string>>{
+            {"0", genesisHash->hex()},
+            {"1", release.artifactRootHash.hex()},
+        };
+        CHECK_MESSAGE(
+            probe.readRows(
+                "SELECT installed_generation, artifact_root_hash FROM "
+                "runtime_installations ORDER BY installed_generation"
+            ) == expectedGenerations,
+            "generation 0 stays genesis and the release takes generation 1"
+        );
+    }
+
+    // OperatorCoordinator::open runs on every command, so it is what a root
+    // written before the genesis generation existed meets first. It gains
+    // genesis there -- schema CHECK through the registered migration pair, rows
+    // through the same ensure a fresh root runs -- and nothing it already had
+    // installed moves.
+    //
+    // Removing admitTheGenesisGeneration from migrateGenesisGeneration, or the
+    // IS NULL guard from the ensure's active-pin claim, reds this.
+    TEST_CASE("an Operator root written before the genesis generation gains it")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        auto const genesisHash  = task::genesisArtifactRootHash();
+        REQUIRE(genesisHash.has_value());
+
+        auto priorRootHash   = std::string{};
+        auto priorGeneration = uint64{};
+        {
+            auto prepared   = prepareStore(temporary.path());
+            priorRootHash   = prepared.runtimeArtifactRootHash.hex();
+            priorGeneration = prepared.installedGeneration;
+        }
+
+        auto sourceIdentity = std::string{};
+        auto priorSessions  = std::vector<std::vector<std::string>>{};
+        {
+            auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restoreGenesisGenerationSchema(prior);
+            sourceIdentity = exactSchemaIdentity(prior);
+            priorSessions  = prior.readRows(
+                "SELECT session_id, runtime_artifact_root_hash, "
+                "installed_generation FROM sessions ORDER BY session_id"
+            );
+        }
+        CHECK_MESSAGE(
+            sourceIdentity == k_genesisGenerationSourceIdentity,
+            "the fixture must reproduce the exact identity this pair migrates from"
+        );
+
+        // A root written before this change has no genesis directory either.
+        auto discarded = std::error_code{};
+        std::filesystem::remove_all(
+            production / "runtime-artifacts" / genesisHash->hex(),
+            discarded
+        );
+
+        {
+            auto migrated = OperatorCoordinator::open(production);
+            auto const migratedWhy = migrated.has_value()
+                ? std::string{}
+                : std::string{migrated.error().message()};
+            REQUIRE_MESSAGE(migrated.has_value(), migratedWhy);
+            auto const active = migrated->activeRuntimeArtifactPin();
+            REQUIRE(active.has_value());
+            CHECK_MESSAGE(
+                active->installedGeneration == priorGeneration,
+                "gaining genesis leaves the installed generation the root "
+                "already had active"
+            );
+            CHECK_MESSAGE(
+                active->artifactRootHash.hex() == priorRootHash,
+                "gaining genesis leaves the RuntimeArtifact the root already "
+                "had active"
+            );
+        }
+
+        CHECK_MESSAGE(
+            std::filesystem::is_directory(
+                production / "runtime-artifacts" / genesisHash->hex()
+            ),
+            "a root written before the genesis generation gains its artifact "
+            "when it is next opened"
+        );
+
+        auto after = test_support::OperatorDatabaseProbe{databasePath};
+        CHECK(exactSchemaIdentity(after) == k_targetSchemaIdentity);
+        auto const expectedGenesisRow =
+            std::vector<std::vector<std::string>>{{genesisHash->hex()}};
+        CHECK_MESSAGE(
+            after.readRows(
+                "SELECT artifact_root_hash FROM runtime_installations "
+                "WHERE installed_generation=0"
+            ) == expectedGenesisRow,
+            "a root written before the genesis generation gains it at "
+            "generation 0"
+        );
+        CHECK_MESSAGE(
+            after.readRows(
+                "SELECT session_id, runtime_artifact_root_hash, "
+                "installed_generation FROM sessions ORDER BY session_id"
+            ) == priorSessions,
+            "every session the root already recorded keeps its bytes"
+        );
+        auto const expectedTransition = std::vector<std::vector<std::string>>{
+            {sourceIdentity, std::string{k_targetSchemaIdentity}},
+        };
+        CHECK(
+            after.readRows(
+                "SELECT source_identity, target_identity FROM "
+                "schema_identity_transitions WHERE source_identity='"
+                + sourceIdentity + "'"
+            ) == expectedTransition
+        );
+    }
+
+    // Reclamation removes an artifact root no installation names and that is
+    // not the active pin. Genesis is named by the generation-0 installation, so
+    // it is referenced by exactly the mechanism every other kept artifact is
+    // referenced by -- there is no exemption for it and none is needed.
+    //
+    // Deleting the generation-0 row from ensureGenesisGeneration reds this.
+    TEST_CASE("reclamation keeps the genesis RuntimeArtifact")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const genesisHash  = task::genesisArtifactRootHash();
+        REQUIRE(genesisHash.has_value());
+        auto const genesisDirectory =
+            production / "runtime-artifacts" / genesisHash->hex();
+
+        // A root running a real release, so genesis is NOT the active pin and
+        // its survival is the installation row rather than the pin.
+        auto prepared = prepareStore(temporary.path());
+        REQUIRE(prepared.runtimeArtifactRootHash != *genesisHash);
+        REQUIRE(std::filesystem::is_directory(genesisDirectory));
+
+        auto const reclaimed = prepared.store.reclaimUnreferencedRuntimeArtifacts();
+        auto const reclaimWhy = reclaimed.has_value()
+            ? std::string{}
+            : std::string{reclaimed.error().message()};
+        REQUIRE_MESSAGE(reclaimed.has_value(), reclaimWhy);
+        CHECK_MESSAGE(
+            std::filesystem::is_directory(genesisDirectory),
+            "reclamation does not remove the genesis RuntimeArtifact"
+        );
+        CHECK(
+            task::loadRuntimeArtifact(genesisDirectory, *genesisHash).has_value()
+        );
     }
 
     TEST_CASE("production RuntimeArtifact installation owns activation CAS")

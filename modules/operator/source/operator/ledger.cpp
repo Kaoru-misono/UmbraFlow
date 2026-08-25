@@ -1310,7 +1310,7 @@ namespace uf::operator_runtime
         // "Delete-on-open has a deadline" section owns
         // the exact-pair migration policy.
         constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
-            "sha256:5ed5e558e04f24347a97a0de03550eaa02f6e48ddb64c29bf09e05c50e55d194"
+            "sha256:045925eefabef97b964f6a21db0da81cdc6a2c293c21e7f495011fe3d1b9277f"
         };
 
         // A transition row records the applied exact pair; neither the row nor
@@ -1756,6 +1756,29 @@ namespace uf::operator_runtime
                 )sql"
         };
 
+        // Which RuntimeArtifact each generation of this root holds. Generation
+        // 0 is the genesis generation: every Operator root materialises it as
+        // part of its layout, the same way it materialises the staging
+        // directory and the empty database, so the row is there before any
+        // installation happens and the CHECK admits it.
+        //
+        // It sits in its own constant rather than inside the layout block that
+        // creates runtime_artifacts and runtime_state, because
+        // admitTheGenesisGeneration rebuilds the table and the two paths must
+        // store byte-identical DDL. That is also why the closing )sql" sits on
+        // the same line as ) STRICT: a newline there would be stored by the
+        // standalone path and not by the block, and schema identity is the
+        // stored text.
+        constexpr auto k_runtimeInstallationsDdl = std::string_view{
+            R"sql(CREATE TABLE IF NOT EXISTS runtime_installations(
+                        installed_generation INTEGER PRIMARY KEY
+                            CHECK(installed_generation >= 0),
+                        artifact_root_hash TEXT NOT NULL
+                            REFERENCES runtime_artifacts(artifact_root_hash),
+                        UNIQUE(installed_generation, artifact_root_hash)
+                    ) STRICT)sql"
+        };
+
         // The session table and its one partial index, as the schema bundle
         // above also stores them. The migration that adds the world-scope
         // columns rebuilds the table from this exact text; SQLite strips only
@@ -1770,7 +1793,7 @@ namespace uf::operator_runtime
                         manifest_hash TEXT NOT NULL,
                         runtime_artifact_root_hash TEXT NOT NULL,
                         installed_generation INTEGER NOT NULL
-                            CHECK(installed_generation > 0),
+                            CHECK(installed_generation >= 0),
                         project_registration_hash TEXT NOT NULL
                             REFERENCES project_registrations(registration_hash),
                         -- The capability set this session holds, as the exact
@@ -2690,6 +2713,134 @@ namespace uf::operator_runtime
             return execute(database, "DROP TABLE prior_project_instances");
         }
 
+        // The generation in which generation 0 stopped meaning "nothing is
+        // installed" and started meaning the genesis generation.
+        //
+        // Every Operator root now materialises the genesis RuntimeArtifact as
+        // part of its layout, so generation 0 names a real artifact root and a
+        // session may pin it. Both CHECKs that spelled "a generation is
+        // positive" become "a generation is non-negative"; nothing else about
+        // either table moves, and the first REAL installation still lands at
+        // generation 1 because the CHECK is the only thing that changed.
+        //
+        // The rows are NOT written here. ensureGenesisGeneration runs on every
+        // open, after the schema is at target, and writes them for a root
+        // created before this change and a root created after it alike --
+        // one mechanism rather than a migration branch and a creation branch.
+        //
+        // Both tables are rebuilt rather than altered: SQLite cannot change a
+        // CHECK in place. Neither is renamed out of the way either, because
+        // sessions carries a foreign key into runtime_installations and four
+        // tables carry one into sessions -- ALTER TABLE RENAME rewrites those
+        // references in the other tables' stored DDL, which is the very text
+        // this schema identity is taken over.
+        [[nodiscard]]
+        auto admitTheGenesisGeneration(sqlite3* database) -> Status
+        {
+            UF_TRY(execute(database, "PRAGMA defer_foreign_keys=ON"));
+            UF_TRY(execute(
+                database,
+                "CREATE TABLE prior_runtime_installations("
+                "installed_generation INTEGER PRIMARY KEY,"
+                "artifact_root_hash TEXT NOT NULL) STRICT"
+            ));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO prior_runtime_installations(installed_generation, "
+                "artifact_root_hash) SELECT installed_generation, "
+                "artifact_root_hash FROM runtime_installations"
+            ));
+            UF_TRY(execute(database, "DROP TABLE runtime_installations"));
+            UF_TRY(execute(database, k_runtimeInstallationsDdl));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO runtime_installations(installed_generation, "
+                "artifact_root_hash) SELECT installed_generation, "
+                "artifact_root_hash FROM prior_runtime_installations"
+            ));
+            UF_TRY(execute(database, "DROP TABLE prior_runtime_installations"));
+
+            UF_TRY(execute(
+                database,
+                "CREATE TABLE prior_sessions("
+                "session_id TEXT PRIMARY KEY,"
+                "authenticated_controller_id TEXT NOT NULL,"
+                "idempotency_namespace TEXT NOT NULL,"
+                "manifest_hash TEXT NOT NULL,"
+                "runtime_artifact_root_hash TEXT NOT NULL,"
+                "installed_generation INTEGER NOT NULL,"
+                "project_registration_hash TEXT NOT NULL,"
+                "controller_capabilities TEXT NOT NULL,"
+                "capability_profile_hash TEXT NOT NULL,"
+                "session_epoch INTEGER NOT NULL,"
+                "controlled_target_id TEXT NOT NULL,"
+                "project_instance_key TEXT NOT NULL,"
+                "mode TEXT NOT NULL,"
+                "controller_kind TEXT NOT NULL,"
+                "world_scope_kind TEXT NOT NULL,"
+                "world_scope_id TEXT NOT NULL,"
+                "world_scope_generation TEXT NOT NULL,"
+                "active INTEGER NOT NULL"
+                ") STRICT"
+            ));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO prior_sessions(session_id, "
+                "authenticated_controller_id, idempotency_namespace, "
+                "manifest_hash, runtime_artifact_root_hash, "
+                "installed_generation, project_registration_hash, "
+                "controller_capabilities, capability_profile_hash, "
+                "session_epoch, controlled_target_id, project_instance_key, "
+                "mode, controller_kind, world_scope_kind, world_scope_id, "
+                "world_scope_generation, active) SELECT session_id, "
+                "authenticated_controller_id, idempotency_namespace, "
+                "manifest_hash, runtime_artifact_root_hash, "
+                "installed_generation, project_registration_hash, "
+                "controller_capabilities, capability_profile_hash, "
+                "session_epoch, controlled_target_id, project_instance_key, "
+                "mode, controller_kind, world_scope_kind, world_scope_id, "
+                "world_scope_generation, active FROM sessions"
+            ));
+            UF_TRY(execute(database, "DROP TABLE sessions"));
+            UF_TRY(execute(database, k_sessionsDdl));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO sessions(session_id, "
+                "authenticated_controller_id, idempotency_namespace, "
+                "manifest_hash, runtime_artifact_root_hash, "
+                "installed_generation, project_registration_hash, "
+                "controller_capabilities, capability_profile_hash, "
+                "session_epoch, controlled_target_id, project_instance_key, "
+                "mode, controller_kind, world_scope_kind, world_scope_id, "
+                "world_scope_generation, active) SELECT session_id, "
+                "authenticated_controller_id, idempotency_namespace, "
+                "manifest_hash, runtime_artifact_root_hash, "
+                "installed_generation, project_registration_hash, "
+                "controller_capabilities, capability_profile_hash, "
+                "session_epoch, controlled_target_id, project_instance_key, "
+                "mode, controller_kind, world_scope_kind, world_scope_id, "
+                "world_scope_generation, active FROM prior_sessions"
+            ));
+            UF_TRY(execute(database, k_oneActiveWriteSessionIndexDdl));
+            return execute(database, "DROP TABLE prior_sessions");
+        }
+
+        // The pair whose source is the schema the immediately prior
+        // generation created. It carries no step beyond the genesis
+        // generation, because nothing else about the schema moved with it.
+        [[nodiscard]]
+        auto migrateGenesisGeneration(
+            sqlite3* database,
+            SchemaMigration const& migration
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY(admitTheGenesisGeneration(database));
+            UF_TRY(recordSchemaIdentityTransition(database, migration));
+            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
+            return transaction.commit();
+        }
+
         [[nodiscard]]
         auto migrateProjectStateInterpretation(
             sqlite3* database,
@@ -2698,6 +2849,7 @@ namespace uf::operator_runtime
         {
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(dropProjectStateInterpretation(database));
+            UF_TRY(admitTheGenesisGeneration(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2719,6 +2871,7 @@ namespace uf::operator_runtime
             UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
+            UF_TRY(admitTheGenesisGeneration(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2752,6 +2905,7 @@ namespace uf::operator_runtime
             UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
+            UF_TRY(admitTheGenesisGeneration(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
 
             // No migration commits under an identity other than the exact
@@ -2778,6 +2932,7 @@ namespace uf::operator_runtime
             UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
+            UF_TRY(admitTheGenesisGeneration(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2800,6 +2955,7 @@ namespace uf::operator_runtime
             UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
+            UF_TRY(admitTheGenesisGeneration(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2820,6 +2976,7 @@ namespace uf::operator_runtime
             UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
+            UF_TRY(admitTheGenesisGeneration(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2839,6 +2996,7 @@ namespace uf::operator_runtime
             UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
+            UF_TRY(admitTheGenesisGeneration(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2857,6 +3015,7 @@ namespace uf::operator_runtime
             UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
+            UF_TRY(admitTheGenesisGeneration(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2876,6 +3035,7 @@ namespace uf::operator_runtime
             UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
+            UF_TRY(admitTheGenesisGeneration(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2919,6 +3079,7 @@ namespace uf::operator_runtime
             UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
+            UF_TRY(admitTheGenesisGeneration(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2991,6 +3152,7 @@ namespace uf::operator_runtime
             UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
+            UF_TRY(admitTheGenesisGeneration(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -3010,6 +3172,7 @@ namespace uf::operator_runtime
             UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
+            UF_TRY(admitTheGenesisGeneration(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -3038,6 +3201,7 @@ namespace uf::operator_runtime
             UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
+            UF_TRY(admitTheGenesisGeneration(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -3059,6 +3223,7 @@ namespace uf::operator_runtime
             UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
+            UF_TRY(admitTheGenesisGeneration(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -3080,6 +3245,7 @@ namespace uf::operator_runtime
             UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
+            UF_TRY(admitTheGenesisGeneration(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -3098,6 +3264,7 @@ namespace uf::operator_runtime
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
+            UF_TRY(admitTheGenesisGeneration(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -3217,6 +3384,12 @@ namespace uf::operator_runtime
                 .targetIdentity = k_operatorDatabaseSchemaIdentity,
                 .apply          = migrateObservedInstanceBindingLocalRef,
             },
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:5ed5e558e04f24347a97a0de03550eaa02f6e48ddb64c29bf09e05c50e55d194",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = migrateGenesisGeneration,
+            },
         };
 
         [[nodiscard]]
@@ -3263,13 +3436,6 @@ namespace uf::operator_runtime
             ContentHash const& artifactRootHash
         ) -> Status
         {
-            if (installedGeneration == 0U)
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "Installed RuntimeArtifact generation must be positive"
-                );
-            }
             UF_TRY_VALUE(
                 query,
                 prepare(
@@ -4616,14 +4782,6 @@ namespace uf::operator_runtime
                         active_runtime_artifact_root_hash
                     ) VALUES(1, 0, 0, NULL);
 
-                    CREATE TABLE IF NOT EXISTS runtime_installations(
-                        installed_generation INTEGER PRIMARY KEY
-                            CHECK(installed_generation > 0),
-                        artifact_root_hash TEXT NOT NULL
-                            REFERENCES runtime_artifacts(artifact_root_hash),
-                        UNIQUE(installed_generation, artifact_root_hash)
-                    ) STRICT;
-
 )sql"
                 R"sql(
                     CREATE TABLE IF NOT EXISTS fencing_high_water(
@@ -4736,6 +4894,7 @@ namespace uf::operator_runtime
 
                 )sql"
             ));
+            UF_TRY(execute(database, k_runtimeInstallationsDdl));
             UF_TRY(execute(database, k_observedInstanceBindingsDdl));
             UF_TRY(execute(database, k_sessionsDdl));
             UF_TRY(execute(database, k_oneActiveWriteSessionIndexDdl));
@@ -5533,6 +5692,92 @@ namespace uf::operator_runtime
             return transaction.commit();
         }
 
+        // The genesis generation, materialized as part of the root's layout.
+        //
+        // This is the whole of what makes "init then explore --runtime <root>"
+        // work: a root that has never been upgraded holds H_genesis at
+        // generation 0, so a first session has something to pin. Genesis grants
+        // nothing -- an empty model under an absent policy artifact resolves to
+        // deny-all -- so pinning it decides nothing on the operator's behalf.
+        //
+        // It runs on EVERY open, for a root created before the genesis
+        // generation existed and a root created after it alike. That is one
+        // mechanism rather than a creation path and a migration path: the DDL
+        // moved the CHECK, and this moves the rows, and neither asks which kind
+        // of root it is looking at.
+        //
+        // The active pin is only claimed when there is none. A root already
+        // running an installed generation keeps it: genesis is layout, not a
+        // release, and it has never been the thing a root was upgraded to.
+        [[nodiscard]]
+        auto ensureGenesisGeneration(
+            sqlite3* database,
+            std::filesystem::path const& runtimeArtifactRoot
+        ) -> Status
+        {
+            UF_TRY_VALUE(
+                genesisRootHash,
+                detail::ensureGenesisRuntimeArtifact(runtimeArtifactRoot)
+            );
+            auto const hex = genesisRootHash.hex();
+            UF_TRY(registerArtifactRoot(database, hex));
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY_VALUE(
+                installation,
+                prepare(
+                    database,
+                    "INSERT OR IGNORE INTO runtime_installations("
+                    "installed_generation, artifact_root_hash) VALUES(0, ?1)"
+                )
+            );
+            UF_TRY(bindText(database, installation.get(), 1, hex));
+            UF_TRY(expectDone(database, installation.get()));
+            UF_TRY_VALUE(
+                claim,
+                prepare(
+                    database,
+                    "UPDATE runtime_state SET active_runtime_artifact_root_hash=?1 "
+                    "WHERE singleton=1 AND active_runtime_artifact_root_hash IS NULL"
+                )
+            );
+            UF_TRY(bindText(database, claim.get(), 1, hex));
+            UF_TRY(expectDone(database, claim.get()));
+
+            // Generation 0 must name genesis and nothing else. A root whose
+            // generation-0 row already names another hash was written by
+            // something this ledger does not have a reading of, and is refused
+            // by name rather than quietly carried.
+            UF_TRY_VALUE(
+                query,
+                prepare(
+                    database,
+                    "SELECT artifact_root_hash FROM runtime_installations "
+                    "WHERE installed_generation=0"
+                )
+            );
+            if (sqlite3_step(query.get()) != SQLITE_ROW)
+            {
+                return databaseFailure(
+                    database,
+                    "could not read the genesis RuntimeArtifact generation"
+                );
+            }
+            auto const recorded = columnText(query.get(), 0);
+            if (recorded != hex)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "Operator root pins generation 0 to RuntimeArtifact root "
+                        "sha256:{}, and the genesis RuntimeArtifact is sha256:{}",
+                        recorded,
+                        hex
+                    )
+                );
+            }
+            return transaction.commit();
+        }
+
         // One coordinator owns a runtime directory at a time, and this is what
         // makes that true rather than assumed. beginSessionEpoch below clears
         // every control lease and deactivates every session on the reading that
@@ -5752,6 +5997,10 @@ namespace uf::operator_runtime
         // name rather than by whichever statement happens to hit the lock.
         UF_TRY(claimExclusiveOwnership(database.get()));
         UF_TRY(initialize(database.get()));
+
+        // Part of the layout, beside the directories and the database above:
+        // every Operator root holds the genesis generation from its first open.
+        UF_TRY(ensureGenesisGeneration(database.get(), runtimeArtifactRoot));
         UF_TRY_VALUE(sessionEpoch, beginSessionEpoch(database.get()));
         auto coordinator = OperatorCoordinator{std::make_unique<Impl>(
             Impl{

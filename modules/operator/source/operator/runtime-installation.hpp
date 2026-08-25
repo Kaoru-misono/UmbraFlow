@@ -43,6 +43,27 @@ namespace uf::operator_runtime::detail
         std::string_view stagingToken
     ) -> Result<std::shared_ptr<task::RuntimeArtifactHandle const>>;
 
+    // Materializes the genesis RuntimeArtifact into the production root and
+    // returns H_genesis, the root hash its bytes address. Idempotent: a root
+    // that already holds the directory is verified against H_genesis rather
+    // than rewritten, exactly as publishRuntimeArtifact verifies what it
+    // published.
+    //
+    // Genesis is layout, not an installation. Its bytes are the framework's
+    // own constants rather than a directory an operator supplied, so there is
+    // no source tree to read and nothing to keep disjoint from the production
+    // root. It still lands through .staging and one rename, because a
+    // content-addressed directory that appeared half-written is
+    // indistinguishable from a complete one. The staging leaf is a fixed short
+    // name rather than a CSPRNG token: only one Coordinator may hold a root at
+    // a time, so there is no second publisher to collide with, and a name
+    // shorter than the 64-character destination cannot be the component that
+    // pushes the path past a platform limit the destination itself fits under.
+    [[nodiscard]]
+    auto ensureGenesisRuntimeArtifact(
+        std::filesystem::path const& productionRoot
+    ) -> Result<ContentHash>;
+
     [[nodiscard]]
     auto openProductionRuntimeArtifact(
         std::filesystem::path const& productionRoot,
