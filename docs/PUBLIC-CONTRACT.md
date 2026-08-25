@@ -613,7 +613,7 @@ classification inside the value it answers with.
 | Reserved scoped module | Exports | Source SHA-256 |
 | --- | --- | --- |
 | `@umbraflow/audit` | `record`, `recorded` | `59ca9c95641c7582282ea718017f2893f60e0573f9375705048b817eeb497425` |
-| `@umbraflow/screen` | `actions`, `observation`, `observe`, `targets`, `use`, `used` | `cf8f228a71108300ac4f2421c9cbaf631e931e6af6a8daba902c8aa47c7fd718` |
+| `@umbraflow/screen` | `actions`, `observation`, `observe`, `targets`, `use`, `used` | `82c2c1042e2fc1583e3b7eb352a56bb50c0383841dfa853a331bfa81dfaceeb9` |
 | `@umbraflow/tools` | `call`, `call_identity`, `catalog_hash`, `describe`, `evidence`, `knows`, `names`, `result`, `state`, `states`, `tool_name` | `c64a623869a21f16f50a35505b52ec66570f08c89b5d88dd5947c6a969869ecd` |
 | `@umbraflow/workflow` | `absent`, `child_flow`, `delivered`, `pending`, `recover`, `refused`, `settled`, `status`, `stopped`, `uncertain`, `wait` | `fb9e9e178384ac9c824d74843a6a45839679d7c5b36d60390e9df8ccfee6799d` |
 

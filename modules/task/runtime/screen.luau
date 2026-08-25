@@ -99,9 +99,34 @@ function screen.observation(answer: any): any
     local observed = fromTool(answer, k_observeTool, "observation")
     local state = tools.state(observed)
     if state ~= "confirmed" then
+        -- THE RECORDED REASON REACHES THE READER, VERBATIM. An outcome that did
+        -- not confirm carries the framework's own account of why -- the
+        -- provider's message, its kind and its failure response -- and the
+        -- Operator persists it, replays it, and hands it back on this very
+        -- answer. Answering with a constant sentence here threw all of that
+        -- away one step before the only reader who has no other way to see it:
+        -- a chunk author is not an operator with the ledger open.
+        --
+        -- Measured 2026-08-25: every observation of a live session failed with
+        -- "Operator database write failed: CHECK constraint failed:
+        -- target_generation > 0", that sentence arrived here three times, and
+        -- this function replaced it with "the observation did not confirm".
+        -- Three probes were then read as "the screen has no text on it".
+        --
+        -- The code keeps classifying by state, because a caller matching on a
+        -- category should not have to parse prose.
+        local recorded = resultModule.unwrap_or(tools.result(observed), nil)
+        local reason = nil
+        if type(recorded) == "table" then
+            local message = rawget(recorded, "message")
+            if type(message) == "string" and message ~= "" then
+                reason = message
+            end
+        end
         return resultModule.err(
             "umbraflow.screen." .. state,
-            "the observation did not confirm"
+            reason or "the observation did not confirm, and recorded no reason",
+            recorded
         )
     end
     local payload = resultModule.unwrap_or(tools.result(observed), nil)
