@@ -3779,12 +3779,15 @@ namespace uf::operator_runtime
             return transaction.commit();
         }
 
+        // An opaque name nobody can predict, `bytes` CSPRNG bytes rendered as
+        // lowercase hex, so the caller states the width its own constraint
+        // needs rather than inheriting one chosen for another caller.
         [[nodiscard]]
-        auto randomToken(sqlite3* database) -> Result<std::string>
+        auto randomToken(sqlite3* database, uint32 bytes) -> Result<std::string>
         {
             UF_TRY_VALUE(
                 statement,
-                prepare(database, "SELECT lower(hex(randomblob(32)))")
+                prepare(database, std::format("SELECT lower(hex(randomblob({})))", bytes))
             );
             if (sqlite3_step(statement.get()) != SQLITE_ROW)
             {
@@ -3792,6 +3795,31 @@ namespace uf::operator_runtime
             }
             return columnText(statement.get(), 0);
         }
+
+        // Opaque identity with no length constraint on it.
+        constexpr auto k_opaqueTokenBytes = uint32{32};
+
+        // The RuntimeArtifact staging leaf, and its width is arithmetic rather
+        // than taste.
+        //
+        // A staged file's path is the production root plus
+        // `runtime-artifacts\.staging\<token>\`, while the same file's final
+        // path is the production root plus `runtime-artifacts\<64 hex>\`. Every
+        // layer under those paths is bounded by the platform -- Win32 measures
+        // an ordinary path against MAX_PATH, 260 wide characters -- so if the
+        // staging leaf is WIDER than the destination leaf, a root that the
+        // installed artifact fits inside can still fail while being installed.
+        // At 32 bytes it was: `.staging\` plus 64 hex is 73 against the
+        // destination's 64, and a 144-character root, an ordinary Windows path,
+        // failed partway through an install having already written some of it.
+        //
+        // 27 bytes is 54 hex characters, so `.staging\` plus the token is 63
+        // against the destination's 64. The destination is therefore always the
+        // binding constraint: whatever root the artifact can live in, it can be
+        // installed into. The unguessability the staging leaf exists for is
+        // untouched at 216 bits -- it is what stops anyone pre-creating the
+        // directory or planting a link inside it before the writes land.
+        constexpr auto k_stagingTokenBytes = uint32{27};
 
         [[nodiscard]]
         auto isLocalReference(std::string_view value) -> bool
@@ -4579,7 +4607,7 @@ namespace uf::operator_runtime
 
             for (;;)
             {
-                UF_TRY_VALUE(randomBytes, randomToken(database));
+                UF_TRY_VALUE(randomBytes, randomToken(database, k_opaqueTokenBytes));
                 auto observedInstanceId = std::string{"oi1_"} + randomBytes;
                 UF_TRY_VALUE(
                     collision,
@@ -6033,7 +6061,10 @@ namespace uf::operator_runtime
         // What the failure leaves behind instead is a runtime_artifacts row no
         // installation names, which reclaimUnreferencedRuntimeArtifacts is free
         // to remove once nothing else does either.
-        UF_TRY_VALUE(stagingToken, randomToken(m_impl->database.get()));
+        UF_TRY_VALUE(
+            stagingToken,
+            randomToken(m_impl->database.get(), k_stagingTokenBytes)
+        );
         UF_TRY_VALUE(
             source,
             detail::readRuntimeArtifactSource(
@@ -7455,7 +7486,7 @@ namespace uf::operator_runtime
             );
         }
         auto const nextFence = previousFence + 1U;
-        UF_TRY_VALUE(leaseId, randomToken(m_impl->database.get()));
+        UF_TRY_VALUE(leaseId, randomToken(m_impl->database.get(), k_opaqueTokenBytes));
 
         UF_TRY_VALUE(
             highWaterWrite,
@@ -7588,7 +7619,7 @@ namespace uf::operator_runtime
             );
         }
         auto const nextFence = previousFence + 1U;
-        UF_TRY_VALUE(leaseId, randomToken(m_impl->database.get()));
+        UF_TRY_VALUE(leaseId, randomToken(m_impl->database.get(), k_opaqueTokenBytes));
 
         UF_TRY_VALUE(
             highWaterWrite,
@@ -8288,7 +8319,7 @@ namespace uf::operator_runtime
             sha256(std::as_bytes(std::span{canonicalParts}))
         );
 
-        UF_TRY_VALUE(token, randomToken(m_impl->database.get()));
+        UF_TRY_VALUE(token, randomToken(m_impl->database.get(), k_opaqueTokenBytes));
         UF_TRY_VALUE(
             insert,
             prepare(
@@ -10446,7 +10477,7 @@ namespace uf::operator_runtime
             );
         }
 
-        UF_TRY_VALUE(token, randomToken(database));
+        UF_TRY_VALUE(token, randomToken(database, k_opaqueTokenBytes));
         UF_TRY_VALUE(
             insert,
             prepare(
@@ -11503,7 +11534,7 @@ namespace uf::operator_runtime
             sqlite3_column_int64(revisionQuery.get(), 0)
         );
 
-        UF_TRY_VALUE(findingId, randomToken(m_impl->database.get()));
+        UF_TRY_VALUE(findingId, randomToken(m_impl->database.get(), k_opaqueTokenBytes));
         UF_TRY_VALUE(
             insert,
             prepare(

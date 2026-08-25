@@ -228,8 +228,10 @@ namespace uf::operator_runtime::detail
             auto cleanup = StagingDirectory{staging};
 
             // Staging writes go through the same confinement the loader reads
-            // through. The leaf name is 32 CSPRNG bytes and so cannot be
-            // pre-created, but the directories underneath it are ours to make,
+            // through. The leaf name is CSPRNG bytes and so cannot be
+            // pre-created -- the ledger picks its width, narrower than the
+            // destination leaf so the destination stays the binding path-length
+            // constraint -- but the directories underneath it are ours to make,
             // and a link planted at one of those between the create and the
             // write would otherwise redirect a deployment write out of the
             // production root.
