@@ -255,7 +255,12 @@ namespace uf::operator_runtime::conformance
         auto result = Frame::create(
             id,
             CaptureSessionId{7},
-            TargetGeneration::fromValue(3),
+            // What a freshly resolved target actually carries, rather than a
+            // number no producer would emit at a first binding. The distinction
+            // is not cosmetic: a hand-picked generation is how this fixture
+            // stayed green while the first generation of every real session was
+            // the one value the ledger refused.
+            TargetGeneration::initial(),
             MonotonicInstant::now(),
             width,
             height,

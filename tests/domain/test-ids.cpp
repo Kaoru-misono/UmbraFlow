@@ -40,9 +40,18 @@ TEST_CASE("target generation increments without wrapping")
     auto const initial = uf::TargetGeneration{};
     auto const next = initial.next();
 
+    // A bound target's first generation is 1, and the Operator ledger depends
+    // on it: `snapshots` records one under CHECK(target_generation > 0), so a
+    // first generation of 0 is the one value an observation cannot be stored
+    // against.
+    CHECK_MESSAGE(
+        initial.value() == uf::uint64{1},
+        "a target that has been resolved has had one incarnation"
+    );
+
     REQUIRE(next.has_value());
     CHECK(*next != initial);
-    CHECK(next->value() == uf::uint64{1});
+    CHECK(next->value() == uf::uint64{2});
     CHECK(initial < *next);
 }
 

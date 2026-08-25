@@ -370,7 +370,12 @@ namespace uf::operator_runtime
                 "SnapshotParts available_tools must name every offered tool"
             );
         }
-        CHECK(parts.find("\"target_generation\":3") != std::string::npos);
+        // 1, because the fixture's frame now carries what a freshly resolved
+        // target actually carries rather than a hand-picked number. This
+        // assertion used to pin 3, and that is how the suite stayed green while
+        // the first generation of every real session was the one value
+        // `snapshots`' CHECK(target_generation > 0) refused.
+        CHECK(parts.find("\"target_generation\":1") != std::string::npos);
 
         // Record naming is outside the parts, which is why re-observing an
         // unchanged world does not re-decide it: the token and the revision

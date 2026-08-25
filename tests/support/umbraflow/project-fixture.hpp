@@ -1314,7 +1314,16 @@ identity = ["fixture.panel.anchor"]
             project.observedInstanceIdentitySchemas,
             reading
         );
-        REQUIRE(snapshot.has_value());
+        // The reason travels. A fixture that refuses without saying why costs
+        // whoever broke it the same hunt this one already cost once: every
+        // snapshot in a live session failed on the ledger's
+        // CHECK(target_generation > 0) and the bare REQUIRE here said only that
+        // it had failed.
+        REQUIRE_MESSAGE(
+            snapshot.has_value(),
+            "createSnapshot: ",
+            snapshot.has_value() ? std::string{} : std::string{snapshot.error().message()}
+        );
         // "operator" is the exact operator protocol schema this fixture's
         // session manifest pins; the authority verifies the bytes rather than
         // the name. The RuntimeModel binding is this generation's own parse of

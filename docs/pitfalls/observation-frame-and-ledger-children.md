@@ -106,3 +106,100 @@ One ROOT REQUEST per top-level interactive call rather than one per session:
 `interactiveRequests`, so every top-of-run call is its own root — exactly as
 every CLI verb's single call is. Calls inside an observation's body are
 unaffected; they are children of that observation and are numbered under it.
+
+## A first observation against a freshly bound target is refused by the ledger
+
+### Symptom
+
+Every `framework.screen.observe` in an exploration session terminally fails, and
+the chunk that called it still reports success, because a failed Tool answer is
+a value rather than a raise. A body passed to `screen.observe` never runs, so
+measurements inside it silently produce nothing:
+
+```text
+body_ran=false  observe_state=terminal_failure
+```
+
+Nothing in the trace says why — the trace carries `engine.observed` and
+`engine.action_found` and no Tool outcome at all. The reason is in the Operator
+database, in `tool_call_history.outcome_payload`:
+
+```json
+{"failure_response":"abort","kind":"io_failure",
+ "message":"Operator database write failed: CHECK constraint failed: target_generation > 0"}
+```
+
+The capture works. Frames are taken, templates match, SAD scores are real. Only
+the recording fails, and it fails after the work.
+
+### Root cause
+
+Two halves of the tree disagree about where a target's generation counter
+starts.
+
+`Generation::initial()` (`modules/core/source/core/types/strong-id.hpp:30`)
+returns `Generation{Representation{0}}`, and `TargetGeneration` both
+default-constructs and `initial()`s to that zero. A target bound for the first
+time therefore has generation **0**; it only reaches 1 after a `next()`, which
+is a re-acquisition.
+
+The `snapshots` table (`modules/operator/source/operator/ledger.cpp:1743`)
+declares `target_generation INTEGER NOT NULL CHECK(target_generation > 0)`,
+matching the convention every other counter in that schema follows —
+`snapshot_revision`, `session_epoch`, `lease_revision` and
+`project_observation_revision` are all `> 0`, and only `availability_revision`
+admits zero.
+
+So the very first observation of a session is the one the ledger cannot record.
+It has been latent since the CHECK landed on 2026-08-11 and was unreachable
+until 2026-08-25, because the only consumer had no Operator production root to
+run a session against — the install door demanded a document no shipped verb
+produced. Repairing that door is what made this defect reachable.
+
+### Fix
+
+**The counter moved, not the constraint.** `Generation::initial()`
+(`modules/core/source/core/types/strong-id.hpp`) returns 1, and the `snapshots`
+DDL is untouched — so there is no schema-identity migration and no data to
+migrate, because the CHECK guaranteed no row with generation zero could ever
+exist.
+
+Three reasons that side is the one that moves:
+
+- The ledger's convention is deliberate and was reaffirmed on the same branch.
+  `snapshot_revision`, `session_epoch`, `lease_revision` and
+  `project_observation_revision` are all `> 0`, and generation 0 now means
+  *genesis — the state materialised before anything happened*. A bound target
+  producing frames is not genesis.
+- Relaxing the CHECK would give 0 two readings inside one schema, which is the
+  two-spellings defect `CLAUDE.md` forbids.
+- **Nothing read zero as "absent".** The earlier draft of this entry warned that
+  every reader treating generation 0 as absent had to be found first; there are
+  none. Absence is spelled `std::optional` throughout, and every comparison is
+  relative, so shifting the origin changes no behaviour but the stored value.
+
+`Generation<>` has exactly one consumer, `TargetGeneration`, so the core change
+produces exactly one behavioural change.
+
+### Regression check
+
+No new test, and that is the point. The conformance fixture wrote
+`TargetGeneration::fromValue(3)` — a hand-picked number no producer emits at a
+first binding — and **that is what kept the whole suite blind**. It carries
+`TargetGeneration::initial()` now, so every existing test that lands a snapshot
+exercises a real first generation.
+
+Falsified by returning `initial()` to zero: nine tests go red across the
+contract, CLI and fault-injection suites, and the red reproduces the live
+machine's own sentence, because the fixture's `REQUIRE` now carries the reason
+it used to swallow:
+
+```text
+createSnapshot: Operator database write failed:
+CHECK constraint failed: target_generation > 0
+```
+
+The general lesson is the one in
+[checks that cannot fail](checks-that-cannot-fail.md): a fixture that spells a
+value the real producer would never spell is a test that cannot fail at the
+place it matters. Take the value from the producer.

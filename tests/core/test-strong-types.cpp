@@ -61,13 +61,24 @@ namespace uf
         using Generation = Generation<ProjectTag, uint8>;
 
         auto const initial = Generation::initial();
+
+        // The first incarnation is 1, not 0. Zero is not a generation: the
+        // Operator ledger records an identifying counter under CHECK(> 0), and
+        // a first generation of zero is the one value it cannot store. Absence
+        // is spelled with an absent optional, never with a value inside the
+        // domain.
+        CHECK_MESSAGE(
+            initial.value() == uint8{1},
+            "a generation counts incarnations, so the first one is 1"
+        );
+
         auto const next = initial.next();
         if (!next.has_value())
         {
             FAIL("The initial generation did not have a successor");
             return;
         }
-        CHECK(next->value() == uint8{1});
+        CHECK(next->value() == uint8{2});
 
         auto const exhausted = Generation::fromValue(std::numeric_limits<uint8>::max());
         CHECK_FALSE(exhausted.next().has_value());
