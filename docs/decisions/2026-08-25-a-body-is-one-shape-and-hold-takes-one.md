@@ -52,9 +52,9 @@ ruling only hands the general body shape to `hold`.
   held, so the run is verifiable, whereas a blind 800 ms hold records nothing and
   is at odds with the traceability contract.
 - **An empty body is refused, specifically.** Engage and immediately release is a
-  keypress, which is the `key` arm's territory, so an empty `hold` body is
-  `key`'s second spelling. The refusal names it: *"a hold body is empty; press
-  and release is the `key` arm."*
+  click, which is the `click` arm's territory, so an empty `hold` body is
+  `click`'s second spelling. The refusal names it: *"a hold body is empty; press
+  and release is the `click` arm."*
 - **No depth constant. The admission loop is the only law.** A one-level limit
   would kill the motivating case outright — it is already two levels deep
   (`hold → observe → measure`). Depth is not a limit: the ledger's call tree
