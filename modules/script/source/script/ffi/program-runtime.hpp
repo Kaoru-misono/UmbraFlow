@@ -69,7 +69,10 @@ namespace uf::script::detail
     // this resolver.
     constexpr auto k_sameLevelMarker             = std::string_view{"./"};
     constexpr auto k_parentLevelMarker           = std::string_view{"../"};
-    constexpr auto k_maximumFrameworkModuleCount = std::size_t{16U};
+    // A scoped closure now carries one GENERATED module per Tool namespace
+    // the run pinned, beside the static Framework set, so this ceiling
+    // bounds a catalog's namespace count rather than a fixed release list.
+    constexpr auto k_maximumFrameworkModuleCount = std::size_t{64U};
     constexpr auto k_interruptBudgetTicks        = uint64{2'000'000U};
     constexpr auto k_compileOptimizationLevel    = 1;
     constexpr auto k_compileDebugLevel           = 0;

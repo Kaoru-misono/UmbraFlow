@@ -84,13 +84,13 @@ return {
 
         // The tool closure: two bound entries and nothing else.
         //
-        // It requires @umbraflow/tools at the top, which is only loadable if
+        // It requires @umbraflow/catalog at the top, which is only loadable if
         // the registrar baked this generation's pinned discovery resource into
         // the scoped program. `sweep` answers out of that frozen table without
         // spending a Tool call, so a load that skipped the resource cannot
         // reach any assertion here.
         constexpr auto k_toolSource = std::string_view{R"LUAU(
-local tools = require("@umbraflow/tools")
+local catalog = require("@umbraflow/catalog")
 
 return {
     plugin_id = "chaos.project",
@@ -99,9 +99,11 @@ return {
     end,
     sweep = function(_input)
         return {
-            catalog_hash = tools.catalog_hash,
-            knows_framework = tools.knows("framework.audit.record"),
-            knows_sibling = tools.knows("chaos.project.dismiss"),
+            catalog_hash = catalog.hash,
+            knows_framework =
+                catalog.describe("framework.audit.record") ~= nil,
+            knows_sibling =
+                catalog.describe("chaos.project.dismiss") ~= nil,
         }
     end,
 }

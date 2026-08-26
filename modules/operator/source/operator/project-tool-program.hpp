@@ -44,7 +44,8 @@ namespace uf::operator_runtime
     [[nodiscard]] auto currentScopedToolEnvironmentHash() -> Result<ContentHash>;
 
     // The run's pinned Tool catalog, as the read-only Framework resource
-    // @umbraflow/tools reads its discovery table from. It is a resource rather
+    // @umbraflow/catalog reads its discovery table from, and @umbraflow/tool
+    // renders into one callable per Tool. It is a resource rather
     // than a native call because discovery must cost no Tool-call budget and
     // must be identical on replay: these bytes are fixed at program
     // construction, so a description cannot move under a running script.

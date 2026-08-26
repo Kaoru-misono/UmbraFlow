@@ -793,13 +793,53 @@ namespace uf::script::detail
             return std::string{p_bytecode, bytecodeSize};
         }
 
+        // The value a script raised, as text a host can report.
+        //
+        // A raised TABLE is rendered as the canonical JSON it already is rather
+        // than dismissed. The generated Tool face raises the whole answer
+        // envelope -- delivery, call identity and the provider's own error --
+        // precisely so that nothing about a failed call is discarded, and an
+        // uncaught one must still reach the operator saying which delivery it
+        // was and why. Rendering costs nothing when a script raises a string,
+        // which is still every other raise in the system.
+        //
+        // The environment is optional because only a resume inside a booted
+        // closure has one; without it a non-string value stays unreadable, as
+        // it was.
         [[nodiscard]]
-        auto topError(lua_State* thread) -> std::string
+        auto topError(
+            lua_State* thread,
+            ProgramEnvironment const* p_environment = nullptr
+        ) -> std::string
         {
             std::size_t length = 0;
             char const* p_text = lua_tolstring(thread, -1, &length);
             if (p_text == nullptr)
-                return "(non-string error value)";
+            {
+                if (p_environment == nullptr || lua_type(thread, -1) != LUA_TTABLE)
+                {
+                    return "(non-string error value)";
+                }
+                auto budget = ValueBudget{};
+                auto raised = readValue(
+                    thread,
+                    *p_environment,
+                    lua_gettop(thread),
+                    0U,
+                    budget
+                );
+                if (!raised.has_value())
+                {
+                    return "(non-string error value)";
+                }
+                auto rendered = json::canonicalBytes(*raised);
+                if (rendered.size() > k_maximumErrorBytes)
+                {
+                    rendered.resize(k_maximumErrorBytes);
+                    rendered += "... (truncated)";
+                }
+                return rendered;
+            }
             if (length <= k_maximumErrorBytes)
                 return std::string{p_text, length};
             return std::string{p_text, k_maximumErrorBytes} + "... (truncated)";
@@ -871,7 +911,9 @@ namespace uf::script::detail
             }
             if (status != LUA_OK)
             {
-                return refuse("pure data program failed: " + topError(thread));
+                return refuse(
+                    "pure data program failed: " + topError(thread, p_environment)
+                );
             }
             if (
                 p_environment != nullptr
@@ -1901,9 +1943,15 @@ namespace uf::script::detail
         }
         if (spec.frameworkModules.size() > k_maximumFrameworkModuleCount)
         {
+            // Named, because the count is now partly the caller's: a pinned
+            // catalog with many Tool namespaces renders many modules, and
+            // "exceeds its fixed ceiling" would leave the reader guessing which
+            // number it is and what it was measured against.
             return fail(
                 AutomationErrorKind::InternalInvariant,
-                "Framework pure module count exceeds its fixed ceiling"
+                "this closure needs " + std::to_string(spec.frameworkModules.size())
+                    + " Framework modules, and the fixed ceiling is "
+                    + std::to_string(k_maximumFrameworkModuleCount)
             );
         }
         auto orderedFrameworkModules = std::vector<FrameworkModule>{

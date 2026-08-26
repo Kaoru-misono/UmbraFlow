@@ -27,9 +27,14 @@ namespace uf::script
     {
         constexpr auto k_entryPoints = std::array{std::string_view{"derive"}};
 
-        constexpr auto k_toolsFacade = std::string_view{R"LUAU(
+        // A stand-in for the renderer. The real one turns each pinned Tool into
+        // a closure over its own name; this one hands the seam whatever the
+        // script passed, because what these cases exercise is the SEAM's
+        // contract -- its arity, its name grammar and its argument shape --
+        // rather than the rendering above it.
+        constexpr auto k_renderFacade = std::string_view{R"LUAU(
 local native = ...
-return {
+local seam = {
     call = function(name, arguments)
         return native.invoke(name, arguments)
     end,
@@ -37,12 +42,28 @@ return {
         return native.invoke(...)
     end,
 }
+return {
+    module = function(_namespace)
+        return seam
+    end,
+}
 )LUAU"};
 
-        constexpr auto k_passthroughFacade = std::string_view{R"LUAU(
+        // The discovery module holds no capability at all, so its chunk
+        // argument is empty exactly as a Project-authored module's is.
+        constexpr auto k_catalogFacade = std::string_view{R"LUAU(
 local _native = ...
 return {}
 )LUAU"};
+
+        // The pinned catalog every scoped program is compiled against: the
+        // module set a closure carries is derived from these bytes, so a
+        // program with no catalog has no Tool surface to render and is refused.
+        constexpr auto k_catalogBytes = std::string_view{
+            R"({"catalog_hash":"0000000000000000000000000000000000000000000000000000000000000000",)"
+            R"("tools":[{"description":"Observe one retained screenshot",)"
+            R"("input_schema":{},"name":"framework.screen.observe","tool_version":"1"}]})"
+        };
 
         [[nodiscard]]
         auto parsed(std::string_view text) -> json::Value
@@ -78,20 +99,13 @@ return {}
         {
             return {
                 FrameworkModule{
-                    .name   = "@umbraflow/audit",
-                    .source = k_passthroughFacade,
+                    .name   = "@umbraflow/catalog",
+                    .source = k_catalogFacade,
                 },
                 FrameworkModule{
-                    .name   = "@umbraflow/screen",
-                    .source = k_passthroughFacade,
-                },
-                FrameworkModule{
-                    .name   = "@umbraflow/tools",
-                    .source = k_toolsFacade,
-                },
-                FrameworkModule{
-                    .name   = "@umbraflow/workflow",
-                    .source = k_passthroughFacade,
+                    .name           = "@umbraflow/internal/render",
+                    .source         = k_renderFacade,
+                    .projectVisible = false,
                 },
             };
         }
@@ -117,6 +131,18 @@ return {}
             std::vector<PureDataProgram::Resource> frameworkResources = {}
         ) -> Result<ScopedToolProgram>
         {
+            if (!std::ranges::contains(
+                    frameworkResources,
+                    scopedToolCatalogResourceName(),
+                    &PureDataProgram::Resource::name
+                ))
+            {
+                frameworkResources.emplace_back(PureDataProgram::Resource{
+                    .kind  = PureDataProgram::ResourceKind::Json,
+                    .name  = std::string{scopedToolCatalogResourceName()},
+                    .bytes = std::string{k_catalogBytes},
+                });
+            }
             return ScopedToolProgram::compile(
                 pluginId,
                 "main",
@@ -160,9 +186,9 @@ return {}
             pluginSource(
                 "fixture.project.leaf",
                 "",
-                "        local tools = require(\"@umbraflow/tools\")\n"
+                "        local tools = require(\"@umbraflow/screen\")\n"
                 "        local caught = pcall(function()\n"
-                "            return tools.call(\"framework.screen.observe\", input)\n"
+                "            return tools.call(\"framework.screen.observe\", {})\n"
                 "        end)\n"
                 "        return { caught = caught }"
             )
@@ -187,7 +213,7 @@ return {}
             "fixture.project.admission",
             pluginSource(
                 "fixture.project.admission",
-                "local tools = require(\"@umbraflow/tools\")\n"
+                "local tools = require(\"@umbraflow/screen\")\n"
                 "tools.call(\"framework.screen.observe\", {})",
                 "        return input"
             ),
@@ -210,24 +236,32 @@ return {}
             pluginSource(
                 "fixture.project.malformed",
                 "",
-                "        local tools = require(\"@umbraflow/tools\")\n"
+                "        local tools = require(\"@umbraflow/screen\")\n"
                 "        local arity, arityError = pcall(function()\n"
                 "            return tools.raw(\"a.one\")\n"
                 "        end)\n"
                 "        local named, namedError = pcall(function()\n"
                 "            return tools.call(\"NotCanonical\", {})\n"
                 "        end)\n"
+                "        local shaped, shapedError = pcall(function()\n"
+                "            return tools.call(\"a.one\", \"not an object\")\n"
+                "        end)\n"
                 "        return { arity = arity, arityError = tostring(arityError),\n"
-                "            named = named, namedError = tostring(namedError) }"
+                "            named = named, namedError = tostring(namedError),\n"
+                "            shaped = shaped, shapedError = tostring(shapedError) }"
             )
         );
         auto const answer = program.invoke("derive", json::Value{}, runRequest());
         REQUIRE(answer.has_value());
         auto const bytes = json::canonicalBytes(*answer);
         CHECK(bytes.contains(R"("arity":false)"));
-        CHECK(bytes.contains("takes a tool name and one argument value"));
+        CHECK(bytes.contains("takes a tool name and one argument object"));
         CHECK(bytes.contains(R"("named":false)"));
         CHECK(bytes.contains("rejected a non-canonical tool name"));
+        // A Tool's top-level arguments are one JSON object, and the seam is the
+        // only place that holds it: no Luau module repeats the check, so a
+        // non-object here has to be refused right here.
+        CHECK(bytes.contains(R"("shaped":false)"));
     }
 
     TEST_CASE("the pure resolver refuses each scoped module by name")
@@ -258,11 +292,16 @@ return {}
     TEST_CASE("a scoped program admits exactly its scoped module catalog")
     {
         constexpr auto expected = std::array{
-            std::string_view{"@umbraflow/audit"},
-            std::string_view{"@umbraflow/screen"},
-            std::string_view{"@umbraflow/tools"},
-            std::string_view{"@umbraflow/workflow"},
+            std::string_view{"@umbraflow/catalog"},
+            std::string_view{"@umbraflow/internal/render"},
         };
+        constexpr auto visible = std::array{
+            std::string_view{"@umbraflow/catalog"},
+        };
+        CHECK(std::ranges::equal(
+            ScopedToolProgram::projectVisibleScopedModuleNames(),
+            visible
+        ));
         CHECK(std::ranges::equal(ScopedToolProgram::scopedModuleNames(), expected));
 
         auto incomplete = frameworkModules();
@@ -274,7 +313,7 @@ return {}
         );
         REQUIRE_FALSE(missing.has_value());
         CHECK(std::string{missing.error().message()}.contains(
-            "requires the Framework module @umbraflow/workflow"
+            "requires the Framework module @umbraflow/internal/render"
         ));
     }
 
@@ -325,11 +364,17 @@ return {}
         // note. Changing it is the point at which the change becomes a break.
         CHECK(
             scoped->hex()
-            == "30d312235ad2e7471cb7946e5d8e34502fa61807a4c3e79000abbff8f9026273"
+            == "f2acab246b56b6348344048cbd440ce4598eab92fcc47ff1ea06ca6961a5058a"
         );
         CHECK(material.contains(R"("interactive_tool_calls":1024)"));
         CHECK(material.contains(
             R"("failure_behaviour":"runtime_refusal_is_terminal_uncatchable_vm_teardown_v1")"
+        ));
+        // Exactly one module is handed the private capability table. A build
+        // that widened that set would move this digest and go red here, which
+        // is the only place the narrowing is observable from outside a VM.
+        CHECK(material.contains(
+            R"("capability_modules":["@umbraflow/internal/render"])"
         ));
     }
 }

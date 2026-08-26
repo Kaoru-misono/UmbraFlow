@@ -1,6 +1,7 @@
 #include "framework-bundle.hpp"
 
 #include <script/engine.hpp>
+#include <script/scoped-tool-program.hpp>
 
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
@@ -50,19 +51,25 @@ namespace uf::task
             std::size_t      dependencyDepth{};
         };
 
-        // A release-owned module that is publicly nameable but reaches the world
-        // through one native seam, so it loads only inside a
-        // script::ScopedToolProgram or script::ScopedToolSession. It is
-        // deliberately absent from every trusted Engine VM and from the pure
-        // closure: those environments build no Tool Runtime capability table,
-        // and a scoped module that loaded without one would either fail the
-        // whole generation or -- far worse -- grow a branch that pretends a Tool
-        // call can be skipped.
+        // A release-owned module that is publicly nameable but belongs to the
+        // Tool Runtime, so it loads only inside a script::ScopedToolProgram or
+        // script::ScopedToolSession. It is deliberately absent from every
+        // trusted Engine VM and from the pure closure: those environments build
+        // no Tool Runtime capability table and bake no pinned Tool catalog, so
+        // a scoped module that loaded there would either fail the whole
+        // generation or -- far worse -- grow a branch that pretends a Tool call
+        // can be skipped.
         struct ScopedModuleBinding final
         {
             std::string_view privateName;
             std::string_view publicName;
             std::size_t      dependencyDepth{};
+
+            // Whether Project-authored source may resolve it. The Tool face
+            // renderer may not: it holds the private capability table, and the
+            // only route from Project source to the Tool Runtime is a module
+            // the scoped program type GENERATED from the run's pinned catalog.
+            bool projectVisible{};
         };
 
         // Which of the four declaration tables below admits a module, spelled
@@ -127,32 +134,30 @@ namespace uf::task
             },
         };
 
-        // The four scoped facades, in the exact order and under the exact names
-        // script::ScopedToolProgram::scopedModuleNames() states. Both registered
-        // handlers and interactive chunks validate this same list. A name that
-        // moved here without moving there is a program that cannot compile, and
-        // a test binds the two lists to each other.
+        // The STATIC half of the scoped tier, in the exact order and under the
+        // exact names script::ScopedToolProgram::scopedModuleNames() states.
+        // Both registered handlers and interactive chunks validate this same
+        // list. A name that moved here without moving there is a program that
+        // cannot compile, and a test binds the two lists to each other.
         //
-        // Depths continue the pure tier rather than restarting: `tools` owns the
-        // single call primitive and the other three reach the Tool Runtime only
-        // through it, which is why nothing at depth 4 requires anything else at
-        // depth 4.
+        // Neither is a facade over a Tool. `catalog` is the pinned catalog read
+        // as data, and `render` turns that catalog into one function per
+        // Tool, which is why it sits one depth above `catalog`. The modules a
+        // chunk actually requires -- `@umbraflow/screen`, `@umbraflow/input`
+        // and one per Project Tool namespace -- are GENERATED per run from the
+        // pinned catalog and are deliberately not here: a release cannot know
+        // what Tools a Project will declare.
         constexpr auto k_scopedModuleBindings = std::array{
-            ScopedModuleBinding{"audit", "@umbraflow/audit", 4U},
-            ScopedModuleBinding{"screen", "@umbraflow/screen", 4U},
-            ScopedModuleBinding{"tools", "@umbraflow/tools", 3U},
-            ScopedModuleBinding{"workflow", "@umbraflow/workflow", 4U},
+            ScopedModuleBinding{"catalog", "@umbraflow/catalog", 3U, true},
+            ScopedModuleBinding{
+                "render",
+                "@umbraflow/internal/render",
+                4U,
+                false,
+            },
         };
 
         constexpr auto k_maximumScopedDependencyDepth = std::size_t{4U};
-
-        // The read-only JSON resource `@umbraflow/tools` reads the run's pinned
-        // Tool catalog from. It is stated here as well as inside tools.luau
-        // because a Luau source cannot read a C++ constant; a case in
-        // tests/task/test-framework-bundle.cpp asserts this exact spelling
-        // appears in the embedded module source, so the two cannot drift.
-        constexpr auto k_scopedToolCatalogResource =
-            std::string_view{"umbraflow.tool-catalog"};
 
         constexpr auto k_maximumFrameworkDependencyDepth = std::size_t{2U};
 
@@ -408,7 +413,7 @@ namespace uf::task
                     .name            = binding.publicName,
                     .source          = found->source,
                     .dependencyDepth = binding.dependencyDepth,
-                    .projectVisible  = true,
+                    .projectVisible  = binding.projectVisible,
                 });
             }
         }
@@ -417,7 +422,7 @@ namespace uf::task
 
     auto scopedToolCatalogResourceName() noexcept -> std::string_view
     {
-        return k_scopedToolCatalogResource;
+        return script::scopedToolCatalogResourceName();
     }
 
     auto frameworkProjectGlobals() -> std::vector<std::string>

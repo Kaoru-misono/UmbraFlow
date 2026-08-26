@@ -1123,10 +1123,9 @@ namespace uf::cli
         auto const measured = (*session)->evaluate(
             R"lua(
                 local screen = require("@umbraflow/screen")
-                local receipt = rawget(screen.capture(), "result")
-                local resolved = screen.observe(receipt.screenshot_sha256)
-                return rawget(resolved, "ok") == true
-                    and rawget(resolved, "delivery") == "confirmed"
+                local shot = screen.capture{}.screenshot_sha256
+                local resolved = screen.observe{ screenshot_sha256 = shot }
+                return resolved.observation_reference ~= nil
             )lua",
             "annotation-explicit-screenshot"
         );
@@ -1141,11 +1140,8 @@ namespace uf::cli
         // Framework-only catalog or a second dispatcher.
         auto const projectTool = (*session)->evaluate(
             R"lua(
-                local tools = require("@umbraflow/tools")
-                local answer = tools.call("fixture.alpha.observe-1", {
-                    value = 1,
-                })
-                return rawget(rawget(answer, "result"), "outcome")
+                local alpha = require("@umbraflow/fixture/alpha")
+                return alpha["observe-1"]{ value = 1 }.outcome
             )lua",
             "interactive-project-tool"
         );
@@ -1161,10 +1157,10 @@ namespace uf::cli
         // Operator's own sentence, which is what an annotator has to read.
         auto const refused = (*session)->evaluate(
             R"lua(
-                local tools = require("@umbraflow/tools")
-                tools.call("framework.input.click", {
+                local input = require("@umbraflow/input")
+                input.click{
                     screenshot_sha256 = string.rep("0", 64), x = 0, y = 0,
-                })
+                }
                 return "delivered"
             )lua",
             "annotation-input-under-deny-all"
@@ -1351,13 +1347,11 @@ namespace uf::cli
             auto const clicked = (*session)->evaluate(
                 R"lua(
                     local screen = require("@umbraflow/screen")
-                    local tools = require("@umbraflow/tools")
-                    local captured = screen.capture()
-                    local hash = rawget(rawget(captured, "result"), "screenshot_sha256")
-                    local answer = tools.call("framework.input.click", {
+                    local input  = require("@umbraflow/input")
+                    local hash = screen.capture{}.screenshot_sha256
+                    return input.click{
                         screenshot_sha256 = hash, x = 0, y = 0,
-                    })
-                    return rawget(rawget(answer, "result"), "delivered") == true
+                    }.delivered == true
                 )lua",
                 "annotation-input"
             );
@@ -1437,25 +1431,20 @@ namespace uf::cli
             auto const measured = (*session)->evaluate(
                 R"lua(
                     local screen = require("@umbraflow/screen")
-                    local tools = require("@umbraflow/tools")
-                    local receipt = rawget(screen.capture(), "result")
-                    local hash = receipt.screenshot_sha256
-                    local read = tools.call("framework.screen.read_lines", {
+                    local hash = screen.capture{}.screenshot_sha256
+                    -- Neither measurement is checked for success: a call
+                    -- that did not confirm raises, so reaching the return
+                    -- IS the proof that both confirmed.
+                    screen.read_lines{
                         screenshot_sha256 = hash,
                         x = 0, y = 0, width = 1, height = 1,
-                    })
-                    local probe = tools.call("framework.screen.probe", {
+                    }
+                    screen.probe{
                         screenshot_sha256 = hash,
                         x = 0, y = 0, width = 1, height = 1,
                         colour_red = 0, colour_green = 0,
                         colour_blue = 0, tolerance = 12, removes = false,
-                    })
-                    if rawget(read, "ok") ~= true
-                        or rawget(read, "delivery") ~= "confirmed"
-                        or rawget(probe, "ok") ~= true
-                        or rawget(probe, "delivery") ~= "confirmed" then
-                        error("explicit screenshot measurement did not confirm")
-                    end
+                    }
                     return hash
                 )lua",
                 "annotation-two-explicit-measurements"
@@ -1537,19 +1526,17 @@ namespace uf::cli
         auto const measured = (*session)->evaluate(
             R"lua(
                 local screen = require("@umbraflow/screen")
-                local tools = require("@umbraflow/tools")
-                local first = rawget(screen.capture(), "result")
-                local second = rawget(screen.capture(), "result")
-                if first.screenshot_sha256 == second.screenshot_sha256 then
+                local first = screen.capture{}.screenshot_sha256
+                local second = screen.capture{}.screenshot_sha256
+                if first == second then
                     error("the two fixture screens had one digest")
                 end
-                local answer = tools.call("framework.screen.probe", {
-                    screenshot_sha256 = first.screenshot_sha256,
+                return screen.probe{
+                    screenshot_sha256 = first,
                     x = 0, y = 0, width = 1, height = 1,
                     colour_red = 0, colour_green = 0, colour_blue = 0,
                     tolerance = 0, removes = false,
-                })
-                return rawget(answer, "result").dominant_red
+                }.dominant_red
             )lua",
             "measure-first-screenshot-after-second-capture"
         );
@@ -1862,18 +1849,15 @@ namespace uf::cli
             auto const captured = (*session)->evaluate(
             R"lua(
                 local screen = require("@umbraflow/screen")
-                local tools = require("@umbraflow/tools")
-                local source = screen.capture()
-                local hash = rawget(rawget(source, "result"), "screenshot_sha256")
-                local answer = tools.call("framework.input.hold", {
+                local input  = require("@umbraflow/input")
+                local hash = screen.capture{}.screenshot_sha256
+                return input.hold{
                     duration_ms = 0,
                     return_screen = "capture",
                     screenshot_sha256 = hash,
                     x = 0,
                     y = 0,
-                })
-                local result = rawget(answer, "result")
-                return rawget(rawget(result, "screen"), "screenshot_sha256")
+                }.screen.screenshot_sha256
             )lua",
             "flat-hold-captures"
         );
@@ -1893,16 +1877,15 @@ namespace uf::cli
             auto const failed = (*session)->evaluate(
             R"lua(
                 local screen = require("@umbraflow/screen")
-                local tools = require("@umbraflow/tools")
-                local source = screen.capture()
-                local hash = rawget(rawget(source, "result"), "screenshot_sha256")
-                return tools.call("framework.input.hold", {
+                local input  = require("@umbraflow/input")
+                local hash = screen.capture{}.screenshot_sha256
+                return input.hold{
                     duration_ms = 0,
                     return_screen = "capture",
                     screenshot_sha256 = hash,
                     x = 0,
                     y = 0,
-                })
+                }.screen.screenshot_sha256
             )lua",
             "flat-hold-capture-fails"
         );
@@ -1918,15 +1901,15 @@ namespace uf::cli
             auto const cancelled = (*session)->evaluate(
             R"lua(
                 local screen = require("@umbraflow/screen")
-                local tools = require("@umbraflow/tools")
-                local source = screen.capture()
-                local hash = rawget(rawget(source, "result"), "screenshot_sha256")
-                return tools.call("framework.input.hold", {
+                local input  = require("@umbraflow/input")
+                local hash = screen.capture{}.screenshot_sha256
+                input.hold{
                     duration_ms = 250,
                     screenshot_sha256 = hash,
                     x = 0,
                     y = 0,
-                })
+                }
+                return "held"
             )lua",
             "flat-hold-cancelled"
         );
@@ -1941,7 +1924,16 @@ namespace uf::cli
         CHECK(lifecycle->shutdown().has_value());
     }
 
-    TEST_CASE("a flat hold releases when its internal observation fails")
+    // WHAT THIS CASE ACTUALLY PROVES, restated 2026-08-26. It was named for a
+    // failing internal observation and asserted only that evaluate() errored --
+    // which it did for the wrong reason: the chunk returned the answer TABLE and
+    // the result transport refuses a table. Under the flat call surface the
+    // chunk returns the Tool's own result, so the wrong reason is gone, and with
+    // it the illusion: at a zero pixel-comparison budget the observation
+    // SUCCEEDS and the hold confirms. The invariant worth having is the one
+    // below and it is asserted directly -- a hold that observes while engaged
+    // releases on the way out.
+    TEST_CASE("a flat hold that observes while engaged still releases")
     {
         auto const world     = ExploreDoorWorld{};
         auto const delivered = std::make_shared<uint32>();
@@ -1988,20 +1980,27 @@ namespace uf::cli
         auto const failed = (*session)->evaluate(
             R"lua(
                 local screen = require("@umbraflow/screen")
-                local tools = require("@umbraflow/tools")
-                local source = screen.capture()
-                local hash = rawget(rawget(source, "result"), "screenshot_sha256")
-                return tools.call("framework.input.hold", {
+                local input  = require("@umbraflow/input")
+                local hash = screen.capture{}.screenshot_sha256
+                return input.hold{
                     duration_ms = 0,
                     return_screen = "observe",
                     screenshot_sha256 = hash,
                     x = 0,
                     y = 0,
-                })
+                }.screen.observation_id
             )lua",
-            "flat-hold-observation-fails"
+            "flat-hold-observes-while-engaged"
         );
-        REQUIRE_FALSE(failed.has_value());
+        auto const why = failed.has_value()
+            ? std::string{}
+            : std::string{failed.error().message()};
+        REQUIRE_MESSAGE(failed.has_value(), why);
+        REQUIRE(failed->text() != nullptr);
+        CHECK_MESSAGE(
+            !failed->text()->empty(),
+            "a hold that observes while engaged must answer with what it saw"
+        );
         CHECK(held->engaged == 1U);
         CHECK(held->released == 1U);
         CHECK_FALSE(held->held);
@@ -2022,15 +2021,15 @@ namespace uf::cli
         auto const evaluated = evaluateAuthoringChunk(
             world,
             R"lua(
-                local tools = require("@umbraflow/tools")
-                local answer = tools.call("framework.project.write_file", {
+                local project = require("@umbraflow/project")
+                local ok, raised = pcall(project.write_file, {
                     path = "runtime/missing.png",
                     file_sha256 = string.rep("0", 64),
                 })
-                if rawget(answer, "ok") == true then
+                if ok then
                     return "unexpected success"
                 end
-                return rawget(rawget(answer, "error"), "message")
+                return raised.error.message
             )lua",
             "project-write-file-missing-evidence"
         );
@@ -2057,18 +2056,13 @@ namespace uf::cli
         auto const evaluated = evaluateAuthoringChunk(
             world,
             R"lua(
-                local screen = require("@umbraflow/screen")
-                local tools = require("@umbraflow/tools")
-                local captured = screen.capture()
-                local artifact = rawget(captured, "result")
-                local fileSha256 = rawget(artifact, "screenshot_sha256")
-                local written = tools.call("framework.project.write_file", {
+                local screen  = require("@umbraflow/screen")
+                local project = require("@umbraflow/project")
+                local fileSha256 = screen.capture{}.screenshot_sha256
+                project.write_file{
                     path = "runtime/copied.png",
                     file_sha256 = fileSha256,
-                })
-                if rawget(written, "ok") ~= true then
-                    return rawget(rawget(written, "error"), "message")
-                end
+                }
                 return fileSha256
             )lua",
             "project-write-file-exact-bytes"
@@ -2120,21 +2114,24 @@ namespace uf::cli
         auto const evaluated = evaluateAuthoringChunk(
             world,
             R"lua(
-                local tools = require("@umbraflow/tools")
-                local function outcome(name, answer)
-                    if rawget(answer, "ok") == true then
+                local project = require("@umbraflow/project")
+                local function outcome(name, called, raised)
+                    if called then
                         return name .. ":unexpected success"
                     end
-                    return name .. ":" .. rawget(rawget(answer, "error"), "message")
+                    return name .. ":" .. raised.error.message
                 end
-                local read = tools.call("framework.project.read_text", {
-                    path = "../outside.txt",
-                })
-                local write = tools.call("framework.project.write_text", {
-                    path = "../outside.txt",
-                    content = "escaped",
-                })
-                return outcome("read", read) .. "|" .. outcome("write", write)
+                local readOk, readRaised = pcall(
+                    project.read_text,
+                    { path = "../outside.txt" }
+                )
+                local writeOk, writeRaised = pcall(
+                    project.write_text,
+                    { path = "../outside.txt", content = "escaped" }
+                )
+                return outcome("read", readOk, readRaised)
+                    .. "|"
+                    .. outcome("write", writeOk, writeRaised)
             )lua",
             "project-text-path-confinement"
         );
@@ -2202,15 +2199,15 @@ namespace uf::cli
             REQUIRE(session.has_value());
             auto const written = (*session)->evaluate(
                 R"lua(
-                    local tools = require("@umbraflow/tools")
-                    local answer = tools.call("framework.project.write_text", {
-                        path = "runtime/annotation.txt",
-                        content = "a stroke",
-                    })
-                    return if rawget(answer, "ok") == true
-                        and rawget(answer, "delivery") == "confirmed"
-                        then "written"
-                        else tostring(rawget(rawget(answer, "error"), "message"))
+                    local project = require("@umbraflow/project")
+                    local ok, raised = pcall(
+                        project.write_text,
+                        {
+                            path = "runtime/annotation.txt",
+                            content = "a stroke",
+                        }
+                    )
+                    return if ok then "written" else tostring(raised.error.message)
                 )lua",
                 "annotation-authoring-write"
             );

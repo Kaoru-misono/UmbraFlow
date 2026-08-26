@@ -1766,7 +1766,7 @@ return {
                   R"("luau_implementation":"luau-0.730+5bc7f4b23756f69f4669b419fa9034f117ccd6fe")")
               != std::string::npos);
         CHECK(material.find(
-                  R"("framework_module_count":16)"
+                  R"("framework_module_count":64)"
               )
               != std::string::npos);
         CHECK(material.find(
@@ -1802,7 +1802,7 @@ return {
         CHECK(material.find(R"("framework_resource_count":16)") != std::string::npos);
         CHECK(
             first->hex()
-            == "a68c40d41cb0b6c5ae8560e9dc12d68e4382c2bb83a0430dbaf2860dd7af768f"
+            == "43b6a5d846610611ef80c9f3c2adce2b92411ff4ce8a951beda6990705b1e4ff"
         );
     }
 } // namespace uf::script

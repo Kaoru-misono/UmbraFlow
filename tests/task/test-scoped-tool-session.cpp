@@ -50,7 +50,7 @@ namespace uf::task
         }
 
         [[nodiscard]]
-        auto catalogResources()
+        auto catalogResources(std::string_view tools = k_catalogTools)
             -> std::vector<script::PureDataProgram::Resource>
         {
             return {
@@ -58,8 +58,8 @@ namespace uf::task
                     .kind = script::PureDataProgram::ResourceKind::Json,
                     .name = std::string{scopedToolCatalogResourceName()},
                     .bytes = R"({"catalog_hash":")"
-                        + digestOf(k_catalogTools).hex() + R"(","tools":)"
-                        + std::string{k_catalogTools} + "}",
+                        + digestOf(tools).hex() + R"(","tools":)"
+                        + std::string{tools} + "}",
                 },
             };
         }
@@ -69,7 +69,8 @@ namespace uf::task
             std::shared_ptr<std::vector<std::string>> calls,
             MonotonicInstant::Duration maximumRuntime = std::chrono::seconds{5},
             uint64 memoryQuotaBytes = 16U * 1024U * 1024U,
-            script::ToolRuntimeInvoke runtime = {}
+            script::ToolRuntimeInvoke runtime = {},
+            std::string_view catalogTools = k_catalogTools
         )
             -> Result<script::ScopedToolSession>
         {
@@ -103,7 +104,7 @@ namespace uf::task
             }
             return script::ScopedToolSession::create(
                 std::move(*modules),
-                catalogResources(),
+                catalogResources(catalogTools),
                 std::move(runtime),
                 {},
                 maximumRuntime,
@@ -136,6 +137,15 @@ namespace uf::task
             auto result = json::Value::ofObject({});
             if (tool == "framework.screen.capture")
             {
+                // `capture{}` and nothing else. A Tool's top-level arguments are
+                // an object by contract, so the seam must hand the empty TABLE
+                // across as the empty OBJECT; the empty-object sentinel a caller
+                // used to need is gone, and this is where its absence is proved.
+                CHECK_MESSAGE(
+                    arguments.kind() == json::ValueKind::Object,
+                    "an empty argument table must arrive as a JSON object"
+                );
+                CHECK(arguments.members().empty());
                 result = json::Value::ofObject({
                     {"screenshot_sha256",
                      json::Value::ofString(digestOf("flat-loop-frame").hex())},
@@ -175,29 +185,18 @@ namespace uf::task
 
         auto const outcome = scoped->evaluate(
             R"LUAU(
-                local tools = require("@umbraflow/tools")
-
-                local function call(name, args)
-                    local answer = tools.call(name, args)
-                    if rawget(answer, "ok") ~= true then
-                        error(name .. " did not confirm")
-                    end
-                    return rawget(answer, "result")
-                end
+                local screen   = require("@umbraflow/screen")
+                local input    = require("@umbraflow/input")
+                local workflow = require("@umbraflow/workflow")
 
                 for _ = 1, 3 do
-                    local shot = call("framework.screen.capture", canon.emptyObject)
-                    local digest = rawget(shot, "screenshot_sha256")
-                    local seen = call("framework.screen.observe", {
-                        screenshot_sha256 = digest,
-                    })
-                    if rawget(seen, "terminal") == true then
+                    local shot = screen.capture{}.screenshot_sha256
+                    local seen = screen.observe{ screenshot_sha256 = shot }
+                    if seen.terminal == true then
                         return "terminated"
                     end
-                    call("framework.input.click", {
-                        screenshot_sha256 = digest, x = 1, y = 0,
-                    })
-                    call("framework.workflow.wait", { duration_ms = 5 })
+                    input.click{ screenshot_sha256 = shot, x = 1, y = 0 }
+                    workflow.wait{ duration_ms = 5 }
                 end
                 return "exhausted"
             )LUAU",
@@ -228,7 +227,7 @@ namespace uf::task
         );
     }
 
-    TEST_CASE("interactive chunks resolve the registered-handler scoped modules")
+    TEST_CASE("the face renders the pinned catalog and discovery answers for it")
     {
         auto calls  = std::make_shared<std::vector<std::string>>();
         auto scoped = session(calls);
@@ -237,24 +236,32 @@ namespace uf::task
         auto result = scoped->evaluate(
             R"LUAU(
                 local screen = require("@umbraflow/screen")
-                local tools = require("@umbraflow/tools")
+                local catalog = require("@umbraflow/catalog")
                 local hash = string.rep("0", 64)
-                local answer = screen.observe(hash)
-                local measured = true
-                tools.call("framework.screen.read_lines", {
-                    screenshot_sha256 = hash,
-                    x = 0,
-                    y = 0,
-                    width = 1,
-                    height = 1,
-                })
-                return answer.delivery .. ":" .. tostring(answer.ok) .. ":" .. tostring(measured)
+                screen.observe{ screenshot_sha256 = hash }
+                -- Nothing in this repository writes the name `read_lines`. It
+                -- is callable because the pinned catalog names it, which is the
+                -- whole property: no per-Tool source exists anywhere.
+                screen.read_lines{
+                    screenshot_sha256 = hash, x = 0, y = 0, width = 1, height = 1,
+                }
+                return #catalog.names()
+                    .. ":"
+                    .. catalog.describe("framework.screen.capture").description
+                    .. ":"
+                    .. tostring(screen.probe)
             )LUAU",
             "scoped-modules"
         );
-        REQUIRE(result.has_value());
+        auto const why = result.has_value()
+            ? std::string{}
+            : std::string{result.error().message()};
+        REQUIRE_MESSAGE(result.has_value(), why);
         REQUIRE(result->text() != nullptr);
-        CHECK(*result->text() == "confirmed:true:true");
+        // Five pinned Tools, the host's own description for one of them, and
+        // nothing at all for a Tool this run did not pin: the face is the
+        // catalog and holds nothing the catalog did not name.
+        CHECK(*result->text() == "5:Capture one screenshot:nil");
         CHECK(
             *calls
             == std::vector<std::string>{
@@ -264,7 +271,86 @@ namespace uf::task
         );
     }
 
-    TEST_CASE("screen observation carries a provider failure message verbatim")
+    // The one catalog shape this spelling cannot render, refused by name when
+    // the session is built rather than special-cased.
+    //
+    // A Tool's namespace becomes its module path, and the framework's own
+    // namespace is elided because `@umbraflow/` already is it. A Tool named
+    // `framework.<member>` therefore has nothing left to be a module. Note what
+    // is NOT refused: one Tool's name being a dotted prefix of another's is
+    // fine here, because `a.b` and `a.b.c` are simply two namespaces and two
+    // modules.
+    TEST_CASE("a Tool with no module segment left is refused by name")
+    {
+        constexpr auto k_unrenderable = std::string_view{
+            R"([{"description":"Capture one screenshot","input_schema":{},)"
+            R"("name":"framework.capture","tool_version":"1"}])"
+        };
+        auto calls  = std::make_shared<std::vector<std::string>>();
+        auto scoped = session(
+            calls,
+            std::chrono::seconds{5},
+            16U * 1024U * 1024U,
+            {},
+            k_unrenderable
+        );
+        REQUIRE_FALSE(scoped.has_value());
+        auto const message = std::string{scoped.error().message()};
+        CHECK_MESSAGE(
+            message.contains(
+                "the pinned Tool catalog names framework.capture, whose "
+                "namespace is the framework's own and leaves no module segment "
+                "behind"
+            ),
+            "a Tool the module rule cannot place must be refused by name"
+        );
+    }
+
+    // Two namespaces, one a dotted prefix of the other, are two modules and
+    // neither shadows the other. This is the case a nested single-table face
+    // could not have rendered at all.
+    TEST_CASE("a Tool namespace nested inside another is its own module")
+    {
+        constexpr auto k_nested = std::string_view{
+            R"([{"description":"Capture one screenshot","input_schema":{},)"
+            R"("name":"framework.screen.capture","tool_version":"1"},)"
+            R"({"description":"Capture a region","input_schema":{},)"
+            R"("name":"framework.screen.region.capture","tool_version":"1"}])"
+        };
+        auto calls  = std::make_shared<std::vector<std::string>>();
+        auto scoped = session(
+            calls,
+            std::chrono::seconds{5},
+            16U * 1024U * 1024U,
+            {},
+            k_nested
+        );
+        REQUIRE(scoped.has_value());
+
+        auto const result = scoped->evaluate(
+            R"LUAU(
+                local screen = require("@umbraflow/screen")
+                local region = require("@umbraflow/screen/region")
+                screen.capture{}
+                region.capture{}
+                return "both"
+            )LUAU",
+            "nested-namespaces"
+        );
+        auto const why = result.has_value()
+            ? std::string{}
+            : std::string{result.error().message()};
+        REQUIRE_MESSAGE(result.has_value(), why);
+        CHECK(
+            *calls
+            == std::vector<std::string>{
+                "framework.screen.capture",
+                "framework.screen.region.capture",
+            }
+        );
+    }
+
+    TEST_CASE("a Tool that ran and failed raises its whole envelope")
     {
         constexpr auto k_providerMessage =
             std::string_view{"the provider could not read this retained frame"};
@@ -293,23 +379,68 @@ namespace uf::task
         );
         REQUIRE(scoped.has_value());
 
-        auto const result = scoped->evaluate(
-            R"LUAU(
-                local screen = require("@umbraflow/screen")
-                local observed = screen.observation(screen.observe(string.rep("0", 64)))
-                return observed.error.message
-            )LUAU",
-            "provider-message"
-        );
-        auto const message = result.has_value()
-            ? std::string{}
-            : std::string{result.error().message()};
-        REQUIRE_MESSAGE(result.has_value(), message);
-        REQUIRE(result->text() != nullptr);
-        CHECK_MESSAGE(
-            *result->text() == k_providerMessage,
-            "screen.observation must carry the provider failure message verbatim"
-        );
+        SUBCASE("a caught failure carries the whole envelope")
+        {
+            auto const result = scoped->evaluate(
+                R"LUAU(
+                    local screen = require("@umbraflow/screen")
+                    local ok, raised = pcall(
+                        screen.observe,
+                        { screenshot_sha256 = string.rep("0", 64) }
+                    )
+                    if ok then
+                        return "READ AS SUCCESS"
+                    end
+                    return raised.delivery
+                        .. ":" .. raised.error.code
+                        .. ":" .. raised.error.message
+                        .. ":" .. #raised.call_identity
+                )LUAU",
+                "provider-message"
+            );
+            auto const message = result.has_value()
+                ? std::string{}
+                : std::string{result.error().message()};
+            REQUIRE_MESSAGE(result.has_value(), message);
+            REQUIRE(result->text() != nullptr);
+            // The whole point of raising rather than answering: a caller cannot
+            // read a failed call as a success, and nothing about the failure is
+            // discarded on the way -- delivery, the provider's verbatim message
+            // and the call identity all survive the raise.
+            CHECK_MESSAGE(
+                *result->text()
+                    == std::string{"terminal_failure:io_failure:"}
+                        + std::string{k_providerMessage} + ":64",
+                "a failed Tool call must raise its whole envelope and must not "
+                "be readable as a success"
+            );
+        }
+
+        SUBCASE("an uncaught failure reaches the host as the envelope")
+        {
+            auto const result = scoped->evaluate(
+                R"LUAU(
+                    local screen = require("@umbraflow/screen")
+                    return screen.observe{
+                        screenshot_sha256 = string.rep("0", 64),
+                    }
+                )LUAU",
+                "uncaught-provider-message"
+            );
+            REQUIRE_FALSE(result.has_value());
+            auto const message = std::string{result.error().message()};
+            // THE RECORDED REASON REACHES THE READER, VERBATIM. Measured
+            // 2026-08-25: an SDK wrapper replaced the provider's own sentence
+            // with a constant, and three failed observations were read as "the
+            // screen has no text on it". A raised envelope that a chunk did not
+            // catch must still say which delivery it was and why.
+            CHECK_MESSAGE(
+                message.contains(k_providerMessage),
+                "an uncaught Tool failure must reach the host with the "
+                "provider's message verbatim"
+            );
+            CHECK(message.contains(R"("delivery":"terminal_failure")"));
+        }
     }
 
     TEST_CASE("a Tool admission or protocol refusal still raises")
@@ -331,14 +462,14 @@ namespace uf::task
 
         auto const result = scoped->evaluate(
             R"LUAU(
-                local tools = require("@umbraflow/tools")
-                local answer = tools.call("framework.screen.observe", {})
-                return answer.ok
+                local screen = require("@umbraflow/screen")
+                local ok = pcall(screen.observe, {})
+                return tostring(ok)
             )LUAU",
             "protocol-refusal"
         );
         auto const message = result.has_value()
-            ? std::string{"returned ok: false instead of raising"}
+            ? std::string{"a pcall observed the refusal instead of the run dying"}
             : std::string{result.error().message()};
         auto const raisedRefusal = !result.has_value()
             && message.contains("protocol refusal sentinel");
@@ -373,16 +504,22 @@ namespace uf::task
 
         auto const result = scoped->evaluate(
             R"LUAU(
-                local tools = require("@umbraflow/tools")
-                return tools.call("framework.screen.observe", {}).delivery
+                local screen = require("@umbraflow/screen")
+                local ok, raised = pcall(screen.observe, {})
+                return tostring(ok) .. ":" .. raised.delivery
             )LUAU",
             "possible-delivery"
         );
         REQUIRE(result.has_value());
         REQUIRE(result->text() != nullptr);
+        // Raising does not collapse the three unresolved outcomes into one
+        // failure: `possible` stays its own named value on the raised table, so
+        // whether to retry an input that may have landed is still the project's
+        // judgement and never the framework's.
         CHECK_MESSAGE(
-            *result->text() == "possible",
-            "an input whose landing is unknown must remain delivery possible"
+            *result->text() == "false:possible",
+            "an input whose landing is unknown must raise and must remain "
+            "delivery possible"
         );
     }
 

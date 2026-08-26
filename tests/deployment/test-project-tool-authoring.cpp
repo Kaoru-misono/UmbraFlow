@@ -96,22 +96,27 @@ namespace uf::deployment
             return rendered;
         }
 
-        // Two entries, one closure. `dismiss` reaches the Tool Runtime through
-        // the scoped facade -- which is loadable only because the registrar
-        // baked the pinned catalog resource -- and `sweep` answers from the
-        // frozen discovery table without spending a call. Nothing judges what
-        // either of them returns: the framework records an answer's bytes and
-        // never reads their meaning.
+        // Two entries, one closure. `dismiss` reaches for the Tool Runtime
+        // through the generated face -- which is loadable only because the
+        // registrar baked the pinned catalog resource -- and `sweep` answers
+        // from the frozen discovery table without spending a call. Nothing
+        // judges what either of them returns: the framework records an answer's
+        // bytes and never reads their meaning.
+        //
+        // A Project Tool is a LEAF, so `dismiss` is refused by name when it
+        // calls; the face existing in a handler's context is not the same as a
+        // handler being able to use it.
         constexpr auto k_pluginSource = std::string_view{R"LUAU(
-local tools = require("@umbraflow/tools")
+local chaos = require("@umbraflow/chaos/project")
+local catalog = require("@umbraflow/catalog")
 
 return {
     plugin_id = "chaos.project",
     dismiss = function(input)
-        return tools.call("chaos.project.sweep", input)
+        return chaos.sweep(input)
     end,
     sweep = function(_input)
-        if tools.knows("chaos.project.dismiss") then
+        if catalog.describe("chaos.project.dismiss") ~= nil then
             return { outcome = "swept" }
         end
         return { outcome = "blind" }

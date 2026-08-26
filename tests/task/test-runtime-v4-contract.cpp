@@ -1740,21 +1740,21 @@ identity = ["screen.anchor"]
         auto authoringSurface = (*session)->evaluate(
             R"lua(
                 local screen = require("@umbraflow/screen")
-                local tools = require("@umbraflow/tools")
+                local input  = require("@umbraflow/input")
                 local hash = string.rep("0", 64)
-                screen.observe(hash)
-                tools.call("framework.screen.read_lines", {
+                screen.observe{ screenshot_sha256 = hash }
+                screen.read_lines{
                     screenshot_sha256 = hash,
                     x = 0,
                     y = 0,
                     width = 1,
                     height = 1,
-                })
-                tools.call("framework.input.click", {
+                }
+                input.click{
                     screenshot_sha256 = hash,
                     x = 0,
                     y = 0,
-                })
+                }
                 return "issued"
             )lua",
             "authoring-boundary"

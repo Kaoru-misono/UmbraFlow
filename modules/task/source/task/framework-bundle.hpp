@@ -119,14 +119,14 @@ namespace uf::task
         -> Result<std::vector<script::FrameworkModule>>;
 
     // The Framework closure a script::ScopedToolProgram or
-    // script::ScopedToolSession admits: the whole pure SDK plus the four scoped
-    // facades under their reserved names. The scoped four are project-visible
+    // script::ScopedToolSession admits: the whole pure SDK plus the scoped
+    // modules under their reserved names. The scoped ones are project-visible
     // because both program shapes refuse a catalog whose modules Project code
-    // cannot resolve -- a scoped facade nothing can require is a native seam
-    // with no caller.
+    // cannot resolve -- a Tool face nothing can require is a native seam with
+    // no caller.
     //
     // Deliberately NOT a superset that any other environment may take: this list
-    // is the only place the four are admitted, and pureFrameworkScriptModules()
+    // is the only place they are admitted, and pureFrameworkScriptModules()
     // and frameworkScriptModules() both exclude them, so a pure program's require
     // fails in the resolver naming the module and no trusted Engine VM ever runs
     // their source.
@@ -134,10 +134,12 @@ namespace uf::task
     auto scopedFrameworkScriptModules()
         -> Result<std::vector<script::FrameworkModule>>;
 
-    // The read-only JSON resource name `@umbraflow/tools` reads the run's pinned
-    // Tool catalog from. Published so the host that bakes those bytes and the
-    // module that reads them cannot drift; a bundle test binds it to the exact
-    // spelling inside the embedded module source.
+    // The read-only JSON resource name the host bakes a run's pinned Tool
+    // catalog into. Re-exported from script::scopedToolCatalogResourceName so
+    // the host that bakes those bytes names them exactly as the scoped program
+    // type that reads them does; a bundle test binds it to the spelling inside
+    // the embedded `catalog` module as well, which is the one place a Luau
+    // source cannot read the C++ constant.
     [[nodiscard]]
     auto scopedToolCatalogResourceName() noexcept -> std::string_view;
 

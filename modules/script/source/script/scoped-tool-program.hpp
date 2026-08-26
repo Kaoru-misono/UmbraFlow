@@ -57,10 +57,12 @@ namespace uf::script
     // would make purity a value, and a program in a signature would stop telling
     // the reader whether the thing in hand can reach the world.
     //
-    // The four scoped modules are Luau sources in the Framework bundle, exactly
-    // as the pure Framework modules are. compile() refuses a bundle that does
-    // not carry all four under their exact names, and hands each of them, and
-    // nothing else, the private capability table as its chunk argument.
+    // The scoped modules are Luau sources in the Framework bundle, exactly as
+    // the pure Framework modules are. compile() refuses a bundle that does not
+    // carry every one of them under its exact name, and hands the private
+    // capability table to the generated Tool face alone -- the module that
+    // renders the pinned catalog into one callable per Tool -- and to nothing
+    // else.
     class ScopedToolProgram final
     {
     public:
@@ -92,6 +94,14 @@ namespace uf::script
         // by comparing it here.
         [[nodiscard]]
         static auto scopedModuleNames() -> std::span<std::string_view const>;
+
+        // The subset of those a Project-authored module may resolve. The Tool
+        // face renderer is deliberately absent: it holds the private capability
+        // table, so the only route from Project source to the Tool Runtime is a
+        // module this type GENERATED from the pinned catalog.
+        [[nodiscard]]
+        static auto projectVisibleScopedModuleNames()
+            -> std::span<std::string_view const>;
 
         // `frameworkModules` must carry every name scopedModuleNames() states,
         // and may carry pure Framework modules besides. The Tool primitive is
@@ -134,6 +144,15 @@ namespace uf::script
     class ScopedToolSession final
     {
         std::vector<FrameworkModule>           m_frameworkModules;
+
+        // The Tool face this session's pinned catalog renders to, as owned
+        // sources. They are OWNED rather than borrowed because they exist only
+        // for this run: they are derived from the catalog resource below, not
+        // from the release, so no static literal backs them. Each evaluate()
+        // builds its module views from this vector, which is never mutated
+        // after construction.
+        std::vector<PureDataProgram::Module>   m_generatedModules;
+
         std::vector<PureDataProgram::Resource> m_frameworkResources;
         ToolRuntimeInvoke                      m_invokeTool;
         std::stop_token                        m_cancellation;
@@ -145,6 +164,7 @@ namespace uf::script
 
         ScopedToolSession(
             std::vector<FrameworkModule> frameworkModules,
+            std::vector<PureDataProgram::Module> generatedModules,
             std::vector<PureDataProgram::Resource> frameworkResources,
             ToolRuntimeInvoke invokeTool,
             std::stop_token cancellation,
@@ -198,6 +218,14 @@ namespace uf::script
         // chunk, whose fresh VM is already gone.
         [[nodiscard]] auto generationSpent() const noexcept -> bool;
     };
+
+    // The read-only JSON resource name the host bakes a run's pinned Tool
+    // catalog into, and the scoped program type reads to render its Tool face.
+    // It is owned here rather than by the Framework bundle because the module
+    // set a scoped closure carries is DERIVED from these bytes: the type that
+    // builds the closure has to be able to find them.
+    [[nodiscard]]
+    auto scopedToolCatalogResourceName() noexcept -> std::string_view;
 
     // The exact scoped environment bytes scopedToolEnvironmentHash is taken
     // over: everything the pure environment attests to, plus the scoped module

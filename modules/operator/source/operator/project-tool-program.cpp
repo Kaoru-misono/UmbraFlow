@@ -29,9 +29,14 @@ namespace uf::operator_runtime
         }
 
         // The discovery projection one Tool contributes to the pinned catalog
-        // resource the scoped facades read: name, description and flat input
-        // schema. Version remains because the caller pins the catalog that
-        // chose the handler contract.
+        // resource the scoped facades read: name, description, flat input
+        // schema and result shape. Version remains because the caller pins the
+        // catalog that chose the handler contract.
+        //
+        // output_schema is rendered even when it is null. A Project Tool that
+        // did not write its result down states that here, rather than leaving a
+        // reader to decide whether the member is missing or the result is
+        // empty; a Framework Tool always carries one.
         //
         // It is deliberately not the whole descriptor. Every remaining bound is
         // ENFORCEMENT data, evaluated by admission on the exact catalog bytes
@@ -44,6 +49,7 @@ namespace uf::operator_runtime
                 {"description", json::Value::ofString(tool.description)},
                 {"input_schema", tool.inputSchema},
                 {"name", json::Value::ofString(tool.name)},
+                {"output_schema", tool.outputSchema},
                 {"tool_version", json::Value::ofString(tool.descriptor.toolVersion)},
             });
         }
@@ -83,7 +89,7 @@ namespace uf::operator_runtime
             entries.emplace_back(std::move(entry));
         }
 
-        // Sorted by name, which is the order @umbraflow/tools requires and
+        // Sorted by name, which is the order @umbraflow/catalog requires and
         // refuses by name if it does not get. Uniqueness needs no check
         // here and must not grow one: the Project catalog owner already
         // refuses a repeated name, and every name it admits is inside the

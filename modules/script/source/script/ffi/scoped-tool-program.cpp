@@ -56,28 +56,86 @@ namespace uf::script
 {
     namespace
     {
+        // The two static scoped modules, each spelled once and referred to by
+        // its constant everywhere else: the same name appears in the scoped
+        // catalog, in a visibility list, in the capability list and inside the
+        // source of every generated module, and four spellings of one name is
+        // four places to drift.
+        constexpr auto k_catalogModule = std::string_view{"@umbraflow/catalog"};
+        constexpr auto k_renderModule =
+            std::string_view{"@umbraflow/internal/render"};
+
         // The scoped Framework catalog, in JCS order because the environment
         // identity states it in this order. A name moved here moves that digest
         // and nothing else in the repository can move it back.
+        //
+        // These two are the STATIC half. The rest of a scoped closure's Tool
+        // surface is GENERATED from the pinned catalog below, one module per
+        // Tool namespace, and is therefore a property of the run rather than of
+        // the release.
         constexpr auto k_scopedModules = std::array{
-            std::string_view{"@umbraflow/audit"},
-            std::string_view{"@umbraflow/screen"},
-            std::string_view{"@umbraflow/tools"},
-            std::string_view{"@umbraflow/workflow"},
+            k_catalogModule,
+            k_renderModule,
         };
 
+        // Which of the static two Project code may resolve. The renderer is not
+        // one of them: it holds the private capability table, so the ONLY route
+        // from Project source to the Tool Runtime is a generated module the host
+        // built from the pinned catalog, and a chunk cannot reach past it to
+        // call a name the catalog does not carry.
+        constexpr auto k_projectVisibleScopedModules = std::array{
+            k_catalogModule,
+        };
+
+        // Which module is handed the private capability table. Exactly one is:
+        // the renderer. `@umbraflow/catalog` reads the same pinned bytes as data
+        // and holds no capability at all, so a reader asking "what here can act"
+        // has one answer rather than a list to audit.
+        constexpr auto k_capabilityBoundModules = std::array{
+            k_renderModule,
+        };
+
+        // The read-only JSON resource the host bakes this run's pinned Tool
+        // catalog into. It is named HERE, by the program type that renders it,
+        // rather than by the bundle: the module set a scoped closure carries is
+        // derived from these bytes, so the type that builds the closure has to
+        // be able to read them.
+        constexpr auto k_toolCatalogResource =
+            std::string_view{"umbraflow.tool-catalog"};
+
+        // Where a generated module sits in the declared topology: one above the
+        // renderer it asks to render it. Metadata on this path -- the closure
+        // resolves by name and loads on demand -- but it is what the bundle's
+        // own depth discipline says, stated rather than left at zero.
+        constexpr auto k_generatedModuleDepth = std::size_t{5};
+
         // The single field of the private capability table, and the whole of the
-        // native surface. Everything else -- screen wrappers, bounded waits,
-        // delivery classification, result helpers, Tool discovery -- is Luau over
-        // this one closure, so there is exactly one native primitive to reason
-        // about and exactly one path an effect can take.
+        // native surface. Everything else -- the generated Tool face, delivery
+        // classification, discovery -- is Luau over this one closure, so there
+        // is exactly one native primitive to reason about and exactly one path
+        // an effect can take.
         constexpr auto k_capabilityInvokeField = std::string_view{"invoke"};
         constexpr auto k_toolInvokeArity       = 2;
 
         // Observable contracts. These move the scoped environment identity
         // whenever a script can distinguish the old runtime from the new one.
+        //
+        // A Tool's top-level arguments are one JSON OBJECT by contract, so the
+        // seam admits only a table there and reads an EMPTY one as `{}` rather
+        // than as the empty array a Luau table would otherwise decode to. That
+        // is what retires the `canon.emptyObject` spelling at this boundary: a
+        // caller writes `screen.capture{}` and means the object.
         constexpr auto k_toolArgumentContract = std::string_view{
-            "tool_name_string_plus_one_decoded_json_value_v3"
+            "tool_name_string_plus_one_argument_object_empty_table_is_object_v4"
+        };
+
+        // How a Tool name becomes a module a chunk can require, stated as one
+        // literal because it is the whole of what a caller must know to address
+        // any Tool at all. It is in the environment identity for the same
+        // reason the argument shape is: a build that renamed the modules under
+        // a chunk would otherwise move nothing.
+        constexpr auto k_generatedModuleContract = std::string_view{
+            "tool_namespace_is_the_module_path_under_@umbraflow_framework_elided_v1"
         };
         constexpr auto k_toolResultContract = std::string_view{
             "one_frozen_decoded_json_value_no_userdata_no_metatable_v1"
@@ -86,7 +144,7 @@ namespace uf::script
             "runtime_refusal_is_terminal_uncatchable_vm_teardown_v1"
         };
         constexpr auto k_capabilityTableContract = std::string_view{
-            "single_invoke_closure_chunk_argument_to_catalog_modules_dropped_v1"
+            "single_invoke_closure_chunk_argument_to_the_generated_tool_face_v2"
         };
         constexpr auto k_runtimeCeilingSource = std::string_view{
             "outer_project_tool_registration.timeout.maximum_elapsed_ms"
@@ -101,6 +159,188 @@ namespace uf::script
                 ScopedToolProgram::k_maximumToolNameSegments,
                 ScopedToolProgram::k_maximumToolNameSegmentBytes
             );
+        }
+
+        // The framework's own Tool namespace. The module path elides it
+        // because `@umbraflow/` already IS it, which is what makes
+        // `framework.screen.capture` reachable as `screen.capture` after
+        // requiring `@umbraflow/screen`. A registration inside `framework.` is
+        // refused, so no Project namespace can be elided by this rule.
+        constexpr auto k_frameworkToolNamespace = std::string_view{"framework."};
+        constexpr auto k_bareFrameworkNamespace = std::string_view{"framework"};
+
+        // The module a Tool is reached through, and the namespace that module
+        // asks the renderer to render.
+        struct ToolPlacement final
+        {
+            std::string moduleName{};
+            std::string toolNamespace{};
+        };
+
+        // The one rule, applied to one Tool name. Everything before the last
+        // dot is the namespace and becomes the module path; the last segment is
+        // the member. A name whose namespace is only `framework` has no module
+        // segment left after the elision and is refused by name -- the only
+        // catalog shape this spelling cannot render, and no Tool has it.
+        //
+        // Nothing here restricts what a member may be called. A member that is
+        // not a Luau identifier is reached as `alpha["observe-1"]{...}`, which
+        // is the language's own index sugar for one expression rather than a
+        // second spelling, so a legal Tool name never has to be refused for it.
+        [[nodiscard]]
+        auto placementOf(std::string_view toolName) -> Result<ToolPlacement>
+        {
+            auto const lastDot = toolName.rfind('.');
+            if (lastDot == std::string_view::npos)
+            {
+                return detail::refuse(
+                    "the pinned Tool catalog names " + std::string{toolName}
+                    + ", which has no namespace to become a module"
+                );
+            }
+            auto const toolNamespace = toolName.substr(0U, lastDot);
+            if (toolNamespace == k_bareFrameworkNamespace)
+            {
+                return detail::refuse(
+                    "the pinned Tool catalog names " + std::string{toolName}
+                    + ", whose namespace is the framework's own and leaves no "
+                      "module segment behind"
+                );
+            }
+            auto path = std::string{
+                toolNamespace.starts_with(k_frameworkToolNamespace)
+                    ? toolNamespace.substr(k_frameworkToolNamespace.size())
+                    : toolNamespace
+            };
+            std::ranges::replace(path, '.', '/');
+            return ToolPlacement{
+                .moduleName    = std::string{detail::k_frameworkModulePrefix} + path,
+                .toolNamespace = std::string{toolNamespace},
+            };
+        }
+
+        // The Tool names this run pinned, read out of the catalog resource the
+        // host baked. It is read here rather than passed in because the scoped
+        // program type is the thing that renders it: a caller that could supply
+        // a different list than the one `@umbraflow/catalog` answers from could
+        // publish a module for a Tool the run never pinned.
+        [[nodiscard]]
+        auto pinnedToolNames(
+            std::span<PureDataProgram::Resource const> frameworkResources
+        ) -> Result<std::vector<std::string>>
+        {
+            auto const found = std::ranges::find(
+                frameworkResources,
+                k_toolCatalogResource,
+                &PureDataProgram::Resource::name
+            );
+            if (found == frameworkResources.end())
+            {
+                return detail::refuse(
+                    "a scoped tool program requires the pinned Tool catalog "
+                    "resource "
+                    + std::string{k_toolCatalogResource}
+                );
+            }
+            UF_TRY_VALUE(document, json::parse(found->bytes));
+            auto const* const p_tools = document.find("tools");
+            if (
+                document.kind() != json::ValueKind::Object || p_tools == nullptr
+                || p_tools->kind() != json::ValueKind::Array
+            )
+            {
+                return detail::refuse(
+                    "the pinned Tool catalog resource carries no tools list"
+                );
+            }
+            auto names = std::vector<std::string>{};
+            names.reserve(p_tools->items().size());
+            for (auto const& entry : p_tools->items())
+            {
+                auto const* const p_name = entry.find("name");
+                if (
+                    entry.kind() != json::ValueKind::Object || p_name == nullptr
+                    || p_name->kind() != json::ValueKind::String
+                    || !validToolName(p_name->string())
+                )
+                {
+                    return detail::refuse(
+                        "the pinned Tool catalog carries a descriptor that does "
+                        "not name a canonical tool"
+                    );
+                }
+                names.emplace_back(p_name->string());
+            }
+            return names;
+        }
+
+        // The Tool face, as modules. One per Tool namespace the catalog names,
+        // each a single line asking the renderer for that namespace, so there is
+        // no per-Tool source anywhere and the catalog moving moves the whole
+        // surface with it.
+        [[nodiscard]]
+        auto generatedToolModules(
+            std::span<PureDataProgram::Resource const> frameworkResources,
+            std::span<FrameworkModule const> frameworkModules
+        ) -> Result<std::vector<PureDataProgram::Module>>
+        {
+            UF_TRY_VALUE(names, pinnedToolNames(frameworkResources));
+            auto generated = std::vector<PureDataProgram::Module>{};
+            for (auto const& toolName : names)
+            {
+                UF_TRY_VALUE(placement, placementOf(toolName));
+                if (std::ranges::contains(
+                        generated,
+                        placement.moduleName,
+                        &PureDataProgram::Module::name
+                    ))
+                {
+                    continue;
+                }
+                if (std::ranges::contains(
+                        frameworkModules,
+                        placement.moduleName,
+                        &FrameworkModule::name
+                    ))
+                {
+                    return detail::refuse(
+                        "the pinned Tool catalog renders " + toolName
+                        + " into the module " + placement.moduleName
+                        + ", which the Framework closure already carries"
+                    );
+                }
+                generated.emplace_back(PureDataProgram::Module{
+                    .name   = placement.moduleName,
+                    .source = "return require(\"" + std::string{k_renderModule}
+                        + "\").module(\"" + placement.toolNamespace + "\")\n",
+                });
+            }
+            return generated;
+        }
+
+        // The static Framework list plus the generated one, as the view list a
+        // closure is compiled from. The generated sources must outlive the
+        // returned vector, which is why every caller keeps them in a local that
+        // is not moved from until the closure is compiled.
+        [[nodiscard]]
+        auto withGeneratedModules(
+            std::span<FrameworkModule const> frameworkModules,
+            std::span<PureDataProgram::Module const> generated
+        ) -> std::vector<FrameworkModule>
+        {
+            auto combined = std::vector<FrameworkModule>{};
+            combined.reserve(frameworkModules.size() + generated.size());
+            combined.assign(frameworkModules.begin(), frameworkModules.end());
+            for (auto const& module : generated)
+            {
+                combined.emplace_back(FrameworkModule{
+                    .name            = module.name,
+                    .source          = module.source,
+                    .dependencyDepth = k_generatedModuleDepth,
+                    .projectVisible  = true,
+                });
+            }
+            return combined;
         }
 
         // The run context the ONE VM primitive borrows. Registered handlers
@@ -299,12 +539,13 @@ namespace uf::script
             if (
                 lua_gettop(state) != k_toolInvokeArity
                 || lua_type(state, 1) != LUA_TSTRING
+                || lua_type(state, 2) != LUA_TTABLE
             )
             {
                 luaL_error(
                     state,
                     "the Tool Runtime primitive takes a tool name and one "
-                    "argument value"
+                    "argument object"
                 );
             }
 
@@ -342,10 +583,30 @@ namespace uf::script
                 auto argumentBudget = detail::ValueBudget{};
                 auto arguments =
                     detail::readValue(state, *p_environment, 2, 0U, argumentBudget);
+                if (
+                    arguments.has_value()
+                    && arguments->kind() == json::ValueKind::Array
+                    && arguments->items().empty()
+                )
+                {
+                    // A Tool's top-level arguments are an object by contract, so
+                    // the one table shape Luau cannot tell apart from an empty
+                    // array is read as the object it must be. This is the whole
+                    // reason a caller no longer needs an empty-object sentinel
+                    // to spell `capture{}`.
+                    *arguments = json::Value::ofObject({});
+                }
                 if (!arguments.has_value())
                 {
                     refusalText = detail::boundedText(arguments.error().message());
                     refused     = true;
+                }
+                else if (arguments->kind() != json::ValueKind::Object)
+                {
+                    refusalText = detail::boundedText(
+                        "a Tool call's arguments must be one JSON object"
+                    );
+                    refused = true;
                 }
                 else
                 {
@@ -505,11 +766,23 @@ namespace uf::script
                         + std::string{scopedName}
                     );
                 }
-                if (!found->projectVisible)
+                // Visibility is asserted in both directions. The discovery
+                // module must be reachable from Project source or a chunk
+                // cannot ask what exists; the renderer must NOT be, or a chunk
+                // could hold the capability table's one primitive directly and
+                // address a Tool the pinned catalog never named.
+                auto const shouldBeVisible = std::ranges::contains(
+                    k_projectVisibleScopedModules,
+                    scopedName
+                );
+                if (found->projectVisible != shouldBeVisible)
                 {
                     return detail::refuse(
-                        "scoped tool program requires a project-visible Framework module: "
+                        std::string{"scoped tool program requires "}
                         + std::string{scopedName}
+                        + (shouldBeVisible
+                               ? " to be project-visible"
+                               : " to be hidden from Project source")
                     );
                 }
             }
@@ -542,6 +815,7 @@ namespace uf::script
         auto compileSessionClosure(
             std::string_view source,
             std::span<FrameworkModule const> frameworkModules,
+            std::span<PureDataProgram::Module const> generated,
             std::vector<PureDataProgram::Resource> frameworkResources
         ) -> Result<detail::ProgramClosure>
         {
@@ -550,13 +824,15 @@ namespace uf::script
                 .name   = std::string{k_sessionModuleName},
                 .source = sessionModuleSource(source),
             });
+            auto const rendered =
+                withGeneratedModules(frameworkModules, generated);
             return detail::compileClosure(
                 detail::ClosureSpec{
                     .pluginId               = k_sessionPluginId,
                     .entryModule            = k_sessionModuleName,
                     .entryPoints            = k_sessionEntryPoints,
-                    .frameworkModules       = frameworkModules,
-                    .capabilityBoundModules = k_scopedModules,
+                    .frameworkModules       = rendered,
+                    .capabilityBoundModules = k_capabilityBoundModules,
                 },
                 std::move(modules),
                 {},
@@ -581,6 +857,17 @@ namespace uf::script
         return k_scopedModules;
     }
 
+    auto ScopedToolProgram::projectVisibleScopedModuleNames()
+        -> std::span<std::string_view const>
+    {
+        return k_projectVisibleScopedModules;
+    }
+
+    auto scopedToolCatalogResourceName() noexcept -> std::string_view
+    {
+        return k_toolCatalogResource;
+    }
+
     auto ScopedToolProgram::compile(
         std::string_view pluginId,
         std::string_view entryModule,
@@ -592,13 +879,18 @@ namespace uf::script
     ) -> Result<ScopedToolProgram>
     {
         UF_TRY(validateScopedCatalog(frameworkModules));
+        UF_TRY_VALUE(
+            generated,
+            generatedToolModules(frameworkResources, frameworkModules)
+        );
+        auto const rendered = withGeneratedModules(frameworkModules, generated);
 
         auto const spec = detail::ClosureSpec{
             .pluginId               = pluginId,
             .entryModule            = entryModule,
             .entryPoints            = entryPoints,
-            .frameworkModules       = frameworkModules,
-            .capabilityBoundModules = k_scopedModules,
+            .frameworkModules       = rendered,
+            .capabilityBoundModules = k_capabilityBoundModules,
         };
         UF_TRY_VALUE(
             closure,
@@ -670,6 +962,7 @@ namespace uf::script
 
     ScopedToolSession::ScopedToolSession(
         std::vector<FrameworkModule> frameworkModules,
+        std::vector<PureDataProgram::Module> generatedModules,
         std::vector<PureDataProgram::Resource> frameworkResources,
         ToolRuntimeInvoke invokeTool,
         std::stop_token cancellation,
@@ -677,6 +970,7 @@ namespace uf::script
         std::size_t memoryQuotaBytes
     ) noexcept
         : m_frameworkModules{std::move(frameworkModules)}
+        , m_generatedModules{std::move(generatedModules)}
         , m_frameworkResources{std::move(frameworkResources)}
         , m_invokeTool{std::move(invokeTool)}
         , m_cancellation{std::move(cancellation)}
@@ -699,6 +993,10 @@ namespace uf::script
             return detail::refuse("a scoped Tool session requires a Tool Runtime");
         }
         UF_TRY(validateScopedCatalog(frameworkModules));
+        UF_TRY_VALUE(
+            generated,
+            generatedToolModules(frameworkResources, frameworkModules)
+        );
         auto const convertedMemoryQuota = checkedCast<std::size_t>(memoryQuotaBytes);
         if (!convertedMemoryQuota.has_value())
         {
@@ -715,6 +1013,7 @@ namespace uf::script
             compileSessionClosure(
                 "return nil",
                 frameworkModules,
+                generated,
                 frameworkResources
             )
         );
@@ -746,6 +1045,7 @@ namespace uf::script
 
         return ScopedToolSession{
             std::move(frameworkModules),
+            std::move(generated),
             std::move(frameworkResources),
             std::move(invokeTool),
             std::move(cancellation),
@@ -773,6 +1073,7 @@ namespace uf::script
             compileSessionClosure(
                 source,
                 m_frameworkModules,
+                m_generatedModules,
                 m_frameworkResources
             )
         );
@@ -894,10 +1195,27 @@ namespace uf::script
         appendJsonString(output, k_toolArgumentContract);
         output += ",\"capability_field\":";
         appendJsonString(output, k_capabilityInvokeField);
-        output += ",\"capability_table\":";
+        output += ",\"capability_modules\":[";
+        auto boundSeparated = false;
+        for (auto const name : k_capabilityBoundModules)
+        {
+            if (boundSeparated)
+            {
+                output += ',';
+            }
+            boundSeparated = true;
+            appendJsonString(output, name);
+        }
+        output += "],\"capability_table\":";
         appendJsonString(output, k_capabilityTableContract);
+        output += ",\"catalog_resource\":";
+        appendJsonString(output, k_toolCatalogResource);
         output += ",\"failure_behaviour\":";
         appendJsonString(output, k_toolFailureContract);
+        output += ",\"generated_module_contract\":";
+        appendJsonString(output, k_generatedModuleContract);
+        output += ",\"generated_module_depth\":";
+        output += std::to_string(k_generatedModuleDepth);
         output += ",\"invoke_arity\":";
         output += std::to_string(k_toolInvokeArity);
         output += ",\"result_shape\":";

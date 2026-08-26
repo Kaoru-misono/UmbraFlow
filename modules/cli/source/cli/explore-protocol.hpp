@@ -25,7 +25,7 @@ namespace uf::cli
     // The exploration queue protocol: one JSON object per line, two required
     // members and one optional.
     //
-    //   {"id":"step-3","chunk":"local s=require('@umbraflow/screen'); return s.capture()"}
+    //   {"id":"step-3","chunk":"local t=require('@umbraflow/tool'); return t.framework.screen.capture{}.screenshot_sha256"}
     //   {"id":"step-4","chunk":"return 'done'","end":true}
     //
     // A line carries a chunk rather than one command because an agent's smallest
