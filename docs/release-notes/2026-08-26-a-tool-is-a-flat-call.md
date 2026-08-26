@@ -223,6 +223,30 @@ generation's authoring store — but they sit on **different Tool surfaces**:
 `write_text` is Semantic and `write_file` is Privileged. A policy that admits
 one does not thereby admit the other, so grant the exact names you use.
 
+## The clock is a Tool, and it is the only one
+
+`framework.workflow.now` is new. It takes no arguments and answers
+`read_at_unix_ms`: the instant the Operator's wall clock was read, in Unix
+milliseconds since 1970-01-01T00:00:00Z, as a decimal string — the same clock,
+epoch and rendering as a `framework.screen.capture` receipt's
+`created_at_unix_ms`. It is Semantic and read-only, so an absent policy artifact
+still admits it.
+
+It exists because a chunk had no way to ask the time. `os.time`, `os.clock` and
+`os.date` are nilled in the sandbox and stay nilled, because a pure-data VM must
+carry no nondeterministic source; the only reachable instant was
+`created_at_unix_ms` inside a capture receipt, so learning the time meant taking
+a screenshot. A Tool call is what makes a wall-clock reading safe here: the
+instant enters the call's durable outcome, so **a replay of that call position
+answers the recorded instant rather than a fresh one**. A clock reached through
+a VM global would tick again on every restart and leave no record of what it
+first said.
+
+It costs a Tool call like everything else, and how often you want one is yours.
+A project that logs a timestamp per line pays a call per line; one that stamps
+per turn pays a call per turn. The framework states the reading and never how
+often to want it.
+
 ## What a session may do is still its Operator's policy
 
 Unchanged in shape, changed in spelling: an artifact that granted
@@ -250,13 +274,16 @@ older release does not compare equal to a new one.
 | --- | --- | --- |
 | Operator ledger schema | `045925eefabef97b964f6a21db0da81cdc6a2c293c21e7f495011fe3d1b9277f` | `181f202e9d7516dff603a006dfabf4fef372a0413710e2bb23ad9cb75dc1bc12` |
 | Operator protocol schema | `cb21ba6a001fa0a955584269b1f5850dd19bbf3a7e7dc774483563a07baf572e` | `137f1e7101310736172425e8282e2df479759cdf04d3a2962eb9e74568547b07` |
-| Framework Tool Catalog | `a6fd2afbf07ceeb53bdc8dbaf4073a94f25a4f91f6e8619b3c1da59225397c8b` | `620c25591a727c03fb905dce2384943514d6d0942a3e9cb8620d0a8f03c20d4d` |
-| Tool Runtime Protocol | `c51ec2229b00c3c62e56fb14993ca3b820b6c77a905433d3e38904377212c25c` | `8b50a6d03c6976a37407e85058aa1f89938e44765fb869139b6f4e53ffdbfdb5` |
-| Scoped Tool Environment | `e15fe8ed81a8edf041ccd45e14f953670f8337d420ea2f7e6fd9f99ccaecfc77` | `30d312235ad2e7471cb7946e5d8e34502fa61807a4c3e79000abbff8f9026273` |
-| `@umbraflow/audit` source | `59ca9c95641c7582282ea718017f2893f60e0573f9375705048b817eeb497425` | `d154c50398cd7dcff7e5cb81d839c6d556f2a1efeade5a59d537e9e14ebe5b73` |
-| `@umbraflow/screen` source | `82c2c1042e2fc1583e3b7eb352a56bb50c0383841dfa853a331bfa81dfaceeb9` | `df1ee617bf071e1c5047b1f7603bf615fdc2cb45527c80fa016459b58c390c1a` |
-| `@umbraflow/tools` source | `c64a623869a21f16f50a35505b52ec66570f08c89b5d88dd5947c6a969869ecd` | `f495bfee576aff4b1894e39f687f115e3c7bc41f7023d030d0673b241bfc80c1` |
-| `@umbraflow/workflow` source | `fb9e9e178384ac9c824d74843a6a45839679d7c5b36d60390e9df8ccfee6799d` | `67debc25de08abc3ed29f9d85d042bb32811ab0c85b3b7f03e4f2d4dce395861` |
+| Framework Tool Catalog | `a6fd2afbf07ceeb53bdc8dbaf4073a94f25a4f91f6e8619b3c1da59225397c8b` | `2a3629d6534c4795e94ec256c889f8227d56a725846899e608acb5562ee34aac` |
+| Tool Runtime Protocol | `c51ec2229b00c3c62e56fb14993ca3b820b6c77a905433d3e38904377212c25c` | `d943bd81b033b7cfe5cd2fab59e8f3ccaacd6b6f2fdd513f75cf06fd1650fd01` |
+| Scoped Tool Environment | `e15fe8ed81a8edf041ccd45e14f953670f8337d420ea2f7e6fd9f99ccaecfc77` | `f2acab246b56b6348344048cbd440ce4598eab92fcc47ff1ea06ca6961a5058a` |
+
+The four `@umbraflow/*` module source rows this table used to carry are gone
+along with the modules. `screen`, `tools`, `workflow` and `audit` were
+hand-written Luau; the face is generated from the catalog now, so there is no
+per-module source to digest and nothing for a consumer to compare. What replaces
+them as the thing to watch is the catalog hash above: it moves when any Tool's
+name, description or schema moves, and the module face moves with it.
 
 ## The work list, shortest first
 

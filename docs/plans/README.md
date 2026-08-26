@@ -7,6 +7,7 @@ rulings, consumer status or facts copied from code. Rulings live under
 
 ## Live plans
 
+- [Split the Tool provider file](2026-08-27-split-the-tool-provider-file.md)
 - [Product form and roadmap](2026-07-21-product-form-and-roadmap.md)
 - [Runtime and game-operator breaking rewrite](2026-08-09-runtime-hardening-rewrite.md)
 - [Runtime migration report](2026-08-09-runtime-migration-report.md)
