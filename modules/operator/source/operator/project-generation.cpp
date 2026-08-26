@@ -28,22 +28,6 @@ namespace uf::operator_runtime
             return fail(AutomationErrorKind::InvalidResource, std::move(message));
         }
 
-        [[nodiscard]]
-        auto scriptModules(std::vector<ProjectModuleBlob> blobs)
-            -> std::vector<script::PureDataProgram::Module>
-        {
-            auto modules = std::vector<script::PureDataProgram::Module>{};
-            modules.reserve(blobs.size());
-            for (auto& blob : blobs)
-            {
-                modules.emplace_back(script::PureDataProgram::Module{
-                    .name   = std::move(blob.name),
-                    .source = std::move(blob.source),
-                });
-            }
-            return modules;
-        }
-
         // The stated export set, as the bridge takes it. The views name the
         // generation's own strings and outlive nothing: the compile call they
         // are handed to reads them and keeps none.
@@ -212,7 +196,7 @@ namespace uf::operator_runtime
             script::ScopedToolProgram::compile(
                 generation.pluginId(),
                 toolClosure.entryModule,
-                scriptModules(std::move(toolClosure.modules)),
+                projectScriptModules(toolClosure.modules),
                 toolEntries,
                 std::move(toolResources),
                 scopedFrameworkModules,

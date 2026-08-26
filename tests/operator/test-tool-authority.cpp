@@ -220,7 +220,7 @@ namespace uf::operator_runtime
             controllerProfile(ControllerKind::Agent),
             noCapabilities
         );
-        REQUIRE(offered.size() == 13U);
+        REQUIRE(offered.size() == 14U);
         CHECK(offered[0].name == "framework.audit.record");
         CHECK(offered[1].name == "framework.project.read_text");
         CHECK(offered[2].name == "framework.project.write_text");
@@ -232,8 +232,9 @@ namespace uf::operator_runtime
         CHECK(offered[8].name == "framework.ui.key");
         CHECK(offered[9].name == "framework.ui.move");
         CHECK(offered[10].name == "framework.ui.scroll");
-        CHECK(offered[11].name == "framework.workflow.status");
-        CHECK(offered[12].name == "framework.workflow.wait");
+        CHECK(offered[11].name == "framework.workflow.now");
+        CHECK(offered[12].name == "framework.workflow.status");
+        CHECK(offered[13].name == "framework.workflow.wait");
 
         auto catalogMaterial = CanonicalJson::parseExact(
             frameworkCatalog->canonicalJcs()

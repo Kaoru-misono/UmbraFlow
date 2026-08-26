@@ -15,6 +15,7 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <chrono>
 #include <memory>
 #include <optional>
@@ -70,7 +71,9 @@ namespace uf::task
             MonotonicInstant::Duration maximumRuntime = std::chrono::seconds{5},
             uint64 memoryQuotaBytes = 16U * 1024U * 1024U,
             script::ToolRuntimeInvoke runtime = {},
-            std::string_view catalogTools = k_catalogTools
+            std::string_view catalogTools = k_catalogTools,
+            std::vector<script::PureDataProgram::Module> projectModules = {},
+            std::vector<script::PureDataProgram::Resource> projectResources = {}
         )
             -> Result<script::ScopedToolSession>
         {
@@ -105,6 +108,8 @@ namespace uf::task
             return script::ScopedToolSession::create(
                 std::move(*modules),
                 catalogResources(catalogTools),
+                std::move(projectModules),
+                std::move(projectResources),
                 std::move(runtime),
                 {},
                 maximumRuntime,
@@ -583,5 +588,167 @@ namespace uf::task
             );
             CHECK_FALSE(scoped->generationSpent());
         }
+    }
+
+    // The third thing an interactive chunk may require, and the defect this
+    // suite exists to hold shut: the verified Project closure of the generation
+    // the session pinned. A Project's own decision logic -- a card-play
+    // strategy, a scoring routine -- is Luau in `tool_closure.modules`, and
+    // before this it was reachable from a registered handler and unreachable
+    // from a chunk, which made one program type two faces.
+    TEST_CASE("a chunk requires a declared Project module and calls its pure function")
+    {
+        auto calls  = std::make_shared<std::vector<std::string>>();
+        auto scoped = session(
+            calls,
+            std::chrono::seconds{5},
+            16U * 1024U * 1024U,
+            {},
+            k_catalogTools,
+            {script::PureDataProgram::Module{
+                .name   = "strategy/battle",
+                .source = "return table.freeze({\n"
+                          "    next_card = function(hand)\n"
+                          "        return hand[1]\n"
+                          "    end,\n"
+                          "})\n",
+            }}
+        );
+        REQUIRE(scoped.has_value());
+
+        auto const played = scoped->evaluate(
+            "local strategy = require(\"strategy/battle\")\n"
+            "return strategy.next_card({ \"ember\", \"frost\" })\n",
+            "declared-strategy"
+        );
+        auto const playedWhy = played.has_value()
+            ? std::string{}
+            : std::string{played.error().message()};
+        REQUIRE_MESSAGE(played.has_value(), playedWhy);
+        REQUIRE(played->text() != nullptr);
+        CHECK_MESSAGE(
+            *played->text() == "ember",
+            "a chunk must resolve the session's declared Project module under "
+            "its registered name and run it"
+        );
+        CHECK(calls->empty());
+    }
+
+    // Capability is a property of the ISSUING RUN and never of the module, and
+    // this is the case that says so with one set of bytes: the identical module
+    // reaches the Tool Runtime from a chunk and is refused by name from a
+    // handler. It is why admitting the Project closure into a session needs no
+    // new mechanism to keep handlers leaves -- ScopedToolRun's callTool refuses
+    // every name, whatever required it.
+    TEST_CASE(
+        "one declared Project module calls a Tool from a chunk and is refused "
+        "from a handler"
+    )
+    {
+        auto const strategy = script::PureDataProgram::Module{
+            .name   = "strategy/scout",
+            .source = "local screen = require(\"@umbraflow/screen\")\n"
+                      "return table.freeze({\n"
+                      "    look = function()\n"
+                      "        return screen.capture{}\n"
+                      "    end,\n"
+                      "})\n",
+        };
+
+        auto calls  = std::make_shared<std::vector<std::string>>();
+        auto scoped = session(
+            calls,
+            std::chrono::seconds{5},
+            16U * 1024U * 1024U,
+            {},
+            k_catalogTools,
+            {strategy}
+        );
+        REQUIRE(scoped.has_value());
+        auto const fromChunk = scoped->evaluate(
+            "local strategy = require(\"strategy/scout\")\n"
+            "strategy.look()\n"
+            "return \"looked\"\n",
+            "chunk-through-strategy"
+        );
+        auto const chunkWhy = fromChunk.has_value()
+            ? std::string{}
+            : std::string{fromChunk.error().message()};
+        REQUIRE_MESSAGE(fromChunk.has_value(), chunkWhy);
+        CHECK_MESSAGE(
+            *calls == std::vector<std::string>{"framework.screen.capture"},
+            "a Project module required by a chunk must reach the session's "
+            "root issuing door"
+        );
+
+        auto modules = scopedFrameworkScriptModules();
+        REQUIRE(modules.has_value());
+        constexpr auto k_handlerEntries = std::array{std::string_view{"play"}};
+        auto handler = script::ScopedToolProgram::compile(
+            "fixture.strategy",
+            "main",
+            {
+                strategy,
+                script::PureDataProgram::Module{
+                    .name   = "main",
+                    .source = "local strategy = require(\"strategy/scout\")\n"
+                              "return {\n"
+                              "    plugin_id = \"fixture.strategy\",\n"
+                              "    play = function(_)\n"
+                              "        return strategy.look()\n"
+                              "    end,\n"
+                              "}\n",
+                },
+            },
+            k_handlerEntries,
+            {},
+            *modules,
+            catalogResources()
+        );
+        REQUIRE(handler.has_value());
+        auto const fromHandler = handler->invoke(
+            "play",
+            json::Value{},
+            script::ScopedRunRequest{
+                .callIdentity = digestOf("strategy-leaf"),
+                .budgetOwner  = "fixture.strategy.play",
+                .maximumElapsedMillis = 5'000U,
+            }
+        );
+        REQUIRE_FALSE(fromHandler.has_value());
+        CHECK_MESSAGE(
+            std::string{fromHandler.error().message()}.contains(
+                "Project Tool handler fixture.strategy.play may not issue Tool "
+                "call framework.screen.capture"
+            ),
+            "the same Project module required by a handler must be refused by "
+            "name at the leaf"
+        );
+    }
+
+    TEST_CASE(
+        "a declared Project module named as the session root is refused by name"
+    )
+    {
+        auto const scoped = session(
+            std::make_shared<std::vector<std::string>>(),
+            std::chrono::seconds{5},
+            16U * 1024U * 1024U,
+            {},
+            k_catalogTools,
+            {script::PureDataProgram::Module{
+                .name   = "chunk",
+                .source = "return table.freeze({})\n",
+            }}
+        );
+        REQUIRE_FALSE(scoped.has_value());
+        CHECK_MESSAGE(
+            std::string{scoped.error().message()}.contains(
+                "a Project closure module may not be named chunk: that name is "
+                "the interactive session's own root module"
+            ),
+            "a Project module colliding with the session's root must be "
+            "refused at create() and must name the collision"
+        );
     }
 }

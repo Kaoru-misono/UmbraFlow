@@ -198,20 +198,27 @@ namespace uf::operator_runtime
         return m_value;
     }
 
+    auto projectScriptModules(std::span<ProjectModuleBlob const> modules)
+        -> std::vector<script::PureDataProgram::Module>
+    {
+        auto admitted = std::vector<script::PureDataProgram::Module>{};
+        admitted.reserve(modules.size());
+        for (auto const& module : modules)
+        {
+            admitted.emplace_back(script::PureDataProgram::Module{
+                .name   = module.name,
+                .source = module.source,
+            });
+        }
+        return admitted;
+    }
+
     auto derivePluginModuleManifestHash(
         std::string_view entryModule,
         std::span<ProjectModuleBlob const> modules
     ) -> Result<ContentHash>
     {
-        auto admittedModules = std::vector<script::PureDataProgram::Module>{};
-        admittedModules.reserve(modules.size());
-        for (auto const& module : modules)
-        {
-            admittedModules.emplace_back(script::PureDataProgram::Module{
-                .name   = module.name,
-                .source = module.source,
-            });
-        }
+        auto const admittedModules = projectScriptModules(modules);
         UF_TRY(script::PureDataProgram::validateModuleClosure(
             entryModule,
             admittedModules

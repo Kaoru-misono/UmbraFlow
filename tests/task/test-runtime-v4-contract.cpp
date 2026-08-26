@@ -595,6 +595,19 @@ identity = ["screen.anchor"]
             };
         }
 
+        // A stand-in, because this suite registers no generation with an
+        // Operator to take one from. What the run bracket needs is that the
+        // opening line carries a registration at all; which one it is, is the
+        // production caller's to supply from the deployment it verified.
+        [[nodiscard]] auto explorationRegistrationHash() -> std::string
+        {
+            constexpr auto material =
+                std::string_view{"exploration-fixture-registration"};
+            auto const hashed = sha256(std::as_bytes(std::span{material}));
+            REQUIRE(hashed.has_value());
+            return hashed->hex();
+        }
+
         // What service::ProductLifecycle::startExplorationSession composes in
         // production, composed here instead: the recorder, the engine session
         // and the Tool Runtime are the ledgered caller's to build, so a test
@@ -652,6 +665,12 @@ identity = ["screen.anchor"]
                     .tracePath           = std::move(tracePath),
                     .bindToolRuntime     = recordingToolRuntime(std::move(issued)),
                     .toolCatalogResource = explorationCatalogResource(),
+
+                    // No Project closure: this suite drives the RuntimeModel
+                    // contract, not what a chunk may require. The registration
+                    // hash still has to be stated, because the opening trace
+                    // line names the generation whatever its closure holds.
+                    .projectRegistrationHash = explorationRegistrationHash(),
                 }
             );
         }

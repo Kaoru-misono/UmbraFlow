@@ -2264,4 +2264,37 @@ namespace uf::cli
             );
         }
     }
+
+    // The door itself, end to end: what a chunk may require is the closure the
+    // GENERATION was registered with, taken from the deployment this lifecycle
+    // already verified rather than re-read from the project directory.
+    //
+    // `main` is the exemplar deployment's own `tool_closure.modules` entry, the
+    // same module every registered handler of this generation is compiled over.
+    // A session that got its modules from a fresh read of the directory would
+    // still pass this; what it would break is attribution, so the sibling case
+    // in tests/task/test-scoped-tool-session.cpp holds the in-memory route and
+    // this one holds the wiring that reaches it at all.
+    TEST_CASE("an interactive chunk requires the deployment's own verified closure")
+    {
+        auto const world = ExploreDoorWorld{};
+        auto const evaluated = evaluateAuthoringChunk(
+            world,
+            R"lua(
+                local closure = require("main")
+                return closure.command_1({}).outcome
+            )lua",
+            "deployment-closure"
+        );
+        auto const why = evaluated.has_value()
+            ? std::string{}
+            : std::string{evaluated.error().message()};
+        REQUIRE_MESSAGE(evaluated.has_value(), why);
+        REQUIRE(evaluated->text() != nullptr);
+        CHECK_MESSAGE(
+            *evaluated->text() == "command-1",
+            "a chunk must be able to require the deployment's declared closure "
+            "and call its pure entry"
+        );
+    }
 }

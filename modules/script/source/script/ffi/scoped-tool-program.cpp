@@ -811,19 +811,33 @@ namespace uf::script
             return wrapped;
         }
 
+        // One chunk plus the generation's own module closure, compiled as the
+        // one Project half of a session closure. The chunk is the entry module
+        // and the Project modules sit beside it under their registered names,
+        // so a chunk requires `strategy/battle` exactly as a registered handler
+        // in the same generation does -- one graph, resolved by the same host
+        // resolver, and no second visibility rule anywhere.
         [[nodiscard]]
         auto compileSessionClosure(
             std::string_view source,
             std::span<FrameworkModule const> frameworkModules,
             std::span<PureDataProgram::Module const> generated,
+            std::span<PureDataProgram::Module const> projectModules,
+            std::vector<PureDataProgram::Resource> projectResources,
             std::vector<PureDataProgram::Resource> frameworkResources
         ) -> Result<detail::ProgramClosure>
         {
             auto modules = std::vector<PureDataProgram::Module>{};
+            modules.reserve(projectModules.size() + 1U);
             modules.emplace_back(PureDataProgram::Module{
                 .name   = std::string{k_sessionModuleName},
                 .source = sessionModuleSource(source),
             });
+            modules.insert(
+                modules.end(),
+                projectModules.begin(),
+                projectModules.end()
+            );
             auto const rendered =
                 withGeneratedModules(frameworkModules, generated);
             return detail::compileClosure(
@@ -835,7 +849,7 @@ namespace uf::script
                     .capabilityBoundModules = k_capabilityBoundModules,
                 },
                 std::move(modules),
-                {},
+                std::move(projectResources),
                 std::move(frameworkResources)
             );
         }
@@ -964,6 +978,8 @@ namespace uf::script
         std::vector<FrameworkModule> frameworkModules,
         std::vector<PureDataProgram::Module> generatedModules,
         std::vector<PureDataProgram::Resource> frameworkResources,
+        std::vector<PureDataProgram::Module> projectModules,
+        std::vector<PureDataProgram::Resource> projectResources,
         ToolRuntimeInvoke invokeTool,
         std::stop_token cancellation,
         MonotonicInstant::Duration maximumRuntime,
@@ -972,6 +988,8 @@ namespace uf::script
         : m_frameworkModules{std::move(frameworkModules)}
         , m_generatedModules{std::move(generatedModules)}
         , m_frameworkResources{std::move(frameworkResources)}
+        , m_projectModules{std::move(projectModules)}
+        , m_projectResources{std::move(projectResources)}
         , m_invokeTool{std::move(invokeTool)}
         , m_cancellation{std::move(cancellation)}
         , m_maximumRuntime{maximumRuntime}
@@ -982,6 +1000,8 @@ namespace uf::script
     auto ScopedToolSession::create(
         std::vector<FrameworkModule> frameworkModules,
         std::vector<PureDataProgram::Resource> frameworkResources,
+        std::vector<PureDataProgram::Module> projectModules,
+        std::vector<PureDataProgram::Resource> projectResources,
         ToolRuntimeInvoke invokeTool,
         std::stop_token cancellation,
         MonotonicInstant::Duration maximumRuntime,
@@ -992,6 +1012,23 @@ namespace uf::script
         {
             return detail::refuse("a scoped Tool session requires a Tool Runtime");
         }
+
+        // The one name a Project closure may not carry into a session. The
+        // compiler beneath would refuse the pair as a duplicate and name
+        // neither side of it, and a Project author reading "module names must
+        // be unique" about a module they declared once has nothing to act on.
+        for (auto const& module : projectModules)
+        {
+            if (module.name == k_sessionModuleName)
+            {
+                return detail::refuse(
+                    "a Project closure module may not be named "
+                    + std::string{k_sessionModuleName}
+                    + ": that name is the interactive session's own root module"
+                );
+            }
+        }
+
         UF_TRY(validateScopedCatalog(frameworkModules));
         UF_TRY_VALUE(
             generated,
@@ -1005,15 +1042,26 @@ namespace uf::script
             );
         }
 
-        // Validate and boot the exact Framework closure and catalog before the
-        // caller receives a session. The probe module has no user source and
-        // calls no Tool; the admission capability makes that structural.
+        // Validate and boot the exact Framework closure, catalog and Project
+        // closure before the caller receives a session. The probe module has no
+        // user source and calls no Tool; the admission capability makes that
+        // structural.
+        //
+        // Every Project module is COMPILED here, so a Project module that does
+        // not parse refuses the session and names the module. None of them is
+        // EXECUTED here: the closure is resolved on demand, so a module's
+        // top-level code first runs in the chunk that requires it. That is
+        // exactly what ScopedToolProgram::compile does for a registered handler
+        // over the same graph, and matching it is the point -- a session and a
+        // handler must not disagree about when a Project module runs.
         UF_TRY_VALUE(
             probe,
             compileSessionClosure(
                 "return nil",
                 frameworkModules,
                 generated,
+                projectModules,
+                projectResources,
                 frameworkResources
             )
         );
@@ -1034,8 +1082,9 @@ namespace uf::script
             {
                 return detail::refuse(
                     std::format(
-                        "the scoped Tool session's Framework closure exhausted its "
-                        "session-supplied Luau memory ceiling of {} bytes during admission",
+                        "the scoped Tool session's Framework and Project closure "
+                        "exhausted its session-supplied Luau memory ceiling of {} "
+                        "bytes during admission",
                         *convertedMemoryQuota
                     )
                 );
@@ -1047,6 +1096,8 @@ namespace uf::script
             std::move(frameworkModules),
             std::move(generated),
             std::move(frameworkResources),
+            std::move(projectModules),
+            std::move(projectResources),
             std::move(invokeTool),
             std::move(cancellation),
             maximumRuntime,
@@ -1074,6 +1125,8 @@ namespace uf::script
                 source,
                 m_frameworkModules,
                 m_generatedModules,
+                m_projectModules,
+                m_projectResources,
                 m_frameworkResources
             )
         );

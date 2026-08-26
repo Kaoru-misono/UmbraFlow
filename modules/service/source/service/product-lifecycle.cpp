@@ -115,6 +115,7 @@ namespace uf::service
         constexpr auto k_waitTool    = std::string_view{"framework.workflow.wait"};
         constexpr auto k_auditTool   = std::string_view{"framework.audit.record"};
         constexpr auto k_statusTool  = std::string_view{"framework.workflow.status"};
+        constexpr auto k_nowTool     = std::string_view{"framework.workflow.now"};
         constexpr auto k_censusGridTool = std::string_view{
             "framework.screen.census_grid"
         };
@@ -963,6 +964,12 @@ namespace uf::service
         auto answerStatusTool()
             -> Result<operator_runtime::ToolCallCompletion>;
 
+        // The wall clock, read on the same std::chrono::system_clock that
+        // stamps created_at_unix_ms onto an evidence receipt, so the two
+        // instants a project sees are comparable rather than merely similar.
+        [[nodiscard]]
+        auto answerNowTool() -> Result<operator_runtime::ToolCallCompletion>;
+
         // Section 6's input-authority boundary. It resolves the observation the
         // call was issued against -- spending it, once -- against this run's own
         // controlled target, Project registration, RuntimeArtifact, Host
@@ -1410,6 +1417,29 @@ namespace uf::service
             )
         );
 
+        // The generation's own closure, taken from the deployment this
+        // lifecycle already registered rather than re-read from the project
+        // directory. These are the exact in-memory blobs registerGeneration was
+        // handed and held against the registration's module_manifest_hash and
+        // its pinned resource rows, so the code a chunk can require is the code
+        // the ledger names. Opening the directory again here would let an edit
+        // between start() and this call run under a hash that never covered it.
+        //
+        // The resources go through verifyProjectResourceClosure -- the same
+        // routine registerGeneration uses, and the only one that decides which
+        // bytes a registration pinned. A narrower reader here would be a second
+        // answer to that question.
+        auto& deployed = m_impl->deployment();
+        UF_TRY_VALUE(
+            projectResources,
+            operator_runtime::verifyProjectResourceClosure(
+                deployed.generation.projectResources(),
+                deployed.projectResources
+            )
+        );
+        auto projectModules =
+            operator_runtime::projectScriptModules(deployed.toolClosure.modules);
+
         return m_impl->operatorHost.host().startExplorationSession(
             m_impl->generation,
             std::move(recorder),
@@ -1419,19 +1449,24 @@ namespace uf::service
                 // the directory it happens to sit in: the trace line naming a
                 // project has to survive the project being moved. The
                 // registration hash would be the stronger name and cannot be
-                // used -- a bare 64-character hash is what the trace refuses as
-                // payload text, and the manifest hash on the stream header is
-                // already the identity a reader joins on.
-                .projectId            = pinned.deployment,
-                .projectRoot          = pinned.projectDirectory,
-                .tracePath            = std::move(config.tracePath),
-                .bindToolRuntime      = std::move(bindToolRuntime),
-                .toolCatalogResource  = std::move(toolCatalogResource),
-                .cancellation         = std::move(cancellation),
-                .maximumReadsPerCycle = config.maximumReadsPerCycle,
-                .maximumCropsPerCycle = config.maximumCropsPerCycle,
-                .memoryQuotaBytes     = config.memoryQuotaBytes,
-                .maxScriptRuntime     = config.maxScriptRuntime,
+                // used HERE -- a bare 64-character hash is what the trace
+                // refuses as payload text, and the manifest hash on the stream
+                // header is already the identity a reader joins on. It travels
+                // instead as projectRegistrationHash below, which the run
+                // bracket writes as a REFERENCE, where a content hash belongs.
+                .projectId               = pinned.deployment,
+                .projectRoot             = pinned.projectDirectory,
+                .tracePath               = std::move(config.tracePath),
+                .bindToolRuntime         = std::move(bindToolRuntime),
+                .toolCatalogResource     = std::move(toolCatalogResource),
+                .projectModules          = std::move(projectModules),
+                .projectResources        = std::move(projectResources),
+                .projectRegistrationHash = pinned.registrationHash.hex(),
+                .cancellation            = std::move(cancellation),
+                .maximumReadsPerCycle    = config.maximumReadsPerCycle,
+                .maximumCropsPerCycle    = config.maximumCropsPerCycle,
+                .memoryQuotaBytes        = config.memoryQuotaBytes,
+                .maxScriptRuntime        = config.maxScriptRuntime,
             }
         );
     }
@@ -1790,6 +1825,19 @@ namespace uf::service
              json::Value::ofString(controller().controlledTargetId())},
             {"installed_generation", counterMember(installedGeneration)},
             {"session_id", json::Value::ofString(sessionId)},
+        }));
+    }
+
+    auto ProductLifecycle::Impl::answerNowTool()
+        -> Result<operator_runtime::ToolCallCompletion>
+    {
+        // One reading, rendered as a decimal string for counterMember's
+        // reason. The instant is nondeterministic at the source and
+        // deterministic on replay: it lands in this call's terminal outcome,
+        // and a restart that reaches this coordinate is answered by the
+        // ledger without this provider running again.
+        return confirmedToolResult(json::Value::ofObject({
+            {"read_at_unix_ms", counterMember(unixMillisNow())},
         }));
     }
 
@@ -2737,6 +2785,10 @@ namespace uf::service
         if (toolName == k_statusTool)
         {
             return answerStatusTool();
+        }
+        if (toolName == k_nowTool)
+        {
+            return answerNowTool();
         }
         if (toolName == k_readLinesTool)
         {

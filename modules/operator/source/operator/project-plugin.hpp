@@ -78,6 +78,16 @@ namespace uf::operator_runtime
         std::string         bytes{};
     };
 
+    // One Project closure's module blobs, as the closed-graph compiler takes
+    // them. Published rather than repeated because every consumer of a closure
+    // -- the manifest hash, the registered handler program, and the interactive
+    // session that requires the same modules -- must hand the compiler the same
+    // bytes under the same names. Three copies of the same two-line loop would
+    // be three places a name or a byte could be dropped from.
+    [[nodiscard]]
+    auto projectScriptModules(std::span<ProjectModuleBlob const> modules)
+        -> std::vector<script::PureDataProgram::Module>;
+
     [[nodiscard]]
     auto derivePluginModuleManifestHash(
         std::string_view entryModule,

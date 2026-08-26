@@ -138,6 +138,25 @@ namespace uf::task
         // move under a chunk mid-session.
         script::PureDataProgram::Resource toolCatalogResource{};
 
+        // The verified Project closure of the generation this session pins:
+        // `tool_closure.modules` and the registration's resource closure, as
+        // the exact in-memory bytes the generation was registered against.
+        //
+        // They are DATA rather than a directory to read, and that is the whole
+        // of what makes an interactive run attributable. A session that opened
+        // the project directory for itself could run a module the ledger's
+        // module_manifest_hash does not name, so the code the record names and
+        // the code that ran could differ.
+        std::vector<script::PureDataProgram::Module>   projectModules{};
+        std::vector<script::PureDataProgram::Resource> projectResources{};
+
+        // The generation those two came from, as hex, for the run.started
+        // reference. It is required rather than defaulted-to-absent: a stream
+        // whose opening line names the Framework bundle but not the Project
+        // registration would name half of what ran, and the half it omits is
+        // the half that varies between two runs of the same release.
+        std::string projectRegistrationHash{};
+
         std::stop_token cancellation{};
 
         uint32                     maximumReadsPerCycle{32};

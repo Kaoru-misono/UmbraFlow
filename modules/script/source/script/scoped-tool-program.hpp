@@ -137,10 +137,21 @@ namespace uf::script
     // modules scopedModuleNames() states and reaches the same one
     // ToolRuntimeInvoke primitive a registered Project handler reaches.
     //
+    // A chunk requires three things and no fourth: the Framework modules, the
+    // Tool face this run's pinned catalog renders, and THE VERIFIED PROJECT
+    // CLOSURE OF THE GENERATION ITS SESSION PINNED. The third is the same
+    // module graph ScopedToolProgram::compile is given for a registered
+    // handler, so a Project's own decision logic is written once and required
+    // from either side. What separates the two sides is the RUN, not the
+    // module: ScopedSessionRun admits a Tool call through the session's root
+    // and counts it, ScopedToolRun refuses every Tool name because a handler is
+    // a leaf, and one module required from both places is subject to whichever
+    // run it is executing inside.
+    //
     // Each evaluate() owns one fresh VM and one elapsed-time window. The
     // release-owned Framework module views must outlive this object; the task
-    // bundle satisfies that with generated string literals. Framework resources
-    // and the Tool Runtime are owned here.
+    // bundle satisfies that with generated string literals. Framework
+    // resources, the Project closure and the Tool Runtime are owned here.
     class ScopedToolSession final
     {
         std::vector<FrameworkModule>           m_frameworkModules;
@@ -154,18 +165,29 @@ namespace uf::script
         std::vector<PureDataProgram::Module>   m_generatedModules;
 
         std::vector<PureDataProgram::Resource> m_frameworkResources;
-        ToolRuntimeInvoke                      m_invokeTool;
-        std::stop_token                        m_cancellation;
-        MonotonicInstant::Duration             m_maximumRuntime;
-        std::size_t                            m_memoryQuotaBytes;
-        HeapUsage                              m_outcomeHeapUsage{};
-        HeapUsage                              m_heapUsage{};
-        bool                                   m_generationSpent{};
+
+        // The generation's own verified module and resource closures, held as
+        // the exact bytes create() was handed. They are OWNED and never re-read
+        // from anywhere: a session that went back to the project directory
+        // could run code the ledger's module_manifest_hash does not name, and
+        // the run would stop being attributable to the generation it pinned.
+        std::vector<PureDataProgram::Module>   m_projectModules;
+        std::vector<PureDataProgram::Resource> m_projectResources;
+
+        ToolRuntimeInvoke          m_invokeTool;
+        std::stop_token            m_cancellation;
+        MonotonicInstant::Duration m_maximumRuntime;
+        std::size_t                m_memoryQuotaBytes;
+        HeapUsage                  m_outcomeHeapUsage{};
+        HeapUsage                  m_heapUsage{};
+        bool                       m_generationSpent{};
 
         ScopedToolSession(
             std::vector<FrameworkModule> frameworkModules,
             std::vector<PureDataProgram::Module> generatedModules,
             std::vector<PureDataProgram::Resource> frameworkResources,
+            std::vector<PureDataProgram::Module> projectModules,
+            std::vector<PureDataProgram::Resource> projectResources,
             ToolRuntimeInvoke invokeTool,
             std::stop_token cancellation,
             MonotonicInstant::Duration maximumRuntime,
@@ -180,13 +202,23 @@ namespace uf::script
             -> ScopedToolSession& = default;
         ~ScopedToolSession() = default;
 
-        // Validates the scoped Framework closure and pinned catalog before a
-        // session is handed back. Zero memoryQuotaBytes has the same explicit
-        // meaning EngineConfig gives it: no allocator ceiling.
+        // Validates the scoped Framework closure, the pinned catalog and the
+        // Project closure before a session is handed back. Zero
+        // memoryQuotaBytes has the same explicit meaning EngineConfig gives it:
+        // no allocator ceiling.
+        //
+        // `projectModules` is the generation's verified module closure and
+        // `projectResources` its verified resource closure, both as the exact
+        // bytes their registration was held against. A module named as the
+        // session's own root is refused by name here rather than left to
+        // collide inside the compiler, because the two names mean different
+        // things and only the caller can tell which one it meant.
         [[nodiscard]]
         static auto create(
             std::vector<FrameworkModule> frameworkModules,
             std::vector<PureDataProgram::Resource> frameworkResources,
+            std::vector<PureDataProgram::Module> projectModules,
+            std::vector<PureDataProgram::Resource> projectResources,
             ToolRuntimeInvoke invokeTool,
             std::stop_token cancellation,
             MonotonicInstant::Duration maximumRuntime,

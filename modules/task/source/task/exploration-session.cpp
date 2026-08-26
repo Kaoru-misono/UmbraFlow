@@ -43,7 +43,8 @@ namespace uf::task
         [[nodiscard]]
         auto explorationRunStartedEvent(
             std::string const& projectId,
-            std::string_view frameworkBundleDigest
+            std::string_view frameworkBundleDigest,
+            std::string_view projectRegistrationHash
         ) -> trace::TraceEventSpec
         {
             return trace::TraceEventSpec{
@@ -56,10 +57,21 @@ namespace uf::task
                     // encoded bytes, and the trace refuses payload text that
                     // could be a smuggled frame. A reference is what a content
                     // hash was always meant to be here.
+                    //
+                    // The registration hash is beside it on the same terms, and
+                    // for the same reason: a chunk executes the generation's own
+                    // tool_closure as well as the release's modules, so a line
+                    // that named only the bundle would name only half the code
+                    // that ran. With both, a trace stream says which Project
+                    // bytes it loaded without joining to the ledger.
                     .references = {
                         trace::TraceReference{
                             .type = "framework_bundle",
                             .id   = std::string{frameworkBundleDigest},
+                        },
+                        trace::TraceReference{
+                            .type = "project_registration",
+                            .id   = std::string{projectRegistrationHash},
                         },
                     },
                 },
@@ -140,6 +152,16 @@ namespace uf::task
             );
         }
 
+        if (spec.projectRegistrationHash.empty())
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "an exploration session needs the registration hash of the "
+                "generation whose closure it was given; its opening trace line "
+                "names which Project bytes a chunk can run"
+            );
+        }
+
         // Derived rather than baked -- frameworkBundleHash() hashes the embedded
         // sources together with the reserved alias, dependency depth and
         // declaration tier each module carries in framework-bundle.cpp -- so it
@@ -173,7 +195,11 @@ namespace uf::task
         }
         UF_TRY(
             owned->m_recorder->emit(
-                explorationRunStartedEvent(spec.projectId, frameworkBundleDigest)
+                explorationRunStartedEvent(
+                    spec.projectId,
+                    frameworkBundleDigest,
+                    spec.projectRegistrationHash
+                )
             )
         );
 
@@ -181,9 +207,18 @@ namespace uf::task
         auto frameworkResources =
             std::vector<script::PureDataProgram::Resource>{};
         frameworkResources.emplace_back(std::move(spec.toolCatalogResource));
+
+        // The three things a chunk may require, and no fourth: the Framework
+        // modules, the Tool face this run's pinned catalog renders, and the
+        // verified Project closure of the generation this session pinned. The
+        // closure arrives as bytes on the spec; nothing here opens the project
+        // directory, so what a chunk can require is exactly what the ledger's
+        // module_manifest_hash names.
         auto program = script::ScopedToolSession::create(
             std::move(scopedModules),
             std::move(frameworkResources),
+            std::move(spec.projectModules),
+            std::move(spec.projectResources),
             std::move(toolRuntime),
             spec.cancellation,
             spec.maxScriptRuntime,

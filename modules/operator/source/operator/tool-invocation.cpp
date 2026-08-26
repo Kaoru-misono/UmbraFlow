@@ -79,6 +79,9 @@ namespace uf::operator_runtime
         constexpr auto k_projectWriteTextTool = std::string_view{
             "framework.project.write_text"
         };
+        constexpr auto k_nowTool = std::string_view{
+            "framework.workflow.now"
+        };
         constexpr auto k_statusTool = std::string_view{
             "framework.workflow.status"
         };
@@ -116,6 +119,7 @@ namespace uf::operator_runtime
         constexpr auto k_maximumProjectMillis = uint64{10'000U};
         constexpr auto k_maximumWaitMillis = uint64{60'000U};
         constexpr auto k_maximumAuditMillis = uint64{1'000U};
+        constexpr auto k_maximumNowMillis = uint64{1'000U};
         constexpr auto k_maximumStatusMillis = uint64{1'000U};
         constexpr auto k_maximumInputMillis = uint64{15'000U};
         constexpr auto k_maximumHoldMillis = uint64{75'000U};
@@ -984,6 +988,37 @@ namespace uf::operator_runtime
             );
         }
 
+        // Reading the Operator's wall clock. Semantic and ReadOnly with no
+        // effect bound, for status's reasons: it observes no frame, spends no
+        // observation and changes nothing outside the Operator, so no policy
+        // is consulted.
+        //
+        // WHY THE CLOCK IS A TOOL AND NOT A VM GLOBAL. The sandbox nils
+        // os.time, os.clock and os.date so that a pure-data VM carries no
+        // nondeterministic source, and that floor stands. What a Tool call
+        // adds is the durable record: the instant this call read enters the
+        // call's terminal outcome, and a replayed position answers the
+        // recorded instant rather than a fresh one, because only a Tool call
+        // short-circuits on replay. A clock reached through a global would
+        // tick again on every restart and nothing would record what it said.
+        [[nodiscard]]
+        auto nowDescriptor() -> Result<ToolDescriptor>
+        {
+            return ToolDescriptor{
+                .toolVersion          = std::string{k_frameworkToolVersion},
+                .requiredCapabilities = {},
+                .effectBounds         = {},
+                .uiActionBounds       = {},
+                .timeout = TimeoutPolicy{
+                    .maximumElapsedMillis = k_maximumNowMillis,
+                    .onTimeout            = TimeoutAction::Stop,
+                },
+                .mutability  = ToolMutability::ReadOnly,
+                .surface     = ToolSurface::Semantic,
+                .idempotency = ToolIdempotency::ReadSafe,
+            };
+        }
+
         // Run and call-tree status. It observes no frame and spends no
         // observation, so its limits admit neither.
         [[nodiscard]]
@@ -1202,7 +1237,7 @@ namespace uf::operator_runtime
         // reference to an action -- is something a caller reads rather than
         // something it has to be told. What surrounds the result is the answer
         // envelope, which is one shape for every Tool and is published once, at
-        // the catalog, rather than repeated twenty-four times here.
+        // the catalog, rather than repeated twenty-five times here.
         // ------------------------------------------------------------------
 
         [[nodiscard]]
@@ -1666,6 +1701,32 @@ namespace uf::operator_runtime
             );
         }
 
+        // ONE UNIX-MILLISECOND INSTANT, SPELLED THE WAY THIS CATALOG ALREADY
+        // SPELLS ONE. The unit, the epoch and the decimal-string rendering are
+        // exactly a screenshot receipt's created_at_unix_ms; what varies is the
+        // prefix, which names WHAT happened at that instant. The catalog
+        // already carries two of them -- created_at_unix_ms on an evidence
+        // receipt, expires_at_unix_ms on an observation reference -- so
+        // <verb>_at_unix_ms is the convention rather than a second spelling of
+        // one member. Nothing is created here, so created_at would name a
+        // creation that did not happen.
+        [[nodiscard]]
+        auto nowOutputMaterial() -> json::Value
+        {
+            return objectResult(
+                {
+                    {"read_at_unix_ms",
+                     counterResult(
+                         "The instant the Operator's wall clock was read, in "
+                         "Unix milliseconds since 1970-01-01T00:00:00Z. Same "
+                         "clock, epoch and rendering as a screenshot "
+                         "receipt's created_at_unix_ms."
+                     )},
+                },
+                {"read_at_unix_ms"}
+            );
+        }
+
         [[nodiscard]]
         auto statusOutputMaterial() -> json::Value
         {
@@ -1870,7 +1931,7 @@ namespace uf::operator_runtime
         }
 
         // The one shape every answer has, published once here rather than
-        // repeated inside twenty-four output schemas. Each Tool's own
+        // repeated inside twenty-five output schemas. Each Tool's own
         // output_schema describes the `result` member of this envelope and
         // nothing around it.
         [[nodiscard]]
@@ -2249,6 +2310,23 @@ namespace uf::operator_runtime
                 &uiScrollDescriptor,
                 &uiArgumentMaterial,
                 &uiInputOutputMaterial,
+            },
+            FrameworkToolDefinition{
+                k_nowTool,
+                "Read the Operator's wall clock and answer with the instant it "
+                "read. Takes no arguments, observes no frame and delivers "
+                "nothing. This is the only source of wall-clock time inside a "
+                "run: the VM carries no clock of its own, because a pure-data "
+                "VM must hold no nondeterministic source. A confirmed result "
+                "carries read_at_unix_ms -- Unix milliseconds since "
+                "1970-01-01T00:00:00Z, as a decimal string, on the same clock "
+                "and in the same rendering as a framework.screen.capture "
+                "receipt's created_at_unix_ms. The reading is a durable Tool "
+                "outcome, so replaying this call position answers the instant "
+                "that was recorded rather than a fresh one.",
+                &nowDescriptor,
+                &noArgumentsMaterial,
+                &nowOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_statusTool,

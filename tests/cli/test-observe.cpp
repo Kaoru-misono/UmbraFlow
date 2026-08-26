@@ -51,6 +51,8 @@
 
 #include <sqlite3.h>
 
+#include <charconv>
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
@@ -359,6 +361,7 @@ namespace uf::cli
             std::string waited{};
             std::string audited{};
             std::string status{};
+            std::string clockRead{};
         };
 
         // The exemplar copied out of the repository, its RuntimeArtifact
@@ -961,14 +964,30 @@ namespace uf::cli
                             "framework.audit.record",
                             R"({"record":{"note":"observed"}})"
                         ),
-                        .status = issued("framework.workflow.status", "{}"),
+                        .status    = issued("framework.workflow.status", "{}"),
+                        .clockRead = issued("framework.workflow.now", "{}"),
                     };
                 }
             );
             return payloads;
         };
 
-        auto const executed = runFrameworkTools("framework-tools.jsonl");
+        // The window the clock Tool's reading has to fall inside. It is read
+        // here, on the same std::chrono::system_clock the Operator stamps a
+        // screenshot receipt with, so a reading outside it is not a reading of
+        // the wall clock at all.
+        auto const wallClockNow = []
+        {
+            return static_cast<uint64>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()
+                )
+                    .count()
+            );
+        };
+        auto const beforeRun = wallClockNow();
+        auto const executed  = runFrameworkTools("framework-tools.jsonl");
+        auto const afterRun  = wallClockNow();
 
         auto const parsedPayload = json::parse(executed.firstObserve);
         REQUIRE(parsedPayload.has_value());
@@ -1031,6 +1050,32 @@ namespace uf::cli
         REQUIRE(p_access != nullptr);
         CHECK(p_access->string() == "writable");
 
+        // framework.workflow.now answers a reading of the wall clock, and the
+        // whole point of reaching a clock through a Tool rather than a VM
+        // global is the pair of properties below: the reading is real, and it
+        // is recorded. A global would answer a fresh instant on every restart
+        // and leave no record of what it first said.
+        auto const clockRead = json::parse(executed.clockRead);
+        REQUIRE(clockRead.has_value());
+        auto const* const p_readAt = clockRead->find("read_at_unix_ms");
+        REQUIRE(p_readAt != nullptr);
+        auto const readAtText = p_readAt->string();
+        auto readAtUnixMillis = uint64{0U};
+        auto const parsed     = std::from_chars(
+            readAtText.data(),
+            readAtText.data() + readAtText.size(),
+            readAtUnixMillis
+        );
+        REQUIRE(parsed.ec == std::errc{});
+        CHECK(parsed.ptr == readAtText.data() + readAtText.size());
+        auto const insideTheRun = readAtUnixMillis >= beforeRun
+            && readAtUnixMillis <= afterRun;
+        CHECK_MESSAGE(
+            insideTheRun,
+            "framework.workflow.now must answer a reading of the wall clock "
+            "taken while the call ran"
+        );
+
         // The two observes are byte-identical requests, and they still differ:
         // the second one got its own ordinal, executed on its own and minted
         // its own observation. That is what stops a caller from addressing a
@@ -1047,6 +1092,16 @@ namespace uf::cli
         CHECK(replayed.secondObserve == executed.secondObserve);
         CHECK(replayed.waited == executed.waited);
         CHECK(replayed.audited == executed.audited);
+
+        // The clock reading replays byte-identically although the wall clock
+        // moved between the two runs. That is the property that makes a
+        // nondeterministic source safe here: the instant enters the call's
+        // terminal outcome, and only a Tool call short-circuits on replay.
+        CHECK_MESSAGE(
+            replayed.clockRead == executed.clockRead,
+            "a replayed framework.workflow.now must answer the recorded "
+            "instant, not a fresh reading"
+        );
 
         // Status is the one recorded outcome whose replay is load-bearing on
         // its own: the second run's session id differs from the first's, so

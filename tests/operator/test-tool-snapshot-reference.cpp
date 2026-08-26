@@ -452,7 +452,7 @@ namespace uf::operator_runtime
         CHECK(*crossed == ObservationRefusal::Unminted);
     }
 
-    TEST_CASE("The Framework Tool Catalog declares twenty-four built-in Tools")
+    TEST_CASE("The Framework Tool Catalog declares twenty-five built-in Tools")
     {
         auto catalog = FrameworkToolCatalogOwner::create();
         REQUIRE(catalog.has_value());
@@ -600,6 +600,19 @@ namespace uf::operator_runtime
                 ToolSurface::Semantic,
                 ToolIdempotency::NonIdempotent,
             },
+            // Reading the clock is Semantic and ReadOnly beside status and
+            // wait: it observes no frame, changes nothing outside the
+            // Operator, and asks for nothing in the machine's vocabulary. It
+            // is ReadSafe despite answering a different instant each time --
+            // idempotency here is what redelivering costs, not whether the
+            // answer repeats, which is why framework.screen.capture carries
+            // the same label.
+            CatalogExpectation{
+                "framework.workflow.now",
+                ToolMutability::ReadOnly,
+                ToolSurface::Semantic,
+                ToolIdempotency::ReadSafe,
+            },
             CatalogExpectation{
                 "framework.workflow.status",
                 ToolMutability::ReadOnly,
@@ -710,7 +723,7 @@ namespace uf::operator_runtime
         // hash compared against itself pins nothing.
         CHECK(
             catalog->toolCatalogHash().hex()
-            == "b4767fb49926ba7f10e9d76a13d3469662ffb5f27f3be167f52630ecacfb0a64"
+            == "2a3629d6534c4795e94ec256c889f8227d56a725846899e608acb5562ee34aac"
         );
 
         auto material = CanonicalJson::parseExact(catalog->canonicalJcs());
@@ -868,7 +881,7 @@ namespace uf::operator_runtime
         );
 
         // And the envelope around every result is stated once, by the catalog,
-        // rather than twenty-four times inside the result shapes.
+        // rather than twenty-five times inside the result shapes.
         auto const material = json::parse(catalog->canonicalJcs());
         REQUIRE(material.has_value());
         CHECK(material->find("answer_envelope") != nullptr);
