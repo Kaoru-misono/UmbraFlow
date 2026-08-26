@@ -725,8 +725,9 @@ the encoded bytes and their hash.
 **Interactive scoped Tool session (`explore` CLI)** — the chunk-at-a-time
 transport used when a caller needs to inspect a result before composing its next
 piece of code. `explore` names the CLI and queue protocol only. Each chunk is a
-root `ScopedToolSession` program, imports `@umbraflow/tools`,
-`@umbraflow/screen`, `@umbraflow/workflow` or `@umbraflow/audit`, and may call
+root `ScopedToolSession` program, imports the modules the host GENERATED from
+this run's pinned catalog -- `@umbraflow/screen`, `@umbraflow/input` and one per
+Project Tool namespace -- and may call
 any Framework or Project Tool in the session's pinned combined catalog. The
 Operator's policy, not the transport name, decides which calls are admitted.
 Host state and ledger identity survive between chunks; Luau globals and module

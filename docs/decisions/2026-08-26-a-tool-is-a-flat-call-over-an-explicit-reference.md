@@ -209,6 +209,65 @@ as a child, and observes inside its own handler. Under this ruling the caller
 writes three ordinary calls instead, and the Project Tool needs neither child
 bounds nor an observation budget.
 
+## The published surface a stranger reads
+
+A Tool is meant to end up as a tool an agent calls, so its declaration must be
+complete for a model that has never seen this repository: name, description and
+argument schema, and nothing else. Three things stood in the way and are fixed
+with this ruling rather than after it.
+
+**Descriptions were placeholders.** Every Framework Tool's description was
+generated as `"Call the " + name + " Tool."`, while the same catalog refused a
+Project Tool whose description was empty. The framework failed the requirement it
+imposed. Each of the twenty-four now says what the call does, what a confirmed
+result carries, and which member came from which other Tool.
+
+**The argument schemas were a private dialect.** `additional_properties` and
+`min_length` appeared where JSON Schema spells `additionalProperties` and
+`minLength`, and `framework.workflow.wait` carried no `properties` at all: its
+ceiling sat under an invented top-level `maximum_duration_ms`, so the only
+place stating `duration_ms`'s type and bound was a keyword no evaluator reads.
+That number now lives at `properties.duration_ms.maximum`, where a caller, the
+Operator and an ordinary Draft 2020-12 evaluator read the same number from the
+same place. The separation ruled on 2026-08-24 is unchanged; only its spelling
+is, and that ruling keeps its bytes.
+
+With the schemas standard, the twenty-five hand-written argument validators are
+deleted: the catalog compiles each Tool's **published** bytes and judges
+arguments against that, so what the schema says and what the framework enforces
+cannot drift apart. A Framework schema this evaluator cannot apply is a startup
+refusal rather than a constraint nobody checks.
+
+**No Tool declared its result.** Chaining is the whole use of these Tools — a
+capture's digest feeds a measurement, an observation's reference feeds an action
+— and none of it was discoverable. `output_schema` is required of a Framework
+Tool and optional for a Project Tool, where an absent one means the result is
+not written down rather than that there is none. The answer envelope is
+published once, at the catalog.
+
+## The calling surface is generated, not written
+
+`tools.call(name, arguments)` passed the Tool's name as string data to a
+meta-verb. It is the wire shape — it is what MCP's `tools/call` is — but it is
+not how anything calls a tool it knows the name of, and the evidence that it was
+wrong is what its only real user did with it: every interactive chunk opened by
+hand-writing the same four wrappers around it.
+
+The catalog is the single authority and every caller-facing surface renders it.
+Luau renders each namespace as a module and each Tool as a function taking one
+argument table whose keys are the schema's own; an MCP server renders the same
+entry as an MCP tool. **A hand-written per-Tool wrapper stays forbidden** — that
+is what the 2026-08-25 ruling against a verb facade got right — but a face
+derived mechanically from the pinned catalog is not a second spelling, because
+nothing per-Tool is maintained and the catalog moving moves the face with it.
+
+A call answers with its result. Any other terminal delivery raises the whole
+envelope as a table, so `pcall` recovers `delivery`, the call identity and the
+provider's message unchanged. Z5's requirement is that delivery uncertainty stay
+data, and it does: what is refused is discarding it, not the control flow. An
+envelope a caller may forget to check is what let a chunk report success while
+every observation had failed; a raise cannot be forgotten.
+
 ## What is deleted
 
 `framework.input.deliver`, `framework.input.semantic_target`,

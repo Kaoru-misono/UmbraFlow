@@ -194,8 +194,16 @@ A Project Tool entry point takes only its declared arguments. Tool
 calls have no caller-supplied body or callback protocol.
 
 Each entry carries `description` and `argument_schema` as mandatory
-members. `argument_schema` is the Tool's flat inline JSON Schema; there
+members. `argument_schema` is the Tool's flat inline JSON Schema --
+Draft 2020-12 keywords, no private spelling of one -- and there
 is no unchecked spelling, body, or child-effect declaration.
+
+`output_schema` is the one optional Tool member: the shape of the
+result a confirmed call answers with, stated inline as JSON Schema
+and compiled where the Tool is declared. It describes the `result`
+member of the answer and never the envelope around it. Leaving it
+out says this project did not write its result down; every Framework
+Tool states one.
 
 ## 3. CLI surface
 
@@ -583,7 +591,7 @@ Unicode-derived data is distributed under `modules/task/runtime/UNICODE-LICENSE.
 | `@umbraflow/text` | `case_fold`, `collapse_whitespace`, `contains`, `ends_with`, `equals`, `normalize`, `split`, `starts_with`, `tokens`, `trim`, `unicode_version` | `27d3dd8d13a9cda802ee07bd5a18f5e66dc27faae4c681b0955a9c6b1d3c67bc` |
 | `@umbraflow/utf8` | `classify`, `codepoints`, `is_valid`, `is_whitespace`, `length`, `slice`, `unicode_version`, `validate` | `d79e97a6dc10860e60bbfa713f49170b6279d0f05069db5da77f2f3ed598a410` |
 
-Reserved SCOPED Framework modules: `@umbraflow/audit`, `@umbraflow/screen`, `@umbraflow/tools`, `@umbraflow/workflow`.
+Reserved SCOPED Framework modules: `@umbraflow/catalog`, `@umbraflow/internal/render`.
 These are a DIFFERENT contract from the pure modules above and are
 not interchangeable with them. A pure module loads in every Project
 program of the pure type. A scoped module loads only
@@ -594,7 +602,26 @@ property of the program type rather than of a runtime flag. They are
 absent from the pure module closure, from the trusted framework
 bundle, and from every project-global projection.
 
-A scoped module reaches the world only by making an ordinary Tool
+The two above are the STATIC half. The modules a caller actually
+requires are GENERATED per run from the pinned Tool catalog, which
+is the single authority: a Tool named `<namespace>.<member>` is
+reached as `<member>` on the module `@umbraflow/<path>`, where
+`<path>` is that namespace with its dots turned into slashes and a
+leading `framework` elided because `@umbraflow/` already is it.
+`framework.screen.read_lines` is therefore `screen.read_lines`
+after `require("@umbraflow/screen")`, and a Project Tool
+`chaos.dream.get_current_event` is `dream.get_current_event` after
+`require("@umbraflow/chaos/dream")`.
+
+One argument table, whose keys are the input schema's own property
+names unchanged, so a chunk and an MCP client send the same object
+and adding a property cannot break an existing call. NOTHING
+PER-TOOL IS WRITTEN BY HAND anywhere: a Tool added to the catalog
+is callable with no source change. A Tool whose namespace is only
+`framework` has no module segment left and is refused by name when
+the closure is built.
+
+A generated module reaches the world only by making an ordinary Tool
 call through one private capability primitive it is handed as its
 chunk argument and cannot republish. Every such call creates a
 ToolInvocation, spends Tool-call budget, and is recorded at a call
@@ -602,15 +629,13 @@ position the host assigns; a script cannot name, pass, or influence
 that position. Tool discovery and description are frozen data read
 from the run's pinned Tool catalog resource, not a call. A Tool
 Runtime refusal is terminal for the run and no `pcall` can observe
-it, while a Tool that ran and failed reports its delivery
-classification inside the value it answers with.
+it, while a Tool that ran and failed raises its whole answer
+envelope, which a `pcall` recovers unchanged.
 
 | Reserved scoped module | Exports | Source SHA-256 |
 | --- | --- | --- |
-| `@umbraflow/audit` | `record` | `d154c50398cd7dcff7e5cb81d839c6d556f2a1efeade5a59d537e9e14ebe5b73` |
-| `@umbraflow/screen` | `capture`, `crop`, `observation`, `observe`, `ui_actions`, `use`, `used` | `df1ee617bf071e1c5047b1f7603bf615fdc2cb45527c80fa016459b58c390c1a` |
-| `@umbraflow/tools` | `call`, `catalog_hash`, `describe`, `knows`, `names` | `f495bfee576aff4b1894e39f687f115e3c7bc41f7023d030d0673b241bfc80c1` |
-| `@umbraflow/workflow` | `status`, `stopped`, `wait` | `67debc25de08abc3ed29f9d85d042bb32811ab0c85b3b7f03e4f2d4dce395861` |
+| `@umbraflow/catalog` | `describe`, `hash`, `names` | `13806be8e96826c60dafeadc4da9207a7eb6e979b32cb6da4abae9c1e6d3aadd` |
+| `@umbraflow/internal/render` | `module` | `46cc3b47e74149691242bf83b2a75bf13d988af504d83670b971192780893946` |
 
 ### 4.2 Identity preimage
 
@@ -641,7 +666,7 @@ interrupt contract: `non_gc_loop_backedge_call_return_safepoints_v1`.
 | `cached_failure_bytes` | `1024` |
 | `entry_point_count` | `32` |
 | `entry_point_name_bytes` | `64` |
-| `framework_module_count` | `16` |
+| `framework_module_count` | `64` |
 | `framework_resource_count` | `16` |
 | `host_error_bytes` | `4096` |
 | `instruction_budget_ticks` | `2000000` |
@@ -693,7 +718,7 @@ target-wide mutation barrier, because neither says what the world did.
 Read from `k_toolCallStateNames` and `toolCallStateHasOutcome` in
 `modules/operator/source/operator/tool-runtime.cpp`. The three nonterminal states remain
 internal. A synchronous caller sees only the terminal half as
-`delivery`, validated by `checkedAnswer` in `modules/task/runtime/tools.luau`.
+`delivery`, validated by `checkedAnswer` in `modules/task/runtime/render.luau`.
 
 | State | Carries an outcome |
 | --- | --- |
@@ -709,7 +734,7 @@ internal. A synchronous caller sees only the terminal half as
 ### 5.2 The answer a script sees
 
 One Tool call answers one frozen object. `checkedAnswer` in
-`modules/task/runtime/tools.luau` rejects anything else, so these member names
+`modules/task/runtime/render.luau` rejects anything else, so these member names
 are the whole of what an answer is:
 
 | Answer member |
@@ -724,6 +749,16 @@ Success carries `ok = true`, `delivery = confirmed`, and `result`.
 A provider that ran and failed carries `ok = false`, its terminal
 `delivery`, and an `error` object with `code`, the provider message
 verbatim, and `retryable`.
+
+A call reads as an ordinary function call: on success the Tool's own
+`result` is what the call evaluates to. On every other terminal
+delivery the WHOLE envelope above is raised as a table, so `pcall`
+recovers `delivery`, `call_identity` and the provider's verbatim
+`error` unchanged. Nothing is discarded and nothing is decided for
+the caller -- `possible`, `proven_absent` and
+`terminally_unresolved` stay distinguishable, and whether to retry
+one is the project's judgement. What raising removes is the ability
+to ignore a failed call and read it as a success.
 
 A Tool Runtime *refusal* never reaches this envelope at all: it is
 terminal for the run, the VM is destroyed without resuming the script,

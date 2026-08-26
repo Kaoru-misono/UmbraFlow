@@ -126,19 +126,38 @@ Unicode data is pinned by the release rather than read from the host locale:
 | `@umbraflow/collections` | deterministic list/set helpers, immutable updates |
 | `@umbraflow/result` | one frozen success/error envelope vocabulary |
 
-**Scoped facades** — `@umbraflow/tools`, `@umbraflow/screen`,
-`@umbraflow/workflow`, `@umbraflow/audit` — exist only in a tool closure. They
-are absent from the reducer's resolver, from the trusted Framework bundle, and
-from every project-global whitelist, so a reducer that names one fails to load
-with the module named.
+**The Tool face** — the modules a chunk calls Tools through exist only in a tool
+closure, and there is no hand-written list of them. The pinned Tool catalog is
+the single authority and the face is GENERATED from it, one module per Tool
+namespace: a Tool named `<namespace>.<member>` is `<member>` on
+`@umbraflow/<namespace with dots as slashes>`, with a leading `framework`
+elided because `@umbraflow/` already is it.
 
-A facade's only way to *cause* anything is a Tool call. `@umbraflow/tools` owns
-the single spelling of that call over one synchronous native `invoke`; the other
-three are handed the same capability table and deliberately ignore it, reaching
-the runtime through `tools.call`. The one thing a facade reads without a call is
-the run's pinned, read-only Tool catalog, which backs discovery and description —
-advisory data that spends no budget and cannot make the Operator accept
-anything.
+```lua
+local screen = require("@umbraflow/screen")   -- framework.screen.*
+local input  = require("@umbraflow/input")    -- framework.input.*
+local dream  = require("@umbraflow/chaos/dream") -- a Project's own Tools
+```
+
+Nothing per-Tool is written by hand anywhere, so a Tool added to the catalog is
+callable with no source change, and a Tool removed from it stops being callable
+the same way. A call takes one argument table whose keys are the input schema's
+own property names, unchanged, so a chunk and an MCP client send the same
+object. They are absent from the reducer's resolver, from the trusted Framework
+bundle, and from every project-global whitelist, so a reducer that names one
+fails to load with the module named.
+
+A generated module's only way to *cause* anything is a Tool call, over one
+synchronous native `invoke` held by a single release-owned renderer that Project
+source cannot resolve. The one thing it reads without a call is the run's
+pinned, read-only Tool catalog, published as `@umbraflow/catalog` — advisory
+data that spends no budget and cannot make the Operator accept anything.
+
+A call reads as an ordinary call: on success it evaluates to the Tool's own
+result, and on any other terminal delivery it RAISES the whole answer envelope
+as a table, so `pcall` recovers `delivery`, `call_identity` and the provider's
+verbatim `error` unchanged. Nothing about a failure is discarded, and a failed
+call cannot be mistaken for a success by ignoring it.
 
 ## A script is an ordinary loop
 
@@ -146,22 +165,23 @@ Project automation is not a state machine, a step list, or an `advance` callback
 It is Luau with `for`, `if` and locals:
 
 ```lua
-for _attempt = 1, input.attempts do
-    local capture = screen.capture()
-    if not capture.ok then return capture end
-    local captured = capture.result
-    local handle = results.unwrap_or(
-        screen.observation(screen.observe(captured.screenshot_sha256)), nil)
-    local action = screen.ui_actions(handle)[1]
+local screen   = require("@umbraflow/screen")
+local ui       = require("@umbraflow/ui")
+local workflow = require("@umbraflow/workflow")
+
+for _attempt = 1, attempts do
+    local shot = screen.capture{}.screenshot_sha256
+    local seen = screen.observe{ screenshot_sha256 = shot }
+    local action = seen.observation_reference.ui_actions[1]
     if action == nil then break end
 
-    tools.call("framework.ui." .. action.kind, {
-        observation_reference = screen.use(handle),
+    ui.click{
+        observation_reference = seen.observation_reference,
         ui_target = action.ui_target,
         binding   = action.binding,
         action    = action.action,
-    })
-    workflow.wait(0)
+    }
+    workflow.wait{ duration_ms = 0 }
 end
 ```
 

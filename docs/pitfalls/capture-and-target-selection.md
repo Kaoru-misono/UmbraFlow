@@ -344,17 +344,13 @@ A chunk names Tools; there is no private input verb. Every raw act is its own
 client-pixel coordinates:
 
 ```lua
-local result = require("@umbraflow/result")
 local screen = require("@umbraflow/screen")
-local tools = require("@umbraflow/tools")
-local capture = screen.capture()
-if not capture.ok then return capture end
-local captured = capture.result
-return tools.call("framework.input.click", {
-    screenshot_sha256 = captured.screenshot_sha256,
+local input = require("@umbraflow/input")
+return input.click{
+    screenshot_sha256 = screen.capture{}.screenshot_sha256,
     x = 1447,
     y = 247,
-})
+}.delivered
 ```
 
 Two operational notes: the session is long-running, so launch it detached
@@ -416,24 +412,17 @@ message at the coordinate and presses nothing, which is the whole difference
 from the click that used to stand in for it:
 
 ```lua
-local tools = require("@umbraflow/tools")
-local result = require("@umbraflow/result")
+local input = require("@umbraflow/input")
 local screen = require("@umbraflow/screen")
-local moveCapture = screen.capture()
-if not moveCapture.ok then return moveCapture end
-local beforeMove = moveCapture.result
-tools.call("framework.input.move", {
-    screenshot_sha256 = beforeMove.screenshot_sha256,
+input.move{
+    screenshot_sha256 = screen.capture{}.screenshot_sha256,
     x = gridX,
     y = gridY,
-})
-local scrollCapture = screen.capture()
-if not scrollCapture.ok then return scrollCapture end
-local beforeScroll = scrollCapture.result
-tools.call("framework.input.scroll", {
-    screenshot_sha256 = beforeScroll.screenshot_sha256,
+}
+input.scroll{
+    screenshot_sha256 = screen.capture{}.screenshot_sha256,
     notches = -5,
-})
+}
 ```
 
 Two calls and two explicit captures, because the move changes what the target
