@@ -5,7 +5,6 @@
 
 #include <domain/content-hash.hpp>
 
-#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -26,16 +25,6 @@ namespace uf::operator_runtime
 
     [[nodiscard]] auto riskWireName(Risk risk) noexcept -> std::string_view;
 
-    // The inverse of riskWireName, for a reader that must turn a document's
-    // enum member back into the domain it was rendered from. std::nullopt is
-    // "no enumerator is spelled this way", which is the one verdict every
-    // schema that constrains the member and every reader that does not share
-    // that schema can agree on. The mapping is the forward function's and is
-    // never restated: the enumerators are listed, the projection is the
-    // spelling, so a name that drifts drifts in the one place it was written.
-    [[nodiscard]]
-    auto parseRisk(std::string_view wire) noexcept -> std::optional<Risk>;
-
     // Whether a tool changes anything outside the Operator. It is a property of
     // the Tool Catalog descriptor and never of a request, because the whole
     // point of the mutation chain is that it cannot be opted out of.
@@ -48,10 +37,6 @@ namespace uf::operator_runtime
     [[nodiscard]]
     auto toolMutabilityWireName(ToolMutability mutability) noexcept
         -> std::string_view;
-
-    [[nodiscard]]
-    auto parseToolMutability(std::string_view wire) noexcept
-        -> std::optional<ToolMutability>;
 
     // Whether a tool's arguments and results are stated in the project's own
     // vocabulary, or in the machine's -- coordinates, pixels, key codes,
@@ -76,10 +61,6 @@ namespace uf::operator_runtime
     [[nodiscard]]
     auto toolSurfaceWireName(ToolSurface surface) noexcept -> std::string_view;
 
-    [[nodiscard]]
-    auto parseToolSurface(std::string_view wire) noexcept
-        -> std::optional<ToolSurface>;
-
     // What redelivering one call of this tool would cost, declared strongest
     // first. The order is the whole of the type's meaning: a step may claim at
     // most the safety its tool declares, and `<=` on the enumerator is that
@@ -95,28 +76,6 @@ namespace uf::operator_runtime
     [[nodiscard]]
     auto toolIdempotencyWireName(ToolIdempotency idempotency) noexcept
         -> std::string_view;
-
-    [[nodiscard]]
-    auto parseToolIdempotency(std::string_view wire) noexcept
-        -> std::optional<ToolIdempotency>;
-
-    // OP:`UIActionIntent`.delivery_class, in the same strongest-first order.
-    // There is no ReadSafe: a step that is delivered is not a read.
-    enum class DeliveryClass : uint8
-    {
-        DeliverySafe,
-        KeyedExternal,
-        NonIdempotent,
-    };
-
-    // Whether a step claiming this delivery class stays within what the tool
-    // declared about itself. The descriptor is the weaker-or-equal bound, so a
-    // tool that admits it is not idempotent cannot have a step claim it is.
-    [[nodiscard]]
-    auto deliveryClassWithin(
-        DeliveryClass claimed,
-        ToolIdempotency declared
-    ) noexcept -> bool;
 
     // What a timed-out call does next. Never a domain success: a postcondition
     // that did not arrive is a reason to look again, not evidence that the
@@ -136,26 +95,11 @@ namespace uf::operator_runtime
     [[nodiscard]]
     auto timeoutActionWireName(TimeoutAction action) noexcept -> std::string_view;
 
-    [[nodiscard]]
-    auto parseTimeoutAction(std::string_view wire) noexcept
-        -> std::optional<TimeoutAction>;
-
     // OP:`TimeoutPolicy`.
     struct TimeoutPolicy final
     {
         uint64        maximumElapsedMillis{};
         TimeoutAction onTimeout{TimeoutAction::Stop};
-    };
-
-    // OP:`WorkflowLimits`. Every member is an upper bound, so clamping is a
-    // minimum and a plan can only ever become more restricted.
-    struct WorkflowLimits final
-    {
-        uint32 maximumSteps{};
-        uint32 maximumDispatches{};
-        uint32 maximumObservations{};
-        uint32 maximumWaits{};
-        uint64 maximumElapsedMillis{};
     };
 
     // One entry of a descriptor's effect_bounds: the whole of what a tool is
@@ -198,56 +142,6 @@ namespace uf::operator_runtime
         std::string opaqueProjectPayload{};
     };
 
-    // What one Tool's handler may issue as child calls, and how far. It is the
-    // parent half of section 3.3's intersection: a child call is admitted only
-    // from what this declares, intersected with the admitted root effect
-    // envelope, current policy and approvals, target and session authority,
-    // lease and fence, and remaining budgets. A descriptor can request an
-    // envelope; it can never grant or widen one.
-    //
-    // An empty declaration is the whole statement "this tool issues no child
-    // calls", which is what a descriptor that says nothing about children
-    // declares. There is deliberately no second spelling of that: no optional
-    // wrapper, and no flag beside the list.
-    struct ChildEffectDeclaration final
-    {
-        // The exact child Tool names this handler may issue, by the name the
-        // child's own catalog declares it under. A name absent from this list
-        // is refused even when every other bound would admit it, which is what
-        // makes delegated authority enumerated rather than inferred.
-        std::vector<std::string> childToolNames{};
-
-        // The strongest child surface, mutability and effect risk this handler
-        // may delegate. Every default is the most restricted of its kind, so a
-        // declaration that lists a name without stating a ceiling delegates the
-        // least rather than the most.
-        ToolSurface    maximumChildSurface{ToolSurface::Semantic};
-        ToolMutability maximumChildMutability{ToolMutability::ReadOnly};
-        Risk           maximumChildRisk{Risk::ReadOnly};
-
-        // How many child calls one handler invocation may issue. Zero is the
-        // only value a declaration naming no child may carry, and a
-        // declaration naming a child must carry at least one.
-        uint32 maximumChildCalls{};
-    };
-
-    // Whether one Tool call accepts a framework-owned structured body. A Tool
-    // with an untagged argument contract states one boolean in `takesBody`. A
-    // closed tagged contract instead names its tag and states the boolean for
-    // EVERY arm, so no missing arm can acquire a meaning from a default.
-    struct ToolBodyArm final
-    {
-        std::string name{};
-        bool        takesBody{};
-    };
-
-    struct ToolBodyDeclaration final
-    {
-        bool                     takesBody{};
-        std::string              taggedBy{};
-        std::vector<ToolBodyArm> arms{};
-    };
-
     // What one Tool Catalog descriptor says about a tool. Returned by the
     // catalog owner; there is no path by which a request proposes it.
     //
@@ -272,16 +166,7 @@ namespace uf::operator_runtime
         // which is what keeps a step key from reaching mintStep at all.
         std::vector<std::string> uiActionBounds{};
 
-        // What this tool's handler may call while it runs. See
-        // ChildEffectDeclaration: empty is "no child call at all".
-        ChildEffectDeclaration childEffects{};
-
-        // The one declaration of whether this Tool, or each arm of its closed
-        // tagged contract, accepts a structured body.
-        ToolBodyDeclaration body{};
-
-        WorkflowLimits limits{};
-        TimeoutPolicy  timeout{};
+        TimeoutPolicy timeout{};
 
         // Mutating is the default so that a descriptor which failed to state a
         // mutability is treated as the more restricted of the two.
@@ -296,46 +181,6 @@ namespace uf::operator_runtime
         // make about redelivery is what an unstated one is read as.
         ToolIdempotency idempotency{ToolIdempotency::NonIdempotent};
     };
-
-    // Whether one declaration is well formed at all. A declaration that names
-    // a child while admitting no child call, or admits child calls while
-    // naming none, states two halves of one permission that contradict each
-    // other, and a catalog owner refuses it rather than picking a half.
-    [[nodiscard]]
-    auto childEffectDeclarationValid(ChildEffectDeclaration const& declaration)
-        -> Status;
-
-    [[nodiscard]]
-    auto toolBodyDeclarationValid(ToolBodyDeclaration const& declaration)
-        -> Status;
-
-    // The body verdict for one call. `arm` is absent only for an untagged Tool;
-    // tagged declarations require the selected arm by name and refuse a name
-    // outside their closed enumeration.
-    [[nodiscard]]
-    auto toolTakesBody(
-        ToolBodyDeclaration const& declaration,
-        std::optional<std::string_view> arm
-    ) -> Result<bool>;
-
-    // Whether the parent declaration admits this child tool at all. Risk is
-    // judged per proposed effect and is deliberately not folded in here: a
-    // read-only child proposes none, and folding the two would make the
-    // absence of an effect look like a risk verdict.
-    [[nodiscard]]
-    auto childToolWithinDeclaration(
-        ChildEffectDeclaration const& declaration,
-        std::string_view parentToolName,
-        std::string_view childToolName,
-        ToolDescriptor const& childDescriptor
-    ) -> Status;
-
-    [[nodiscard]]
-    auto childEffectWithinDeclaration(
-        ChildEffectDeclaration const& declaration,
-        std::string_view parentToolName,
-        ProposedEffect const& effect
-    ) -> Status;
 
     // Whether this descriptor declared a bound that admits this effect. Both
     // arguments are call-scoped borrows and nothing is retained.

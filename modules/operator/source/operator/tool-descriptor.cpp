@@ -6,12 +6,8 @@
 #include <domain/error.hpp>
 
 #include <algorithm>
-#include <array>
-#include <optional>
 #include <string>
 #include <string_view>
-#include <utility>
-#include <vector>
 
 namespace uf::operator_runtime
 {
@@ -29,23 +25,6 @@ namespace uf::operator_runtime
         UF_UNREACHABLE_MSG("Unknown Risk value");
     }
 
-    auto parseRisk(std::string_view wire) noexcept -> std::optional<Risk>
-    {
-        constexpr auto k_risks = std::array{
-            Risk::ReadOnly,
-            Risk::Low,
-            Risk::Medium,
-            Risk::High,
-            Risk::Critical,
-        };
-        auto const found = std::ranges::find(k_risks, wire, riskWireName);
-        if (found == k_risks.end())
-        {
-            return std::nullopt;
-        }
-        return *found;
-    }
-
     auto toolMutabilityWireName(ToolMutability mutability) noexcept
         -> std::string_view
     {
@@ -58,25 +37,6 @@ namespace uf::operator_runtime
         UF_UNREACHABLE_MSG("Unknown ToolMutability value");
     }
 
-    auto parseToolMutability(std::string_view wire) noexcept
-        -> std::optional<ToolMutability>
-    {
-        constexpr auto k_mutabilities = std::array{
-            ToolMutability::ReadOnly,
-            ToolMutability::Mutating,
-        };
-        auto const found = std::ranges::find(
-            k_mutabilities,
-            wire,
-            toolMutabilityWireName
-        );
-        if (found == k_mutabilities.end())
-        {
-            return std::nullopt;
-        }
-        return *found;
-    }
-
     auto toolSurfaceWireName(ToolSurface surface) noexcept -> std::string_view
     {
         switch (surface)
@@ -86,21 +46,6 @@ namespace uf::operator_runtime
         }
 
         UF_UNREACHABLE_MSG("Unknown ToolSurface value");
-    }
-
-    auto parseToolSurface(std::string_view wire) noexcept
-        -> std::optional<ToolSurface>
-    {
-        constexpr auto k_surfaces = std::array{
-            ToolSurface::Semantic,
-            ToolSurface::Privileged,
-        };
-        auto const found = std::ranges::find(k_surfaces, wire, toolSurfaceWireName);
-        if (found == k_surfaces.end())
-        {
-            return std::nullopt;
-        }
-        return *found;
     }
 
     auto toolIdempotencyWireName(ToolIdempotency idempotency) noexcept
@@ -117,27 +62,6 @@ namespace uf::operator_runtime
         UF_UNREACHABLE_MSG("Unknown ToolIdempotency value");
     }
 
-    auto parseToolIdempotency(std::string_view wire) noexcept
-        -> std::optional<ToolIdempotency>
-    {
-        constexpr auto k_idempotencies = std::array{
-            ToolIdempotency::ReadSafe,
-            ToolIdempotency::DeliverySafe,
-            ToolIdempotency::KeyedExternal,
-            ToolIdempotency::NonIdempotent,
-        };
-        auto const found = std::ranges::find(
-            k_idempotencies,
-            wire,
-            toolIdempotencyWireName
-        );
-        if (found == k_idempotencies.end())
-        {
-            return std::nullopt;
-        }
-        return *found;
-    }
-
     auto timeoutActionWireName(TimeoutAction action) noexcept -> std::string_view
     {
         switch (action)
@@ -147,223 +71,6 @@ namespace uf::operator_runtime
         }
 
         UF_UNREACHABLE_MSG("Unknown TimeoutAction value");
-    }
-
-    auto parseTimeoutAction(std::string_view wire) noexcept
-        -> std::optional<TimeoutAction>
-    {
-        constexpr auto k_timeoutActions = std::array{
-            TimeoutAction::Reobserve,
-            TimeoutAction::Stop,
-        };
-        auto const found = std::ranges::find(
-            k_timeoutActions,
-            wire,
-            timeoutActionWireName
-        );
-        if (found == k_timeoutActions.end())
-        {
-            return std::nullopt;
-        }
-        return *found;
-    }
-
-    auto deliveryClassWithin(
-        DeliveryClass claimed,
-        ToolIdempotency declared
-    ) noexcept -> bool
-    {
-        // The two enumerations are one order with one value missing from the
-        // narrower of them, so the comparison is between their positions in
-        // that order rather than between two unrelated codes.
-        auto const claimedRank = [claimed]
-        {
-            switch (claimed)
-            {
-            case DeliveryClass::DeliverySafe:
-                return std::to_underlying(ToolIdempotency::DeliverySafe);
-            case DeliveryClass::KeyedExternal:
-                return std::to_underlying(ToolIdempotency::KeyedExternal);
-            case DeliveryClass::NonIdempotent:
-                return std::to_underlying(ToolIdempotency::NonIdempotent);
-            }
-
-            UF_UNREACHABLE_MSG("Unknown DeliveryClass value");
-        }();
-        return claimedRank >= std::to_underlying(declared);
-    }
-
-    auto childEffectDeclarationValid(ChildEffectDeclaration const& declaration)
-        -> Status
-    {
-        if (declaration.childToolNames.empty() != (declaration.maximumChildCalls == 0U))
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                declaration.childToolNames.empty()
-                    ? "Tool child_effects admits child calls but names no child tool"
-                    : "Tool child_effects names a child tool but admits no child call"
-            );
-        }
-        auto const empty = std::ranges::find(declaration.childToolNames, "");
-        if (empty != declaration.childToolNames.end())
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "Tool child_effects names an empty child tool"
-            );
-        }
-        auto sorted = declaration.childToolNames;
-        std::ranges::sort(sorted);
-        if (std::ranges::adjacent_find(sorted) != sorted.end())
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "Tool child_effects names one child tool twice"
-            );
-        }
-        return ok();
-    }
-
-    auto toolBodyDeclarationValid(ToolBodyDeclaration const& declaration)
-        -> Status
-    {
-        auto const tagged = !declaration.taggedBy.empty();
-        if (tagged != !declaration.arms.empty())
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                tagged
-                    ? "Tool body declaration names a tag but no arms"
-                    : "Tool body declaration names arms but no tag"
-            );
-        }
-        if (!tagged)
-        {
-            return ok();
-        }
-        if (declaration.takesBody)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "a tagged Tool body declaration states bodies per arm, not per Tool"
-            );
-        }
-        auto names = std::vector<std::string>{};
-        names.reserve(declaration.arms.size());
-        for (auto const& arm : declaration.arms)
-        {
-            if (arm.name.empty())
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "Tool body declaration names an empty arm"
-                );
-            }
-            names.emplace_back(arm.name);
-        }
-        std::ranges::sort(names);
-        if (std::ranges::adjacent_find(names) != names.end())
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "Tool body declaration names one arm twice"
-            );
-        }
-        return ok();
-    }
-
-    auto toolTakesBody(
-        ToolBodyDeclaration const& declaration,
-        std::optional<std::string_view> arm
-    ) -> Result<bool>
-    {
-        UF_TRY(toolBodyDeclarationValid(declaration));
-        if (declaration.taggedBy.empty())
-        {
-            if (arm.has_value())
-            {
-                return fail(
-                    AutomationErrorKind::InternalInvariant,
-                    "an untagged Tool body declaration was asked for an arm"
-                );
-            }
-            return declaration.takesBody;
-        }
-        if (!arm.has_value())
-        {
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "a tagged Tool body declaration was asked without its selected arm"
-            );
-        }
-        auto const found = std::ranges::find(declaration.arms, *arm, &ToolBodyArm::name);
-        if (found == declaration.arms.end())
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "Tool body declaration has no arm named " + std::string{*arm}
-            );
-        }
-        return found->takesBody;
-    }
-
-    auto childToolWithinDeclaration(
-        ChildEffectDeclaration const& declaration,
-        std::string_view parentToolName,
-        std::string_view childToolName,
-        ToolDescriptor const& childDescriptor
-    ) -> Status
-    {
-        if (!std::ranges::contains(declaration.childToolNames, childToolName))
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Parent Tool " + std::string{parentToolName}
-                    + " declares no child effect for " + std::string{childToolName}
-            );
-        }
-        if (childDescriptor.surface > declaration.maximumChildSurface)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Parent Tool " + std::string{parentToolName}
-                    + " may not delegate the "
-                    + std::string{toolSurfaceWireName(childDescriptor.surface)}
-                    + " surface of " + std::string{childToolName}
-            );
-        }
-        if (childDescriptor.mutability > declaration.maximumChildMutability)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Parent Tool " + std::string{parentToolName}
-                    + " may not delegate the mutating child "
-                    + std::string{childToolName}
-            );
-        }
-        return ok();
-    }
-
-    auto childEffectWithinDeclaration(
-        ChildEffectDeclaration const& declaration,
-        std::string_view parentToolName,
-        ProposedEffect const& effect
-    ) -> Status
-    {
-        if (effect.risk > declaration.maximumChildRisk)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Parent Tool " + std::string{parentToolName}
-                    + " may not delegate effect " + effect.namespacedType + " at "
-                    + std::string{riskWireName(effect.risk)}
-                    + " risk, above the "
-                    + std::string{riskWireName(declaration.maximumChildRisk)}
-                    + " its child_effects allow"
-            );
-        }
-        return ok();
     }
 
     auto effectWithinBounds(
