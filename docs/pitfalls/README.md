@@ -16,10 +16,19 @@ Each entry should contain the symptom, root cause, fix, and a regression check. 
 - [Operator schema identity is the STORED DDL text](operator-schema-identity-and-stored-ddl.md)
   — two schemas with identical columns hash differently because SQLite stored
   the trailing whitespace one of them was executed with.
-- [The observation frame and the ledger's call tree](observation-frame-and-ledger-children.md)
-  — why a body's calls cannot be recorded as children of the observe node
-  without moving that Tool's descriptor, and why a frame whose extent is the
-  enclosing run refuses the second observe of an ordinary polling loop.
+- [A framework constant a durable row pins](framework-constants-pinned-in-durable-rows.md)
+  — why a format cut refused every Operator root that existed before it, and the
+  registered-predecessor migration that keeps generation 0 layout rather than
+  history.
+- [The retired observation body and ledger call tree](observation-frame-and-ledger-children.md)
+  — historical nested-call failures; the transferable rules cover independently
+  admitted relationships, resource-scope ownership, independent interactive
+  roots, and producer-shaped fixtures.
+- [Ad-hoc probe binaries put modal dialogs on the screen](ad-hoc-probe-binaries.md)
+  — a hand-built executable links none of the crash-box suppression the test
+  main does, so an access violation blocks on a dialog nobody sees in a log;
+  read a historical identity out of git rather than compiling something to
+  print it.
 - [Concurrent agent builds in one worktree](concurrent-agent-builds.md)
 - [Running the repository's own tooling](repository-tooling-invocation.md) — a
   repo-wide formatter rewrites files another agent owns, the documented MSVC

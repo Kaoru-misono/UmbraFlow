@@ -8,9 +8,10 @@
 > natives became catalogued Tools in `d6e772f` (2026-08-24). The `explore` Luau
 > module followed on 2026-08-25.
 >
-> Today a chunk calls `framework.screen.probe` inside a `framework.screen.observe`
-> body, and keeping a rectangle of the screen is `framework.project.write`'s
-> `capture` arm.
+> Today a chunk passes one `screenshot_sha256` explicitly to
+> `framework.screen.probe`. Keeping a rectangle is two visible calls:
+> `framework.screen.crop` creates the artifact, then
+> `framework.project.write_file` copies its `file_sha256` into the Project.
 >
 > **What still transfers: everything except the spellings.** Every threshold,
 > every measured mean-grey figure, every failure shape and every rule below was

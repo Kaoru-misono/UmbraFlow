@@ -339,11 +339,22 @@ chunk rather than a scalar command (`{"id":"...","chunk":"..."}`,
 > went the same way on 2026-08-03 (`eafc273`), so there is one interactive
 > transport rather than an operator one and an annotation one.
 
-A chunk names Tools; there is no private input verb. Every act on the target is
-an arm of `framework.input.deliver`, and coordinates are client pixels:
+A chunk names Tools; there is no private input verb. Every raw act is its own
+`framework.input.*` Tool, takes the hash of a retained screenshot, and uses
+client-pixel coordinates:
 
-```json
-{"id":"tap-menu","chunk":"local tools = require('@umbraflow/tools') return tools.call('framework.input.deliver', { action = 'click', x = 1447, y = 247 })"}
+```lua
+local result = require("@umbraflow/result")
+local screen = require("@umbraflow/screen")
+local tools = require("@umbraflow/tools")
+local capture = screen.capture()
+if not capture.ok then return capture end
+local captured = capture.result
+return tools.call("framework.input.click", {
+    screenshot_sha256 = captured.screenshot_sha256,
+    x = 1447,
+    y = 247,
+})
 ```
 
 Two operational notes: the session is long-running, so launch it detached
@@ -400,20 +411,35 @@ screen did not change, and all of them dissolved by one click before the wheel.
 
 Deliver a pointer message over the region you intend to scroll, then scroll.
 
-The arm that says exactly that is `framework.input.deliver`'s `move`. It posts
-one pointer message at the coordinate and presses nothing, which is the whole
-difference from the click that used to stand in for it:
+The Tool that says exactly that is `framework.input.move`. It posts one pointer
+message at the coordinate and presses nothing, which is the whole difference
+from the click that used to stand in for it:
 
 ```lua
 local tools = require("@umbraflow/tools")
-tools.call("framework.input.deliver", { action = "move", x = gridX, y = gridY })
-tools.call("framework.input.deliver", { action = "scroll", notches = -5 })
+local result = require("@umbraflow/result")
+local screen = require("@umbraflow/screen")
+local moveCapture = screen.capture()
+if not moveCapture.ok then return moveCapture end
+local beforeMove = moveCapture.result
+tools.call("framework.input.move", {
+    screenshot_sha256 = beforeMove.screenshot_sha256,
+    x = gridX,
+    y = gridY,
+})
+local scrollCapture = screen.capture()
+if not scrollCapture.ok then return scrollCapture end
+local beforeScroll = scrollCapture.result
+tools.call("framework.input.scroll", {
+    screenshot_sha256 = beforeScroll.screenshot_sha256,
+    notches = -5,
+})
 ```
 
-Two calls, because every delivered input spends its frame — the move changes
-what the target believes is hovered, so the frame that authorised it no longer
-describes the screen. Each call opens and closes its own frame, so the ordering
-is structural rather than something the author remembers.
+Two calls and two explicit captures, because the move changes what the target
+believes is hovered, so its prior screenshot no longer describes the target.
+Each input Tool reconstructs only the screenshot its hash names and closes that
+cycle before answering.
 
 The earlier workaround — a bare click into a gutter between cards, chosen only
 because a click was the one pointer message a script could deliver — is no

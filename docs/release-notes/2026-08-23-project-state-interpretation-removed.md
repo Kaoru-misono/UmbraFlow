@@ -7,6 +7,12 @@ anything — replaced it. The reasoning is in
 the normative shape is `schema/umbraflow-project-v3.schema.json` and the
 published surface is [`docs/PUBLIC-CONTRACT.md`](../PUBLIC-CONTRACT.md).
 
+> **Historical upgrade step.** The `child_effects` instructions below describe
+> this release boundary only. The 2026-08-26 flat-call ruling subsequently
+> deleted that member, Tool bodies and nested Project-handler calls. Do not add
+> them to a current declaration; use the generated public contract for the
+> current shape.
+
 ## Your declaration is refused, not degraded
 
 The `schema` const is now `umbraflow-project/v3`. A document carrying

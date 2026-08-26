@@ -10,6 +10,13 @@ them breaking. The name is a date and what the build did, not a milestone tier:
 this project declares no milestone until the first game is stably automated end
 to end.
 
+> **Superseded in part.** This note describes the `2026-08-25-one-tool-vocabulary`
+> boundary as it was published. The 2026-08-26 flat-call ruling then deleted Tool
+> bodies, the `framework.input.deliver` arm table and the `framework.project.write`
+> capture branch, and made every screen Tool name an explicit screenshot digest.
+> Read [`2026-08-26-a-tool-is-a-flat-call.md`](2026-08-26-a-tool-is-a-flat-call.md)
+> after this one; where the two disagree, the later note holds.
+
 ## What this release is
 
 There is no annotation phase and no runtime phase. Everything is a Tool call,

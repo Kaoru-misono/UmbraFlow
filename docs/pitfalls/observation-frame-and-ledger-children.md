@@ -1,9 +1,23 @@
-# The observation frame and the ledger's call tree
+# The retired observation body and ledger call tree
 
-`framework.screen.observe` holds a frame for the calls its body makes, ruled in
+This entry records the failure analysis of the retired nested-call design.
+Project Tool handlers are now leaves, screenshots and observations are explicit
+values, and no current handler opens a body or records child Tool calls.
+
+> **Historical mechanism; transferable findings.** The body, child-effect
+> declaration, delegation grant and caller-visible observation-frame scope in
+> the first two sections no longer exist. What still transfers is: a durable
+> relationship needs an independently admitted declaration; the operation that
+> acquires a resource owns its close on every exit; sequential work must not be
+> mistaken for concurrent work; one refused interactive call must not poison a
+> later independent call; and fixtures must take sentinel and initial values
+> from the real producer. Current screen dependencies are explicit screenshot
+> digests passed between flat calls.
+
+`framework.screen.observe` once held a frame for the calls its body made, ruled in
 [`docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md`](../decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
 Two things about that shape cost a day to re-derive each time; both are recorded
-here because the next step of the work walks straight into them.
+here as history because the failure patterns outlived the mechanism.
 
 ## Recording a body's calls as children of the observe node needs a descriptor
 
@@ -30,7 +44,7 @@ Two independent gates, and neither is reachable without moving
   still `Dispatching` — and the observe row goes terminal when the Tool answers,
   before any body runs.
 
-### Fix
+### Historical fix
 
 **Resolved 2026-08-24 by the natives-to-Tools cut.** Both gates were opened in
 the one catalog-hash move, and neither was routed around:
@@ -38,12 +52,13 @@ the one catalog-hash move, and neither was routed around:
 - `framework.screen.observe`'s descriptor now declares `child_tool_names` —
   `framework.screen.census_grid`, `framework.screen.probe` and
   `framework.screen.read_lines` — so a grant can be minted from it.
-- The body runs **inside the observe provider**, between the durable dispatch
-  boundary and the terminal write, so the row is still `Dispatching` when the
-  grant is minted. `ProjectToolDispatcher::runToolBody` anchors an issuing
-  context on the observe call's own position for the body's extent. The same
-  function now owns `input.deliver#hold` bodies; only the Tool-supplied close
-  differs (frame release versus input lift).
+- The body ran **inside the observe provider**, between the durable dispatch
+  boundary and the terminal write, so the row was still `Dispatching` when the
+  grant was minted. `ProjectToolDispatcher::runToolBody` anchored an issuing
+  context on the observe call's own position for the body's extent, and the same
+  function owned `input.deliver#hold` bodies; only the Tool-supplied close
+  differed (frame release versus input lift). Neither that function nor the hold
+  body exists any more; both went with the flat-call cut.
 
 **The third gate the symptom did not name, and the one that shapes the whole
 vocabulary**: admission also matches a child's proposed effect against the
@@ -56,13 +71,20 @@ body holds read-only measurements only, and an input or project write is issued
 as an independent root Tool call instead. Registered handlers and interactive
 chunks use the same structured-body adapter; neither has a private spelling.
 
+> Superseded 2026-08-26 by the flat-call ruling. Screenshots and observations
+> are now explicit values passed between ordinary calls, raw and semantic input
+> are twelve leaf Tools, and the Tool-body scope described above no longer
+> exists. The historical failure analysis remains useful; this body-shaped fix
+> is no longer the implementation.
+
 ## A frame that spans the enclosing run breaks polling loops
 
 ### Symptom
 
 A handler that observes, acts, and observes again — the ordinary polling shape,
-and what `tests/operator/test-tool-automation-loop.cpp` exercises — earns "at
-most one concurrent observation frame may be open" on its second observe.
+which `tests/operator/test-tool-automation-loop.cpp` exercised until that file
+was deleted with the flat-call cut — earns "at most one concurrent observation
+frame may be open" on its second observe.
 
 ### Root cause
 
@@ -73,13 +95,13 @@ polling loops are unchanged; only *lexical nesting* is refused. The two can only
 be told apart by the body, so a frame whose extent is the enclosing run cannot
 distinguish them and refuses the wrong one.
 
-### Fix
+### Historical fix
 
-The frame's extent is the scope that opened it and nothing wider. That scope is
-the observe call itself, so the frame opens and closes inside
-`ProductLifecycle::Impl::answerObserveTool` — and it stays that way now that a
-body exists, because the body runs inside that same call. Only what happens
-between the open and the close changed; the ownership did not.
+The frame's extent was reduced to the observe call that opened it, with open and
+close inside `ProductLifecycle::Impl::answerObserveTool`. The flat-call ruling
+then deleted that caller-visible scope: the current provider captures or opens
+the explicitly named screenshot only for its own operation and closes the
+internal cycle before returning.
 
 ## A refused root call poisons every later call under the same root request
 
@@ -104,8 +126,8 @@ a refusal must cost exactly the act it refused.
 One ROOT REQUEST per top-level interactive call rather than one per session:
 `ProductLifecycle::Impl::issueInteractiveCall` numbers its request key from
 `interactiveRequests`, so every top-of-run call is its own root — exactly as
-every CLI verb's single call is. Calls inside an observation's body are
-unaffected; they are children of that observation and are numbered under it.
+every CLI verb's single call is. Observation bodies and their child calls were
+subsequently deleted by the flat-call ruling.
 
 ## A first observation against a freshly bound target is refused by the ledger
 

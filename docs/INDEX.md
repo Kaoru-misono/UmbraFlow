@@ -10,7 +10,7 @@ could only be kept true by hand.
   authority; no prose here restates them.
 - [`docs/design/`](design/) — what things currently *are*. The
   [runtime model contract](design/2026-08-09-runtime-model-contract.md) explains
-  `schema/umbraflow-runtime-v3.schema.json`.
+  `schema/umbraflow-runtime-v4.schema.json`.
 - [Architecture](ARCHITECTURE.md) — module ownership, dependency direction, and
   the deliberate absences.
 - [Domain glossary](../CONTEXT.md) — terminology authority.
@@ -36,6 +36,7 @@ could only be kept true by hand.
   what the removed member *was*, not only what is new: a note that describes a
   new capability and omits the deletion it replaced sends a consumer into a wall
   its own release notes never mentioned.
+  - [2026-08-26 — A Tool is a flat call over an explicit reference](release-notes/2026-08-26-a-tool-is-a-flat-call.md)
   - [2026-08-25 — One Tool vocabulary](release-notes/2026-08-25-one-tool-vocabulary.md)
   - [2026-08-23 — The Project-side upgrade path](release-notes/2026-08-23-project-upgrade-path.md)
   - [2026-08-23 — Project state interpretation removed](release-notes/2026-08-23-project-state-interpretation-removed.md)
