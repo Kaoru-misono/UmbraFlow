@@ -14,7 +14,7 @@ repository publishes outward is
 The RuntimeModel portion of this rewrite has since moved to Runtime v3. The
 current field and behavior authority is the
 [runtime model contract](../design/2026-08-09-runtime-model-contract.md) beside
-`schema/umbraflow-runtime-v3.schema.json`. The disposition table and numbered
+`schema/umbraflow-runtime-v4.schema.json`. The disposition table and numbered
 sequence below retain "Runtime v2" where they describe the rewrite that created
 the boundary; they do not authorize a v2 reader or spelling.
 

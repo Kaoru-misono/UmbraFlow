@@ -616,7 +616,7 @@ target_compile_definitions(test-deployment PRIVATE
 # fourth would be cut over nothing.
 uf_shard_doctest_gates(
     TARGET test-deployment
-    TOTAL_CASES 33
+    TOTAL_CASES 31
     SHARDS 3
 )
 
@@ -708,11 +708,9 @@ if(TARGET ${PROJECT_NAME}_operator)
             operator/test-project-generation.cpp
             operator/test-tool-admission-funnel.cpp
             operator/test-tool-authority.cpp
-            operator/test-tool-automation-loop.cpp
             operator/test-tool-binding.cpp
             operator/test-tool-dispatch.cpp
             operator/test-tool-executor.cpp
-            operator/test-tool-nested-calls.cpp
             operator/test-tool-snapshot-reference.cpp
         LIBS
             ${PROJECT_NAME}_operator
@@ -732,14 +730,14 @@ if(TARGET ${PROJECT_NAME}_operator)
     endif()
 
     # The Operator suite deliberately drives real SQLite stores and runtime
-    # artifacts, which costs 110 seconds over 216 cases. Keep its individual CI
+    # artifacts. Keep its individual CI
     # gates below the repository-wide 60-second limit while preserving one
     # executable for focused local runs. Six shards put the slowest of them at
     # 22 seconds, which is the margin a gate needs when five siblings run
     # beside it.
     uf_shard_doctest_gates(
         TARGET test-operator
-        TOTAL_CASES 172
+        TOTAL_CASES 145
         SHARDS 6
     )
 
@@ -1030,6 +1028,9 @@ set(RECLAIM_LEDGER "${RECLAIM_ROOT}/operator-runtime.sqlite")
 set(RECLAIM_STAGED
     "${RECLAIM_ROOT}/runtime-artifacts/.staging/interrupted-publication"
 )
+set(RECLAIM_EVIDENCE_STAGED
+    "${RECLAIM_ROOT}/evidence/.staging/interrupted-publication"
+)
 
 # What an interrupted publication leaves: bytes under a name in the staging
 # tree, and no row anywhere naming them. The directory is planted before the
@@ -1037,11 +1038,14 @@ set(RECLAIM_STAGED
 # opened it first would be testing its own Coordinator.
 file(REMOVE_RECURSE "${RECLAIM_ROOT}")
 file(MAKE_DIRECTORY "${RECLAIM_STAGED}")
+file(MAKE_DIRECTORY "${RECLAIM_EVIDENCE_STAGED}")
 file(WRITE "${RECLAIM_STAGED}/blob.bin" "bytes a publication staged and left\n")
+file(WRITE "${RECLAIM_EVIDENCE_STAGED}/blob.tmp" "partial evidence bytes\n")
 
 function(run_reclaim OUTPUT_VARIABLE)
     execute_process(
         COMMAND "${UF_CLI_EXECUTABLE}" reclaim --runtime "${RECLAIM_ROOT}"
+            --evidence-retention-ms 18446744073709551615
         OUTPUT_VARIABLE SWEPT
         ERROR_VARIABLE SWEPT_ERROR
         RESULT_VARIABLE SWEPT_STATUS
@@ -1064,6 +1068,13 @@ function(staging_count REPORT OUTPUT_VARIABLE)
     set(${OUTPUT_VARIABLE} "${CMAKE_MATCH_1}" PARENT_SCOPE)
 endfunction()
 
+function(evidence_staging_count REPORT OUTPUT_VARIABLE)
+    if(NOT "${REPORT}" MATCHES "evidence stagings +([0-9]+)")
+        message(FATAL_ERROR "reclaim reported no evidence staging count:\n${REPORT}")
+    endif()
+    set(${OUTPUT_VARIABLE} "${CMAKE_MATCH_1}" PARENT_SCOPE)
+endfunction()
+
 run_reclaim(FIRST_REPORT)
 
 # The verb reached the Operator rather than reporting over a root it never
@@ -1079,11 +1090,22 @@ if(EXISTS "${RECLAIM_STAGED}")
         "reclaim left the staged tree behind: ${RECLAIM_STAGED}"
     )
 endif()
+if(EXISTS "${RECLAIM_EVIDENCE_STAGED}")
+    message(FATAL_ERROR
+        "reclaim left evidence staging behind: ${RECLAIM_EVIDENCE_STAGED}"
+    )
+endif()
 
 staging_count("${FIRST_REPORT}" FIRST_STAGING)
 if(NOT FIRST_STAGING STREQUAL "1")
     message(FATAL_ERROR
         "reclaim removed the staged tree and reported ${FIRST_STAGING} of them"
+    )
+endif()
+evidence_staging_count("${FIRST_REPORT}" FIRST_EVIDENCE_STAGING)
+if(NOT FIRST_EVIDENCE_STAGING STREQUAL "1")
+    message(FATAL_ERROR
+        "reclaim removed evidence staging and reported ${FIRST_EVIDENCE_STAGING}"
     )
 endif()
 
@@ -1094,6 +1116,12 @@ staging_count("${SECOND_REPORT}" SECOND_STAGING)
 if(NOT SECOND_STAGING STREQUAL "0")
     message(FATAL_ERROR
         "a second sweep of a swept root reported ${SECOND_STAGING} staging trees"
+    )
+endif()
+evidence_staging_count("${SECOND_REPORT}" SECOND_EVIDENCE_STAGING)
+if(NOT SECOND_EVIDENCE_STAGING STREQUAL "0")
+    message(FATAL_ERROR
+        "a second sweep reported ${SECOND_EVIDENCE_STAGING} evidence stagings"
     )
 endif()
 ]=]
@@ -1373,7 +1401,6 @@ if(TARGET ${PROJECT_NAME}_task)
             task/test-scoped-tool-session.cpp
             task/test-task-binding.cpp
             task/test-framework-bundle.cpp
-            task/test-scoped-framework-modules.cpp
             task/test-script-validator.cpp
             task/test-sdk-canonical-equality.cpp
             task/test-sdk-host-independence.cpp
@@ -1390,7 +1417,7 @@ if(TARGET ${PROJECT_NAME}_task)
     cpp_add_contract_suite(
         TARGET test-contract-runtime
         SOURCES
-            task/test-runtime-v3-contract.cpp
+            task/test-runtime-v4-contract.cpp
         LIBS
             ${PROJECT_NAME}_task
             ${PROJECT_NAME}_image
@@ -1565,9 +1592,9 @@ auto main(int argumentCount, char const* const* p_arguments) -> int
     # to it, which is how tests/task/test-jcs.luau ran in no gate on 2026-08-10.
     set(TASK_LUAU_TESTS
         "test-jcs-luau|task/test-jcs.luau"
-        "test-runtime-model-v3-luau|task/test-runtime-model-v3.luau"
-        "test-resolution-v3-luau|task/test-resolution-v3.luau"
-        "test-receipt-request-v3-luau|task/test-receipt-request-v3.luau"
+        "test-runtime-model-v4-luau|task/test-runtime-model-v4.luau"
+        "test-resolution-v4-luau|task/test-resolution-v4.luau"
+        "test-receipt-request-v4-luau|task/test-receipt-request-v4.luau"
     )
     file(GLOB TASK_LUAU_PRESENT
         RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"

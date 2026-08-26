@@ -91,7 +91,7 @@
       "pattern": "^[a-z][a-z0-9-]*$"
     },
     "NamespacedName": {
-      "$comment": "The one spelling of a namespaced name, and therefore of a Tool name wherever one is written: this deployment's plugin_id, the `name` of each Tool it declares, the `tool_name` of each binding, and every child Tool name a child_effects declaration grants. The namespace is its owner's registered namespace and the local name is what follows the dot that ends it, so the dot is required rather than optional: an unnamespaced name has no owner and there would be nothing for the ownership rule to check.",
+      "$comment": "The one spelling of a namespaced name, and therefore of a Tool name wherever one is written: this deployment's plugin_id, the `name` of each Tool it declares, and the `tool_name` of each binding. The namespace is its owner's registered namespace and the local name is what follows the dot that ends it, so the dot is required rather than optional: an unnamespaced name has no owner and there would be nothing for the ownership rule to check.",
       "type": "string",
       "minLength": 3,
       "maxLength": 128,
@@ -239,11 +239,8 @@
       }
     },
     "ArgumentSchema": {
-      "$comment": "How this Tool's arguments are judged, stated as a value. `unchecked` is a Project declining argument validation: the JSON-to-Luau construction is total, so the trusted seam builds values without a schema, and the framework still records the bytes it passed, their digest and their coordinates. An object is a complete JSON Schema document, inline, and the framework enforces it -- a limit the Project gave. The member is mandatory precisely so that declining is written down: there is no absent-means-unchecked reading, and the two values mean different things rather than being two spellings of one. Reuse inside one schema is JSON Schema's own $defs; there is no cross-Tool indirection, and two Tools repeating a definition is the accepted price of having one spelling.",
-      "oneOf": [
-        {"const": "unchecked"},
-        {"type": "object"}
-      ]
+      "$comment": "The Tool's flat input schema, stated inline and enforced by the framework. Reuse inside one schema is JSON Schema's own $defs; there is no cross-Tool indirection, and two Tools repeating a definition is the accepted price of having one spelling.",
+      "type": "object"
     },
     "Risk": {
       "enum": ["read_only", "low", "medium", "high", "critical"]
@@ -268,46 +265,6 @@
         "on_timeout": {"enum": ["reobserve", "stop"]}
       }
     },
-    "WorkflowLimits": {
-      "$comment": "This Tool's own ceiling. There is no second one compiled into the Operator: a limit stated per Tool and another stated in C++ would be two authorities over one number.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "maximum_dispatches",
-        "maximum_elapsed_ms",
-        "maximum_observations",
-        "maximum_steps",
-        "maximum_waits"
-      ],
-      "properties": {
-        "$comment": {"type": "string"},
-        "maximum_dispatches": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 4294967295
-        },
-        "maximum_elapsed_ms": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 9007199254740991
-        },
-        "maximum_observations": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 4294967295
-        },
-        "maximum_steps": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 4294967295
-        },
-        "maximum_waits": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 4294967295
-        }
-      }
-    },
     "EffectBound": {
       "$comment": "One entry of the complete set of OP:EffectEnvelope this Tool may propose. An empty set is a Tool that may propose none, which is the honest declaration for a read_only Tool. payload_schema_hash is a pinned identity and not a document this project supplies: the framework compares it with what a proposal carries and refuses a mismatch, which is what stops a plan widening a Tool's blast radius without moving tool_catalog_hash, and it never reads the payload's meaning.",
       "type": "object",
@@ -326,43 +283,13 @@
         "scope_kind": {"$ref": "#/$defs/Identifier"}
       }
     },
-    "ChildEffects": {
-      "$comment": "What this Tool's own entry may issue while it runs: the exact child Tool names, and the strongest child surface, mutability and effect risk it may delegate, together with how many child calls one invocation may make. Requested, never granted -- admission intersects it with the root envelope, policy, approvals, session authority, lease, fence and remaining budgets. Every member is required and there is no absent form: a Tool that issues no child call states the empty declaration -- no names, zero calls, and the most restricted ceiling of each kind -- because an omitted member would be an absence carrying a meaning. A declaration that names a child while admitting no call, or admits calls while naming none, is two halves of one permission contradicting each other and is refused when the catalog owner reads it.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "child_tool_names",
-        "maximum_child_calls",
-        "maximum_child_mutability",
-        "maximum_child_risk",
-        "maximum_child_surface"
-      ],
-      "properties": {
-        "$comment": {"type": "string"},
-        "child_tool_names": {
-          "$comment": "Each child by the name its own declaration gives it, this project's Tools and the framework's alike. A name absent from this list is refused even where every other bound would admit it, which is what makes delegated authority enumerated rather than inferred. A grant crosses a namespace boundary by construction, so the names here are the same namespaced name a Tool's own `name` is and nothing looser: an unnamespaced grant would have to mean `the caller's own namespace`, which is an absence carrying a meaning.",
-          "type": "array",
-          "uniqueItems": true,
-          "items": {"$ref": "#/$defs/NamespacedName"}
-        },
-        "maximum_child_calls": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 4294967295
-        },
-        "maximum_child_mutability": {"$ref": "#/$defs/ToolMutability"},
-        "maximum_child_risk": {"$ref": "#/$defs/Risk"},
-        "maximum_child_surface": {"$ref": "#/$defs/ToolSurface"}
-      }
-    },
     "Tool": {
       "$comment": "One complete Tool declaration. Every member is mandatory: a Tool the framework admits is one whose whole contract was stated, and an optional member would be an absence the framework filled in on the Project's behalf.",
       "type": "object",
       "additionalProperties": false,
       "required": [
         "argument_schema",
-        "body",
-        "child_effects",
+        "description",
         "effect_bounds",
         "idempotency",
         "mutability",
@@ -371,14 +298,18 @@
         "surface",
         "timeout_policy",
         "ui_action_bounds",
-        "version",
-        "workflow_limits"
+        "version"
       ],
       "properties": {
         "$comment": {"type": "string"},
         "name": {
           "$comment": "The Tool's name, namespaced under the namespace this deployment's plugin_id registers. The dot is required so that the name has an owner at all; that the owner is this deployment is the loader's own admission rule, which no JSON Schema can state because it compares two members of one document.",
           "$ref": "#/$defs/NamespacedName"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
         },
         "version": {"$ref": "#/$defs/Identifier"},
         "mutability": {"$ref": "#/$defs/ToolMutability"},
@@ -400,13 +331,7 @@
           "uniqueItems": true,
           "items": {"$ref": "#/$defs/EffectBound"}
         },
-        "body": {
-          "$comment": "Project Tool body scope semantics are not part of this contract. The member is mandatory and false so absence cannot acquire a legacy meaning. Framework built-ins declare their own untagged or per-arm body property in the Framework Tool Catalog.",
-          "const": false
-        },
-        "child_effects": {"$ref": "#/$defs/ChildEffects"},
         "timeout_policy": {"$ref": "#/$defs/TimeoutPolicy"},
-        "workflow_limits": {"$ref": "#/$defs/WorkflowLimits"},
         "argument_schema": {"$ref": "#/$defs/ArgumentSchema"}
       }
     },

@@ -128,7 +128,7 @@
         "default_decision": { "const": "deny" },
         "unknown_effect_decision": { "const": "deny" },
         "privileged_surface_tools": {
-          "$comment": "Every Tool this Operator permits to be reached on the Privileged surface at the top of a run, by its declared name. A Project labels its own Tools `privileged` honestly and the framework keeps reading that label, but a label the Project wrote cannot authorise the Project: a top-level call of a privileged-surfaced Tool absent from this list is refused at admission. The member is mandatory and the empty array is a statement -- an Operator that grants no machine surface says so, rather than being read as one whose declaration went missing. Delegated child calls are not judged here: a child's surface is judged against its parent's maximum_child_surface, which is the ceiling the calling Tool's own declaration already stated.",
+          "$comment": "Every Tool this Operator permits to be reached on the Privileged surface, by its declared name. A Project labels its own Tools `privileged` honestly and the framework keeps reading that label, but a label the Project wrote cannot authorise the Project: a call of a privileged-surfaced Tool absent from this list is refused at admission. The member is mandatory and the empty array is a statement -- an Operator that grants no machine surface says so, rather than being read as one whose declaration went missing.",
           "type": "array",
           "items": { "$ref": "#/$defs/NamespacedIdentifier" },
           "uniqueItems": true

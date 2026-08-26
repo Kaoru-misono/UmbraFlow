@@ -14,7 +14,7 @@ namespace uf::cli
 {
     // What one Tool call left in the Tool Runtime's durable record.
     //
-    // Plain strings and integers for ReclaimedRuntime's reason: operator is a
+    // Plain strings and integers for ReclaimedOperatorRoot's reason: operator is a
     // private dependency of this module, so nothing a caller of this header
     // reads obliges it to link the authority that answered. The Operator's own
     // ToolCallReplay is restated here rather than carried.

@@ -1,4 +1,4 @@
-schema_version = 3
+schema_version = 4
 base_resolution = [3, 1]
 base_dpi = [96, 96]
 
@@ -40,6 +40,5 @@ actions = [{ id = "fixture.commit", kind = "key", key = "ENTER", proof_locator =
 
 [[surface]]
 id = "fixture.surface"
-kind = "scene"
 covers = []
 identity = ["fixture.surface.anchor"]

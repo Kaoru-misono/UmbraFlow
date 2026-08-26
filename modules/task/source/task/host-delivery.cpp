@@ -47,4 +47,21 @@ namespace uf::task
     {
         return m_receiptId;
     }
+
+    HostHoldEngagement::HostHoldEngagement(
+        DispatchAuthority authority,
+        uint64 receiptId,
+        MonotonicInstant::Duration duration
+    ) noexcept
+        : m_authority{std::move(authority)}
+        , m_receiptId{receiptId}
+        , m_duration{duration}
+    {
+    }
+
+    auto HostHoldEngagement::duration() const noexcept
+        -> MonotonicInstant::Duration
+    {
+        return m_duration;
+    }
 }

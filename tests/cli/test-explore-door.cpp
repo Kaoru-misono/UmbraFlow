@@ -42,6 +42,8 @@
 
 #include <json/value.hpp>
 
+#include <image/png.hpp>
+
 #include <ocr/engine.hpp>
 
 #include <task/exploration-session.hpp>
@@ -58,7 +60,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <random>
 #include <span>
 #include <stop_token>
@@ -82,8 +86,14 @@ namespace uf::cli
         constexpr auto k_observeTool = std::string_view{
             "framework.screen.observe"
         };
+        constexpr auto k_captureTool = std::string_view{
+            "framework.screen.capture"
+        };
         constexpr auto k_deliverInputTool = std::string_view{
-            "framework.input.deliver"
+            "framework.input.click"
+        };
+        constexpr auto k_holdInputTool = std::string_view{
+            "framework.input.hold"
         };
 
         // The exact sentence the Operator's admission refuses a Privileged
@@ -93,17 +103,23 @@ namespace uf::cli
         // failed would pass on a malformed argument.
         constexpr auto k_privilegedRefusal = std::string_view{
             "Operator policy grants no Privileged surface to tool "
-            "framework.input.deliver"
+            "framework.input.click"
         };
 
-        constexpr auto k_projectWriteTool = std::string_view{
-            "framework.project.write"
+        constexpr auto k_projectWriteFileTool = std::string_view{
+            "framework.project.write_file"
+        };
+        constexpr auto k_projectWriteTextTool = std::string_view{
+            "framework.project.write_text"
         };
         constexpr auto k_readLinesTool = std::string_view{
             "framework.screen.read_lines"
         };
         constexpr auto k_probeTool = std::string_view{
             "framework.screen.probe"
+        };
+        constexpr auto k_cropTool = std::string_view{
+            "framework.screen.crop"
         };
 
         // One durable Tool call row, joined to the admission that admitted it.
@@ -124,10 +140,12 @@ namespace uf::cli
 
         struct HeldInputLog final
         {
-            uint32 engaged{};
-            uint32 released{};
-            bool   held{};
-            bool   observedWhileHeld{};
+            uint32                            engaged{};
+            uint32                            released{};
+            bool                              held{};
+            bool                              observedWhileHeld{};
+            bool                              failCaptureWhileHeld{};
+            std::shared_ptr<std::stop_source> cancelOnEngage{};
         };
 
         struct SqliteClose final
@@ -238,14 +256,14 @@ namespace uf::cli
         // Counts every capture the engine was asked for, through a counter the
         // case owns, for CountingActionSink's reason.
         //
-        // IT IS HOW "ONE FRAME" IS PROVED. An observation's body measures the
-        // frame that observation is holding, so a body that read two rectangles
-        // costs exactly ONE capture; a measuring Tool that captured for itself
-        // would cost three, and would be answering about a screen nobody aimed
-        // at (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
+        // IT IS HOW "ONE SCREENSHOT" IS PROVED. Multiple measurements naming
+        // one retained digest cost exactly one live capture; a measuring Tool
+        // that captured for itself would cost more and answer about a screen
+        // the caller did not name.
         class CountingFrameSource final : public engine::IFrameSource
         {
-            Frame                         m_frame;
+            std::vector<Frame>            m_frames;
+            std::size_t                   m_next{};
             std::shared_ptr<uint32>       m_captures;
             std::shared_ptr<HeldInputLog> m_held;
 
@@ -255,7 +273,18 @@ namespace uf::cli
                 std::shared_ptr<uint32> captures,
                 std::shared_ptr<HeldInputLog> held
             ) noexcept
-                : m_frame{std::move(frame)}
+                : m_frames{std::move(frame)}
+                , m_captures{std::move(captures)}
+                , m_held{std::move(held)}
+            {
+            }
+
+            CountingFrameSource(
+                std::vector<Frame> frames,
+                std::shared_ptr<uint32> captures,
+                std::shared_ptr<HeldInputLog> held
+            ) noexcept
+                : m_frames{std::move(frames)}
                 , m_captures{std::move(captures)}
                 , m_held{std::move(held)}
             {
@@ -264,12 +293,22 @@ namespace uf::cli
             [[nodiscard]]
             auto capture(CaptureBudget const&) -> Result<Frame> override
             {
+                REQUIRE_FALSE(m_frames.empty());
+                auto const index = (std::min)(m_next, m_frames.size() - 1U);
+                ++m_next;
                 ++*m_captures;
                 if (m_held->held)
                 {
                     m_held->observedWhileHeld = true;
+                    if (m_held->failCaptureWhileHeld)
+                    {
+                        return fail(
+                            AutomationErrorKind::IoFailure,
+                            "fixture capture failed while the hold was engaged"
+                        );
+                    }
                 }
-                return m_frame;
+                return m_frames.at(index);
             }
 
             [[nodiscard]] auto validateTargetInstance() -> Status override
@@ -328,6 +367,10 @@ namespace uf::cli
                 ++*m_delivered;
                 ++m_held->engaged;
                 m_held->held = true;
+                if (m_held->cancelOnEngage)
+                {
+                    m_held->cancelOnEngage->request_stop();
+                }
                 return ok();
             }
 
@@ -485,13 +528,19 @@ namespace uf::cli
                 return m_root / std::filesystem::path{name};
             }
 
+            [[nodiscard]] auto probePng() const -> std::vector<std::byte>
+            {
+                return m_probe;
+            }
+
             [[nodiscard]]
             auto ports(
                 std::shared_ptr<uint32> delivered,
                 std::string_view trace,
                 std::shared_ptr<uint32> captures = std::make_shared<uint32>(),
                 std::shared_ptr<HeldInputLog> held =
-                    std::make_shared<HeldInputLog>()
+                    std::make_shared<HeldInputLog>(),
+                uint64 maximumPixelComparisons = k_defaultPixelComparisonBudget
             ) const -> task::TaskRunConfig
             {
                 auto const fingerprint = ProjectFingerprint::create(
@@ -516,6 +565,82 @@ namespace uf::cli
                     ),
                     .ocrEngine               = std::make_unique<SilentReader>(),
                     .liveFingerprint         = *fingerprint,
+                    .maximumPixelComparisons = maximumPixelComparisons,
+                    .recognitionTimeout      = k_defaultRecognitionTimeout,
+                    .tracePath               = path(trace),
+                };
+            }
+
+            [[nodiscard]]
+            auto sequencePorts(
+                std::shared_ptr<uint32> delivered,
+                std::string_view trace,
+                std::shared_ptr<uint32> captures
+            ) const -> task::TaskRunConfig
+            {
+                auto decoded = image::decodePng(m_probe, "sequence-frame.png");
+                REQUIRE(decoded.has_value());
+                REQUIRE(decoded->pixels.size() >= 4U);
+
+                auto firstPixels = decoded->pixels;
+                firstPixels.at(0U) = std::byte{11U};
+                firstPixels.at(1U) = std::byte{22U};
+                firstPixels.at(2U) = std::byte{33U};
+                firstPixels.at(3U) = std::byte{255U};
+                auto first = image::encodeRgbaPng(
+                    "first-sequence-frame.png",
+                    decoded->width,
+                    decoded->height,
+                    firstPixels
+                );
+                REQUIRE(first.has_value());
+
+                auto secondPixels = decoded->pixels;
+                secondPixels.at(0U) = std::byte{201U};
+                secondPixels.at(1U) = std::byte{202U};
+                secondPixels.at(2U) = std::byte{203U};
+                secondPixels.at(3U) = std::byte{255U};
+                auto second = image::encodeRgbaPng(
+                    "second-sequence-frame.png",
+                    decoded->width,
+                    decoded->height,
+                    secondPixels
+                );
+                REQUIRE(second.has_value());
+
+                auto frames = std::vector<Frame>{};
+                frames.emplace_back(
+                    operator_runtime::conformance::observationFrame(
+                        *first,
+                        FrameId{4101}
+                    )
+                );
+                frames.emplace_back(
+                    operator_runtime::conformance::observationFrame(
+                        *second,
+                        FrameId{4102}
+                    )
+                );
+                auto const fingerprint = ProjectFingerprint::create(
+                    k_recordedWidth,
+                    k_recordedHeight,
+                    k_recordedDpi,
+                    k_recordedDpi
+                );
+                REQUIRE(fingerprint.has_value());
+                auto held = std::make_shared<HeldInputLog>();
+                return task::TaskRunConfig{
+                    .frameSource = std::make_unique<CountingFrameSource>(
+                        std::move(frames),
+                        std::move(captures),
+                        held
+                    ),
+                    .actionSink = std::make_unique<CountingActionSink>(
+                        std::move(delivered),
+                        std::move(held)
+                    ),
+                    .ocrEngine               = std::make_unique<SilentReader>(),
+                    .liveFingerprint         = *fingerprint,
                     .maximumPixelComparisons = k_defaultPixelComparisonBudget,
                     .recognitionTimeout      = k_defaultRecognitionTimeout,
                     .tracePath               = path(trace),
@@ -528,10 +653,10 @@ namespace uf::cli
             // (docs/decisions/2026-08-24-the-annotation-policy-is-the-operators.md):
             // a developer annotates a brand-new project under deny-all as far as
             // looking at the screen, and the first annotation stroke or the
-            // first injected input needs this. It grants the two Privileged
-            // Tools by name and allows their effects, and it is written by the
-            // Operator rather than scaffolded, because a permission the
-            // requester signs for itself is a rubber stamp.
+            // first injected input needs this. It grants the exact acting and
+            // authoring Tools used below, and it is written by the Operator
+            // rather than scaffolded, because a permission the requester signs
+            // for itself is a rubber stamp.
             auto authorizeAnnotation() const -> ContentHash
             {
                 auto const policy =
@@ -539,18 +664,20 @@ namespace uf::cli
                         operatorProtocolSchemaHash(),
                         std::vector<std::string>{
                             std::string{k_deliverInputTool},
-                            std::string{k_projectWriteTool},
+                            std::string{k_holdInputTool},
+                            std::string{k_projectWriteFileTool},
+                            std::string{k_projectWriteTextTool},
                         },
-                        // The measuring Tools are granted here too, and only so
-                        // that a case can watch one refuse for the RIGHT
-                        // reason: outside a body they are refused twice over --
-                        // the Privileged surface first, then the missing frame
-                        // -- and a case that saw only the first would never
-                        // reach the refusal it is about.
+                        // The measuring Tools are granted here too so their
+                        // tests reach the explicit screenshot reference and
+                        // measurement providers rather than stopping at the
+                        // Privileged-surface policy gate.
                         std::vector<std::string>{
                             std::string{k_deliverInputTool},
+                            std::string{k_holdInputTool},
+                            std::string{k_cropTool},
                             std::string{k_probeTool},
-                            std::string{k_projectWriteTool},
+                            std::string{k_projectWriteFileTool},
                             std::string{k_readLinesTool},
                         }
                     );
@@ -641,6 +768,58 @@ namespace uf::cli
                 .toolName          = std::string{toolName},
                 .exactArgumentsJcs = std::string{exactArgumentsJcs},
             };
+        }
+
+        [[nodiscard]]
+        auto evaluateAuthoringChunk(
+            ExploreDoorWorld const& world,
+            std::string_view chunk,
+            std::string_view chunkName
+        ) -> Result<script::ScriptValue>
+        {
+            UF_TRY_VALUE(
+                scope,
+                operator_runtime::ObservedInstanceWorldScope::run("window-0", 1)
+            );
+            UF_TRY_VALUE(
+                lifecycle,
+                service::ProductLifecycle::start(service::ProductStart{
+                    .projectDirectory          = world.project(),
+                    .runtimeDirectory          = world.runtime(),
+                    .authenticatedControllerId = "umbra-flow-explore",
+                    .controllerCapabilities = {
+                        std::string{
+                            operator_runtime::conformance::k_operateCapability
+                        },
+                    },
+                    .controlledTargetId = "window-0",
+                    .kind               = operator_runtime::ControllerKind::Human,
+                    .agentProfileJcs = std::string{
+                        operator_runtime::k_unboundedAgentProfileJcs
+                    },
+                    .worldScope = scope,
+                })
+            );
+            auto delivered = std::make_shared<uint32>();
+            UF_TRY_VALUE(
+                session,
+                lifecycle.startExplorationSession(
+                    world.ports(
+                        delivered,
+                        std::string{chunkName} + ".jsonl"
+                    ),
+                    std::stop_token{}
+                )
+            );
+            auto evaluated = session->evaluate(chunk, chunkName);
+            session.reset();
+            auto closed = lifecycle.shutdown();
+            if (!evaluated)
+            {
+                return std::unexpected{std::move(evaluated).error()};
+            }
+            UF_TRY(std::move(closed));
+            return std::move(evaluated);
         }
 
         // A project that has annotated nothing, against an Operator root that
@@ -879,7 +1058,7 @@ namespace uf::cli
         auto const injected = lifecycle->invokeTool(
             explorationCall(
                 k_deliverInputTool,
-                R"({"action":"click","x":0,"y":0})"
+                R"({"screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000","x":0,"y":0})"
             ),
             (*session)->context()
         );
@@ -939,32 +1118,17 @@ namespace uf::cli
 
         auto& context = (*session)->context();
 
-        // AN OBSERVATION WITH A BODY, UNDER DENY-ALL. The observation is
-        // Semantic and read-only so deny-all admits it, and the measurement
-        // inside its body is a CHILD call -- whose surface is judged against
-        // what the observation declared it may delegate rather than against the
-        // Operator's top-of-run grant. That is the whole of why a session with
-        // no policy can still look at the screen
-        // (docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md
-        // V4).
+        // Capture and observation are Semantic and read-only, so deny-all admits
+        // both. The immutable screenshot digest is explicit between them.
         auto const measured = (*session)->evaluate(
             R"lua(
                 local screen = require("@umbraflow/screen")
-                local tools = require("@umbraflow/tools")
-                local resolved = screen.observe(function()
-                    local answer = tools.call("framework.screen.probe", {
-                        x = 0, y = 0, width = 1, height = 1,
-                        colour_red = 0, colour_green = 0, colour_blue = 0,
-                        tolerance = 12, removes = false,
-                    })
-                    local report = rawget(answer, "result")
-                    if report.rect_pixels ~= 1 then
-                        error("probe measured " .. tostring(report.rect_pixels))
-                    end
-                end)
-                return tools.state(resolved) == "confirmed"
+                local receipt = rawget(screen.capture(), "result")
+                local resolved = screen.observe(receipt.screenshot_sha256)
+                return rawget(resolved, "ok") == true
+                    and rawget(resolved, "delivery") == "confirmed"
             )lua",
-            "annotation-observation-body"
+            "annotation-explicit-screenshot"
         );
         auto const measuredWhy = measured.has_value()
             ? std::string{}
@@ -998,8 +1162,8 @@ namespace uf::cli
         auto const refused = (*session)->evaluate(
             R"lua(
                 local tools = require("@umbraflow/tools")
-                tools.call("framework.input.deliver", {
-                    action = "click", x = 0, y = 0,
+                tools.call("framework.input.click", {
+                    screenshot_sha256 = string.rep("0", 64), x = 0, y = 0,
                 })
                 return "delivered"
             )lua",
@@ -1016,8 +1180,22 @@ namespace uf::cli
         // Read-only screen observation carries no effect bounds, so deny-all
         // admits it. This is the half that would be lost if annotation answered
         // deny-all by refusing the session outright.
+        auto const captured = lifecycle->invokeTool(
+            explorationCall(k_captureTool, "{}"),
+            context
+        );
+        REQUIRE(captured.has_value());
+        REQUIRE(captured->payload.has_value());
+        auto const captureReceipt = json::parse(captured->payload->bytes());
+        REQUIRE(captureReceipt.has_value());
+        auto const* const p_screenshot = captureReceipt->find(
+            "screenshot_sha256"
+        );
+        REQUIRE(p_screenshot != nullptr);
+        auto const screenshotArguments = R"({"screenshot_sha256":")"
+            + std::string{p_screenshot->string()} + R"("})";
         auto const observed = lifecycle->invokeTool(
-            explorationCall(k_observeTool, "{}"),
+            explorationCall(k_observeTool, screenshotArguments),
             context
         );
         auto const observedWhy = observed.has_value()
@@ -1030,12 +1208,16 @@ namespace uf::cli
         REQUIRE(resolution.has_value());
         CHECK(resolution->find("state_resolution") != nullptr);
 
+        auto clickArguments = screenshotArguments;
+        clickArguments.pop_back();
+        clickArguments += R"(,"x":0,"y":0})";
+
         // And the half the whole four-step order exists to repay: an injection
         // is refused at admission, by name, before the sink is reached.
         auto const injected = lifecycle->invokeTool(
             explorationCall(
                 k_deliverInputTool,
-                R"({"action":"click","x":0,"y":0})"
+                clickArguments
             ),
             context
         );
@@ -1168,9 +1350,12 @@ namespace uf::cli
 
             auto const clicked = (*session)->evaluate(
                 R"lua(
+                    local screen = require("@umbraflow/screen")
                     local tools = require("@umbraflow/tools")
-                    local answer = tools.call("framework.input.deliver", {
-                        action = "click", x = 0, y = 0,
+                    local captured = screen.capture()
+                    local hash = rawget(rawget(captured, "result"), "screenshot_sha256")
+                    local answer = tools.call("framework.input.click", {
+                        screenshot_sha256 = hash, x = 0, y = 0,
                     })
                     return rawget(rawget(answer, "result"), "delivered") == true
                 )lua",
@@ -1204,24 +1389,19 @@ namespace uf::cli
         CHECK(input->state == "confirmed");
         CHECK(input->sessionId == sessionId);
         CHECK(input->policyHash == policyHash.hex());
-        CHECK(input->canonicalArgs == R"({"action":"click","x":0,"y":0})");
+        auto const inputArguments = json::parse(input->canonicalArgs);
+        REQUIRE(inputArguments.has_value());
+        CHECK(inputArguments->find("screenshot_sha256") != nullptr);
+        CHECK(inputArguments->find("x")->number() == 0.0);
+        CHECK(inputArguments->find("y")->number() == 0.0);
     }
 
-    // The three properties the frame ruling asks of a body, on one run.
-    TEST_CASE(
-        "an observation's body measures one frame and its measurements are "
-        "recorded as its children"
-    )
+
+    TEST_CASE("two measurements passed the same hash measure one screenshot")
     {
         auto const world     = ExploreDoorWorld{};
         auto const delivered = std::make_shared<uint32>();
         auto const captures  = std::make_shared<uint32>();
-
-        // The measuring Tools are granted the Privileged surface here, and only
-        // so that the stray call below refuses for the right reason. Outside a
-        // body a measurement is refused twice over -- the surface first, the
-        // missing frame second -- and a case that saw only the first would pass
-        // without the frame rule existing at all.
         static_cast<void>(world.authorizeAnnotation());
 
         auto const scope = operator_runtime::ObservedInstanceWorldScope::run(
@@ -1230,6 +1410,7 @@ namespace uf::cli
         );
         REQUIRE(scope.has_value());
 
+        auto screenshotHash = std::string{};
         {
             auto lifecycle = service::ProductLifecycle::start(
                 service::ProductStart{
@@ -1246,129 +1427,402 @@ namespace uf::cli
                 }
             );
             REQUIRE(lifecycle.has_value());
-
             auto session = lifecycle->startExplorationSession(
-                world.ports(delivered, "body-trace.jsonl", captures),
+                world.ports(delivered, "explicit-hash-trace.jsonl", captures),
                 std::stop_token{}
             );
             REQUIRE(session.has_value());
 
-            // A MEASURING TOOL OUTSIDE A BODY IS REFUSED BY NAME. It binds by
-            // call position to the innermost open frame and takes no frame
-            // handle, so outside every body there is nothing for it to bind to
-            // and it says so rather than capturing one of its own.
-            auto const stray = (*session)->evaluate(
-                R"lua(
-                    local tools = require("@umbraflow/tools")
-                    local answer = tools.call(
-                        "framework.screen.read_lines",
-                        { x = 0, y = 0, width = 1, height = 1 }
-                    )
-                    if answer.state == "confirmed" then return "measured" end
-                    return tostring(answer.result.message)
-                )lua",
-                "annotation-stray-measurement"
-            );
-            REQUIRE(stray.has_value());
-            REQUIRE(stray->text() != nullptr);
-            CHECK_MESSAGE(
-                std::string_view{*stray->text()}.find(
-                    "there is no open observation frame"
-                ) != std::string_view::npos,
-                "a measurement outside a body was not refused by name: ",
-                *stray->text()
-            );
-
             auto const before = *captures;
-            auto const bodied = (*session)->evaluate(
+            auto const measured = (*session)->evaluate(
                 R"lua(
                     local screen = require("@umbraflow/screen")
                     local tools = require("@umbraflow/tools")
-                    screen.observe(function()
-                        tools.call("framework.screen.read_lines", {
-                            x = 0, y = 0, width = 1, height = 1,
-                        })
-                        tools.call("framework.screen.probe", {
-                            x = 0, y = 0, width = 1, height = 1,
-                            colour_red = 0, colour_green = 0,
-                            colour_blue = 0, tolerance = 12, removes = false,
-                        })
-                    end)
-                    return true
+                    local receipt = rawget(screen.capture(), "result")
+                    local hash = receipt.screenshot_sha256
+                    local read = tools.call("framework.screen.read_lines", {
+                        screenshot_sha256 = hash,
+                        x = 0, y = 0, width = 1, height = 1,
+                    })
+                    local probe = tools.call("framework.screen.probe", {
+                        screenshot_sha256 = hash,
+                        x = 0, y = 0, width = 1, height = 1,
+                        colour_red = 0, colour_green = 0,
+                        colour_blue = 0, tolerance = 12, removes = false,
+                    })
+                    if rawget(read, "ok") ~= true
+                        or rawget(read, "delivery") ~= "confirmed"
+                        or rawget(probe, "ok") ~= true
+                        or rawget(probe, "delivery") ~= "confirmed" then
+                        error("explicit screenshot measurement did not confirm")
+                    end
+                    return hash
                 )lua",
-                "annotation-two-measurements"
+                "annotation-two-explicit-measurements"
             );
-            auto const bodiedWhy = bodied.has_value()
+            auto const measuredWhy = measured.has_value()
                 ? std::string{}
-                : std::string{bodied.error().message()};
-            REQUIRE_MESSAGE(bodied.has_value(), bodiedWhy);
-
-            // ONE FRAME. Two measurements inside one observation cost exactly
-            // one capture; two would mean each verb measured a different
-            // screen, which is the drift the frame exists to delete.
-            CHECK(*captures - before == 1U);
+                : std::string{measured.error().message()};
+            REQUIRE_MESSAGE(measured.has_value(), measuredWhy);
+            REQUIRE(measured->text() != nullptr);
+            screenshotHash = *measured->text();
+            CHECK_MESSAGE(
+                *captures - before == 1U,
+                "two measurements passed the same hash measure one screenshot"
+            );
 
             session->reset();
             CHECK(lifecycle->shutdown().has_value());
         }
 
         auto const recorded = world.recordedToolCalls();
-        auto const observe  = std::ranges::find(
+        auto const readLines = std::ranges::find(
             recorded,
-            std::string{k_observeTool},
+            std::string{k_readLinesTool},
             &ToolCallRow::toolName
         );
-        REQUIRE(observe != recorded.end());
-        CHECK(observe->state == "confirmed");
-
-        // The measurement each Tool CONFIRMED, which is the one written inside
-        // the body: the stray call above left a terminal-failure row of its own
-        // for framework.screen.read_lines, and a search that took the first row
-        // by name would be reading that one.
-        auto const confirmedCall = [&recorded](std::string_view toolName)
-        {
-            return std::ranges::find_if(
-                recorded,
-                [toolName](ToolCallRow const& row)
-                {
-                    return row.toolName == toolName && row.state == "confirmed";
-                }
-            );
-        };
-        auto const readLines = confirmedCall(k_readLinesTool);
-        auto const probe     = confirmedCall(k_probeTool);
+        auto const probe = std::ranges::find(
+            recorded,
+            std::string{k_probeTool},
+            &ToolCallRow::toolName
+        );
         REQUIRE(readLines != recorded.end());
         REQUIRE(probe != recorded.end());
+        auto const oneScreenshot = readLines->canonicalArgs.contains(
+            screenshotHash
+        ) && probe->canonicalArgs.contains(screenshotHash);
+        CHECK_MESSAGE(
+            oneScreenshot,
+            "two measurements passed the same hash measure one screenshot"
+        );
+    }
 
-        // CHILDREN OF THE OBSERVE NODE. Both measurements are parented on the
-        // observation's own durable position rather than on the run's root,
-        // which is what "recorded in the ledger as child calls of that observe
-        // node" asks for.
-        CHECK(readLines->parentIdentity == observe->callIdentity);
-        CHECK(probe->parentIdentity == observe->callIdentity);
+    TEST_CASE("a measurement against a screenshot hash measures that screenshot")
+    {
+        auto const world     = ExploreDoorWorld{};
+        auto const delivered = std::make_shared<uint32>();
+        auto const captures  = std::make_shared<uint32>();
+        static_cast<void>(world.authorizeAnnotation());
+        auto const scope = operator_runtime::ObservedInstanceWorldScope::run(
+            "window-0",
+            1
+        );
+        REQUIRE(scope.has_value());
 
-        // And the refused one is a row too, terminal and attributed, rather
-        // than an act that happened with nothing recording it.
-        auto const strayRow = std::ranges::find_if(
-            recorded,
-            [](ToolCallRow const& row)
-            {
-                return row.toolName == k_readLinesTool
-                    && row.state == "terminal_failure";
+        auto lifecycle = service::ProductLifecycle::start(
+            service::ProductStart{
+                .projectDirectory          = world.project(),
+                .runtimeDirectory          = world.runtime(),
+                .authenticatedControllerId = "umbra-flow-explore",
+                .controllerCapabilities    = {},
+                .controlledTargetId        = "window-0",
+                .kind                      = operator_runtime::ControllerKind::Human,
+                .agentProfileJcs = std::string{
+                    operator_runtime::k_unboundedAgentProfileJcs
+                },
+                .worldScope = *scope,
             }
         );
-        REQUIRE(strayRow != recorded.end());
-        CHECK(strayRow->parentIdentity != observe->callIdentity);
+        REQUIRE(lifecycle.has_value());
+        auto session = lifecycle->startExplorationSession(
+            world.sequencePorts(
+                delivered,
+                "first-screenshot-trace.jsonl",
+                captures
+            ),
+            std::stop_token{}
+        );
+        REQUIRE(session.has_value());
+
+        auto const measured = (*session)->evaluate(
+            R"lua(
+                local screen = require("@umbraflow/screen")
+                local tools = require("@umbraflow/tools")
+                local first = rawget(screen.capture(), "result")
+                local second = rawget(screen.capture(), "result")
+                if first.screenshot_sha256 == second.screenshot_sha256 then
+                    error("the two fixture screens had one digest")
+                end
+                local answer = tools.call("framework.screen.probe", {
+                    screenshot_sha256 = first.screenshot_sha256,
+                    x = 0, y = 0, width = 1, height = 1,
+                    colour_red = 0, colour_green = 0, colour_blue = 0,
+                    tolerance = 0, removes = false,
+                })
+                return rawget(answer, "result").dominant_red
+            )lua",
+            "measure-first-screenshot-after-second-capture"
+        );
+        auto const measuredWhy = measured.has_value()
+            ? std::string{}
+            : std::string{measured.error().message()};
+        REQUIRE_MESSAGE(measured.has_value(), measuredWhy);
+        CHECK_MESSAGE(
+            measured->number() == std::optional<double>{11.0},
+            "a measurement against a screenshot hash measures that screenshot"
+        );
+        CHECK(*captures == 2U);
+
+        session->reset();
+        CHECK(lifecycle->shutdown().has_value());
+    }
+
+    TEST_CASE("a named screenshot that does not exist is refused by name")
+    {
+        auto const world     = ExploreDoorWorld{};
+        auto const delivered = std::make_shared<uint32>();
+        auto const captures  = std::make_shared<uint32>();
+        auto const scope = operator_runtime::ObservedInstanceWorldScope::run(
+            "window-0",
+            1
+        );
+        REQUIRE(scope.has_value());
+
+        auto lifecycle = service::ProductLifecycle::start(
+            service::ProductStart{
+                .projectDirectory          = world.project(),
+                .runtimeDirectory          = world.runtime(),
+                .authenticatedControllerId = "umbra-flow-explore",
+                .controllerCapabilities    = {},
+                .controlledTargetId        = "window-0",
+                .kind                      = operator_runtime::ControllerKind::Human,
+                .agentProfileJcs = std::string{
+                    operator_runtime::k_unboundedAgentProfileJcs
+                },
+                .worldScope = *scope,
+            }
+        );
+        REQUIRE(lifecycle.has_value());
+        auto session = lifecycle->startExplorationSession(
+            world.ports(delivered, "missing-screenshot-trace.jsonl", captures),
+            std::stop_token{}
+        );
+        REQUIRE(session.has_value());
+
+        constexpr auto k_missing = std::string_view{
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        };
+        auto const refused = lifecycle->invokeTool(
+            explorationCall(
+                k_observeTool,
+                R"({"screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000"})"
+            ),
+            (*session)->context()
+        );
+        REQUIRE(refused.has_value());
+        CHECK(refused->state == operator_runtime::ToolCallState::TerminalFailure);
+        REQUIRE(refused->payload.has_value());
+        auto const namedMissing = refused->payload->bytes().contains(k_missing)
+            && refused->payload->bytes().contains("missing or expired");
+        CHECK_MESSAGE(
+            namedMissing,
+            "a named screenshot that does not exist is refused by name and says which hash was missing"
+        );
+        CHECK(*captures == 0U);
+
+        session->reset();
+        CHECK(lifecycle->shutdown().has_value());
+    }
+
+    TEST_CASE("a screenshot receipt is committed only after its blob is durable")
+    {
+        auto const world = ExploreDoorWorld{};
+        auto const png   = world.probePng();
+        auto const frame = operator_runtime::conformance::observationFrame(
+            png,
+            FrameId{4201}
+        );
+        auto coordinator = operator_runtime::OperatorCoordinator::open(
+            world.runtime()
+        );
+        REQUIRE(coordinator.has_value());
+        auto const published = coordinator->publishEvidenceArtifact(
+            operator_runtime::EvidenceArtifactSpec{
+                .bytes         = png,
+                .mediaType     = "image/png",
+                .width         = frame.width(),
+                .height        = frame.height(),
+                .frameIdentity = FrameIdentity::fromFrame(frame),
+            }
+        );
+        REQUIRE(published.has_value());
+
+        // This is the interruption seam: publication has returned, so the blob
+        // is durable, but no Tool completion has yet committed the receipt.
+        auto const durable = coordinator->readEvidenceArtifact(
+            published->contentHash,
+            image::k_maximumPngFileBytes
+        );
+        auto const committed = coordinator->evidenceArtifactReceipt(
+            published->contentHash
+        );
+        REQUIRE(committed.has_value());
+        auto const durableBeforeReceipt = durable.has_value()
+            && durable->size() == png.size() && !committed->has_value();
+        CHECK_MESSAGE(
+            durableBeforeReceipt,
+            "a screenshot receipt is committed only after its blob is durable"
+        );
     }
 
     TEST_CASE(
-        "a hold body observes while input is engaged and releases on every exit"
+        "reclaim sweeps unreferenced evidence and retains a run's screenshot"
+    )
+    {
+        auto const world     = ExploreDoorWorld{};
+        auto const delivered = std::make_shared<uint32>();
+        static_cast<void>(world.authorizeAnnotation());
+        auto const scope = operator_runtime::ObservedInstanceWorldScope::run(
+            "window-0",
+            1
+        );
+        REQUIRE(scope.has_value());
+
+        auto retainedHash = ContentHash::parse(
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        );
+        REQUIRE(retainedHash.has_value());
+        {
+            auto lifecycle = service::ProductLifecycle::start(
+                service::ProductStart{
+                    .projectDirectory          = world.project(),
+                    .runtimeDirectory          = world.runtime(),
+                    .authenticatedControllerId = "umbra-flow-explore",
+                    .controllerCapabilities    = {},
+                    .controlledTargetId        = "window-0",
+                    .kind                      = operator_runtime::ControllerKind::Human,
+                    .agentProfileJcs = std::string{
+                        operator_runtime::k_unboundedAgentProfileJcs
+                    },
+                    .worldScope = *scope,
+                }
+            );
+            REQUIRE(lifecycle.has_value());
+            auto session = lifecycle->startExplorationSession(
+                world.ports(delivered, "retained-evidence-trace.jsonl"),
+                std::stop_token{}
+            );
+            REQUIRE(session.has_value());
+            auto const captured = lifecycle->invokeTool(
+                explorationCall(k_captureTool, "{}"),
+                (*session)->context()
+            );
+            REQUIRE(captured.has_value());
+            REQUIRE(captured->payload.has_value());
+            auto const receipt = json::parse(captured->payload->bytes());
+            REQUIRE(receipt.has_value());
+            auto const* const p_hash = receipt->find("screenshot_sha256");
+            REQUIRE(p_hash != nullptr);
+            CHECK(receipt->find("byte_count") != nullptr);
+            CHECK(receipt->find("frame_identity") != nullptr);
+            CHECK(receipt->find("height") != nullptr);
+            CHECK(receipt->find("width") != nullptr);
+            auto const* const p_media = receipt->find("media_type");
+            REQUIRE(p_media != nullptr);
+            CHECK(p_media->string() == "image/png");
+            retainedHash = ContentHash::parse(
+                "sha256:" + std::string{p_hash->string()}
+            );
+            REQUIRE(retainedHash.has_value());
+            auto const carried = lifecycle->readScreenshot(*retainedHash);
+            REQUIRE(carried.has_value());
+            CHECK_FALSE(carried->empty());
+
+            auto const cropArguments = R"({"height":1,"screenshot_sha256":")"
+                + retainedHash->hex() + R"(","width":1,"x":0,"y":0})";
+            auto const cropped = lifecycle->invokeTool(
+                explorationCall(k_cropTool, cropArguments),
+                (*session)->context()
+            );
+            REQUIRE(cropped.has_value());
+            CHECK(cropped->state == operator_runtime::ToolCallState::Confirmed);
+            REQUIRE(cropped->payload.has_value());
+            auto const cropReceipt = json::parse(cropped->payload->bytes());
+            REQUIRE(cropReceipt.has_value());
+            auto const* const p_rectangle = cropReceipt->find("rectangle");
+            REQUIRE(p_rectangle != nullptr);
+            auto const* const p_cropWidth = cropReceipt->find("width");
+            auto const* const p_cropHeight = cropReceipt->find("height");
+            REQUIRE(p_cropWidth != nullptr);
+            REQUIRE(p_cropHeight != nullptr);
+            CHECK(p_cropWidth->number() == 1.0);
+            CHECK(p_cropHeight->number() == 1.0);
+            session->reset();
+            CHECK(lifecycle->shutdown().has_value());
+        }
+
+        auto alternate = image::decodePng(
+            world.probePng(),
+            "unreferenced-evidence.png"
+        );
+        REQUIRE(alternate.has_value());
+        REQUIRE_FALSE(alternate->pixels.empty());
+        alternate->pixels.at(0U) = std::byte{77U};
+        auto orphanPng = image::encodeRgbaPng(
+            "unreferenced-evidence.png",
+            alternate->width,
+            alternate->height,
+            alternate->pixels
+        );
+        REQUIRE(orphanPng.has_value());
+        auto const orphanFrame = operator_runtime::conformance::observationFrame(
+            *orphanPng,
+            FrameId{4301}
+        );
+        auto orphanHash = *retainedHash;
+        {
+            auto coordinator = operator_runtime::OperatorCoordinator::open(
+                world.runtime()
+            );
+            REQUIRE(coordinator.has_value());
+            auto const orphan = coordinator->publishEvidenceArtifact(
+                operator_runtime::EvidenceArtifactSpec{
+                    .bytes         = *orphanPng,
+                    .mediaType     = "image/png",
+                    .width         = orphanFrame.width(),
+                    .height        = orphanFrame.height(),
+                    .frameIdentity = FrameIdentity::fromFrame(orphanFrame),
+                }
+            );
+            REQUIRE(orphan.has_value());
+            orphanHash = orphan->contentHash;
+            CHECK(orphanHash != *retainedHash);
+        }
+
+        auto const reclaimed = service::reclaimOperatorStores(
+            world.runtime(),
+            (std::numeric_limits<uint64>::max)()
+        );
+        REQUIRE(reclaimed.has_value());
+        auto coordinator = operator_runtime::OperatorCoordinator::open(
+            world.runtime()
+        );
+        REQUIRE(coordinator.has_value());
+        auto const retained = coordinator->readEvidenceArtifact(
+            *retainedHash,
+            image::k_maximumPngFileBytes
+        );
+        auto const orphan = coordinator->readEvidenceArtifact(
+            orphanHash,
+            image::k_maximumPngFileBytes
+        );
+        auto const sweptOnlyOrphan = reclaimed->evidence.blobs == 1U
+            && retained.has_value() && !orphan.has_value();
+        CHECK_MESSAGE(
+            sweptOnlyOrphan,
+            "reclaim sweeps an unreferenced evidence blob and does not sweep one a retained run still references"
+        );
+    }
+
+    TEST_CASE(
+        "a flat hold captures while pressed and releases on every exit"
     )
     {
         auto const world     = ExploreDoorWorld{};
         auto const delivered = std::make_shared<uint32>();
         auto const captures  = std::make_shared<uint32>();
         auto const held      = std::make_shared<HeldInputLog>();
+        auto const cancellation = std::make_shared<std::stop_source>();
         static_cast<void>(world.authorizeAnnotation());
 
         auto const scope = operator_runtime::ObservedInstanceWorldScope::run(
@@ -1398,166 +1852,310 @@ namespace uf::cli
         REQUIRE(lifecycle.has_value());
         auto session = lifecycle->startExplorationSession(
             world.ports(delivered, "hold-body-trace.jsonl", captures, held),
+            cancellation->get_token()
+        );
+        REQUIRE(session.has_value());
+
+
+        SUBCASE("capture succeeds before release")
+        {
+            auto const captured = (*session)->evaluate(
+            R"lua(
+                local screen = require("@umbraflow/screen")
+                local tools = require("@umbraflow/tools")
+                local source = screen.capture()
+                local hash = rawget(rawget(source, "result"), "screenshot_sha256")
+                local answer = tools.call("framework.input.hold", {
+                    duration_ms = 0,
+                    return_screen = "capture",
+                    screenshot_sha256 = hash,
+                    x = 0,
+                    y = 0,
+                })
+                local result = rawget(answer, "result")
+                return rawget(rawget(result, "screen"), "screenshot_sha256")
+            )lua",
+            "flat-hold-captures"
+        );
+            REQUIRE(captured.has_value());
+            REQUIRE(captured->text() != nullptr);
+            CHECK_FALSE(captured->text()->empty());
+            CHECK(held->engaged == 1U);
+            CHECK(held->released == 1U);
+            CHECK_FALSE(held->held);
+            CHECK(held->observedWhileHeld);
+            CHECK(*captures == 2U);
+        }
+
+        SUBCASE("a capture failure still releases")
+        {
+            held->failCaptureWhileHeld = true;
+            auto const failed = (*session)->evaluate(
+            R"lua(
+                local screen = require("@umbraflow/screen")
+                local tools = require("@umbraflow/tools")
+                local source = screen.capture()
+                local hash = rawget(rawget(source, "result"), "screenshot_sha256")
+                return tools.call("framework.input.hold", {
+                    duration_ms = 0,
+                    return_screen = "capture",
+                    screenshot_sha256 = hash,
+                    x = 0,
+                    y = 0,
+                })
+            )lua",
+            "flat-hold-capture-fails"
+        );
+            REQUIRE_FALSE(failed.has_value());
+            CHECK(held->engaged == 1U);
+            CHECK(held->released == 1U);
+            CHECK_FALSE(held->held);
+        }
+
+        SUBCASE("cancellation during the dwell still releases")
+        {
+            held->cancelOnEngage = cancellation;
+            auto const cancelled = (*session)->evaluate(
+            R"lua(
+                local screen = require("@umbraflow/screen")
+                local tools = require("@umbraflow/tools")
+                local source = screen.capture()
+                local hash = rawget(rawget(source, "result"), "screenshot_sha256")
+                return tools.call("framework.input.hold", {
+                    duration_ms = 250,
+                    screenshot_sha256 = hash,
+                    x = 0,
+                    y = 0,
+                })
+            )lua",
+            "flat-hold-cancelled"
+        );
+            REQUIRE_FALSE(cancelled.has_value());
+            CHECK(held->engaged == 1U);
+            CHECK(held->released == 1U);
+            CHECK_FALSE(held->held);
+        }
+
+
+        session->reset();
+        CHECK(lifecycle->shutdown().has_value());
+    }
+
+    TEST_CASE("a flat hold releases when its internal observation fails")
+    {
+        auto const world     = ExploreDoorWorld{};
+        auto const delivered = std::make_shared<uint32>();
+        auto const captures  = std::make_shared<uint32>();
+        auto const held      = std::make_shared<HeldInputLog>();
+        static_cast<void>(world.authorizeAnnotation());
+
+        auto const scope = operator_runtime::ObservedInstanceWorldScope::run(
+            "window-0",
+            1
+        );
+        REQUIRE(scope.has_value());
+        auto lifecycle = service::ProductLifecycle::start(
+            service::ProductStart{
+                .projectDirectory          = world.project(),
+                .runtimeDirectory          = world.runtime(),
+                .authenticatedControllerId = "umbra-flow-explore",
+                .controllerCapabilities = {
+                    std::string{
+                        operator_runtime::conformance::k_operateCapability
+                    },
+                },
+                .controlledTargetId = "window-0",
+                .kind               = operator_runtime::ControllerKind::Human,
+                .agentProfileJcs = std::string{
+                    operator_runtime::k_unboundedAgentProfileJcs
+                },
+                .worldScope = *scope,
+            }
+        );
+        REQUIRE(lifecycle.has_value());
+        auto session = lifecycle->startExplorationSession(
+            world.ports(
+                delivered,
+                "hold-observe-failure-trace.jsonl",
+                captures,
+                held,
+                0U
+            ),
             std::stop_token{}
         );
         REQUIRE(session.has_value());
 
-        SUBCASE("hold observe measure is the motivating case")
-        {
-            auto const before = *captures;
-            auto const observed = (*session)->evaluate(
+        auto const failed = (*session)->evaluate(
             R"lua(
                 local screen = require("@umbraflow/screen")
                 local tools = require("@umbraflow/tools")
-                tools.call("framework.input.deliver", {
-                    action = "hold", x = 0, y = 0,
-                }, function()
-                    screen.observe(function()
-                        tools.call("framework.screen.read_lines", {
-                            x = 0, y = 0, width = 1, height = 1,
-                        })
-                        tools.call("framework.screen.probe", {
-                            x = 0, y = 0, width = 1, height = 1,
-                            colour_red = 0, colour_green = 0,
-                            colour_blue = 0, tolerance = 12, removes = false,
-                        })
-                    end)
-                end)
-                return true
+                local source = screen.capture()
+                local hash = rawget(rawget(source, "result"), "screenshot_sha256")
+                return tools.call("framework.input.hold", {
+                    duration_ms = 0,
+                    return_screen = "observe",
+                    screenshot_sha256 = hash,
+                    x = 0,
+                    y = 0,
+                })
             )lua",
-            "hold-observe-measure"
+            "flat-hold-observation-fails"
         );
-            auto const observedWhy = observed.has_value()
-                ? std::string{}
-                : std::string{observed.error().message()};
-            REQUIRE_MESSAGE(observed.has_value(), observedWhy);
-            CHECK(held->observedWhileHeld);
-            CHECK(held->engaged == 1U);
-            CHECK(held->released == 1U);
-            CHECK_FALSE(held->held);
-            // One capture to aim the input, then exactly one for the observe
-            // whose body made two measurements. Per-measurement capture makes 4.
-            CHECK(*captures - before == 2U);
-        }
-
-        SUBCASE("a raising body still releases")
-        {
-            auto const raised = (*session)->evaluate(
-            R"lua(
-                local tools = require("@umbraflow/tools")
-                local answer = tools.call("framework.input.deliver", {
-                    action = "hold", x = 0, y = 0,
-                }, function()
-                    error("the hold body raised")
-                end)
-                local result = rawget(answer, "result")
-                return tostring(rawget(result, "reason") or rawget(result, "message"))
-            )lua",
-            "hold-body-raises"
-        );
-            REQUIRE(raised.has_value());
-            REQUIRE(raised->text() != nullptr);
-            CHECK(
-                std::string_view{*raised->text()}.contains(
-                    "the hold body raised"
-                )
-            );
-            CHECK(held->engaged == 1U);
-            CHECK(held->released == 1U);
-            CHECK_FALSE(held->held);
-        }
-
-        SUBCASE("an empty body is refused by the click arm's exact name")
-        {
-            auto const empty = (*session)->evaluate(
-            R"lua(
-                local tools = require("@umbraflow/tools")
-                local answer = tools.call("framework.input.deliver", {
-                    action = "hold", x = 0, y = 0,
-                }, function() end)
-                local result = rawget(answer, "result")
-                return tostring(rawget(result, "reason") or rawget(result, "message"))
-            )lua",
-            "empty-hold-body"
-        );
-            REQUIRE(empty.has_value());
-            REQUIRE(empty->text() != nullptr);
-            CHECK(
-                std::string_view{*empty->text()}.contains(
-                    "a hold body is empty; press and release is the `click` arm."
-                )
-            );
-            CHECK(held->engaged == 1U);
-            CHECK(held->released == 1U);
-            CHECK_FALSE(held->held);
-        }
-
-        SUBCASE("an input refusal is not mislabeled as an empty body")
-        {
-            auto const refused = (*session)->evaluate(
-            R"lua(
-                local screen = require("@umbraflow/screen")
-                local tools = require("@umbraflow/tools")
-                local answer = tools.call("framework.input.deliver", {
-                    action = "hold", x = 999, y = 999,
-                }, function()
-                    screen.observe(function() end)
-                end)
-                local result = rawget(answer, "result")
-                return tostring(rawget(result, "reason") or rawget(result, "message"))
-            )lua",
-            "refused-hold-body"
-        );
-            REQUIRE(refused.has_value());
-            REQUIRE(refused->text() != nullptr);
-            CHECK(
-                std::string_view{*refused->text()}.contains(
-                    "is outside the"
-                )
-            );
-            CHECK(
-                std::string_view{*refused->text()}.contains(
-                    "target surface"
-                )
-            );
-            CHECK_FALSE(
-                std::string_view{*refused->text()}.contains(
-                    "hold body is empty"
-                )
-            );
-            CHECK(held->engaged == 0U);
-            CHECK(held->released == 0U);
-            CHECK_FALSE(held->held);
-        }
-
-        SUBCASE("an observation body still refuses a mutating child")
-        {
-            auto const refused = (*session)->evaluate(
-                R"lua(
-                    local screen = require("@umbraflow/screen")
-                    local tools = require("@umbraflow/tools")
-                    local answer = screen.observe(function()
-                        tools.call("framework.input.deliver", {
-                            action = "click", x = 0, y = 0,
-                        })
-                    end)
-                    local result = rawget(answer, "result")
-                    return tostring(rawget(result, "reason") or rawget(result, "message"))
-                )lua",
-                "observe-mutating-child"
-            );
-            REQUIRE_FALSE(refused.has_value());
-            CHECK(
-                std::string_view{refused.error().message()}.contains(
-                    "Parent Tool framework.screen.observe declares no child "
-                    "effect for framework.input.deliver"
-                )
-            );
-            CHECK(*delivered == 0U);
-        }
+        REQUIRE_FALSE(failed.has_value());
+        CHECK(held->engaged == 1U);
+        CHECK(held->released == 1U);
+        CHECK_FALSE(held->held);
+        CHECK(held->observedWhileHeld);
 
         session->reset();
         CHECK(lifecycle->shutdown().has_value());
+    }
+
+    TEST_CASE(
+        "framework.project.write_file refuses a file_sha256 with no retained "
+        "evidence blob"
+    )
+    {
+        auto const world = ExploreDoorWorld{};
+        static_cast<void>(world.authorizeAnnotation());
+
+        auto const evaluated = evaluateAuthoringChunk(
+            world,
+            R"lua(
+                local tools = require("@umbraflow/tools")
+                local answer = tools.call("framework.project.write_file", {
+                    path = "runtime/missing.png",
+                    file_sha256 = string.rep("0", 64),
+                })
+                if rawget(answer, "ok") == true then
+                    return "unexpected success"
+                end
+                return rawget(rawget(answer, "error"), "message")
+            )lua",
+            "project-write-file-missing-evidence"
+        );
+        REQUIRE(evaluated.has_value());
+        REQUIRE(evaluated->text() != nullptr);
+        CHECK_MESSAGE(
+            *evaluated->text()
+                == "file_sha256 " + std::string(64U, '0')
+                    + " is missing or expired: no committed evidence receipt "
+                    "names a retained blob",
+            "framework.project.write_file must refuse a file_sha256 naming no "
+            "retained evidence blob"
+        );
+        CHECK_FALSE(
+            std::filesystem::exists(world.project() / "runtime" / "missing.png")
+        );
+    }
+
+    TEST_CASE("framework.project.write_file writes exactly the retained artifact bytes")
+    {
+        auto const world = ExploreDoorWorld{};
+        static_cast<void>(world.authorizeAnnotation());
+
+        auto const evaluated = evaluateAuthoringChunk(
+            world,
+            R"lua(
+                local screen = require("@umbraflow/screen")
+                local tools = require("@umbraflow/tools")
+                local captured = screen.capture()
+                local artifact = rawget(captured, "result")
+                local fileSha256 = rawget(artifact, "screenshot_sha256")
+                local written = tools.call("framework.project.write_file", {
+                    path = "runtime/copied.png",
+                    file_sha256 = fileSha256,
+                })
+                if rawget(written, "ok") ~= true then
+                    return rawget(rawget(written, "error"), "message")
+                end
+                return fileSha256
+            )lua",
+            "project-write-file-exact-bytes"
+        );
+        REQUIRE(evaluated.has_value());
+        REQUIRE(evaluated->text() != nullptr);
+        auto const artifactHash = ContentHash::parse(
+            "sha256:" + *evaluated->text()
+        );
+        REQUIRE(artifactHash.has_value());
+
+        auto stream = std::ifstream{
+            world.project() / "runtime" / "copied.png",
+            std::ios::binary,
+        };
+        REQUIRE(stream.good());
+        auto const copied = std::string{
+            std::istreambuf_iterator<char>{stream},
+            std::istreambuf_iterator<char>{},
+        };
+        auto const copiedHash = sha256(
+            std::as_bytes(std::span{std::string_view{copied}})
+        );
+        REQUIRE(copiedHash.has_value());
+        CHECK_MESSAGE(
+            *copiedHash == *artifactHash,
+            "framework.project.write_file must write exactly the bytes held by "
+            "file_sha256"
+        );
+    }
+
+    TEST_CASE(
+        "framework.project.read_text and write_text refuse paths outside the "
+        "authoring store"
+    )
+    {
+        auto const world = ExploreDoorWorld{};
+        static_cast<void>(world.authorizeAnnotation());
+        {
+            auto outside = std::ofstream{
+                world.path("outside.txt"),
+                std::ios::binary | std::ios::trunc,
+            };
+            REQUIRE(outside.good());
+            outside << "outside";
+            REQUIRE(outside.good());
+        }
+
+        auto const evaluated = evaluateAuthoringChunk(
+            world,
+            R"lua(
+                local tools = require("@umbraflow/tools")
+                local function outcome(name, answer)
+                    if rawget(answer, "ok") == true then
+                        return name .. ":unexpected success"
+                    end
+                    return name .. ":" .. rawget(rawget(answer, "error"), "message")
+                end
+                local read = tools.call("framework.project.read_text", {
+                    path = "../outside.txt",
+                })
+                local write = tools.call("framework.project.write_text", {
+                    path = "../outside.txt",
+                    content = "escaped",
+                })
+                return outcome("read", read) .. "|" .. outcome("write", write)
+            )lua",
+            "project-text-path-confinement"
+        );
+        REQUIRE(evaluated.has_value());
+        REQUIRE(evaluated->text() != nullptr);
+        CHECK_MESSAGE(
+            evaluated->text()->contains(
+                "read:project file name ../outside.txt contains forbidden "
+                "parent traversal"
+            ),
+            "framework.project.read_text must refuse a path that leaves the "
+            "authoring store"
+        );
+        CHECK_MESSAGE(
+            evaluated->text()->contains(
+                "write:project file name ../outside.txt contains forbidden "
+                "parent traversal"
+            ),
+            "framework.project.write_text must refuse a path that leaves the "
+            "authoring store"
+        );
     }
 
     // The authoring-write line, both ways round. It is the second thing an
@@ -1605,14 +2203,14 @@ namespace uf::cli
             auto const written = (*session)->evaluate(
                 R"lua(
                     local tools = require("@umbraflow/tools")
-                    local answer = tools.call("framework.project.write", {
-                        action = "text",
+                    local answer = tools.call("framework.project.write_text", {
                         path = "runtime/annotation.txt",
                         content = "a stroke",
                     })
-                    return if tools.state(answer) == "confirmed"
+                    return if rawget(answer, "ok") == true
+                        and rawget(answer, "delivery") == "confirmed"
                         then "written"
-                        else tostring(rawget(rawget(answer, "result"), "reason"))
+                        else tostring(rawget(rawget(answer, "error"), "message"))
                 )lua",
                 "annotation-authoring-write"
             );
@@ -1637,8 +2235,8 @@ namespace uf::cli
             auto const refused = runWrite(world, {}, "unauthorised-trace.jsonl");
             CHECK_MESSAGE(
                 refused.find(
-                    "Operator policy grants no Privileged surface to tool "
-                    "framework.project.write"
+                    "Policy operator-deny-all names no rule for effect type "
+                    "framework.project.write_text"
                 ) != std::string::npos,
                 "an authoring write under deny-all was not refused by name: ",
                 refused

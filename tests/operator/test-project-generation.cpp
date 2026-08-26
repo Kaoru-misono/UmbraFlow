@@ -493,27 +493,6 @@ return {
             return *std::move(generation);
         }
 
-        // These cases are about the closure and the join, so the seam answers
-        // anything. It is required all the same: a scoped program with no Tool
-        // Runtime is not a scoped program at all.
-        [[nodiscard]]
-        auto acceptingRuntime() -> script::ToolRuntimeDispatch
-        {
-            return [](
-                       std::string_view toolName,
-                       json::Value const& arguments,
-                       script::ToolCallCoordinate const&,
-                       std::stop_token,
-                       script::ToolCallBody
-                   ) -> Result<json::Value>
-            {
-                return json::Value::ofObject({
-                    {"result", arguments},
-                    {"tool", json::Value::ofString(std::string{toolName})},
-                });
-            };
-        }
-
         [[nodiscard]]
         auto bothBindings() -> std::vector<ProjectToolBinding>
         {
@@ -545,15 +524,11 @@ return {
         auto declaredTool(std::string_view name) -> ToolCatalogEntry
         {
             return ToolCatalogEntry{
-                .name       = std::string{name},
+                .name        = std::string{name},
+                .description = "A fixture Project Tool leaf.",
+                .inputSchema = json::Value::ofObject({}),
                 .descriptor = ToolDescriptor{
                     .toolVersion = "1",
-                    .childEffects = ChildEffectDeclaration{
-                        .maximumChildSurface    = ToolSurface::Semantic,
-                        .maximumChildMutability = ToolMutability::ReadOnly,
-                        .maximumChildRisk       = Risk::ReadOnly,
-                        .maximumChildCalls      = 0U,
-                    },
                     .timeout = TimeoutPolicy{
                         .maximumElapsedMillis = 5'000U,
                         .onTimeout            = TimeoutAction::Stop,
@@ -642,8 +617,7 @@ return {
                 generation,
                 catalogOver(generation, std::move(declaredTools)),
                 closureModules(toolSource),
-                {},
-                acceptingRuntime()
+                {}
             );
         }
     } // namespace
@@ -689,8 +663,8 @@ return {
                     {"note", json::Value::ofString("kept")},
                 }),
                 script::ScopedRunRequest{
-                    .parentPosition = runPosition(),
-                    .budgetOwner    = std::string{k_dismissTool},
+                    .callIdentity = runPosition(),
+                    .budgetOwner  = std::string{k_dismissTool},
                     .maximumElapsedMillis   = 5'000U,
                 }
             );
@@ -707,8 +681,8 @@ return {
                 k_sweepTool,
                 json::Value::ofObject({}),
                 script::ScopedRunRequest{
-                    .parentPosition = runPosition(),
-                    .budgetOwner    = std::string{k_sweepTool},
+                    .callIdentity = runPosition(),
+                    .budgetOwner  = std::string{k_sweepTool},
                     .maximumElapsedMillis   = 5'000U,
                 }
             );
@@ -733,8 +707,8 @@ return {
                 "chaos.project.unknown",
                 json::Value::ofObject({}),
                 script::ScopedRunRequest{
-                    .parentPosition = runPosition(),
-                    .budgetOwner    = "chaos.project.unknown",
+                    .callIdentity = runPosition(),
+                    .budgetOwner  = "chaos.project.unknown",
                     .maximumElapsedMillis   = 5'000U,
                 }
             );
@@ -807,8 +781,8 @@ return {
                 k_dismissTool,
                 json::Value::ofObject({}),
                 script::ScopedRunRequest{
-                    .parentPosition = runPosition(),
-                    .budgetOwner    = std::string{k_dismissTool},
+                    .callIdentity = runPosition(),
+                    .budgetOwner  = std::string{k_dismissTool},
                     .maximumElapsedMillis   = 5'000U,
                 }
             );
@@ -1122,28 +1096,6 @@ return {
             ));
         }
 
-        SUBCASE("a generation with no Tool Runtime seam")
-        {
-            auto const generation = generationOver(
-                k_toolSource,
-                bothEntries(),
-                bothBindings()
-            );
-
-            // The seam is required, and its absence is refused at the loader
-            // rather than discovered by a run that finds nothing there.
-            auto const unrunnable = registrar.registerGeneration(
-                generation,
-                catalogOver(generation, bothTools()),
-                closureModules(k_toolSource),
-                {},
-                script::ToolRuntimeDispatch{}
-            );
-            REQUIRE_FALSE(unrunnable.has_value());
-            CHECK(
-                unrunnable.error().message().contains("requires a Tool Runtime")
-            );
-        }
     }
 
     TEST_CASE("the catalog join refuses a contract and a binding table that disagree")

@@ -25,10 +25,6 @@ namespace uf::operator_runtime
         RequireApproval,
     };
 
-    [[nodiscard]]
-    auto policyDecisionWireName(PolicyDecision decision) noexcept
-        -> std::string_view;
-
     // An Operator that has stated no policy gets this exact artifact: no rules,
     // no Privileged surface granted, with both defaults fixed to deny. It is
     // parameterized only by the exact Operator protocol schema it answers for.

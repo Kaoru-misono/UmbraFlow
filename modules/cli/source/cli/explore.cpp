@@ -118,7 +118,6 @@ namespace uf::cli
 
         UF_TRY_VALUE(recorded, readQueueCursor(cursorPath, queue));
         UF_TRY_VALUE(extent, measureQueueExtent(queue));
-        UF_TRY_VALUE(start, resolveQueueStart(recorded, extent, queue));
 
         error                    = std::error_code{};
         auto const resultsStatus = std::filesystem::symlink_status(results, error);
@@ -131,33 +130,80 @@ namespace uf::cli
             && resultsStatus.type() != std::filesystem::file_type::not_found
         );
 
-        if (recorded.has_value())
+        // THE THREE FILES ARE ONE VALUE, so they are judged together and any
+        // refusal names all of them at once.
+        //
+        // Two shapes are legal. A FRESH session: an empty queue, no cursor, no
+        // results. A RESUMED one: a cursor, a queue at least as long as the
+        // cursor consumed, and the results it already wrote.
+        //
+        // These checks existed and each aborted the process on its own, so an
+        // operator learned the four preconditions one relaunch apiece -- and
+        // every relaunch of this verb is a UAC approval, because the target
+        // runs elevated. Worse, the first refusal's remedy caused the second:
+        // "start from an empty queue" says nothing about the cursor beside it,
+        // and emptying the queue under a cursor is exactly what
+        // `resolveQueueStart` refuses next. A diagnosis delivered one file per
+        // approval is not a specific signal; it is the same signal charged four
+        // times.
+        auto const cursorExists = recorded.has_value();
+        auto const queueEmpty   = extent.totalBytes == 0U;
+        auto const freshShape   = queueEmpty && !cursorExists && !resultsExist;
+        auto const resumedShape = cursorExists
+            && recorded->consumedBytes <= extent.totalBytes
+            && resultsExist;
+
+        if (!freshShape && !resumedShape)
         {
-            if (!resultsExist)
+            auto observed = std::string{};
+            auto const note = [&observed](std::string const& line)
             {
-                return invalid(
-                    std::format(
-                        "the cursor beside {} records {} answered chunk(s), but "
-                        "the results file {} is gone; a resumed session appends "
-                        "to the answers it already gave",
-                        args.queue.string(),
-                        recorded->consumedLines,
-                        args.results.string()
-                    )
-                );
-            }
+                if (!observed.empty())
+                {
+                    observed += '\n';
+                }
+                observed += line;
+            };
+            note(std::format(
+                "  queue    {}: {}",
+                args.queue.string(),
+                queueEmpty
+                    ? std::string{"empty"}
+                    : std::format("{} line(s)", extent.framedLines)
+            ));
+            note(std::format(
+                "  cursor   {}: {}",
+                cursorPath.string(),
+                cursorExists
+                    ? std::format(
+                          "{} chunk(s), {} byte(s) consumed",
+                          recorded->consumedLines,
+                          recorded->consumedBytes
+                      )
+                    : std::string{"absent"}
+            ));
+            note(std::format(
+                "  results  {}: {}",
+                args.results.string(),
+                resultsExist ? "present" : "absent"
+            ));
+
+            return invalid(std::format(
+                "the queue, its cursor and the results file do not form a "
+                "session this verb can start. Running a queue nobody recorded "
+                "could re-deliver clicks and keystrokes against a live target, "
+                "and skipping it could drop work, so neither is guessed.\n"
+                "\nWhat is there now:\n{}\n"
+                "\nFor a FRESH session, all three at once: empty the queue, "
+                "delete the cursor, delete the results file.\n"
+                "For a RESUMED session: keep the cursor, keep the results file, "
+                "and leave the queue at least {} byte(s) long.",
+                observed,
+                cursorExists ? recorded->consumedBytes : uint64{0}
+            ));
         }
-        else if (resultsExist)
-        {
-            return invalid(
-                std::format(
-                    "the results path {} already exists and no cursor records a "
-                    "session it belongs to; a fresh exploration session's results "
-                    "must be a fresh file",
-                    args.results.string()
-                )
-            );
-        }
+
+        UF_TRY_VALUE(start, resolveQueueStart(recorded, extent, queue));
 
         return ExploreIpcPaths{
             .queue   = std::move(queue),

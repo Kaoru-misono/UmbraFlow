@@ -30,12 +30,16 @@ namespace uf::task
     namespace
     {
         constexpr auto k_catalogTools = std::string_view{
-            R"([{"argument_contract":{},"body":true)"
-            R"(,"child_effects":{"maximum_child_calls":1})"
-            R"(,"name":"framework.screen.observe","tool_version":"1"})"
-            R"(,{"argument_contract":{},"body":false)"
-            R"(,"child_effects":{"maximum_child_calls":0})"
-            R"(,"name":"framework.screen.read_lines","tool_version":"1"}])"
+            R"([{"description":"Deliver one click","input_schema":{},)"
+            R"("name":"framework.input.click","tool_version":"1"},)"
+            R"({"description":"Capture one screenshot","input_schema":{},)"
+            R"("name":"framework.screen.capture","tool_version":"1"},)"
+            R"({"description":"Observe one retained screenshot","input_schema":{},)"
+            R"("name":"framework.screen.observe","tool_version":"1"},)"
+            R"({"description":"Read lines from one retained screenshot","input_schema":{},)"
+            R"("name":"framework.screen.read_lines","tool_version":"1"},)"
+            R"({"description":"Let time pass","input_schema":{},)"
+            R"("name":"framework.workflow.wait","tool_version":"1"}])"
         };
 
         [[nodiscard]] auto digestOf(std::string_view text) -> ContentHash
@@ -64,7 +68,8 @@ namespace uf::task
         auto session(
             std::shared_ptr<std::vector<std::string>> calls,
             MonotonicInstant::Duration maximumRuntime = std::chrono::seconds{5},
-            uint64 memoryQuotaBytes = 16U * 1024U * 1024U
+            uint64 memoryQuotaBytes = 16U * 1024U * 1024U,
+            script::ToolRuntimeInvoke runtime = {}
         )
             -> Result<script::ScopedToolSession>
         {
@@ -80,25 +85,22 @@ namespace uf::task
                 .dependencyDepth = 0U,
                 .projectVisible  = true,
             });
-            auto runtime = script::ToolRuntimeInvoke{
-                [calls = std::move(calls)](
+            if (!runtime)
+            {
+                runtime = [calls = std::move(calls)](
                     std::string_view name,
-                    json::Value const&,
-                    script::ToolCallBody body
+                    json::Value const&
                 ) -> Result<json::Value>
                 {
                     calls->emplace_back(name);
-                    if (body)
-                    {
-                        UF_TRY(body(digestOf(name)));
-                    }
                     return json::Value::ofObject({
                         {"call_identity", json::Value::ofString(digestOf(name).hex())},
-                        {"state", json::Value::ofString("confirmed")},
-                        {"tool", json::Value::ofString(std::string{name})},
+                        {"delivery", json::Value::ofString("confirmed")},
+                        {"ok", json::Value::ofBoolean(true)},
+                        {"result", json::Value::ofObject({})},
                     });
-                }
-            };
+                };
+            }
             return script::ScopedToolSession::create(
                 std::move(*modules),
                 catalogResources(),
@@ -110,6 +112,122 @@ namespace uf::task
         }
     } // namespace
 
+    // The loop this architecture exists to run, asserted end to end.
+    //
+    // It was covered before the flat-call cut by a case written on the nested
+    // observation body, and that case could not survive the body's deletion. It
+    // is restored here in the shape the ruling gives it: a screenshot is a
+    // value, so the loop CAPTURES first and every later call names that digest.
+    // Nothing about the sequence is implicit any more -- no open frame, no
+    // callback, no scope -- so the only thing that can hold the steps together
+    // is the caller, which is exactly what this asserts.
+    TEST_CASE("a flat automation loop captures observes acts waits and terminates")
+    {
+        auto calls        = std::make_shared<std::vector<std::string>>();
+        auto observations = std::make_shared<uint32>();
+
+        auto runtime = [calls, observations](
+                           std::string_view tool,
+                           json::Value const& arguments
+                       ) -> Result<json::Value>
+        {
+            calls->emplace_back(tool);
+
+            auto result = json::Value::ofObject({});
+            if (tool == "framework.screen.capture")
+            {
+                result = json::Value::ofObject({
+                    {"screenshot_sha256",
+                     json::Value::ofString(digestOf("flat-loop-frame").hex())},
+                });
+            }
+            else if (tool == "framework.screen.observe")
+            {
+                // Every later call must name the digest capture answered with.
+                // A loop that observed "the current screen" instead would pass
+                // this test while measuring something nobody captured.
+                auto const* const named = arguments.find("screenshot_sha256");
+                REQUIRE(named != nullptr);
+                CHECK_MESSAGE(
+                    named->string() == digestOf("flat-loop-frame").hex(),
+                    "observe must name the screenshot capture answered with"
+                );
+                ++*observations;
+                result = json::Value::ofObject({
+                    {"terminal", json::Value::ofBoolean(*observations == 2U)},
+                });
+            }
+
+            return json::Value::ofObject({
+                {"call_identity",
+                 json::Value::ofString(digestOf(
+                     std::string{tool} + "#" + std::to_string(calls->size())
+                 ).hex())},
+                {"delivery", json::Value::ofString("confirmed")},
+                {"ok", json::Value::ofBoolean(true)},
+                {"result", std::move(result)},
+            });
+        };
+
+        auto scoped = session({}, std::chrono::seconds{5}, 16U * 1024U * 1024U,
+                              std::move(runtime));
+        REQUIRE(scoped.has_value());
+
+        auto const outcome = scoped->evaluate(
+            R"LUAU(
+                local tools = require("@umbraflow/tools")
+
+                local function call(name, args)
+                    local answer = tools.call(name, args)
+                    if rawget(answer, "ok") ~= true then
+                        error(name .. " did not confirm")
+                    end
+                    return rawget(answer, "result")
+                end
+
+                for _ = 1, 3 do
+                    local shot = call("framework.screen.capture", canon.emptyObject)
+                    local digest = rawget(shot, "screenshot_sha256")
+                    local seen = call("framework.screen.observe", {
+                        screenshot_sha256 = digest,
+                    })
+                    if rawget(seen, "terminal") == true then
+                        return "terminated"
+                    end
+                    call("framework.input.click", {
+                        screenshot_sha256 = digest, x = 1, y = 0,
+                    })
+                    call("framework.workflow.wait", { duration_ms = 5 })
+                end
+                return "exhausted"
+            )LUAU",
+            "flat-automation-loop"
+        );
+
+        auto const why = outcome.has_value()
+            ? std::string{}
+            : std::string{outcome.error().message()};
+        REQUIRE_MESSAGE(outcome.has_value(), why);
+        REQUIRE(outcome->text() != nullptr);
+        CHECK_MESSAGE(
+            *outcome->text() == "terminated",
+            "the loop must end because an observation said so, not by exhaustion"
+        );
+
+        auto const expected = std::vector<std::string>{
+            "framework.screen.capture",
+            "framework.screen.observe",
+            "framework.input.click",
+            "framework.workflow.wait",
+            "framework.screen.capture",
+            "framework.screen.observe",
+        };
+        CHECK_MESSAGE(
+            *calls == expected,
+            "capture, observe, act, wait, then capture and observe again"
+        );
+    }
+
     TEST_CASE("interactive chunks resolve the registered-handler scoped modules")
     {
         auto calls  = std::make_shared<std::vector<std::string>>();
@@ -120,29 +238,151 @@ namespace uf::task
             R"LUAU(
                 local screen = require("@umbraflow/screen")
                 local tools = require("@umbraflow/tools")
-                local measured = false
-                local answer = screen.observe(function()
-                    measured = true
-                    tools.call("framework.screen.read_lines", {
-                        x = 0,
-                        y = 0,
-                        width = 1,
-                        height = 1,
-                    })
-                end)
-                return tools.state(answer) .. ":" .. tostring(measured)
+                local hash = string.rep("0", 64)
+                local answer = screen.observe(hash)
+                local measured = true
+                tools.call("framework.screen.read_lines", {
+                    screenshot_sha256 = hash,
+                    x = 0,
+                    y = 0,
+                    width = 1,
+                    height = 1,
+                })
+                return answer.delivery .. ":" .. tostring(answer.ok) .. ":" .. tostring(measured)
             )LUAU",
             "scoped-modules"
         );
         REQUIRE(result.has_value());
         REQUIRE(result->text() != nullptr);
-        CHECK(*result->text() == "confirmed:true");
+        CHECK(*result->text() == "confirmed:true:true");
         CHECK(
             *calls
             == std::vector<std::string>{
                 "framework.screen.observe",
                 "framework.screen.read_lines",
             }
+        );
+    }
+
+    TEST_CASE("screen observation carries a provider failure message verbatim")
+    {
+        constexpr auto k_providerMessage =
+            std::string_view{"the provider could not read this retained frame"};
+        auto calls = std::make_shared<std::vector<std::string>>();
+        auto scoped = session(
+            calls,
+            std::chrono::seconds{5},
+            16U * 1024U * 1024U,
+            [calls, k_providerMessage](
+                std::string_view name,
+                json::Value const&
+            ) -> Result<json::Value>
+            {
+                calls->emplace_back(name);
+                return json::Value::ofObject({
+                    {"call_identity", json::Value::ofString(digestOf(name).hex())},
+                    {"delivery", json::Value::ofString("terminal_failure")},
+                    {"error", json::Value::ofObject({
+                        {"code", json::Value::ofString("io_failure")},
+                        {"message", json::Value::ofString(std::string{k_providerMessage})},
+                        {"retryable", json::Value::ofBoolean(false)},
+                    })},
+                    {"ok", json::Value::ofBoolean(false)},
+                });
+            }
+        );
+        REQUIRE(scoped.has_value());
+
+        auto const result = scoped->evaluate(
+            R"LUAU(
+                local screen = require("@umbraflow/screen")
+                local observed = screen.observation(screen.observe(string.rep("0", 64)))
+                return observed.error.message
+            )LUAU",
+            "provider-message"
+        );
+        auto const message = result.has_value()
+            ? std::string{}
+            : std::string{result.error().message()};
+        REQUIRE_MESSAGE(result.has_value(), message);
+        REQUIRE(result->text() != nullptr);
+        CHECK_MESSAGE(
+            *result->text() == k_providerMessage,
+            "screen.observation must carry the provider failure message verbatim"
+        );
+    }
+
+    TEST_CASE("a Tool admission or protocol refusal still raises")
+    {
+        auto calls = std::make_shared<std::vector<std::string>>();
+        auto scoped = session(
+            calls,
+            std::chrono::seconds{5},
+            16U * 1024U * 1024U,
+            [](std::string_view, json::Value const&) -> Result<json::Value>
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "protocol refusal sentinel"
+                );
+            }
+        );
+        REQUIRE(scoped.has_value());
+
+        auto const result = scoped->evaluate(
+            R"LUAU(
+                local tools = require("@umbraflow/tools")
+                local answer = tools.call("framework.screen.observe", {})
+                return answer.ok
+            )LUAU",
+            "protocol-refusal"
+        );
+        auto const message = result.has_value()
+            ? std::string{"returned ok: false instead of raising"}
+            : std::string{result.error().message()};
+        auto const raisedRefusal = !result.has_value()
+            && message.contains("protocol refusal sentinel");
+        CHECK_MESSAGE(
+            raisedRefusal,
+            "Tool admission or protocol refusal must raise instead of returning ok false"
+        );
+    }
+
+    TEST_CASE("possible remains an explicit delivery value")
+    {
+        auto calls = std::make_shared<std::vector<std::string>>();
+        auto scoped = session(
+            calls,
+            std::chrono::seconds{5},
+            16U * 1024U * 1024U,
+            [](std::string_view name, json::Value const&) -> Result<json::Value>
+            {
+                return json::Value::ofObject({
+                    {"call_identity", json::Value::ofString(digestOf(name).hex())},
+                    {"delivery", json::Value::ofString("possible")},
+                    {"error", json::Value::ofObject({
+                        {"code", json::Value::ofString("delivery_unknown")},
+                        {"message", json::Value::ofString("the input may have landed")},
+                        {"retryable", json::Value::ofBoolean(false)},
+                    })},
+                    {"ok", json::Value::ofBoolean(false)},
+                });
+            }
+        );
+        REQUIRE(scoped.has_value());
+
+        auto const result = scoped->evaluate(
+            R"LUAU(
+                local tools = require("@umbraflow/tools")
+                return tools.call("framework.screen.observe", {}).delivery
+            )LUAU",
+            "possible-delivery"
+        );
+        REQUIRE(result.has_value());
+        REQUIRE(result->text() != nullptr);
+        CHECK_MESSAGE(
+            *result->text() == "possible",
+            "an input whose landing is unknown must remain delivery possible"
         );
     }
 

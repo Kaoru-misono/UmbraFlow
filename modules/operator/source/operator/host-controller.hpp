@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <string>
+#include <variant>
 
 namespace uf::operator_runtime
 {
@@ -18,12 +19,9 @@ namespace uf::operator_runtime
     // takeover returns or move between a successful reservation and
     // TaskHost::deliver.
     //
-    // PER OPERATION, never across a held input. Each method below takes the
-    // lock for its own span and gives it back before it returns, so an engaged
-    // hold -- which outlives the call that engaged it -- leaves nothing locked
-    // behind for the child calls that observe while the button is down. A lock
-    // spanning a whole hold would serialise exactly the calls hold-with-children
-    // exists to allow.
+    // A flat hold keeps the serialization token until it releases. Its one
+    // optional capture/observation is internal to the same Tool call, so no
+    // child call needs to enter while the target is pressed.
     class OperatorTaskHost final
     {
         struct Impl;
@@ -36,6 +34,29 @@ namespace uf::operator_runtime
             -> Status;
 
     public:
+        class ToolCallHold final
+        {
+            friend class OperatorTaskHost;
+
+            struct Impl;
+            std::unique_ptr<Impl> m_impl;
+
+            explicit ToolCallHold(std::unique_ptr<Impl> implementation);
+
+        public:
+            ToolCallHold(ToolCallHold const&) = delete;
+            ToolCallHold(ToolCallHold&&) noexcept;
+            auto operator=(ToolCallHold const&) -> ToolCallHold& = delete;
+            auto operator=(ToolCallHold&&) noexcept -> ToolCallHold&;
+            ~ToolCallHold();
+
+            [[nodiscard]] auto duration() const noexcept
+                -> MonotonicInstant::Duration;
+        };
+
+        using ToolCallHoldStart =
+            std::variant<ToolCallHold, task::HostDeliveryReport>;
+
         // What one Tool-call-native input asks the Host to deliver: the model
         // target the call's own resolved observation named, and the UI action
         // it asks for on that target.
@@ -48,7 +69,9 @@ namespace uf::operator_runtime
         struct ToolCallInputIntent final
         {
             std::string uiTarget{};
-            std::string uiAction{};
+            std::string binding{};
+            std::string action{};
+            std::string expectedKind{};
         };
 
         [[nodiscard]]
@@ -107,5 +130,20 @@ namespace uf::operator_runtime
             ToolCallInputIntent const& intent,
             task::TaskContext& context
         ) -> Result<task::HostDeliveryReport>;
+
+        [[nodiscard]]
+        auto engageToolCallHold(
+            ToolCallPositionIdentity const& call,
+            ControlLease const& lease,
+            GenerationId runtimeGeneration,
+            ToolCallInputIntent const& intent,
+            task::TaskContext& context
+        ) -> Result<ToolCallHoldStart>;
+
+        [[nodiscard]]
+        auto finishToolCallHold(
+            ToolCallHold hold,
+            task::TaskContext& context
+        ) -> task::HostDeliveryReport;
     };
 }

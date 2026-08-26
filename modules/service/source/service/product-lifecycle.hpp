@@ -15,6 +15,7 @@
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
 
+#include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -125,16 +126,6 @@ namespace uf::service
         operator_runtime::ToolExecutionIdentity executionIdentity;
         std::string                             toolName{};
         std::string                             exactArgumentsJcs{};
-
-        // The structured body a descriptor-declared call holds its scope for.
-        // It runs INSIDE this call's own dispatch, so the Tool calls it
-        // makes are numbered under this call's durable position and recorded as
-        // its children
-        // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
-        //
-        // Move-only, because it is consumed exactly once: a body that could be
-        // copied could be run twice under one recorded position.
-        operator_runtime::ToolBodyRun body{};
     };
 
     // The production session over an Operator root. The exact published
@@ -143,7 +134,7 @@ namespace uf::service
     // session's policy authority.
     //
     // This module holds the only production calls that open an
-    // OperatorCoordinator -- start below, and reclaimRuntimeArtifacts,
+    // OperatorCoordinator -- start below, and reclaimOperatorStores,
     // upgradeRuntimeArtifactAndPinSession and approveReleaseCapabilities after
     // the class -- so every one reaches a root through
     // OperatorCoordinator::open and completes its recovery before doing
@@ -223,6 +214,14 @@ namespace uf::service
             task::TaskContext& context
         ) -> Result<operator_runtime::ToolCallReplay>;
 
+        // Carries screenshot payload bytes outside the ledger. The caller names
+        // the digest from a committed capture or crop receipt; the Operator
+        // verifies both that receipt and the blob's digest before returning
+        // owned bytes suitable for a harness attachment or image viewer.
+        [[nodiscard]]
+        auto readScreenshot(ContentHash const& hash)
+            -> Result<std::vector<std::byte>>;
+
         // The three actor transports, each one translation away from the same
         // admitted request and the same dispatch. What differs between them is
         // what the transport delivers -- a model's parsed tool-use block, a
@@ -260,8 +259,16 @@ namespace uf::service
         [[nodiscard]] auto shutdown() -> Status;
     };
 
-    // Runs the Operator root's reclamation pass over runtimeDirectory and
-    // reports what it removed.
+    struct ReclaimedOperatorStores final
+    {
+        operator_runtime::ReclaimedRuntimeArtifacts  runtime{};
+        operator_runtime::ReclaimedEvidenceArtifacts evidence{};
+    };
+
+    // Runs the Operator root's independent reclamation passes over
+    // runtimeDirectory and reports what each store removed. The evidence
+    // retention ceiling is operator input; the framework does not supply a
+    // default or reinterpret it as RuntimeArtifact lifetime.
     //
     // It opens a Coordinator of its own and closes it again, which is what
     // makes the pass safe to offer: claimExclusiveOwnership refuses this call
@@ -276,8 +283,10 @@ namespace uf::service
     // lifecycle hook has no caller to hand them to and would drop the only
     // report the pass produces.
     [[nodiscard]]
-    auto reclaimRuntimeArtifacts(std::filesystem::path const& runtimeDirectory)
-        -> Result<operator_runtime::ReclaimedRuntimeArtifacts>;
+    auto reclaimOperatorStores(
+        std::filesystem::path const& runtimeDirectory,
+        uint64 evidenceRetentionMillis
+    ) -> Result<ReclaimedOperatorStores>;
 
     // The production door for a RuntimeArtifact release upgrade: what a caller
     // states, in the order the ledger consumes it.

@@ -70,14 +70,4 @@ function audit.record(record: any): any
     return tools.call(k_recordTool, { [k_recordMember] = checkedRecord(record) })
 end
 
--- Whether a record durably landed. It asserts provenance as well as the
--- classification, so a script cannot mistake another Tool's confirmed answer
--- for its own audit record.
-function audit.recorded(answer: any): boolean
-    if tools.tool_name(answer) ~= k_recordTool then
-        reject("recorded needs the answer of " .. k_recordTool)
-    end
-    return tools.state(answer) == "confirmed"
-end
-
 return table.freeze(audit)

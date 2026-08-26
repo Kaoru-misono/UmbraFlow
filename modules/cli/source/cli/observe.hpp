@@ -31,7 +31,7 @@ namespace uf::cli
         std::unique_ptr<engine::IFrameSource> frameSource{};
         std::unique_ptr<engine::IActionSink>  actionSink{};
 
-        // Required, not optional. A null engine answers every Reader with "no
+        // Required, not optional. A null engine answers every Readout with "no
         // text", and this verb exists so a human can tell a screen with no text
         // from a host that could not read one.
         std::unique_ptr<ocr::IOcrEngine> ocrEngine{};

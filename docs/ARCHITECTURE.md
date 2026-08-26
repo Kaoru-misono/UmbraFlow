@@ -63,7 +63,6 @@ its home.
 | published framework schema files and their generated exact-byte runtime catalog | `schema` |
 | generic immutable audit events | `trace` |
 | offline Project Kit build, immutable release and project command | `project` |
-| offline Project Authoring C++ boundary | `authoring` |
 | offline evidence, candidates, review, replay and publication | `tools/annotate` |
 | the Operator contract a consumer must satisfy, as runnable cases | `conformance` |
 | game semantics and payload schemas | external ProjectPlugin consumer |

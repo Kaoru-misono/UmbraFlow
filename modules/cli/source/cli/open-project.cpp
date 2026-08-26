@@ -7,8 +7,6 @@
 #include <operator/project-generation.hpp>
 #include <operator/project-plugin.hpp>
 
-#include <script/scoped-tool-program.hpp>
-
 #include <task/runtime-model-file.hpp>
 #include <task/task-host.hpp>
 
@@ -29,33 +27,6 @@ namespace uf::cli
 {
     namespace
     {
-        // The Tool Runtime seam `open` compiles a generation against. The verb
-        // starts no session, holds no lease and dispatches nothing; it answers
-        // whether each deployment's two closures are admissible, and a
-        // generation that could dispatch from here would be an unadmitted call.
-        //
-        // The seam refuses rather than being absent, for the reason the scoped
-        // program type exists: a scoped program with no Tool Runtime is a pure
-        // program wearing the wrong type. It is one value this seam always
-        // answers with, never a branch on anything.
-        [[nodiscard]]
-        auto inertToolRuntime() -> script::ToolRuntimeDispatch
-        {
-            return [](
-                       std::string_view,
-                       json::Value const&,
-                       script::ToolCallCoordinate const&,
-                       std::stop_token,
-                       script::ToolCallBody
-                   ) -> Result<json::Value>
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "umbra-flow open dispatches no Tool call"
-                );
-            };
-        }
-
         // Why the Operator's registrar refused this deployment, or nothing at
         // all when the registry holds its generation afterwards.
         //
@@ -80,8 +51,7 @@ namespace uf::cli
                     .entryModule = loaded.toolClosure.entryModule,
                     .modules     = loaded.toolClosure.modules,
                 },
-                loaded.projectResources,
-                inertToolRuntime()
+                loaded.projectResources
             );
             if (!registered)
             {

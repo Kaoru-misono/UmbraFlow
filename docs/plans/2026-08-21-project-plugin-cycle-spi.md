@@ -15,6 +15,16 @@ followed; WP11, WP12 and the remaining obligations of section 14 are open**
 > ruling's own table. Where this plan and that ruling disagree, the ruling
 > decides; nothing here is edited to hide the disagreement.
 
+> **Superseded in part, 2026-08-26, by
+> [a Tool is a flat call over an explicit reference](../decisions/2026-08-26-a-tool-is-a-flat-call-over-an-explicit-reference.md).**
+> Every clause below about Tool bodies, child effects, nested handler issuance,
+> call-position observation frames or the accessor-based answer envelope is
+> historical. Current Project handlers are leaves over explicit inputs; a Tool
+> is one name plus one flat object schema; screenshots are explicit artifact
+> references; and a synchronous call returns its terminal answer directly. The
+> experiments below retain their measurements, but those retired mechanisms no
+> longer own work.
+
 The ruling is frozen in
 [`tools are the shared game-driving boundary`](../decisions/2026-08-21-tools-are-the-shared-game-driving-boundary.md).
 Nine later rulings refine it and are equally binding on this plan.
@@ -84,8 +94,8 @@ Project automation -----+              |
 ```
 
 Framework and Project are both tool providers. Project automation is a tool
-caller, not a privileged Host callback. Project may also provide tool handlers,
-and a handler may make child calls only through the same runtime.
+caller, not a privileged Host callback. A Project may also provide leaf Tool
+handlers, and a handler receives no Tool-call seam.
 
 The shared call mechanics do not flatten authority. The actor identity and
 profile, Tool Catalog descriptor, policy, approvals, EffectivePlan, lease,
@@ -453,78 +463,21 @@ Both are forbidden. What makes an entry startable at the top of a run is that
 the actor is admitted to start it, which is the same authority and policy
 question that already exists for an Agent-issued root call.
 
-The forcing argument is recorded in full in that decision: a Tool's tuple and a
-script's tuple are field for field the same tuple under two sets of names, so
-two declaration shapes for it would be the "two spellings of one thing" the
-house rules ban. The field correspondence an implementer needs is that the
-requested Tool set and profile are the `ChildEffectDeclaration`'s child Tool
-names — `childToolNames` — together with its `maximumChildSurface`,
-`maximumChildMutability` and `maximumChildRisk` ceilings, and the requested
-budget ceilings are its `maximumChildCalls` together with the descriptor's
-workflow limits and timeout policy.
+The current declaration is one name, one description and one flat argument
+schema, with ordinary descriptor bounds. It carries no body, child Tool set,
+child profile or nested-call budget. The binding row, inside the registration
+root and outside `tool_catalog_hash`, pins the closure entry that answers it.
 
-One declaration therefore pins all of it, across the two documents section 5.2
-keeps apart. The descriptor, inside `tool_catalog_hash`, pins the argument and
-result schemas, the requested child Tool set and profile, and every requested
-ceiling and budget. The binding row, inside the registration root and outside
-`tool_catalog_hash`, pins the entry. The closed Project module closure both are
-read against is the registration's own tool closure.
+A registration carries one tool closure compiled on `ScopedToolProgram`. Its
+export statement and the binding union remain independent sources joined at
+registration. The closure receives explicit arguments, has no ambient
+filesystem, network, process, clock, randomness, Host FFI or Tool-call seam,
+and returns one value. Dispatch invokes that leaf and writes the admitted call's
+terminal durable row.
 
-A registration carries **two** closures, not one.
-[`One job, one vehicle`](../decisions/2026-08-22-one-job-one-vehicle.md) breaks
-the "ONE closure, ONE manifest hash" invariant outright: a registration carries a
-reducer closure compiled on `PureDataProgram` and a tool closure compiled on
-`ScopedToolProgram`, each with its own module manifest hash, and both slots are
-mandatory. There is no absent-means-pure reading and no absent-means-scoped one.
-The pure type's whole contract after the flip is the single entry `reduce`;
-`derive`, `plan`, `next_step` and `reconcile` die with the contract the Tool
-Runtime replaces, and the bridge's exact-export admission runs per closure —
-`{plugin_id, reduce}` for the reducer, `plugin_id` plus the binding union for the
-tool closure.
-
-Each closure states the entries it exports.
-[`A join needs two independent sources`](../decisions/2026-08-22-a-join-needs-two-independent-sources.md)
-fixes where that statement comes from: `exportedEntryPoints` is produced by the
-authoring path on every authoring build, carried by deployment into the
-registration, covered by the manifest hash, cross-checked against the binding
-union at load, and proven against the closure's actual exports by the bridge at
-execution. The loader may neither derive it from the binding table nor execute
-the module to observe it, because either collapse makes the check compare one
-source to itself and leaves a refusal no test can make fail. The authoring tool
-computes it by running the module in the author's own sandbox — nothing short of
-running reads a Luau table's keys — but what ships is a committed, hashed
-statement rather than a re-derivation.
-
-None of that is a grant. Every declared bound is an input to Operator admission,
-never a permission: the effective Tool set and budgets are the intersection of
-the declaration, actor/session authority, Tool descriptors, policy, approvals,
-and runtime limits. The loader and registrar bind that tool closure, the SDK
-generation, the Tool Runtime generation, the Project Tool Catalog, and the
-Project registration before a run starts.
-
-Project code at a bound entry may use normal functions, modules, branches,
-loops, and local variables. It receives no ambient filesystem, network, process,
-clock, randomness, Host FFI, Binding, Receipt, or native-input primitive.
-External work is a Tool call.
-
-A bound entry runs on `ScopedToolProgram`, not `PureDataProgram`. Its one native
-seam is the synchronous `invoke` primitive of section 4.2, and the
-per-invocation fresh VM, closed module graph, resource closure and deep-freeze
-discipline are unchanged from the pure program type.
-
-Three things genuinely differ between the two producers of a run — Operator
-admission of an actor's start, and runtime dispatch of an admitted parent call —
-and each lives where it cannot become a flag. Who mints the run's coordinate is
-resolved in the producer and arrives as a value: dispatch derives the position
-from the admitted parent's durable row, a start at the top of a run mints a root
-coordinate, and the shared invoke path never asks which kind it is serving. What
-feeds the authority intersection is the parent's `ChildEffectDeclaration` plus
-its delegation grant in one case, and actor/session authority plus policy in the
-other; both producers emit the same effective-envelope value, and the
-intersection engine that consumes it is one. Where the result row is written
-does not differ at all: a root run is a root-positioned call, so both results are
-the terminal durable row of the call the run implements, validated against that
-entry's declared result schema.
+None of that is a grant. Actor/session authority, the descriptor, policy,
+approvals and runtime limits are still judged at the one admission boundary
+before the leaf runs.
 
 ### 5.2 Durable call history
 
@@ -1330,24 +1283,21 @@ the old identity before reopening.
   same hash, so the preimage additionally carries a same-source duplicate that
   cannot mismatch. The ruling above replaces the derivation with protocol
   material of its own.
-- **Most of section 10 is unrun.** E2's subject exists as
-  `tests/operator/test-tool-automation-loop.cpp`; the dispatch and
+- **Most of section 10 is unrun.** E2's subject had a runner in
+  `tests/operator/test-tool-automation-loop.cpp` until that file was deleted with
+  the flat-call cut, so it has none now; the dispatch and
   snapshot-reference fixtures cover parts of E3 and E5; and E1 has a three-actor
   fixture in `tests/operator/test-tool-dispatch.cpp`, and it is **audited and done**: it compares canonical
   argument bytes and hash, the seven admission-attempt attributes, all thirteen
   durable position columns and the result, across all four producers, with the
   fourth's one recorded difference — a non-empty `delegation_grant_id` —
   asserted rather than ignored. The caveat is that only the read-only fixture
-  drives all four; the mutating one drives the three adapters. E4, E6's cross-platform half, E7 and E8 have no runner.
+  drives all four; the mutating one drives the three adapters. E2, E4, E6's cross-platform half, E7 and E8 have no runner.
 
-  E4 cannot be written in conformance today: every descriptor in both shipped
-  example catalogs declares `child_effects.maximum_child_calls: 0`, so no
-  handler can issue a child call and no delegation grant can be minted. Its
-  attack list is a set of Operator refusals over a synthetic catalog, which
-  `tests/operator/test-tool-nested-calls.cpp` is the right home for; the half
-  that is genuinely the consumer's — does this project's descriptor declare a
-  child-effect envelope its handler stays inside — needs an example directory
-  that declares one.
+  E4 is closed by deletion: Project handlers are leaves, declarations refuse
+  `child_effects`, and `tests/operator/test-tool-nested-calls.cpp` was removed
+  with the nested admission path. There is no consumer-side child-effect
+  envelope left to test.
 
   E7 belongs in conformance beside the existing Journal-prefix fold case, but
   its subject is WP9's: there is no `commit_context` and no call-bound

@@ -22,14 +22,16 @@ namespace uf::cli
     // OpenedProject restates a load as strings: uf::operator_runtime is a
     // private dependency of this module, so nothing a caller of this header
     // reads obliges it to link the authority that answered.
-    struct ReclaimedRuntime final
+    struct ReclaimedOperatorRoot final
     {
         std::filesystem::path runtime{};
 
         uint64 artifactDirectories{};
         uint64 stagingDirectories{};
+        uint64 evidenceBlobs{};
+        uint64 evidenceStagings{};
 
-        auto operator==(ReclaimedRuntime const&) const -> bool = default;
+        auto operator==(ReclaimedOperatorRoot const&) const -> bool = default;
     };
 
     // Opens the Operator root at args.runtime through the one production door
@@ -40,10 +42,12 @@ namespace uf::cli
     // this verb finding the root already held is the refusal that enforces it
     // rather than a race it has to reason about.
     [[nodiscard]]
-    auto reclaimProduct(ReclaimArgs const& args) -> Result<ReclaimedRuntime>;
+    auto reclaimProduct(ReclaimArgs const& args) -> Result<ReclaimedOperatorRoot>;
 
     // Separate from the sweep so the shape an operator reads is testable
     // without a root on disk, as formatOpenedProject is.
     [[nodiscard]]
-    auto formatReclaimedRuntime(ReclaimedRuntime const& reclaimed) -> std::string;
+    auto formatReclaimedOperatorRoot(
+        ReclaimedOperatorRoot const& reclaimed
+    ) -> std::string;
 }

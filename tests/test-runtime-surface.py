@@ -66,7 +66,7 @@ REQUIRED_SAFE_PATHS = (
     "schema/umbraflow-policy-v1.schema.json",
     "schema/umbraflow-project-registration-v4.schema.json",
     "schema/umbraflow-runtime-artifact-v1.schema.json",
-    "schema/umbraflow-runtime-v3.schema.json",
+    "schema/umbraflow-runtime-v4.schema.json",
     "schema/umbraflow-trace-v2.schema.json",
     "tests/cli/test-args.cpp",
     "tests/cli/test-explore-protocol.cpp",
@@ -349,7 +349,7 @@ LUAU_RUNTIME_PARSER_PATTERN = re.compile(
     r"[A-Za-z0-9_]*\s*\("
 )
 RUNTIME_MODEL_PARSER_SOURCE = "modules/task/runtime/project.luau"
-RUNTIME_MODEL_SCHEMA = "schema/umbraflow-runtime-v3.schema.json"
+RUNTIME_MODEL_SCHEMA = "schema/umbraflow-runtime-v4.schema.json"
 STATE_RESOLUTION_SOURCE = "modules/task/runtime/resolution.luau"
 
 # The declaration of the Snapshot Coordinator's entry point, in the one header
@@ -380,7 +380,7 @@ MINT_BOUNDARIES = (
         "modules/task/source/task/host-delivery.hpp",
         "TaskHost",
         "modules/task/source/task/task-host.cpp",
-        "TaskHost::deliver",
+        "TaskHost::makeDeliveryReport",
     ),
 )
 
@@ -703,7 +703,7 @@ def trusted_parser_errors(root: Path) -> list[str]:
                 relative for _ in LUAU_RUNTIME_PARSER_PATTERN.finditer(text)
             )
 
-    runtime_schema = root / "schema/umbraflow-runtime-v3.schema.json"
+    runtime_schema = root / "schema/umbraflow-runtime-v4.schema.json"
     expected_count = 1 if runtime_schema.is_file() else 0
     if len(luau_parsers) != expected_count:
         errors.append(
@@ -714,12 +714,12 @@ def trusted_parser_errors(root: Path) -> list[str]:
     return errors
 
 
-def reader_member_parity_errors(root: Path) -> list[str]:
+def readout_member_parity_errors(root: Path) -> list[str]:
     parser_path = root / RUNTIME_MODEL_PARSER_SOURCE
     schema_path = root / RUNTIME_MODEL_SCHEMA
     if not parser_path.is_file() or not schema_path.is_file():
         return [
-            "RuntimeModel Reader member parity cannot find both the trusted "
+            "RuntimeModel Readout member parity cannot find both the trusted "
             "parser and published schema"
         ]
 
@@ -730,47 +730,47 @@ def reader_member_parity_errors(root: Path) -> list[str]:
     )
     if section_fields is None:
         return [
-            "RuntimeModel Reader member parity cannot read the trusted "
+            "RuntimeModel Readout member parity cannot read the trusted "
             "parser's sectionFields table"
         ]
     section_body = extract_braced_body(parser_text, section_fields.end() - 1)
     if section_body is None:
         return [
-            "RuntimeModel Reader member parity found an unterminated trusted "
+            "RuntimeModel Readout member parity found an unterminated trusted "
             "parser sectionFields table"
         ]
 
-    reader_fields = re.search(r"\breader\s*=\s*\{", section_body)
-    if reader_fields is None:
+    readout_fields = re.search(r"\breadout\s*=\s*\{", section_body)
+    if readout_fields is None:
         return [
-            "RuntimeModel Reader member parity cannot read trusted parser "
-            "sectionFields.reader"
+            "RuntimeModel Readout member parity cannot read trusted parser "
+            "sectionFields.readout"
         ]
-    reader_body = extract_braced_body(section_body, reader_fields.end() - 1)
-    if reader_body is None:
+    readout_body = extract_braced_body(section_body, readout_fields.end() - 1)
+    if readout_body is None:
         return [
-            "RuntimeModel Reader member parity found an unterminated trusted "
-            "parser sectionFields.reader table"
+            "RuntimeModel Readout member parity found an unterminated trusted "
+            "parser sectionFields.readout table"
         ]
     parser_members = set(
-        re.findall(r"\b([a-z][a-z0-9_]*)\s*=\s*true\b", reader_body)
+        re.findall(r"\b([a-z][a-z0-9_]*)\s*=\s*true\b", readout_body)
     )
     if not parser_members:
         return [
-            "RuntimeModel Reader member parity found no trusted parser members"
+            "RuntimeModel Readout member parity found no trusted parser members"
         ]
 
     try:
         schema = json.loads(schema_path.read_bytes())
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        return [f"RuntimeModel Reader member parity found invalid schema: {error}"]
+        return [f"RuntimeModel Readout member parity found invalid schema: {error}"]
     definitions = schema.get("$defs") if isinstance(schema, dict) else None
-    reader_schema = definitions.get("reader") if isinstance(definitions, dict) else None
-    properties = reader_schema.get("properties") if isinstance(reader_schema, dict) else None
+    readout_schema = definitions.get("readout") if isinstance(definitions, dict) else None
+    properties = readout_schema.get("properties") if isinstance(readout_schema, dict) else None
     if not isinstance(properties, dict):
         return [
-            "RuntimeModel Reader member parity cannot read published schema "
-            "$defs.reader.properties"
+            "RuntimeModel Readout member parity cannot read published schema "
+            "$defs.readout.properties"
         ]
 
     schema_members = set(properties)
@@ -784,7 +784,7 @@ def reader_member_parity_errors(root: Path) -> list[str]:
         differences.append("trusted parser only: " + ", ".join(parser_only))
     if schema_only:
         differences.append("published schema only: " + ", ".join(schema_only))
-    return ["RuntimeModel Reader member parity differs: " + "; ".join(differences)]
+    return ["RuntimeModel Readout member parity differs: " + "; ".join(differences)]
 
 
 def state_resolution_closed_object_errors(root: Path) -> list[str]:
@@ -1170,7 +1170,7 @@ def main() -> int:
             *published_global_errors(root),
             *retired_runtime_errors(root),
             *trusted_parser_errors(root),
-            *reader_member_parity_errors(root),
+            *readout_member_parity_errors(root),
             *state_resolution_closed_object_errors(root),
             *snapshot_identity_errors(root),
             *mint_boundary_errors(root),

@@ -45,13 +45,6 @@ namespace uf::deployment
         // one statement of a Tool and both readers of the document compile it.
         constexpr auto k_toolDefinition = std::string_view{"Tool"};
 
-        // The value a Tool's argument_schema carries when the Project declines
-        // argument validation. It is a value rather than an absence so that
-        // declining is written down: the member is mandatory, and the two
-        // readings mean different things rather than being two spellings of
-        // one.
-        constexpr auto k_uncheckedArguments = std::string_view{"unchecked"};
-
         [[nodiscard]]
         auto refuse(std::string message) -> std::unexpected<Error>
         {
@@ -178,15 +171,12 @@ namespace uf::deployment
         // the compiled guard its own declaration asked for, and the descriptor
         // every bound is read from.
         //
-        // An absent schema is the Project declining argument validation. It is
-        // std::optional rather than an always-present schema that accepts
-        // everything, because the two are different facts: one is a Project
-        // that stated no shape, the other is a Project that stated the empty
-        // shape, and a reader must be able to tell them apart.
         struct ToolEntry final
         {
             std::string                      name{};
-            std::optional<json::Schema>      argumentSchema{};
+            std::string                      description{};
+            json::Value                      inputSchema{};
+            json::Schema                     argumentSchema;
             operator_runtime::ToolDescriptor descriptor{};
         };
 
@@ -220,46 +210,6 @@ namespace uf::deployment
                     member(policy, "maximum_elapsed_ms").number()
                 ),
                 .onTimeout = *action,
-            };
-        }
-
-        // OP:`ChildEffectDeclaration`, the parent half of child admission. The
-        // schema has already required all five members and bounded each of
-        // them, so this reads rather than judges; the one judgement a schema
-        // cannot make -- that names and the call ceiling agree -- is
-        // childEffectDeclarationValid's, and the Tool declaration owner runs it
-        // over these exact values when it is built.
-        [[nodiscard]]
-        auto readChildEffects(
-            json::Value const& declaration
-        ) -> operator_runtime::ChildEffectDeclaration
-        {
-            auto const surface = std::ranges::find(
-                k_surfaces,
-                member(declaration, "maximum_child_surface").string(),
-                operator_runtime::toolSurfaceWireName
-            );
-            auto const mutability = std::ranges::find(
-                k_mutabilities,
-                member(declaration, "maximum_child_mutability").string(),
-                operator_runtime::toolMutabilityWireName
-            );
-            auto const risk = std::ranges::find(
-                k_risks,
-                member(declaration, "maximum_child_risk").string(),
-                operator_runtime::riskWireName
-            );
-            UF_CHECK(surface != k_surfaces.end());
-            UF_CHECK(mutability != k_mutabilities.end());
-            UF_CHECK(risk != k_risks.end());
-            return operator_runtime::ChildEffectDeclaration{
-                .childToolNames         = names(member(declaration, "child_tool_names")),
-                .maximumChildSurface    = *surface,
-                .maximumChildMutability = *mutability,
-                .maximumChildRisk       = *risk,
-                .maximumChildCalls      = static_cast<uint32>(
-                    member(declaration, "maximum_child_calls").number()
-                ),
             };
         }
 
@@ -306,21 +256,12 @@ namespace uf::deployment
         auto readArgumentSchema(
             std::string_view toolName,
             json::Value const& declared
-        ) -> Result<std::optional<json::Schema>>
+        ) -> Result<json::Schema>
         {
-            if (declared.kind() == json::ValueKind::String)
-            {
-                UF_CHECK(declared.string() == k_uncheckedArguments);
-                return std::optional<json::Schema>{};
-            }
-            UF_TRY_VALUE(
-                schema,
-                compile(
-                    std::format("argument schema of {}", toolName),
-                    json::canonicalBytes(declared)
-                )
+            return compile(
+                std::format("argument schema of {}", toolName),
+                json::canonicalBytes(declared)
             );
-            return std::optional<json::Schema>{std::move(schema)};
         }
     } // namespace
 
@@ -387,10 +328,9 @@ namespace uf::deployment
     // refusal here, which is what makes tool_name inside an OP:`PlanProposal` a
     // stronger statement than the operator protocol's own NamespacedIdentifier.
     //
-    // A Tool that declared `unchecked` gets no enforcement. That is the Project
-    // declining a guard rather than the framework skipping one: the trusted
-    // seam builds the Luau value without a schema, and the bytes, their digest
-    // and their coordinates are recorded either way.
+    // Every Project Tool publishes one flat input schema. The trusted seam
+    // validates the arguments against it before it builds the immutable Luau
+    // input value; there is no unchecked spelling.
     auto ProjectDeployment::State::validateToolArguments(
         std::string_view toolName,
         json::Value const& arguments
@@ -404,12 +344,8 @@ namespace uf::deployment
                 toolName
             ));
         }
-        if (!p_tool->argumentSchema.has_value())
-        {
-            return ok();
-        }
         return adopt(
-            p_tool->argumentSchema->validate(arguments),
+            p_tool->argumentSchema.validate(arguments),
             std::format("arguments of {}", toolName)
         );
     }
@@ -531,9 +467,10 @@ namespace uf::deployment
                 readArgumentSchema(name, member(tool, "argument_schema"))
             );
 
-            auto const& declaredLimits = member(tool, "workflow_limits");
             state->tools.emplace_back(ToolEntry{
                 .name           = name,
+                .description    = std::string{member(tool, "description").string()},
+                .inputSchema    = member(tool, "argument_schema"),
                 .argumentSchema = std::move(argumentSchema),
                 .descriptor     = operator_runtime::ToolDescriptor{
                         .toolVersion = std::string{member(tool, "version").string()},
@@ -542,33 +479,10 @@ namespace uf::deployment
                     ),
                         .effectBounds   = std::move(bounds),
                         .uiActionBounds = names(member(tool, "ui_action_bounds")),
-                        .childEffects   = readChildEffects(
-                        member(tool, "child_effects")
-                    ),
-                        .body = operator_runtime::ToolBodyDeclaration{
-                            .takesBody = member(tool, "body").boolean(),
-                        },
-                        .limits = operator_runtime::WorkflowLimits{
-                            .maximumSteps = static_cast<uint32>(
-                            member(declaredLimits, "maximum_steps").number()
-                        ),
-                            .maximumDispatches = static_cast<uint32>(
-                            member(declaredLimits, "maximum_dispatches").number()
-                        ),
-                            .maximumObservations = static_cast<uint32>(
-                            member(declaredLimits, "maximum_observations").number()
-                        ),
-                            .maximumWaits = static_cast<uint32>(
-                            member(declaredLimits, "maximum_waits").number()
-                        ),
-                            .maximumElapsedMillis = static_cast<uint64>(
-                            member(declaredLimits, "maximum_elapsed_ms").number()
-                        ),
-                    },
-                        .timeout     = readTimeoutPolicy(member(tool, "timeout_policy")),
-                        .mutability  = *mutability,
-                        .surface     = *surface,
-                        .idempotency = *idempotency,
+                        .timeout        = readTimeoutPolicy(member(tool, "timeout_policy")),
+                        .mutability     = *mutability,
+                        .surface        = *surface,
+                        .idempotency    = *idempotency,
                 },
             });
         }
@@ -633,8 +547,10 @@ namespace uf::deployment
             for (auto const& tool : p_state->tools)
             {
                 entries.emplace_back(operator_runtime::ToolCatalogEntry{
-                    .name       = tool.name,
-                    .descriptor = tool.descriptor,
+                    .name        = tool.name,
+                    .description = tool.description,
+                    .inputSchema = tool.inputSchema,
+                    .descriptor  = tool.descriptor,
                 });
             }
             return entries;

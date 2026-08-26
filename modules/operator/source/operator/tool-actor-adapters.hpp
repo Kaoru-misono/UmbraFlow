@@ -12,18 +12,15 @@
 
 namespace uf::operator_runtime
 {
-    // The three actor adapters of `caller independence is structural`, beside
-    // the fourth producer that ruling names -- one Tool calling another, which
-    // the scoped seam has always been.
+    // The three actor adapters of `caller independence is structural`.
     //
     // An adapter here is definitionally a translator. It resolves the actor's
     // identity, canonicalises the arguments its transport carries, and is then
     // out of the frame: policy, approvals, envelope intersection, session and
     // target authority and budgets evaluate once, inside admission, on the
     // value it built. None of them can construct anything executable, so
-    // translating badly is the only mistake an adapter is able to make -- and
-    // that is the class the four-way semantic fixture exists to catch, because
-    // no amount of structure can see it.
+    // translating badly is the only mistake an adapter is able to make, and no
+    // amount of structure can see it.
     //
     // Two things are deliberately NOT an adapter's to state, and both are
     // absent from every transport type below. The caller idempotency namespace
@@ -33,14 +30,14 @@ namespace uf::operator_runtime
     // so no adapter can alias another call's position and inherit its recorded
     // outcome.
     //
-    // Adding a fifth caller is adding a fourth class here. A proposed caller
+    // Adding another caller is adding another class here. A proposed caller
     // that cannot be expressed as a translation into ToolAdmissionRequest is a
     // finding about the design and not a reason for a second path.
     //
     // Production-reachable: service::ProductLifecycle holds one adapter of each
     // class and exposes one transport door per class. They are the production
     // entry's only way to start a run at the top, beside the Framework door
-    // that translates its own envelope through the same producer.
+    // that uses the same root producer.
 
     // What every adapter is handed and none of them may state for itself: the
     // authenticated session this actor acts in, the run's pinned execution

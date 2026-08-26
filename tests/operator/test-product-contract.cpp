@@ -275,8 +275,7 @@ namespace uf::operator_runtime
                         )
                     ),
                 },
-                {},
-                test_support::refusingToolRuntime()
+                {}
             );
         }
 
@@ -299,8 +298,8 @@ namespace uf::operator_runtime
                 project.toolName("command-1"),
                 json::Value::ofObject({}),
                 script::ScopedRunRequest{
-                    .parentPosition = hashOf("product-p05-position"),
-                    .budgetOwner    = std::string{project.toolName("command-1")},
+                    .callIdentity = hashOf("product-p05-position"),
+                    .budgetOwner  = std::string{project.toolName("command-1")},
                     .maximumElapsedMillis   = 5'000U,
                 }
             );
@@ -310,8 +309,8 @@ namespace uf::operator_runtime
                 foreignToolName,
                 json::Value::ofObject({}),
                 script::ScopedRunRequest{
-                    .parentPosition = hashOf("product-p05-position"),
-                    .budgetOwner    = std::string{foreignToolName},
+                    .callIdentity = hashOf("product-p05-position"),
+                    .budgetOwner  = std::string{foreignToolName},
                     .maximumElapsedMillis   = 5'000U,
                 }
             );
@@ -876,8 +875,10 @@ namespace uf::operator_runtime
             {
                 return std::vector<ToolCatalogEntry>{
                     ToolCatalogEntry{
-                        .name       = "fixture.control.observe-1",
-                        .descriptor = ToolDescriptor{
+                        .name        = "fixture.control.observe-1",
+                        .description = "A Tool whose surface is unstated.",
+                        .inputSchema = json::Value::ofObject({}),
+                        .descriptor  = ToolDescriptor{
                             .toolVersion = "1",
                             .mutability  = ToolMutability::ReadOnly,
                         },

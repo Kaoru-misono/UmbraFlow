@@ -3,6 +3,7 @@
 #include "agent-profile.hpp"
 #include "controller.hpp"
 #include "effective-plan.hpp"
+#include "evidence-store.hpp"
 #include "manifest.hpp"
 #include "project-generation.hpp"
 #include "project-observation.hpp"
@@ -429,15 +430,6 @@ namespace uf::operator_runtime
             ProjectObservationProposal const& proposal
         ) -> Result<ProjectObservation>;
 
-        // Rebuilds the fresh observation a snapshot named from the exact bytes
-        // the row stores. Only the bytes persist; this is the one parse the
-        // Operator performs of a stored observation, and it happens so a step
-        // can be held to the fresh membership of the observation it was minted
-        // against.
-        [[nodiscard]]
-        auto restoreProjectObservation(std::string_view storedJcs)
-            -> Result<ProjectObservation>;
-
     public:
         OperatorCoordinator(OperatorCoordinator&&) noexcept;
         auto operator=(OperatorCoordinator&&) noexcept -> OperatorCoordinator&;
@@ -528,6 +520,29 @@ namespace uf::operator_runtime
 
         [[nodiscard]] auto databasePath() const -> std::filesystem::path;
 
+        // Publishes bytes into the Operator-owned evidence store. Publication
+        // synchronizes and atomically renames the blob before this function can
+        // answer a receipt; Tool completion commits that receipt afterwards.
+        [[nodiscard]]
+        auto publishEvidenceArtifact(EvidenceArtifactSpec const& spec)
+            -> Result<EvidenceArtifactReceipt>;
+
+        // Resolves a receipt already committed by a confirmed screenshot Tool
+        // call. Ordinary absence means no retained receipt names this digest;
+        // malformed durable receipt material is a failure.
+        [[nodiscard]]
+        auto evidenceArtifactReceipt(ContentHash const& hash)
+            -> Result<std::optional<EvidenceArtifactReceipt>>;
+
+        // The out-of-ledger payload reader. The caller supplies the byte
+        // ceiling appropriate to the media decoder it will hand the result to;
+        // the store verifies the digest before returning owned bytes.
+        [[nodiscard]]
+        auto readEvidenceArtifact(
+            ContentHash const& hash,
+            std::size_t maximumBytes
+        ) -> Result<std::vector<std::byte>>;
+
         [[nodiscard]]
         auto installRuntimeArtifact(
             RuntimeArtifactInstallRequest const& request
@@ -566,6 +581,13 @@ namespace uf::operator_runtime
         // the whole reference set at once may decide.
         [[nodiscard]]
         auto reclaimUnreferencedRuntimeArtifacts() -> Result<ReclaimedRuntimeArtifacts>;
+
+        // Sweeps evidence blobs whose committed screenshot receipts are older
+        // than the Operator-selected ceiling, plus every interrupted staging
+        // entry. RuntimeArtifact retention is deliberately not consulted.
+        [[nodiscard]]
+        auto reclaimUnreferencedEvidenceArtifacts(uint64 maximumAgeMillis)
+            -> Result<ReclaimedEvidenceArtifacts>;
 
         // Both doors take the registration identity rather than a registration
         // document. Nothing durable here is a fact about which generation of
@@ -714,8 +736,8 @@ namespace uf::operator_runtime
         // The one admission function, and the only door to an admitted call.
         //
         // Per `caller independence is structural` every producer -- the Agent
-        // adapter, the human-client adapter, the producer that admits an
-        // actor's start at the top of a run, and one Tool calling another --
+        // adapter, the human-client adapter, and the producer that admits an
+        // actor's start at the top of a run --
         // reaches authority by building one ToolAdmissionRequest and handing it
         // here. There is no second entry point and no shape that takes the
         // members loose, so an adapter cannot assemble its own path: what it can
@@ -731,40 +753,12 @@ namespace uf::operator_runtime
         //
         // Which of the two a call is comes from the descriptor inside the
         // coordinate rather than from the producer, and the request's mutation
-        // must agree with it. So must its delegation grant: a root-positioned
-        // call carrying one and a child call missing one are both refused, and
-        // there is no reading in which a child is admitted on the root's
-        // authority.
+        // must agree with it. A non-root coordinate is refused because Project
+        // handlers are leaves.
         [[nodiscard]]
         auto admitToolCall(
             ToolAdmissionRequest const& request
         ) -> Result<ToolCallAdmission>;
-
-        // The delegation grant one live handler invocation issues its children
-        // on. It is minted only while the parent's durable state is
-        // dispatching -- that is, only while the handler is actually running --
-        // and only for a parent whose descriptor registered a child-effect
-        // declaration. A Tool that declares no child effect can obtain no
-        // grant, so removing that declaration is what makes a nested call fail
-        // rather than merely narrowing it.
-        [[nodiscard]]
-        auto issueToolDelegationGrant(
-            ToolCallPositionIdentity const& parentCall
-        ) -> Result<ToolDelegationGrant>;
-
-        // Closes one issuing context at teardown. Per R4 a restarted script
-        // that terminates leaving recorded calls unconsumed for some context is
-        // divergence, and this is where that is detected: the context knows how
-        // many children it issued, and the ledger knows how many it recorded.
-        //
-        // The context is passed rather than a count so that the number cannot
-        // be restated by the caller: the same object that assigned the indices
-        // is the one that reports them.
-        [[nodiscard]]
-        auto sealToolCallContext(
-            ToolRootRequestIdentity const& root,
-            ToolCallIssuingContext const& context
-        ) -> Status;
 
         // Mints one call-bound approval after re-evaluating the active
         // session's exact effect envelope and PolicyArtifact. The token is
@@ -791,22 +785,17 @@ namespace uf::operator_runtime
         // Re-enters a call whose durable row is already dispatching, because
         // the incarnation that began that dispatch died inside it.
         //
-        // The one shape refused is the MUTATING LEAF: a call answered directly
-        // by a provider whose descriptor declares it mutating. That is the only
-        // shape where the world may have moved with no durable row saying so,
-        // and no amount of re-execution can find out, so its `dispatching` row
-        // is resolved by classifying it uncertain and asking a reconciliation
-        // query, never by dispatching it twice.
+        // The one shape refused is the MUTATING DIRECT LEAF: a Framework call
+        // whose provider may have moved the world with no durable row saying so.
+        // Its `dispatching` row is resolved by classifying it uncertain and
+        // asking a reconciliation query, never by dispatching it twice.
         //
-        // Nothing else is refused, and neither half of that key is sufficient
-        // alone. A call answered by a bound Project entry reaches the world
-        // only through child Tool calls, each already carrying its own durable
-        // classification, so re-running it re-derives the same child
-        // coordinates, meets the recorded rows and executes only the first
-        // position beyond history -- the replay contract itself, not a
-        // redelivery, and true however mutating the call is. A read-only leaf
-        // declares no effect for a delivery to be uncertain about, so running
-        // its provider again delivers nothing twice.
+        // Nothing else is refused. A bound Project entry is a pure leaf with
+        // immutable inputs and resources and no Tool or external-effect
+        // capability, so re-running it is replay however its descriptor labels
+        // mutability. A read-only Framework leaf declares no effect for a
+        // delivery to be uncertain about, so running its provider again
+        // delivers nothing twice.
         //
         // The presented binding and lease are the CURRENT ones and are re-read
         // live, which is what a fence bump is for: the incarnation that lost

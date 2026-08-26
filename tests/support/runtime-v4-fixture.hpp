@@ -68,8 +68,8 @@ namespace uf::task
     inline constexpr auto k_anchorGray = uint8{2};
     inline constexpr auto k_actionGray = uint8{5};
 
-    // One observation, taken and finished: a frame with an empty body -- open,
-    // resolve, close in one call.
+    // One internal observation cycle, taken and finished: open, resolve, close
+    // in one call.
     //
     // Written once here rather than at every call site, because whoever opens a
     // frame owns closing it on EVERY exit path, and a case that returned early
@@ -112,7 +112,7 @@ namespace uf::task
             static auto sequence = std::atomic<uint64>{1};
             m_path = std::filesystem::temp_directory_path()
                 / std::format(
-                    "umbraflow-runtime-v3-{}-{}",
+                    "umbraflow-runtime-v4-{}-{}",
                     std::chrono::steady_clock::now().time_since_epoch().count(),
                     sequence.fetch_add(1, std::memory_order_relaxed)
                 );
@@ -214,7 +214,7 @@ namespace uf::task
 
     [[nodiscard]] inline auto runtimeModel() -> std::string
     {
-        return R"toml(schema_version = 3
+        return R"toml(schema_version = 4
 base_resolution = [3, 1]
 base_dpi = [96, 96]
 
@@ -256,7 +256,6 @@ actions = [{ id = "activate", kind = "click", proof_locator = "confirm-mark" }]
 
 [[surface]]
 id = "screen"
-kind = "scene"
 covers = []
 identity = ["screen.anchor"]
 )toml";
@@ -279,7 +278,6 @@ actions = []
 
 [[surface]]
 id = "panel"
-kind = "scene"
 covers = []
 identity = ["panel.anchor"]
 )toml";

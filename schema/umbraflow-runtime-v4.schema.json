@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://umbraflow.dev/schema/umbraflow-runtime-v3.schema.json",
-  "title": "Umbraflow RuntimeModel v3",
+  "$id": "https://umbraflow.dev/schema/umbraflow-runtime-v4.schema.json",
+  "title": "Umbraflow RuntimeModel v4",
   "description": "Field shapes for the trusted RuntimeModel parser and its two-stage results. Cross-reference, coverage, placement and same-cycle authority rules are enforced by the trusted Luau compiler/resolver.",
   "$ref": "#/$defs/runtime_model",
   "$defs": {
@@ -65,19 +65,32 @@
         "threshold": { "type": "number", "minimum": 0, "maximum": 1 }
       }
     },
-    "reader": {
+    "read_layout": {
+      "$comment": "How much of its rectangle one read is asserting about. single_line says the rectangle holds exactly one line and skips line detection entirely, which is cheaper and immune to a detector that splits one label in two. block says the count is not known, so every line the detector finds inside that rectangle is located and read. There is no default and nothing is inferred: under single_line a rectangle that in fact holds several lines reads as one run of nonsense rather than failing, so which of the two a read is has to be stated by whoever drew the rectangle. It is stated at each reading site rather than in a record of its own, because it is a property of one rectangle and only a site owns one.",
+      "enum": ["single_line", "block"]
+    },
+    "confidence_floor": {
+      "$comment": "The lowest per-line score this read accepts. The floor judges the whole set of lines: one line below it makes the reading low_confidence rather than making that line disappear.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "normalization": {
+      "$comment": "What is done to the text before it is reported. Stated at the reading site for read_layout's reason.",
+      "enum": ["raw", "trim", "collapse_whitespace"]
+    },
+    "readout": {
+      "$comment": "One fixed rectangle on one Surface whose text is reported whenever that Surface is on the resolved stack. It carries no detector and must not: a readout is where a value the target rewrites every frame is printed, so there is no stable ink in it to match and a template drawn over one would stop matching the moment the value changed. Its Surface being resolved is the whole of its gate, and that Surface's own identity Bindings are what proved this rectangle is this rectangle. It attaches to no UiTarget, because a centred message band inside a popup is a thing a project has to read and is not a control anybody acts on.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind", "confidence_floor", "layout", "normalization"],
+      "required": ["id", "surface", "rect", "layout", "confidence_floor", "normalization"],
       "properties": {
         "id": { "$ref": "#/$defs/identifier" },
-        "kind": { "const": "text" },
-        "confidence_floor": { "type": "number", "minimum": 0, "maximum": 1 },
-        "layout": {
-          "$comment": "How much of the Binding's rectangle this Reader is asserting about. single_line says the rectangle holds exactly one line and skips line detection entirely, which is cheaper and immune to a detector that splits one label in two. block says the count is not known, so every line the detector finds inside that rectangle is located and read. There is no default and nothing is inferred: under single_line a rectangle that in fact holds several lines reads as one run of nonsense rather than failing, so which of the two this Reader is has to be stated by whoever drew the rectangle.",
-          "enum": ["single_line", "block"]
-        },
-        "normalization": { "enum": ["raw", "trim", "collapse_whitespace"] }
+        "surface": { "$ref": "#/$defs/identifier" },
+        "rect": { "$ref": "#/$defs/rect" },
+        "layout": { "$ref": "#/$defs/read_layout" },
+        "confidence_floor": { "$ref": "#/$defs/confidence_floor" },
+        "normalization": { "$ref": "#/$defs/normalization" }
       }
     },
     "locator_predicate": {
@@ -90,19 +103,20 @@
       }
     },
     "text_predicate": {
+      "$comment": "read names one of the collection's own reads, by that read's id. There is no cross-record reference here at all: a read belongs to the collection that declared it, so the only thing a predicate can point at is a sibling.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "reader", "value"],
+      "required": ["kind", "read", "value"],
       "properties": {
         "kind": { "const": "text_equals" },
-        "reader": { "$ref": "#/$defs/identifier" },
+        "read": { "$ref": "#/$defs/identifier" },
         "value": { "type": "string" }
       }
     },
     "detector": {
+      "$comment": "An absent group is the empty group. A detector still needs positive measured evidence, so at least one of all and any has to be present and non-empty.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["all", "any", "none"],
       "properties": {
         "all": {
           "type": "array",
@@ -118,8 +132,8 @@
         }
       },
       "anyOf": [
-        { "properties": { "all": { "minItems": 1 } } },
-        { "properties": { "any": { "minItems": 1 } } }
+        { "required": ["all"], "properties": { "all": { "minItems": 1 } } },
+        { "required": ["any"], "properties": { "any": { "minItems": 1 } } }
       ]
     },
     "surface_identity": {
@@ -140,14 +154,14 @@
       }
     },
     "detected_collection_placement": {
-      "$comment": "A search region plus the trusted block Reader that detects every item inside it. search_rect bounds the measurement and is never evidence by itself. Each detected line supplies one item's exact image-space rectangle. order turns those measured rectangles into stable zero-based indices; overlapping spans on that axis are ambiguous and the resolver refuses them instead of inheriting detector enumeration order. slots describes the regular centred layout on that same axis. Its origin is the measured item-origin coordinate for a one-item layout. A layout of n items spans min(pitch * (n - 1), extent), so its spacing is pitch until extent binds and then shrinks as the layout grows: slot k is origin + (2k - (n - 1)) * min(pitch * (n - 1), extent) / (2 * (n - 1)) rounded half up, and a one-item layout is origin itself. Rounding each slot is what lands every cardinality on integer coordinates, so pitch carries no parity constraint. Whether one cardinality's slots are far enough apart to assign items to them is a property of that cardinality, so the resolver checks it when the collection resolves rather than when it is declared. maximum_slots is where the fitted-layout search stops.",
+      "$comment": "A search region and the floor its detection read accepts. That read's layout is block by construction -- a read whose job is to find out how many lines a region holds cannot be told there is one -- and it states no normalization, because the items it produces are line RECTANGLES and every text a collection reports comes from a per-item read. search_rect bounds the measurement and is never evidence by itself. Each detected line supplies one item's exact image-space rectangle. order turns those measured rectangles into stable zero-based indices; overlapping spans on that axis are ambiguous and the resolver refuses them instead of inheriting detector enumeration order. slots describes the regular centred layout on that same axis. Its origin is the measured item-origin coordinate for a one-item layout. A layout of n items spans min(pitch * (n - 1), extent), so its spacing is pitch until extent binds and then shrinks as the layout grows: slot k is origin + (2k - (n - 1)) * min(pitch * (n - 1), extent) / (2 * (n - 1)) rounded half up, and a one-item layout is origin itself. Rounding each slot is what lands every cardinality on integer coordinates, so pitch carries no parity constraint. Whether one cardinality's slots are far enough apart to assign items to them is a property of that cardinality, so the resolver checks it when the collection resolves rather than when it is declared. maximum_slots is where the fitted-layout search stops.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "search_rect", "reader", "order", "slots"],
+      "required": ["kind", "search_rect", "confidence_floor", "order", "slots"],
       "properties": {
         "kind": { "const": "detected" },
         "search_rect": { "$ref": "#/$defs/rect" },
-        "reader": { "$ref": "#/$defs/identifier" },
+        "confidence_floor": { "$ref": "#/$defs/confidence_floor" },
         "order": { "enum": ["left_to_right", "top_to_bottom"] },
         "slots": {
           "$comment": "origin is the one-item slot coordinate on order's axis. pitch is the positive distance between adjacent slots while the layout is short enough for that distance to hold. extent is the positive upper bound on the distance between the first and last slot, and it is required because a Surface is finite: every centred layout already has one, so a declaration without it is hiding a fact rather than describing an unbounded fan. tolerance is the maximum distance between a measured item origin and its assigned slot; a cardinality whose smallest adjacent slot gap is below 2 * tolerance + 1 cannot assign an item to one slot and is refused at resolution. maximum_slots is the largest number of slots this collection can hold, and it bounds the search for a larger layout with missing slots. It is required and is stated rather than derived: origin, pitch, extent and tolerance are all pixels, so a slot count computed from them would be a cardinality bound the framework invented over a declaration that never mentioned cardinality. A detected item count the search cannot place inside the bound is refused by name, reporting the measured count and the declared maximum.",
@@ -165,10 +179,10 @@
       }
     },
     "collection": {
-      "$comment": "An ordered, variable-cardinality collection on one Surface. Its item count and item placements are runtime results, never authored geometry. The placement's Reader is detector evidence for the items and must declare block layout. A Reader named in reads REPORTS from each measured item rectangle and never decides whether the Collection or an item exists; only the placement's detector Reader decides that. predicate conditionally enumerates members using one of those declared per-item Readers; changing it changes the returned count and ordered member list, never the detector's spatial identity. A click action's offset is the [dx, dy] delta from ONE selected item's measured origin. The item is chosen by its zero-based index, and the derived point must remain inside the frame; leaving it is a refusal rather than a clamp. This is the same origin-delta rule collection_read.offset uses because a Collection has no single fixed placement in which an action_point could live.",
+      "$comment": "An ordered, variable-cardinality collection on one Surface. Its item count and item placements are runtime results, never authored geometry. The placement's detection is the evidence for the items. A read declared in reads REPORTS from each measured item rectangle and never decides whether the Collection or an item exists; only the detection decides that. predicate conditionally enumerates members using one of those declared per-item reads; changing it changes the returned count and ordered member list, never the detection's spatial identity. A click action's offset is the [dx, dy] delta from ONE selected item's measured origin. The item is chosen by its zero-based index, and the derived point must remain inside the frame; leaving it is a refusal rather than a clamp. This is the same origin-delta rule collection_read.offset uses because a Collection has no single fixed placement in which an action_point could live.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "surface", "placement", "actions", "reads"],
+      "required": ["id", "surface", "placement"],
       "properties": {
         "id": { "$ref": "#/$defs/identifier" },
         "surface": { "$ref": "#/$defs/identifier" },
@@ -213,14 +227,17 @@
       "maxItems": 2
     },
     "collection_read": {
-      "$comment": "One reporting-only Reader, an origin delta, and an absolute size; the resulting rectangle must remain wholly inside the frame, and leaving it is a refusal rather than a clamp. An item is one line of text whose width belongs to that text, while a read placed against it belongs to the containing element and therefore has that element's fixed extent.",
+      "$comment": "One reporting-only read of every measured item: an id, an origin delta, an absolute size, and how that rectangle is read. The resulting rectangle must remain wholly inside the frame, and leaving it is a refusal rather than a clamp. An item is one line of text whose width belongs to that text, while a read placed against it belongs to the containing element and therefore has that element's fixed extent. The id is unique inside its collection and is the name the reported reading carries.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["reader", "offset", "size"],
+      "required": ["id", "offset", "size", "layout", "confidence_floor", "normalization"],
       "properties": {
-        "reader": { "$ref": "#/$defs/identifier" },
+        "id": { "$ref": "#/$defs/identifier" },
         "offset": { "$ref": "#/$defs/collection_read_offset" },
-        "size": { "$ref": "#/$defs/size" }
+        "size": { "$ref": "#/$defs/size" },
+        "layout": { "$ref": "#/$defs/read_layout" },
+        "confidence_floor": { "$ref": "#/$defs/confidence_floor" },
+        "normalization": { "$ref": "#/$defs/normalization" }
       }
     },
     "click_action": {
@@ -323,8 +340,7 @@
         "surface",
         "ui_target",
         "placement",
-        "variants",
-        "actions"
+        "variants"
       ],
       "properties": {
         "id": { "$ref": "#/$defs/identifier" },
@@ -340,12 +356,6 @@
         "actions": {
           "type": "array",
           "items": { "$ref": "#/$defs/binding_action" }
-        },
-        "reads": {
-          "$comment": "Readers whose normalised value this Binding reports once it is measured present. A reader named here never decides the detector: text is evidence about what is on a Surface, never the identity of one. Absent is the empty list, which is what most Bindings declare; making it required would say nothing on every Binding that reports nothing.",
-          "type": "array",
-          "items": { "$ref": "#/$defs/identifier" },
-          "uniqueItems": true
         }
       },
       "allOf": [
@@ -393,12 +403,12 @@
       }
     },
     "surface": {
+      "$comment": "covers is the whole of where a Surface sits: one that covers nothing is the bottom of a stack, and one that covers something is layered over it. There is no kind beside that, because a kind and a covers list were one fact in two spellings whose agreement had to be enforced -- and that spelling also made a full-screen popup, one that dims everything under it so nothing underneath still resolves, undeclarable except by calling it a scene and lying about what it covers.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind", "covers", "identity"],
+      "required": ["id", "identity"],
       "properties": {
         "id": { "$ref": "#/$defs/identifier" },
-        "kind": { "enum": ["scene", "overlay", "interrupt"] },
         "covers": {
           "type": "array",
           "items": { "$ref": "#/$defs/identifier" },
@@ -520,22 +530,16 @@
       }
     },
     "runtime_model": {
-      "$comment": "ui_targets, bindings and surfaces admit the empty array. The model that declares nothing is the genesis model every project starts from, and its content hash is the root of the parentage chain; a lower bound of one made that state unrepresentable and bought only the tautology that a model declaring nothing can do nothing. Whether a model is worth running is the Project's judgement and the operator's policy, not this schema's.",
+      "$comment": "Every list here admits the empty array, and an absent list IS the empty array. The model that declares nothing is the genesis model every project starts from, and its content hash is the root of the parentage chain; a lower bound of one made that state unrepresentable and bought only the tautology that a model declaring nothing can do nothing. Whether a model is worth running is the Project's judgement and the operator's policy, not this schema's.",
       "type": "object",
       "additionalProperties": false,
       "required": [
         "schema_version",
         "base_resolution",
-        "base_dpi",
-        "ui_targets",
-        "locators",
-        "readers",
-        "bindings",
-        "surfaces",
-        "transitions"
+        "base_dpi"
       ],
       "properties": {
-        "schema_version": { "const": 3 },
+        "schema_version": { "const": 4 },
         "base_resolution": { "$ref": "#/$defs/size" },
         "base_dpi": { "$ref": "#/$defs/size" },
         "ui_targets": {
@@ -547,10 +551,6 @@
           "type": "array",
           "items": { "$ref": "#/$defs/locator" }
         },
-        "readers": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/reader" }
-        },
         "bindings": {
           "type": "array",
           "minItems": 0,
@@ -559,6 +559,10 @@
         "collections": {
           "type": "array",
           "items": { "$ref": "#/$defs/collection" }
+        },
+        "readouts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/readout" }
         },
         "stitched_maps": {
           "type": "array",
@@ -655,7 +659,7 @@
       ]
     },
     "reading_line": {
-      "$comment": "One line of one reading: the normalised text, and the rectangle the frame held that text in. Under a block Reader the rectangle is the detector's own measurement and is in the coordinate space of the IMAGE rather than of the Reader's rectangle; under a single_line Reader nothing was located, so it is the Binding's declared placement rect and cannot move between two captures at all.",
+      "$comment": "One line of one reading: the normalised text, and the rectangle the frame held that text in. Under a block read the rectangle is the detector's own measurement and is in the coordinate space of the IMAGE rather than of the read's own rectangle; under a single_line read nothing was located, so it is the declared rectangle and cannot move between two captures at all.",
       "type": "object",
       "additionalProperties": false,
       "required": ["rect", "text"],
@@ -664,21 +668,20 @@
         "text": { "type": "string" }
       }
     },
-    "binding_reading": {
-      "$comment": "One reading the resolver reports for a Binding it measured present, under a Reader that Binding named in reads. Three outcomes and no fourth: read carries the lines, absent says the Reader found no text in that rectangle, unknown says it could not decide and carries why. The two failures are reported rather than dropped because a consumer that cannot tell 'nothing is written here' from 'this frame was unreadable' has to fail closed on one blurry capture. A reading is a LIST of lines whatever the Reader's layout: a single_line Reader reports one element, not a second shape, because one fact spelled two ways makes every consumer ask which spelling it was handed. What is still not carried is the score: it has already been compared against the Reader's confidence_floor, and it differs between two captures of one unchanged screen while this value is hashed into a decision basis. A bounded reason is safe there; a float is not. Each line's RECT is carried and IS hashed with the rest of this document, and that is a ruling rather than an oversight: the score has no decision left to take once the floor has judged it, while the rect is where a consumer acts, so a basis that omitted it would let a frozen plan be re-derived into a different action without the basis moving. Unsoundness outranks an extra approval. There is still no pre-normalisation text, because that is the raw read the Reader exists to narrow.",
+    "reading": {
+      "$comment": "One reading, named by the id of the site that declared it -- a Readout, or one of a Collection's per-item reads. That id is the whole of the name: a Readout owns its rectangle, and a per-item read is reported inside the item inside the Collection that already names both. Three outcomes and no fourth: read carries the lines, absent says the read found no text in that rectangle, unknown says it could not decide and carries why. The two failures are reported rather than dropped because a consumer that cannot tell 'nothing is written here' from 'this frame was unreadable' has to fail closed on one blurry capture. A reading is a LIST of lines whatever the layout: a single_line read reports one element, not a second shape, because one fact spelled two ways makes every consumer ask which spelling it was handed. What is still not carried is the score: it has already been compared against the declared confidence_floor, and it differs between two captures of one unchanged screen while this value is hashed into a decision basis. A bounded reason is safe there; a float is not. Each line's RECT is carried and IS hashed with the rest of this document, and that is a ruling rather than an oversight: the score has no decision left to take once the floor has judged it, while the rect is where a consumer acts, so a basis that omitted it would let a frozen plan be re-derived into a different action without the basis moving. Unsoundness outranks an extra approval. There is still no pre-normalisation text, because that is the raw read the declared normalization exists to narrow.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "reader", "ui_target"],
+      "required": ["kind", "id"],
       "properties": {
         "kind": { "enum": ["read", "absent", "unknown"] },
+        "id": { "$ref": "#/$defs/identifier" },
         "lines": {
           "type": "array",
           "minItems": 1,
           "items": { "$ref": "#/$defs/reading_line" }
         },
-        "reader": { "$ref": "#/$defs/identifier" },
-        "reason": { "$ref": "#/$defs/unknown_reason" },
-        "ui_target": { "$ref": "#/$defs/identifier" }
+        "reason": { "$ref": "#/$defs/unknown_reason" }
       },
       "allOf": [
         {
@@ -700,12 +703,12 @@
       ]
     },
     "state_readings": {
-      "$comment": "Every reading a resolved state reports, ordered by ui_target then reader so one world produces one document. One entry per Reader every reporting Binding named, whatever the outcome, so the length is decided by the model and the resolved stack rather than by what the Host managed to answer. A Binding owns the visual variants that share its placement and reads, so changing which one matches does not change the reporting subject. Multiple present Bindings sharing a UiTarget still report nothing for it because they are distinct placements or roles and therefore remain ambiguous.",
+      "$comment": "Every reading a resolved state reports, ordered by id so one world produces one document. One entry per Readout on every Surface of the resolved stack, whatever the outcome, so the length is decided by the model and the resolved stack rather than by what the Host managed to answer.",
       "type": "array",
-      "items": { "$ref": "#/$defs/binding_reading" }
+      "items": { "$ref": "#/$defs/reading" }
     },
     "collection_item": {
-      "$comment": "One item located by a collection's trusted block Reader. index is the zero-based slot ordinal declared by the collection, not the Reader adapter's enumeration order; a partial collection can therefore have gaps between indices. rect is copied exactly from the detected line in image coordinates.",
+      "$comment": "One item located by a collection's own detection read. index is the zero-based slot ordinal declared by the collection, not the OCR adapter's enumeration order; a partial collection can therefore have gaps between indices. rect is copied exactly from the detected line in image coordinates.",
       "type": "object",
       "additionalProperties": false,
       "required": ["index", "rect", "readings"],
@@ -713,14 +716,14 @@
         "index": { "type": "integer", "minimum": 0 },
         "rect": { "$ref": "#/$defs/rect" },
         "readings": {
-          "$comment": "One result for every reporting-only Reader the Collection declares, in declaration order.",
+          "$comment": "One result for every reporting-only read the Collection declares, in declaration order.",
           "type": "array",
-          "items": { "$ref": "#/$defs/binding_reading" }
+          "items": { "$ref": "#/$defs/reading" }
         }
       }
     },
     "resolved_collection": {
-      "$comment": "The result of resolving one declared collection against one resolved state in the same live cycle. count is the number of detected items. complete and partial carry those measured items; partial slot indices may contain gaps. unknown means no detected-item-to-layout assignment exists among the cardinalities whose slots stay inside the search rectangle and stay assignable, and carries no items list. A search that instead ran out of cardinalities at maximum_slots produces no resolved_collection at all: the declaration and the frame disagree about how large this collection can get, and that is refused by name rather than reported as an unknown fit. An absent Reader result is a complete collection with count zero. Unknown Reader evidence, ambiguous spatial order, or a detected cardinality whose own slots sit closer together than 2 * tolerance + 1 still produces no resolved_collection.",
+      "$comment": "The result of resolving one declared collection against one resolved state in the same live cycle. count is the number of detected items. complete and partial carry those measured items; partial slot indices may contain gaps. unknown means no detected-item-to-layout assignment exists among the cardinalities whose slots stay inside the search rectangle and stay assignable, and carries no items list. A search that instead ran out of cardinalities at maximum_slots produces no resolved_collection at all: the declaration and the frame disagree about how large this collection can get, and that is refused by name rather than reported as an unknown fit. An absent detection result is a complete collection with count zero. Unknown detection evidence, ambiguous spatial order, or a detected cardinality whose own slots sit closer together than 2 * tolerance + 1 still produces no resolved_collection.",
       "type": "object",
       "additionalProperties": false,
       "required": ["completeness", "count"],

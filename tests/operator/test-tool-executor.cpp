@@ -43,7 +43,7 @@ namespace uf::operator_runtime
             REQUIRE(catalog.has_value());
             REQUIRE(arguments.has_value());
             auto invocation = catalog->validate(
-                "framework.screen.observe",
+                "framework.screen.capture",
                 std::move(*arguments)
             );
             REQUIRE(invocation.has_value());
@@ -141,7 +141,7 @@ namespace uf::operator_runtime
                 [&providerCalls, &result](ToolCallPositionIdentity const& presented)
                 {
                     ++providerCalls;
-                    CHECK(presented.toolName() == "framework.screen.observe");
+                    CHECK(presented.toolName() == "framework.screen.capture");
                     return ToolCallCompletion::confirmed(*result);
                 }
             );
@@ -150,6 +150,15 @@ namespace uf::operator_runtime
             CHECK(replay->state == ToolCallState::Confirmed);
             CHECK(replay->payload->bytes() == result->bytes());
             CHECK(providerCalls == 1U);
+            auto const confirmedAnswer = toolCallAnswer(call.identity(), *replay);
+            REQUIRE(confirmedAnswer.has_value());
+            auto const expectedConfirmed = R"({"call_identity":")"
+                + call.identity().hex()
+                + R"(","delivery":"confirmed","ok":true,"result":{"snapshot_ref":"snapshot-1"}})";
+            CHECK(
+                json::canonicalBytes(*confirmedAnswer)
+                == expectedConfirmed
+            );
 
             auto failurePreimage = CanonicalJson::parseExact(
                 R"({"objective":"executor-failure"})"
@@ -183,7 +192,19 @@ namespace uf::operator_runtime
             CHECK(failed->state == ToolCallState::TerminalFailure);
             CHECK(
                 failed->payload->bytes()
-                == R"({"failure_response":"abort","kind":"capture_unavailable","message":"capture provider refused"})"
+                == R"({"code":"capture_unavailable","message":"capture provider refused","retryable":false})"
+            );
+            auto const failedAnswer = toolCallAnswer(
+                failureCall.identity(),
+                *failed
+            );
+            REQUIRE(failedAnswer.has_value());
+            auto const expectedFailure = R"({"call_identity":")"
+                + failureCall.identity().hex()
+                + R"(","delivery":"terminal_failure","error":{"code":"capture_unavailable","message":"capture provider refused","retryable":false},"ok":false})";
+            CHECK_MESSAGE(
+                json::canonicalBytes(*failedAnswer) == expectedFailure,
+                "provider failure must reach the direct answer with its own message verbatim"
             );
             auto refusedReplayExecutions = uint64{};
             auto replayedFailure = executor.invoke(
@@ -1089,8 +1110,10 @@ namespace uf::operator_runtime
             };
             auto tools = std::vector<ToolCatalogEntry>{
                 ToolCatalogEntry{
-                    .name       = toolName,
-                    .descriptor = std::move(descriptor),
+                    .name        = toolName,
+                    .description = "A fixture Project Tool leaf.",
+                    .inputSchema = json::Value::ofObject({}),
+                    .descriptor  = std::move(descriptor),
                 },
             };
             auto owner = ProjectToolCatalogSchemaOwner::create(
@@ -1204,9 +1227,10 @@ namespace uf::operator_runtime
             CHECK(executions == 0U);
             CHECK(replayed->state == ToolCallState::TerminalFailure);
             auto const& payload = replayed->payload->bytes();
-            CHECK(payload.find(R"("kind":"timeout")") != std::string::npos);
-            CHECK(payload.find(R"("maximum_elapsed_ms":1)") != std::string::npos);
-            CHECK(payload.find(R"("on_timeout":"stop")") != std::string::npos);
+            CHECK(payload.find(R"("code":"timeout")") != std::string::npos);
+            CHECK(payload.find("exceeded the maximum_elapsed_ms of 1")
+                  != std::string::npos);
+            CHECK(payload.find(R"("retryable":false)") != std::string::npos);
         }
 
         {
@@ -1235,10 +1259,10 @@ namespace uf::operator_runtime
             REQUIRE(reobserved->payload.has_value());
             CHECK(reobserved->state == ToolCallState::TerminalFailure);
             auto const& payload = reobserved->payload->bytes();
-            CHECK(payload.find(R"("kind":"timeout")") != std::string::npos);
-            CHECK(
-                payload.find(R"("on_timeout":"reobserve")") != std::string::npos
-            );
+            CHECK(payload.find(R"("code":"timeout")") != std::string::npos);
+            CHECK(payload.find("exceeded the maximum_elapsed_ms of 1")
+                  != std::string::npos);
+            CHECK(payload.find(R"("retryable":false)") != std::string::npos);
 
             // What the provider answered is deliberately NOT the outcome.
             CHECK(payload.find(R"("observed")") == std::string::npos);

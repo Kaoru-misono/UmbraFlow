@@ -22,25 +22,15 @@ namespace uf::script
 {
     // What one scoped run is started under.
     //
-    // No in-class initializer for the parent, for ToolCallCoordinate's reason:
-    // a request that could be default-constructed would be a run anchored on
-    // nothing, and "anchored on nothing" is the absent-means-something reading
-    // this type exists to make unspellable. A caller with no durable position
-    // to name has no run to start, and the closure admission compile() performs
-    // is exactly that caller: it builds no request at all.
+    // No in-class initializer for the call identity: ContentHash has no absent
+    // value, and the identity is what attributes an execution-limit failure.
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
     struct ScopedRunRequest final
     {
-        // The durable parent position this run's issuing context is anchored
-        // on, by the identity the Operator recorded that row under. Every Tool
-        // call the run makes is numbered under it, and there is no absent
-        // value: the Operator hands a root run the coordinate of the
-        // root-positioned call the run implements, exactly as it hands a
-        // handler run the position of its own call.
-        ContentHash parentPosition;
+        ContentHash callIdentity;
 
         // The outer Project Tool whose fresh VM owns every allocation and
-        // elapsed millisecond in this run, including structured body re-entry.
+        // elapsed millisecond in this run.
         std::string budgetOwner{};
 
         // The wall-clock ceiling that Tool's registration declared. Zero is
@@ -74,12 +64,12 @@ namespace uf::script
     class ScopedToolProgram final
     {
     public:
-        // Bounded like every other name this boundary admits, and bounded per
-        // context so the monotone child index cannot run away inside one run.
+        // Bounded like every other name this boundary admits. The call ceiling
+        // belongs only to an interactive session; a Project handler is a leaf.
         static constexpr auto k_maximumToolNameBytes        = std::size_t{128U};
         static constexpr auto k_maximumToolNameSegments     = std::size_t{8U};
         static constexpr auto k_maximumToolNameSegmentBytes = std::size_t{64U};
-        static constexpr auto k_maximumToolCallsPerContext  = uint64{1024U};
+        static constexpr auto k_maximumInteractiveToolCalls = uint64{1024U};
 
     private:
         class State;
@@ -104,9 +94,8 @@ namespace uf::script
         static auto scopedModuleNames() -> std::span<std::string_view const>;
 
         // `frameworkModules` must carry every name scopedModuleNames() states,
-        // and may carry pure Framework modules besides. `invokeTool` is the one
-        // native seam; an empty callable is refused, because a scoped program
-        // with no Tool Runtime is a pure program wearing the wrong type.
+        // and may carry pure Framework modules besides. The Tool primitive is
+        // installed as a terminal named refusal: a Project handler is a leaf.
         //
         // The pinned Tool catalog the scoped facades read is a Framework
         // resource and belongs in `frameworkResources`, whose names must all sit
@@ -121,16 +110,10 @@ namespace uf::script
             std::span<std::string_view const> entryPoints,
             std::vector<PureDataProgram::Resource> resources,
             std::span<FrameworkModule const> frameworkModules,
-            std::vector<PureDataProgram::Resource> frameworkResources,
-            ToolRuntimeDispatch dispatchTool
+            std::vector<PureDataProgram::Resource> frameworkResources
         ) -> Result<ScopedToolProgram>;
 
-        // One run in one fresh VM. Every Tool call it issues is numbered from 1
-        // under `request.parentPosition`, and a second invoke() starts a second
-        // issuing context whose numbering starts again at 1 -- on a re-entry
-        // after a crash exactly as on a first entry, because the recorded
-        // ordinals are re-derived by re-executing rather than resumed from a
-        // stored counter.
+        // One leaf handler run in one fresh VM.
         [[nodiscard]]
         auto invoke(
             std::string_view entryPoint,

@@ -335,6 +335,16 @@ namespace uf::task
             uint64                     fencingToken{};
         };
 
+        // A consumed Receipt after every no-post refusal has been checked. It
+        // is the common linearization product for ordinary delivery and the
+        // split semantic hold.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+        struct AuthorizedReceipt final
+        {
+            DispatchAuthority authority;
+            PendingReceipt    pending;
+        };
+
         friend struct TaskHostTestAccess;
         friend class operator_runtime::OperatorTaskHost;
 
@@ -423,6 +433,32 @@ namespace uf::task
         ) -> Result<Receipt>;
 
         [[nodiscard]]
+        static auto makeDeliveryReport(
+            DispatchAuthority authority,
+            DeliveryOutcome outcome,
+            std::string reason,
+            uint64 receiptId,
+            std::optional<DeliveredInput> posted
+        ) -> HostDeliveryReport;
+
+        [[nodiscard]]
+        auto consumeReceipt(
+            DispatchAuthority authority,
+            Receipt const& receipt,
+            TaskContext& context
+        ) -> Result<std::variant<AuthorizedReceipt, HostDeliveryReport>>;
+
+        [[nodiscard]]
+        auto authorizeUiAction(
+            DispatchAuthority const& authority,
+            TaskContext& context,
+            std::string_view uiTarget,
+            std::string_view binding,
+            std::string_view action,
+            std::string_view expectedKind
+        ) -> Status;
+
+        [[nodiscard]]
         // The context is supplied at delivery rather than remembered from
         // minting: a Receipt that stored a TaskContext* would be a borrow of
         // caller-owned state with no contract keeping it alive. Nothing is
@@ -480,8 +516,25 @@ namespace uf::task
             DispatchAuthority authority,
             TaskContext& context,
             std::string_view uiTarget,
-            std::string_view action
+            std::string_view binding,
+            std::string_view action,
+            std::string_view expectedKind
         ) -> Result<HostDeliveryReport>;
+
+        [[nodiscard]]
+        auto engageUiHold(
+            DispatchAuthority authority,
+            TaskContext& context,
+            std::string_view uiTarget,
+            std::string_view binding,
+            std::string_view action
+        ) -> Result<HostHoldStart>;
+
+        [[nodiscard]]
+        auto finishUiHold(
+            HostHoldEngagement engagement,
+            TaskContext& context
+        ) -> HostDeliveryReport;
 
         // Raises this Host's control fence to the one the ledger now holds.
         // Strictly monotone: a fence at or below the current one is refused, so
@@ -584,6 +637,15 @@ namespace uf::task
         [[nodiscard]]
         auto engageObservationFrame(GenerationId generation, TaskContext& context)
             -> Result<UiObservationSnapshot>;
+
+        // Resolves the recorded frame TaskContext already holds. It captures
+        // nothing and leaves the cycle open so the caller can compose a
+        // snapshot and close it on one unconditional exit path.
+        [[nodiscard]]
+        auto resolveOpenObservationFrame(
+            GenerationId generation,
+            TaskContext& context
+        ) -> Result<UiObservationSnapshot>;
 
         // Closes the observation frame `context` holds and reports whether there
         // was one. Idempotent, and the only close there is: a frame closed twice

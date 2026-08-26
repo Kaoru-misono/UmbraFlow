@@ -56,13 +56,13 @@ namespace uf::task
         // the same kind of counter.
         //
         // `readings` appears exactly when a Surface stack does, and is the empty
-        // array when the resolved model declares no reads: an unresolved state
-        // has no Surface to attribute a reading to, and §6.2 of the consumer
-        // design puts "UI surface resolved" ahead of every read for that reason.
-        // Its length is otherwise decided by the model rather than by what the
-        // Host managed to answer, because a Reader that found nothing and one
-        // that could not decide are both reported with their outcome instead of
-        // being dropped.
+        // array when no Surface on that stack declares a Readout: an unresolved
+        // state has no Surface to attribute a reading to, and §6.2 of the
+        // consumer design puts "UI surface resolved" ahead of every read for
+        // that reason. Its length is otherwise decided by the model rather than
+        // by what the Host managed to answer, because a read that found nothing
+        // and one that could not decide are both reported with their outcome
+        // instead of being dropped.
         // It is inside this document rather than beside it, which is what puts
         // it inside state_resolution_hash and therefore inside decision_basis_hash
         // without a second member having to be remembered.
@@ -78,7 +78,8 @@ namespace uf::task
         // the cycle itself; closing here would release the frame before the one
         // fact the snapshot still needs from it could be read.
         constexpr auto k_observeSource = std::string_view{R"lua(
-            local cycle = observe.open(project.load_project())
+            local runtime = project.load_project()
+            local cycle = observe.open(runtime)
             local state = cycle:resolve_state()
             local reason = state.reason
             if reason == nil and type(state.conflicts) == "table" then
@@ -86,8 +87,23 @@ namespace uf::task
                 if conflict ~= nil then reason = conflict.kind end
             end
             local readings = nil
+            local uiActions = nil
             if state.kind == "resolved_state" then
                 readings = cycle:resolve_readings(state)
+                for _, target in runtime.ui_targets do
+                    local binding = cycle:resolve_binding(state, target.id)
+                    if binding.kind == "resolved_binding" then
+                        for _, action in runtime.binding_by_id[binding.binding].actions do
+                            if uiActions == nil then uiActions = {} end
+                            table.insert(uiActions, {
+                                action = action.id,
+                                binding = binding.binding,
+                                kind = action.kind,
+                                ui_target = binding.ui_target,
+                            })
+                        end
+                    end
+                end
             end
             return jcs.encode({
                 kind = state.kind,
@@ -95,6 +111,48 @@ namespace uf::task
                 readings = readings,
                 reason = reason,
                 diagnostic = state.diagnostic,
+                ui_actions = uiActions,
+            })
+        )lua"};
+
+        // The same semantic resolution over a frame the caller reconstructed
+        // from Operator evidence. observe.current binds to that existing cycle
+        // and therefore performs no capture.
+        constexpr auto k_resolveOpenObservationSource = std::string_view{R"lua(
+            local runtime = project.load_project()
+            local cycle = observe.current(runtime)
+            local state = cycle:resolve_state()
+            local reason = state.reason
+            if reason == nil and type(state.conflicts) == "table" then
+                local conflict = state.conflicts[1]
+                if conflict ~= nil then reason = conflict.kind end
+            end
+            local readings = nil
+            local uiActions = nil
+            if state.kind == "resolved_state" then
+                readings = cycle:resolve_readings(state)
+                for _, target in runtime.ui_targets do
+                    local binding = cycle:resolve_binding(state, target.id)
+                    if binding.kind == "resolved_binding" then
+                        for _, action in runtime.binding_by_id[binding.binding].actions do
+                            if uiActions == nil then uiActions = {} end
+                            table.insert(uiActions, {
+                                action = action.id,
+                                binding = binding.binding,
+                                kind = action.kind,
+                                ui_target = binding.ui_target,
+                            })
+                        end
+                    end
+                end
+            end
+            return jcs.encode({
+                kind = state.kind,
+                ordered_surface_stack = state.ordered_surface_stack,
+                readings = readings,
+                reason = reason,
+                diagnostic = state.diagnostic,
+                ui_actions = uiActions,
             })
         )lua"};
 
@@ -123,19 +181,43 @@ namespace uf::task
         [[nodiscard]]
         auto authorizeUiActionSource(
             std::string_view uiTarget,
-            std::string_view action
+            std::string_view bindingId,
+            std::string_view action,
+            std::string_view expectedKind
         ) -> std::string
         {
             return std::format(
                 R"lua(
-            local cycle = observe.current(project.load_project())
+            local runtime = project.load_project()
+            local cycle = observe.current(runtime)
             local state = cycle:resolve_state()
-            local binding = cycle:resolve_binding(state, "{}")
+            local binding = cycle:resolve_binding(state, "{}", "{}")
+            if binding.kind ~= "resolved_binding" then
+                error("binding '{}' did not resolve for ui_target '{}'")
+            end
+            local declaredKind = nil
+            for _, declared in runtime.binding_by_id["{}"].actions do
+                if declared.id == "{}" then declaredKind = declared.kind end
+            end
+            if declaredKind == nil then error("binding '{}' declares no action '{}'") end
+            if declaredKind ~= "{}" then
+                error("action '{}' declares kind '" .. declaredKind .. "', not '{}'")
+            end
             local receipt, reason = cycle:authorize(binding, "{}")
             if receipt == nil then error(reason) end
             return 1
         )lua",
                 uiTarget,
+                bindingId,
+                bindingId,
+                uiTarget,
+                bindingId,
+                action,
+                bindingId,
+                action,
+                expectedKind,
+                action,
+                expectedKind,
                 action
             );
         }
@@ -797,11 +879,28 @@ namespace uf::task
         return receipt;
     }
 
-    auto TaskHost::deliver(
+    auto TaskHost::makeDeliveryReport(
+        DispatchAuthority authority,
+        DeliveryOutcome outcome,
+        std::string reason,
+        uint64 receiptId,
+        std::optional<DeliveredInput> posted
+    ) -> HostDeliveryReport
+    {
+        return HostDeliveryReport{
+            std::move(authority),
+            outcome,
+            std::move(reason),
+            receiptId,
+            std::move(posted),
+        };
+    }
+
+    auto TaskHost::consumeReceipt(
         DispatchAuthority authority,
         Receipt const& receipt,
         TaskContext& context
-    ) -> Result<HostDeliveryReport>
+    ) -> Result<std::variant<AuthorizedReceipt, HostDeliveryReport>>
     {
         if (
             receipt.m_hostNonce != m_hostNonce
@@ -854,13 +953,13 @@ namespace uf::task
             std::optional<DeliveredInput> delivered
         ) -> HostDeliveryReport
         {
-            return HostDeliveryReport{
+            return makeDeliveryReport(
                 std::move(authority),
                 outcome,
                 std::move(reason),
                 ordinal,
                 delivered
-            };
+            );
         };
 
         auto const p_generation = findGeneration(pending.generation);
@@ -908,6 +1007,42 @@ namespace uf::task
                 std::nullopt
             );
         }
+
+        return AuthorizedReceipt{
+            .authority = std::move(authority),
+            .pending   = std::move(pending),
+        };
+    }
+
+    auto TaskHost::deliver(
+        DispatchAuthority authority,
+        Receipt const& receipt,
+        TaskContext& context
+    ) -> Result<HostDeliveryReport>
+    {
+        UF_TRY_VALUE(consumed, consumeReceipt(std::move(authority), receipt, context));
+        if (auto const* const p_terminal =
+                std::get_if<HostDeliveryReport>(&consumed))
+        {
+            return *p_terminal;
+        }
+        auto authorized = std::get<AuthorizedReceipt>(std::move(consumed));
+        auto& pending   = authorized.pending;
+
+        auto report = [&authorized, ordinal = pending.ordinal](
+            DeliveryOutcome outcome,
+            std::string reason,
+            std::optional<DeliveredInput> delivered
+        ) -> HostDeliveryReport
+        {
+            return makeDeliveryReport(
+                std::move(authorized.authority),
+                outcome,
+                std::move(reason),
+                ordinal,
+                delivered
+            );
+        };
 
         // Past this call the input may already have reached the target, and the
         // engine's Result cannot say whether it did. clickPoint fails before the
@@ -1030,12 +1165,14 @@ namespace uf::task
         return deliver(std::move(authority), receipt, context);
     }
 
-    auto TaskHost::deliverUiAction(
-        DispatchAuthority authority,
+    auto TaskHost::authorizeUiAction(
+        DispatchAuthority const& authority,
         TaskContext& context,
         std::string_view uiTarget,
-        std::string_view action
-    ) -> Result<HostDeliveryReport>
+        std::string_view bindingId,
+        std::string_view action,
+        std::string_view expectedKind
+    ) -> Status
     {
         UF_TRY_VALUE(p_generation, requireGeneration(authority.runtimeGeneration));
         auto const& binding = p_generation->binding();
@@ -1084,10 +1221,152 @@ namespace uf::task
         UF_TRY(runTrustedRuntime(
             generation,
             context,
-            authorizeUiActionSource(uiTarget, action),
+            authorizeUiActionSource(uiTarget, bindingId, action, expectedKind),
             "runtime-authorize"
         ));
+        return ok();
+    }
+
+    auto TaskHost::deliverUiAction(
+        DispatchAuthority authority,
+        TaskContext& context,
+        std::string_view uiTarget,
+        std::string_view bindingId,
+        std::string_view action,
+        std::string_view expectedKind
+    ) -> Result<HostDeliveryReport>
+    {
+        UF_TRY(authorizeUiAction(
+            authority,
+            context,
+            uiTarget,
+            bindingId,
+            action,
+            expectedKind
+        ));
         return deliver(std::move(authority), context);
+    }
+
+    auto TaskHost::engageUiHold(
+        DispatchAuthority authority,
+        TaskContext& context,
+        std::string_view uiTarget,
+        std::string_view bindingId,
+        std::string_view action
+    ) -> Result<HostHoldStart>
+    {
+        UF_TRY(authorizeUiAction(
+            authority,
+            context,
+            uiTarget,
+            bindingId,
+            action,
+            "hold"
+        ));
+
+        auto const found = std::ranges::find_if(
+            m_receipts,
+            [&context](PendingReceipt const& pending)
+            {
+                return context.requireReceiptCycle(
+                    pending.cycle,
+                    pending.evidenceCycleOrdinal
+                ).has_value();
+            }
+        );
+        if (found == m_receipts.end())
+        {
+            return fail(
+                AutomationErrorKind::StaleObservation,
+                "the hold context carries no pending Host Receipt"
+            );
+        }
+        auto const receipt = Receipt{m_hostNonce, found->ordinal};
+        UF_TRY_VALUE(
+            consumed,
+            consumeReceipt(std::move(authority), receipt, context)
+        );
+        if (auto* const p_terminal = std::get_if<HostDeliveryReport>(&consumed))
+        {
+            return HostHoldStart{std::move(*p_terminal)};
+        }
+
+        auto authorized = std::get<AuthorizedReceipt>(std::move(consumed));
+        auto const* const p_hold =
+            std::get_if<TrustedHoldInput>(&authorized.pending.intent.input);
+        if (p_hold == nullptr)
+        {
+            return HostHoldStart{makeDeliveryReport(
+                std::move(authorized.authority),
+                DeliveryOutcome::NotDelivered,
+                "the authorized action is not a hold",
+                authorized.pending.ordinal,
+                std::nullopt
+            )};
+        }
+
+        auto engaged = context.cycleEngageHold(
+            authorized.pending.cycle,
+            p_hold->point,
+            p_hold->duration
+        );
+        if (!engaged)
+        {
+            auto reason = std::format(
+                "Host hold reached the engine and did not engage cleanly: {}",
+                engaged.error().message()
+            );
+            if (context.inputEngaged())
+            {
+                auto const released = context.disengageInput();
+                if (!released)
+                {
+                    reason += std::format(
+                        "; releasing it also failed: {}",
+                        released.error().message()
+                    );
+                }
+            }
+            return HostHoldStart{makeDeliveryReport(
+                std::move(authorized.authority),
+                DeliveryOutcome::TransportUnknown,
+                std::move(reason),
+                authorized.pending.ordinal,
+                std::nullopt
+            )};
+        }
+
+        return HostHoldStart{HostHoldEngagement{
+            std::move(authorized.authority),
+            authorized.pending.ordinal,
+            p_hold->duration,
+        }};
+    }
+
+    auto TaskHost::finishUiHold(
+        HostHoldEngagement engagement,
+        TaskContext& context
+    ) -> HostDeliveryReport
+    {
+        auto released = context.disengageInput();
+        if (!released)
+        {
+            return makeDeliveryReport(
+                std::move(engagement.m_authority),
+                DeliveryOutcome::TransportUnknown,
+                "Host could not release the semantic hold: "
+                    + std::string{released.error().message()},
+                engagement.m_receiptId,
+                std::nullopt
+            );
+        }
+        return makeDeliveryReport(
+            std::move(engagement.m_authority),
+            DeliveryOutcome::Delivered,
+            {},
+            engagement.m_receiptId,
+            DeliveredInput{*std::move(released)}
+        );
     }
 
     auto TaskHost::adoptControlFence(ControlFence fence) -> Status
@@ -1341,6 +1620,75 @@ namespace uf::task
         ++m_nextObservationOrdinal;
         // The frame is handed over, so it stops being this function's to close.
         sweep.release();
+        return UiObservationSnapshot{
+            std::move(observationId),
+            generation,
+            *targetGeneration,
+            binding->artifactRootHash(),
+            binding->semanticHash(),
+            *p_document,
+        };
+    }
+
+    auto TaskHost::resolveOpenObservationFrame(
+        GenerationId generation,
+        TaskContext& context
+    ) -> Result<UiObservationSnapshot>
+    {
+        UF_TRY_VALUE(p_generation, requireGeneration(generation));
+        auto const& binding = p_generation->binding();
+        if (!binding)
+        {
+            return fail(
+                AutomationErrorKind::UnsupportedCapability,
+                "UI observation requires a privately finalized generation"
+            );
+        }
+        if (!context.openObservationFrame().has_value())
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "recorded screenshot resolution requires an open evidence cycle"
+            );
+        }
+        if (m_nextObservationOrdinal == std::numeric_limits<uint64>::max())
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "Host observation ordinal space is exhausted"
+            );
+        }
+        UF_TRY_VALUE(
+            resolved,
+            runTrustedRuntime(
+                generation,
+                context,
+                k_resolveOpenObservationSource,
+                "runtime-observe-evidence"
+            )
+        );
+        auto const* const p_document = resolved.text();
+        if (p_document == nullptr)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "the trusted evidence observation chunk returned no canonical document"
+            );
+        }
+        auto const targetGeneration = context.openCycleTargetGeneration();
+        if (!targetGeneration.has_value())
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "the trusted evidence observation chunk released its cycle"
+            );
+        }
+        auto observationId = std::format(
+            "observation-{}-{}",
+            m_hostNonce,
+            m_nextObservationOrdinal
+        );
+        ++m_nextObservationOrdinal;
         return UiObservationSnapshot{
             std::move(observationId),
             generation,

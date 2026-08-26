@@ -12,8 +12,8 @@ namespace uf::operator_runtime
         // The canonical form of one transported value. Every adapter reaches
         // canonical bytes through this one rendering, so an actor's transport
         // decides what it delivers and never how the bytes it delivers are
-        // spelled -- which is the divergence the four-way fixture would
-        // otherwise have to catch after the fact.
+        // spelled -- which is the divergence the actor fixture would otherwise
+        // have to catch after the fact.
         [[nodiscard]]
         auto canonicalise(json::Value const& value) -> Result<CanonicalJson>
         {
@@ -36,9 +36,9 @@ namespace uf::operator_runtime
         // the catalog that owns the name validates it against the arguments,
         // and the run's own producer mints the root coordinate.
         //
-        // `producer` is mutable because advancing this run's ordinals is what
-        // this call is for: the seam owns the child index and a producer that
-        // did not move would hand the next start the same coordinate.
+        // `producer` is mutable because advancing this actor's root ordinals is
+        // what this call is for: a producer that did not move would hand the
+        // next start the same coordinate.
         [[nodiscard]]
         auto startOf(
             ToolActorRun const& run,

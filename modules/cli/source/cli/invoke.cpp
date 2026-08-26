@@ -431,14 +431,14 @@ namespace uf::cli
     ) -> Result<ToolInvokeReport>
     {
         // First, and before the project directory is opened, for
-        // observeProject's reason: a Reader this project's model declares
+        // observeProject's reason: a Readout this project's model declares
         // reaches the resolver as a read that could not run, and the resolution
         // then reports a reason from a closed vocabulary that names no flag.
         if (!sources.ocrEngine)
         {
             return fail(
                 AutomationErrorKind::UnsupportedCapability,
-                "invoke was given no OCR engine, so every Reader this "
+                "invoke was given no OCR engine, so every Readout this "
                 "project's model declares would report a failed read rather "
                 "than what is written on the screen; pass --ocr-models"
             );

@@ -154,8 +154,7 @@ namespace uf::operator_runtime::conformance
         // digest is the one that registration pinned.
         auto const generation = loadGeneration(
             project,
-            ProjectRole::UnderTest,
-            provisioningToolRuntime()
+            ProjectRole::UnderTest
         );
         CHECK(
             generation.projectRegistrationHash()

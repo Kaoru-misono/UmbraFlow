@@ -404,22 +404,17 @@ namespace uf::operator_runtime
         );
     }
 
-    // What a Tool descriptor may bound, which is the half of C-08 that outlived
-    // the plan document: PlanProposal carried these two definitions and is
-    // deleted, but both are still read out of the Tool Catalog by
-    // tool-descriptor.hpp, so both still describe something the framework has.
+    // The UI action intent is the half of C-08 that outlived the plan document.
+    // Per-Tool workflow-composition limits were deleted with nested Project
+    // Tool execution.
     TEST_CASE("schema-control-c08")
     {
         auto const schema = readSchema("umbraflow-operator-v1.schema.json");
         auto const intent = definition(schema, "UIActionIntent");
-        auto const limits = definition(schema, "WorkflowLimits");
         checkStrictObject(intent);
-        checkStrictObject(limits);
         CHECK(intent.find("\"binding_variant_constraints\"") != std::string::npos);
         CHECK(intent.find("\"expected_ui_postconditions\"") != std::string::npos);
         CHECK(intent.find("\"delivery_class\"") != std::string::npos);
-        CHECK(limits.find("\"maximum_dispatches\"") != std::string::npos);
-        CHECK(limits.find("\"maximum_observations\"") != std::string::npos);
     }
 
     // The policy artifact is the half of C-12 that outlived the Operation:

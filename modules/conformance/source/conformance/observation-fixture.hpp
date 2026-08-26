@@ -569,10 +569,10 @@ namespace uf::operator_runtime::conformance
         };
     }
 
-    // One observation, taken and finished here: a frame with an empty body --
-    // open, resolve, close in one call. Whoever opens a frame owns its close on
-    // every exit path, and for a fixture that measures once the exit path is the
-    // return below.
+    // One internal observation cycle, taken and finished here: open, resolve,
+    // close in one call. Whoever opens a cycle owns its close on every exit
+    // path, and for a fixture that measures once the exit path is the return
+    // below.
     [[nodiscard]]
     inline auto observeOnce(ObservationHost& observation) -> task::UiObservationSnapshot
     {
@@ -669,18 +669,11 @@ namespace uf::operator_runtime::conformance
         GenerationId                        m_generation;
         ProjectFingerprint                  m_fingerprint;
         std::unique_ptr<ObservationRuntime> m_runtime;
-        std::unique_ptr<ObservationRuntime> m_other{};
 
         // The action the project named. It is stored rather than passed to each
         // call because the chunk that mints a Receipt and the check that reads
         // one must name the same action across a whole dispatch.
         task::UiActionUnderTest m_action;
-
-        // The project's own capture, kept because deliverIntoAnotherCycle builds
-        // a second runtime over it on demand. Owned rather than borrowed: a
-        // DeliveringHost outlives the call that made it, so a view of the
-        // caller's loaded project would be a stored borrow with no contract.
-        std::vector<std::byte> m_probe;
 
         auto mint() -> void
         {
@@ -711,7 +704,6 @@ namespace uf::operator_runtime::conformance
                   FrameId{701}
               )}
             , m_action{std::move(action)}
-            , m_probe{std::move(probeFrame)}
         {
             // Minting is refused until a ledger fence is adopted, so this is
             // where a Host stops being inert.
@@ -739,21 +731,6 @@ namespace uf::operator_runtime::conformance
             return m_runtime->actions().clicks();
         }
 
-        auto refuseClicks() noexcept -> void
-        {
-            m_runtime->actions().refuseClicks();
-        }
-
-        auto adoptFence(task::ControlFence fence) -> void
-        {
-            REQUIRE(
-                task::TaskHostTestAccess::adoptControlFence(
-                    *m_host,
-                    std::move(fence)
-                ).has_value()
-            );
-        }
-
         // Mints one Receipt and presents it under `authority`. The Result is
         // returned rather than unwrapped: an Err means nothing was consumed, and
         // a case that could not see that difference could not tell a refusal
@@ -773,56 +750,6 @@ namespace uf::operator_runtime::conformance
                 receipt,
                 m_runtime->context()
             );
-        }
-
-        [[nodiscard]]
-        auto deliverReport(task::DispatchAuthority authority)
-            -> task::HostDeliveryReport
-        {
-            auto report = deliver(std::move(authority));
-            REQUIRE(report.has_value());
-            return *std::move(report);
-        }
-
-        // Mints one Receipt in this Host's cycle and presents it to a second
-        // context holding a cycle of its own. The Receipt is consumed and no
-        // click is posted, which is how a fixture reaches the one outcome that
-        // proves an external effect absent.
-        [[nodiscard]]
-        auto deliverIntoAnotherCycle(task::DispatchAuthority authority)
-            -> task::HostDeliveryReport
-        {
-            mint();
-            if (!m_other)
-            {
-                m_other = std::make_unique<ObservationRuntime>(
-                    m_probe,
-                    m_fingerprint,
-                    FrameId{702}
-                );
-                // The other context must hold a cycle of its own, or the refusal
-                // proves only that it has none.
-                auto const opened = task::TaskHostTestAccess::run(
-                    *m_host,
-                    m_generation,
-                    m_other->context(),
-                    "return observe.open(project.load_project()) ~= nil"
-                );
-                REQUIRE(opened.has_value());
-            }
-            auto const receipt = task::TaskHostTestAccess::pendingReceipt(
-                *m_host,
-                m_action
-            );
-            auto report = task::TaskHostTestAccess::deliver(
-                *m_host,
-                std::move(authority),
-                receipt,
-                m_other->context()
-            );
-            REQUIRE(report.has_value());
-            REQUIRE(m_other->actions().clicks() == 0U);
-            return *std::move(report);
         }
     };
 

@@ -133,10 +133,7 @@ namespace uf::deployment
         [[nodiscard]]
         auto toolCatalogReader() const -> operator_runtime::ToolCatalogReader;
 
-        // A Tool whose argument_schema is the string `unchecked` gets no
-        // argument enforcement, which is the Project declining a guard rather
-        // than the framework skipping one. The framework still records the
-        // exact bytes it passed, their digest and their coordinates.
+        // Every Tool's declared flat input schema is applied to every call.
         [[nodiscard]]
         auto toolArgumentValidator() const
             -> operator_runtime::ToolArgumentValidator;

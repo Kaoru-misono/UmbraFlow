@@ -1,4 +1,4 @@
-#include "../support/runtime-v3-fixture.hpp"
+#include "../support/runtime-v4-fixture.hpp"
 
 #include <task/exploration-session.hpp>
 #include <task/framework-bundle.hpp>
@@ -237,16 +237,17 @@ namespace uf::task
             [[nodiscard]] auto calls() const noexcept -> uint32 { return m_calls; }
         };
 
-        // The fixture's world plus one Binding that reports what a Reader read.
-        // Its detector is the confirm mark, so the middle pixel decides whether
-        // the reading Binding is present while the anchor still resolves the
-        // Surface -- which is what lets an absent reading Binding be exercised
-        // without also unresolving the state.
+        // The fixture's world plus one Readout over the middle pixel, and a
+        // Binding over that same pixel whose detector is the confirm mark. The
+        // Binding is here to be turned OFF: the middle pixel decides whether it
+        // is present while the anchor still resolves the Surface, which is what
+        // lets "a Readout is gated by its Surface and by nothing else" be
+        // exercised without also unresolving the state.
         [[nodiscard]]
         auto readingRuntimeModel(std::string_view titleLayout = "single_line")
             -> std::string
         {
-            return R"toml(schema_version = 3
+            return R"toml(schema_version = 4
 base_resolution = [3, 1]
 base_dpi = [96, 96]
 
@@ -270,15 +271,6 @@ kind = "template"
 asset_path = "assets/confirm.png"
 threshold = 1
 
-[[reader]]
-id = "title.reader"
-kind = "text"
-confidence_floor = 0.5
-layout = ")toml"
-                + std::string{titleLayout}
-                + R"toml("
-normalization = "collapse_whitespace"
-
 [[binding]]
 id = "screen.anchor"
 surface = "screen"
@@ -294,11 +286,19 @@ ui_target = "title"
 placement = { kind = "fixed", rect = [1, 0, 1, 1] }
 variants = [{ name = "primary", detector = { all = [{ kind = "locator_present", locator = "confirm-mark" }], any = [], none = [] } }]
 actions = []
-reads = ["title.reader"]
+
+[[readout]]
+id = "title"
+surface = "screen"
+rect = [1, 0, 1, 1]
+layout = ")toml"
+                + std::string{titleLayout}
+                + R"toml("
+confidence_floor = 0.5
+normalization = "collapse_whitespace"
 
 [[surface]]
 id = "screen"
-kind = "scene"
 covers = []
 identity = ["screen.anchor"]
 )toml";
@@ -318,7 +318,7 @@ identity = ["screen.anchor"]
         [[nodiscard]] auto textIdentityRuntimeModel(std::string_view detector)
             -> std::string
         {
-            return std::string{R"toml(schema_version = 3
+            return std::string{R"toml(schema_version = 4
 base_resolution = [3, 1]
 base_dpi = [96, 96]
 
@@ -332,13 +332,6 @@ kind = "template"
 asset_path = "assets/title.png"
 threshold = 1
 
-[[reader]]
-id = "title.reader"
-kind = "text"
-confidence_floor = 0.5
-layout = "single_line"
-normalization = "collapse_whitespace"
-
 [[binding]]
 id = "title.identity"
 surface = "screen"
@@ -351,7 +344,6 @@ actions = []
 
 [[surface]]
 id = "screen"
-kind = "scene"
 covers = []
 identity = ["title.identity"]
 )toml";
@@ -365,73 +357,44 @@ identity = ["title.identity"]
             REQUIRE(baseResolutionAt != std::string::npos);
             result.replace(baseResolutionAt, baseResolution.size(), "base_resolution = [5, 1]");
             result += R"toml(
-[[reader]]
-id = "options.reader"
-kind = "text"
-confidence_floor = 0.5
-layout = "block"
-normalization = "trim"
-
 [[collection]]
 id = "options"
 surface = "screen"
-placement = { kind = "detected", search_rect = [0, 0, 5, 1], reader = "options.reader", order = "left_to_right", slots = { origin = 2, pitch = 2, extent = 5, tolerance = 0, maximum_slots = 4 } }
-actions = []
-reads = []
+placement = { kind = "detected", search_rect = [0, 0, 5, 1], confidence_floor = 0.5, order = "left_to_right", slots = { origin = 2, pitch = 2, extent = 5, tolerance = 0, maximum_slots = 4 } }
 )toml";
             return result;
         }
 
+        // One rectangle read twice, under the two layouts. A cycle memoises per
+        // read, and the layout is part of the question, so the same pixels
+        // under two layouts are two Host reads rather than one cached answer.
         [[nodiscard]] auto mixedLayoutReadingRuntimeModel() -> std::string
         {
-            auto result = readingRuntimeModel();
-            auto constexpr declaredReads = std::string_view{R"(["title.reader"])"};
-            auto constexpr mixedReads = std::string_view{
-                R"(["title.reader", "title.block"])"
-            };
-            auto const readsAt = result.find(declaredReads);
-            REQUIRE(readsAt != std::string::npos);
-            result.replace(readsAt, declaredReads.size(), mixedReads);
-            result += R"toml(
-[[reader]]
+            return readingRuntimeModel() + R"toml(
+[[readout]]
 id = "title.block"
-kind = "text"
-confidence_floor = 0.5
+surface = "screen"
+rect = [1, 0, 1, 1]
 layout = "block"
+confidence_floor = 0.5
 normalization = "collapse_whitespace"
 )toml";
-            return result;
         }
 
-        // The reading world with a SECOND reporting Binding over the third
-        // pixel. Two rectangles are what a read budget can be exhausted against:
-        // a cycle memoises per rectangle, so two Readers on one Binding cost one
-        // read however they are spelled. It reuses the confirm mark rather than
-        // a third asset because the asset closure is verified against the
-        // manifest, and title.primary stays declared first, which is the order
-        // reading_bindings walks and therefore which of the two spends the read.
+        // The reading world with a SECOND Readout over the third pixel. Two
+        // rectangles are what a read budget can be exhausted against, and
+        // `title` stays declared first, which is the order stack_readouts walks
+        // and therefore which of the two spends the one read a budget of 1 buys.
         [[nodiscard]] auto budgetedReadingRuntimeModel() -> std::string
         {
             return readingRuntimeModel() + R"toml(
-[[ui_target]]
+[[readout]]
 id = "subtitle"
-kind = "region"
-
-[[reader]]
-id = "subtitle.reader"
-kind = "text"
-confidence_floor = 0.5
-layout = "single_line"
-normalization = "collapse_whitespace"
-
-[[binding]]
-id = "subtitle.primary"
 surface = "screen"
-ui_target = "subtitle"
-placement = { kind = "fixed", rect = [2, 0, 1, 1] }
-variants = [{ name = "primary", detector = { all = [{ kind = "locator_present", locator = "confirm-mark" }], any = [], none = [] } }]
-actions = []
-reads = ["subtitle.reader"]
+rect = [2, 0, 1, 1]
+layout = "single_line"
+confidence_floor = 0.5
+normalization = "collapse_whitespace"
 )toml";
         }
 
@@ -442,7 +405,7 @@ reads = ["subtitle.reader"]
         // while the anchor still resolves the Surface.
         [[nodiscard]] auto keyRuntimeModel() -> std::string
         {
-            return R"toml(schema_version = 3
+            return R"toml(schema_version = 4
 base_resolution = [3, 1]
 base_dpi = [96, 96]
 
@@ -484,7 +447,6 @@ actions = [{ id = "activate", kind = "key", key = "E", proof_locator = "confirm-
 
 [[surface]]
 id = "screen"
-kind = "scene"
 covers = []
 identity = ["screen.anchor"]
 )toml";
@@ -601,25 +563,16 @@ identity = ["screen.anchor"]
             {
                 return [issued](
                            std::string_view toolName,
-                           json::Value const&,
-                           script::ToolCallBody body
+                           json::Value const&
                        ) -> Result<json::Value>
                 {
                     issued->emplace_back(toolName);
-                    if (body)
-                    {
-                        UF_TRY_VALUE(
-                            owningCall,
-                            sha256(std::as_bytes(std::span{toolName}))
-                        );
-                        UF_TRY(body(owningCall));
-                    }
                     return json::Value::ofObject({
                         {"call_identity",
                          json::Value::ofString(std::string(64U, '0'))},
+                        {"delivery", json::Value::ofString("confirmed")},
+                        {"ok", json::Value::ofBoolean(true)},
                         {"result", json::Value::ofObject({})},
-                        {"state", json::Value::ofString("confirmed")},
-                        {"tool", json::Value::ofString(std::string{toolName})},
                     });
                 };
             };
@@ -630,7 +583,7 @@ identity = ["screen.anchor"]
             -> script::PureDataProgram::Resource
         {
             constexpr auto tools = std::string_view{
-                R"([{"argument_contract":{},"body":{"arms":{"click":false,"drag":false,"hold":true,"key":false,"move":false,"scroll":false},"tag":"action"},"child_effects":{"maximum_child_calls":1},"name":"framework.input.deliver","tool_version":"1"},{"argument_contract":{},"body":true,"child_effects":{"maximum_child_calls":1},"name":"framework.screen.observe","tool_version":"1"},{"argument_contract":{},"body":false,"child_effects":{"maximum_child_calls":0},"name":"framework.screen.read_lines","tool_version":"1"}])"
+                R"([{"description":"Click at one observed coordinate","input_schema":{"additional_properties":false,"required":["screenshot_sha256","x","y"],"type":"object"},"name":"framework.input.click","tool_version":"1"},{"description":"Observe one retained screenshot","input_schema":{"additional_properties":false,"required":["screenshot_sha256"],"type":"object"},"name":"framework.screen.observe","tool_version":"1"},{"description":"Read lines from one retained screenshot","input_schema":{"additional_properties":false,"required":["height","screenshot_sha256","width","x","y"],"type":"object"},"name":"framework.screen.read_lines","tool_version":"1"}])"
             };
             auto digest = sha256(std::as_bytes(std::span{tools}));
             REQUIRE(digest.has_value());
@@ -713,7 +666,7 @@ identity = ["screen.anchor"]
             auto const fixture = runtimeModel();
             auto const body    = fixture.find("\n\n[[ui_target]]");
             REQUIRE(body != std::string::npos);
-            return "schema_version = 3\n" + std::string{geometry}
+            return "schema_version = 4\n" + std::string{geometry}
                 + fixture.substr(body);
         }
 
@@ -758,7 +711,7 @@ identity = ["screen.anchor"]
         CHECK(*modelBytes == bytes(runtimeModel()));
 
         auto const invalidDirectory = TemporaryDirectory{};
-        auto const invalidModel = std::string{"schema_version = 3\n"};
+        auto const invalidModel = std::string{"schema_version = 4\n"};
         auto const invalidRoot = publish(invalidDirectory.path(), invalidModel, {});
         auto invalidHost = TaskHost{};
         CHECK_FALSE(
@@ -1779,7 +1732,7 @@ identity = ["screen.anchor"]
         );
 
         // EVERY VERB AN EXPLORATION CHUNK WRITES IS A TOOL CALL, including the
-        // measurement written inside an observation's body. The Host reaches no
+        // measurement over an explicit screenshot digest. The Host reaches no
         // engine on their behalf and holds no private verb they could reach it
         // through: what a chunk does is decided where the call is admitted, by
         // the Operator that admitted this session
@@ -1788,16 +1741,17 @@ identity = ["screen.anchor"]
             R"lua(
                 local screen = require("@umbraflow/screen")
                 local tools = require("@umbraflow/tools")
-                screen.observe(function()
-                    tools.call("framework.screen.read_lines", {
-                        x = 0,
-                        y = 0,
-                        width = 1,
-                        height = 1,
-                    })
-                end)
-                tools.call("framework.input.deliver", {
-                    action = "click",
+                local hash = string.rep("0", 64)
+                screen.observe(hash)
+                tools.call("framework.screen.read_lines", {
+                    screenshot_sha256 = hash,
+                    x = 0,
+                    y = 0,
+                    width = 1,
+                    height = 1,
+                })
+                tools.call("framework.input.click", {
+                    screenshot_sha256 = hash,
                     x = 0,
                     y = 0,
                 })
@@ -1813,7 +1767,7 @@ identity = ["screen.anchor"]
             == std::vector<std::string>{
                 "framework.screen.observe",
                 "framework.screen.read_lines",
-                "framework.input.deliver",
+                "framework.input.click",
             }
         );
     }
@@ -1883,13 +1837,15 @@ identity = ["screen.anchor"]
         CHECK(first->stateResolutionHash() == second->stateResolutionHash());
         CHECK(first->observationId() != second->observationId());
 
-        // readings is present and empty because this model declares no reads.
-        // Empty and absent are two different documents, and a resolved state
-        // always says which one it is.
+        // readings is present and empty because this model declares no Readout.
+        // The one resolved action is named with all three identifiers and its
+        // kind; semantic Tools later spend this exact observation authority.
         CHECK(
             first->canonicalJcs()
             == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
-               R"("readings":[]})"
+               R"("readings":[],"ui_actions":[{"action":"activate",)"
+               R"("binding":"confirm.primary","kind":"click",)"
+               R"("ui_target":"confirm"}]})"
         );
         CHECK(first->stateResolutionHash() == hash(first->canonicalJcs()));
         CHECK(first->generation() == *generation);
@@ -1966,11 +1922,11 @@ identity = ["screen.anchor"]
         );
     }
 
-    // The whole reading path, from the trusted Reader to the bytes a plugin is
-    // handed. Nothing below asserts against a string this file also produced:
-    // the text comes out of the scripted Reader, the normalization out of the
-    // RuntimeModel, and the document out of the resolver.
-    TEST_CASE("TaskHost::observe reports what a present Binding's Reader read")
+    // The whole reading path, from the trusted OCR boundary to the bytes a
+    // plugin is handed. Nothing below asserts against a string this file also
+    // produced: the text comes out of the scripted engine, the normalization
+    // out of the RuntimeModel, and the document out of the resolver.
+    TEST_CASE("TaskHost::observe reports what a Readout on the resolved stack read")
     {
         auto const directory = TemporaryDirectory{};
         auto host = TaskHost{};
@@ -2003,25 +1959,24 @@ identity = ["screen.anchor"]
         );
         CHECK_MESSAGE(
             canonical.find(R"("rect":[1,0,1,1])") != std::string::npos,
-            "SingleLine readings must use the declared Binding rectangle"
+            "SingleLine readings must use the declared Readout rectangle"
         );
 
-        // The reading is attributed to the UiTarget, carries one line of the
-        // NORMALISED text its Reader declared collapse_whitespace for with the
+        // The reading is named by the Readout's own id, carries one line of the
+        // NORMALISED text that Readout declared collapse_whitespace for with the
         // rectangle that line was read in, and is inside the document whose
         // sha256 is the state resolution hash.
         CHECK(
             observed->canonicalJcs()
             == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
-               R"("readings":[{"kind":"read","lines":[{"rect":[1,0,1,1],)"
-               R"("text":"Wandering Merchant"}],"reader":"title.reader",)"
-               R"("ui_target":"title"}]})"
+               R"("readings":[{"id":"title","kind":"read",)"
+               R"("lines":[{"rect":[1,0,1,1],"text":"Wandering Merchant"}]}]})"
         );
         CHECK(observed->stateResolutionHash() == hash(observed->canonicalJcs()));
 
-        // The Reader was pointed at the reading Binding's own rectangle and not
-        // at the Surface, so a document that named the right UiTarget over the
-        // wrong pixels would fail here rather than read as a correct answer.
+        // The engine was pointed at the Readout's own rectangle and not at the
+        // Surface, so a document that named the right Readout over the wrong
+        // pixels would fail here rather than read as a correct answer.
         REQUIRE(p_reader->calls() == 1U);
         CHECK(p_reader->lastRect().x() == 1);
         CHECK(p_reader->lastRect().y() == 0);
@@ -2046,11 +2001,11 @@ identity = ["screen.anchor"]
         CHECK(again->stateResolutionHash() == observed->stateResolutionHash());
     }
 
-    // What the Reader's layout buys, end to end. A Reader declaring block is
-    // read under Block, and every line the detector found travels with the
-    // rectangle it found it at -- which is the capability a single-line Reader
-    // cannot express, because it asserts there is only ever one.
-    TEST_CASE("TaskHost::observe reports every line a block Reader read")
+    // What a read's layout buys, end to end. A Readout declaring block is read
+    // under Block, and every line the detector found travels with the rectangle
+    // it found it at -- which is the capability a single_line read cannot
+    // express, because it asserts there is only ever one.
+    TEST_CASE("TaskHost::observe reports every line a block Readout read")
     {
         auto const directory = TemporaryDirectory{};
         auto host = TaskHost{};
@@ -2095,26 +2050,25 @@ identity = ["screen.anchor"]
         REQUIRE(observed.has_value());
 
         // The model's declared layout is what the Host ran, not a default the
-        // engine chose: a Reader saying block and a Host reading one line would
+        // engine chose: a Readout saying block and a Host reading one line would
         // report the first line of three and call the region read.
         CHECK(p_reader->lastLayout() == ocr::TextLayout::Block);
         CHECK(
             observed->canonicalJcs()
             == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
-               R"("readings":[{"kind":"read","lines":[)"
+               R"("readings":[{"id":"title","kind":"read","lines":[)"
                R"({"rect":[0,0,1,1],"text":"The road is blocked"},)"
                R"({"rect":[1,0,1,1],"text":"by a stranger"},)"
-               R"({"rect":[2,0,1,1],"text":"who will not move"}],)"
-               R"("reader":"title.reader","ui_target":"title"}]})"
+               R"({"rect":[2,0,1,1],"text":"who will not move"}]}]})"
         );
 
-        // Each line's own rectangle, and not the Binding's: a reading that
+        // Each line's own rectangle, and not the Readout's: a reading that
         // copied the question would put [1,0,1,1] on all three.
         CHECK(observed->stateResolutionHash() == hash(observed->canonicalJcs()));
     }
 
     // T-002 / T07-equivalent. One declaration is resolved against one, two and
-    // three detected items. The Reader returns right-to-left order for the
+    // three detected items. The engine returns right-to-left order for the
     // multi-item cases, so the exact result also proves that adapter enumeration
     // order is not item identity. A final unchanged three-item capture returns
     // left-to-right and must produce the same indices and rectangles.
@@ -2329,8 +2283,8 @@ identity = ["screen.anchor"]
         CHECK(
             canonical
             == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
-               R"("readings":[{"kind":"unknown","reader":"title.reader",)"
-               R"("reason":"low_confidence","ui_target":"title"}]})"
+               R"("readings":[{"id":"title","kind":"unknown",)"
+               R"("reason":"low_confidence"}]})"
         );
     }
 
@@ -2445,12 +2399,12 @@ identity = ["screen.anchor"]
     // naming text_equals must therefore fail to parse and refuse the whole
     // artifact. The acceptance half -- the same predicate as a Collection's
     // filter, acting on members a locator has already found -- is exercised by
-    // test-runtime-model-v3.luau, whose valid model carries
+    // test-runtime-model-v4.luau, whose valid model carries
     // predicate = { kind = "text_equals", ... } on a Collection and compiles.
     TEST_CASE("T-009 a Binding detector naming text_equals cannot activate")
     {
         auto constexpr textPredicate =
-            R"({ kind = "text_equals", reader = "title.reader", value = "Settings" })";
+            R"({ kind = "text_equals", read = "title", value = "Settings" })";
         auto constexpr locatorPredicate =
             R"({ kind = "locator_present", locator = "title.mark" })";
         auto const titleAsset = std::vector<ArtifactFile>{
@@ -2491,13 +2445,13 @@ identity = ["screen.anchor"]
         REQUIRE(control.has_value());
     }
 
-    // T-004 / T05. Three Reader boundary cases through the real EngineSession
+    // T-004 / T05. Three read boundary cases through the real EngineSession
     // boundary, on one model whose Surface identity is locator-only: absent, a
     // read carrying the raw text, and unknown carrying low_confidence. The
     // Surface resolves in every case -- text never decides identity -- and the
     // three outcomes reach the plugin distinguishable, each case's assertions
     // going red if its outcome is reported as either of the other two.
-    TEST_CASE("T-004 T05 Reader outcomes stay distinguishable under a resolved Surface")
+    TEST_CASE("T-004 T05 read outcomes stay distinguishable under a resolved Surface")
     {
         struct Case final
         {
@@ -2512,24 +2466,23 @@ identity = ["screen.anchor"]
             Case{
                 .name   = "absent",
                 .silent = true,
-                .expectedReading =
-                    R"({"kind":"absent","reader":"title.reader","ui_target":"title"})",
+                .expectedReading = R"({"id":"title","kind":"absent"})",
             },
             Case{
                 .name = "read",
                 .text = "Settings",
                 .confidenceBp  = 9'000,
                 .expectedReading =
-                    R"({"kind":"read","lines":[{"rect":[1,0,1,1],"text":"Settings"}],)"
-                    R"("reader":"title.reader","ui_target":"title"})",
+                    R"({"id":"title","kind":"read",)"
+                    R"("lines":[{"rect":[1,0,1,1],"text":"Settings"}]})",
             },
             Case{
                 .name = "unknown",
                 .text = "Settings",
                 .confidenceBp  = 1'000,
                 .expectedReading =
-                    R"({"kind":"unknown","reader":"title.reader",)"
-                    R"("reason":"low_confidence","ui_target":"title"})",
+                    R"({"id":"title","kind":"unknown",)"
+                    R"("reason":"low_confidence"})",
             },
         };
 
@@ -2582,8 +2535,8 @@ identity = ["screen.anchor"]
             auto const observed = observeOnce(host, *generation, runtime.context());
             REQUIRE(observed.has_value());
 
-            // The Surface resolves whatever the Reader reported: the identity
-            // is the locator's judgement, so the reading can move without the
+            // The Surface resolves whatever the read reported: the identity is
+            // the locator's judgement, so the reading can move without the
             // decision basis' first member moving with it.
             auto const expected = std::string{
                 R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
@@ -2591,7 +2544,7 @@ identity = ["screen.anchor"]
                 + std::string{testCase.expectedReading} + "]}";
             CHECK_MESSAGE(
                 observed->canonicalJcs() == expected,
-                "T-004 T05 each Reader outcome must reach the plugin as itself"
+                "T-004 T05 each read outcome must reach the plugin as itself"
             );
             CHECK(observed->stateResolutionHash() == hash(observed->canonicalJcs()));
 
@@ -2610,14 +2563,14 @@ identity = ["screen.anchor"]
             }
             else if (testCase.confidenceBp >= 5'000)
             {
-                // A read travels with the raw text: the Reader's answer, not a
+                // A read travels with the raw text: the engine's answer, not a
                 // summary of it. A mutation withholding the text -- or
                 // normalizing it past recognition -- goes red.
                 CHECK(observed->canonicalJcs().find("Settings") != std::string::npos);
             }
             else
             {
-                // Below the floor is the Reader's judgement, not a text: the
+                // Below the floor is the declaration's judgement, not a text: the
                 // reason travels and the rejected text -- and the score that
                 // rejected it -- stay behind. A mutation reporting the
                 // below-floor answer as a read, or carrying the score, goes red.
@@ -2632,7 +2585,7 @@ identity = ["screen.anchor"]
     }
 
     // Below the floor is not a text, and it is not silence either. The plugin is
-    // told the Reader could not decide and why, out of a closed vocabulary, so
+    // told the read could not decide and why, out of a closed vocabulary, so
     // it can tell that case apart from a Reader that found nothing and need not
     // fail closed on one blurry capture. What still never travels is the score:
     // the floor is the trusted Reader's judgement, a caller handed the rejected
@@ -2654,8 +2607,8 @@ identity = ["screen.anchor"]
         );
         REQUIRE(generation.has_value());
 
-        // The model floors title.reader at 0.5 and this clears 0.1, so the text
-        // is one the Reader itself produced and the floor is what refuses it.
+        // The model floors the `title` Readout at 0.5 and this clears 0.1, so the
+        // text is one the engine itself produced and the floor is what refuses it.
         auto runtime = RuntimeContext{
             frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{34}),
             1'000,
@@ -2666,8 +2619,8 @@ identity = ["screen.anchor"]
         CHECK(
             observed->canonicalJcs()
             == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
-               R"("readings":[{"kind":"unknown","reader":"title.reader",)"
-               R"("reason":"low_confidence","ui_target":"title"}]})"
+               R"("readings":[{"id":"title","kind":"unknown",)"
+               R"("reason":"low_confidence"}]})"
         );
 
         // The reason is the whole of what the failure adds, so it is asserted on
@@ -2695,7 +2648,7 @@ identity = ["screen.anchor"]
         CHECK(again->stateResolutionHash() == observed->stateResolutionHash());
     }
 
-    // A Reader that found no text at all is a third answer and says so. Without
+    // A read that found no text at all is a third answer and says so. Without
     // this the reason above could be read as "any failure is unknown", and the
     // distinction the whole shape exists for -- nothing is written here, versus
     // this could not be read -- would be untested.
@@ -2730,8 +2683,7 @@ identity = ["screen.anchor"]
         CHECK(
             observed->canonicalJcs()
             == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
-               R"("readings":[{"kind":"absent","reader":"title.reader",)"
-               R"("ui_target":"title"}]})"
+               R"("readings":[{"id":"title","kind":"absent"}]})"
         );
 
         // Absent is not unknown: it carries no reason, because there is nothing
@@ -2780,11 +2732,10 @@ identity = ["screen.anchor"]
         CHECK(
             observed->canonicalJcs()
             == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
-               R"("readings":[{"kind":"unknown","reader":"subtitle.reader",)"
-               R"("reason":"budget_exhausted","ui_target":"subtitle"},)"
-               R"({"kind":"read","lines":[{"rect":[1,0,1,1],)"
-               R"("text":"Wandering Merchant"}],"reader":"title.reader",)"
-               R"("ui_target":"title"}]})"
+               R"("readings":[{"id":"subtitle","kind":"unknown",)"
+               R"("reason":"budget_exhausted"},)"
+               R"({"id":"title","kind":"read",)"
+               R"("lines":[{"rect":[1,0,1,1],"text":"Wandering Merchant"}]}]})"
         );
 
         // The reason on its own, because it is the whole of what this case
@@ -2847,20 +2798,23 @@ identity = ["screen.anchor"]
         CHECK(
             observed->canonicalJcs()
             == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
-               R"("readings":[{"kind":"read","lines":[{"rect":[2,0,1,1],)"
-               R"("text":"Wandering Merchant"}],"reader":"subtitle.reader",)"
-               R"("ui_target":"subtitle"},)"
-               R"({"kind":"read","lines":[{"rect":[1,0,1,1],)"
-               R"("text":"Wandering Merchant"}],"reader":"title.reader",)"
-               R"("ui_target":"title"}]})"
+               R"("readings":[{"id":"subtitle","kind":"read",)"
+               R"("lines":[{"rect":[2,0,1,1],"text":"Wandering Merchant"}]},)"
+               R"({"id":"title","kind":"read",)"
+               R"("lines":[{"rect":[1,0,1,1],"text":"Wandering Merchant"}]}]})"
         );
         CHECK(observed->canonicalJcs().find(R"("reason")") == std::string::npos);
         CHECK(p_reader->calls() == 2U);
     }
 
-    // A Binding that is not present reads nothing, and the state still resolves.
-    // Without this the empty list above could be an artifact of the floor alone.
-    TEST_CASE("TaskHost::observe reports no reading from an absent Binding")
+    // R2's falsifier at the Host boundary. A Readout's Surface is the WHOLE of
+    // its gate: this world turns OFF the Binding that sits on the very same
+    // pixels, and the Readout is still read and still reported. The rule this
+    // replaces -- a reading needs a present Binding beside it -- is exactly what
+    // made a readout region undeclarable, because the digits printed in one
+    // change every frame and no template can be measured on them. Reinstating
+    // that rule empties the readings list here and reds this case.
+    TEST_CASE("TaskHost::observe reads a Readout with no Binding present on it")
     {
         auto const directory = TemporaryDirectory{};
         auto host = TaskHost{};
@@ -2876,8 +2830,8 @@ identity = ["screen.anchor"]
         );
         REQUIRE(generation.has_value());
 
-        // The middle pixel no longer matches the reading Binding's locator, so
-        // the Surface still resolves off its anchor and title.primary does not.
+        // The middle pixel no longer matches title.primary's locator, so the
+        // Surface still resolves off its anchor and that Binding does not.
         auto reader = std::make_unique<ScriptedReader>("Wandering Merchant", 9'100);
         auto* const p_reader = reader.get();
         auto runtime = RuntimeContext{
@@ -2890,12 +2844,13 @@ identity = ["screen.anchor"]
         CHECK(
             observed->canonicalJcs()
             == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
-               R"("readings":[]})"
+               R"("readings":[{"id":"title","kind":"read",)"
+               R"("lines":[{"rect":[1,0,1,1],"text":"Wandering Merchant"}]}]})"
         );
 
-        // Nothing was read at all: an absent Binding does not spend a Host read
-        // on pixels that belong to whatever is there instead.
-        CHECK(p_reader->calls() == 0U);
+        // The read was spent, on the Readout's own rectangle, with no Binding
+        // measured present anywhere near it.
+        CHECK(p_reader->calls() == 1U);
     }
 
     // Three models differing only in the geometry they declare. The first pins

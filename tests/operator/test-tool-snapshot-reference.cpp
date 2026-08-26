@@ -37,13 +37,23 @@ namespace uf::operator_runtime
                 .runtimeArtifactRootHash = testHash("runtime-artifact-1"),
                 .projectRegistrationHash = testHash("registration-1"),
                 .frameIdentityHash       = testHash("frame-1"),
+                .screenshotSha256        = testHash("screenshot-1"),
                 .hostGeneration          = 7U,
-                .rootIdentity            = testHash("root-1"),
-                .issuingParentIdentity   = testHash("parent-1"),
                 .expiresAtUnixMillis     = 1'000U,
-
-                .localSemanticTargets = {"menu-button", "start-button"},
-                .authorizedUiActions  = {"click", "hover"},
+                .uiActions = {
+                    ObservedUiAction{
+                        .uiTarget = "menu-button",
+                        .binding  = "menu.present",
+                        .action   = "hover",
+                        .kind     = "move",
+                    },
+                    ObservedUiAction{
+                        .uiTarget = "start-button",
+                        .binding  = "start.present",
+                        .action   = "activate",
+                        .kind     = "click",
+                    },
+                },
             };
         }
 
@@ -58,10 +68,10 @@ namespace uf::operator_runtime
                 .runtimeArtifactRootHash = spec.runtimeArtifactRootHash,
                 .projectRegistrationHash = spec.projectRegistrationHash,
                 .hostGeneration          = spec.hostGeneration,
-                .rootIdentity            = spec.rootIdentity,
-                .issuingParentIdentity   = spec.issuingParentIdentity,
-                .localSemanticTarget     = "start-button",
-                .uiAction                = "click",
+                .uiTarget                = "start-button",
+                .binding                 = "start.present",
+                .action                  = "activate",
+                .expectedActionKind      = "click",
                 .presentedAtUnixMillis   = 500U,
             };
         }
@@ -84,10 +94,11 @@ namespace uf::operator_runtime
             ObservationRefusal::ForeignRegistration,
             ObservationRefusal::ForeignRuntimeArtifact,
             ObservationRefusal::ChangedGeneration,
-            ObservationRefusal::MissingParent,
-            ObservationRefusal::DuplicateLocal,
-            ObservationRefusal::UnknownLocalTarget,
-            ObservationRefusal::ActionRefused,
+            ObservationRefusal::DuplicateIdentifier,
+            ObservationRefusal::UnknownUiTarget,
+            ObservationRefusal::UnknownBinding,
+            ObservationRefusal::UnknownAction,
+            ObservationRefusal::ActionKindMismatch,
         };
     }
 
@@ -106,35 +117,26 @@ namespace uf::operator_runtime
         CHECK(reference->identity() == wire.contentHash());
         CHECK(reference->identity() == reparsed->contentHash());
 
-        // All six bindings section 6 names are inside the hashed bytes.
+        // Every world binding and exact resolved action tuple is hashed.
         auto const& bytes = wire.bytes();
         CHECK(bytes.find(R"("controlled_target_id":"target-1")") != std::string::npos);
         CHECK(bytes.find(R"("host_generation":"7")") != std::string::npos);
         CHECK(bytes.find(testHash("runtime-artifact-1").hex()) != std::string::npos);
         CHECK(bytes.find(testHash("registration-1").hex()) != std::string::npos);
         CHECK(bytes.find(testHash("frame-1").hex()) != std::string::npos);
+        CHECK(bytes.find(testHash("screenshot-1").hex()) != std::string::npos);
         CHECK(bytes.find(R"("expires_at_unix_ms":"1000")") != std::string::npos);
-        CHECK(bytes.find(R"("root_identity")") != std::string::npos);
-        CHECK(bytes.find(testHash("parent-1").hex()) != std::string::npos);
+        CHECK(bytes.find(R"("binding":"start.present")") != std::string::npos);
+        CHECK(bytes.find(R"("action":"activate")") != std::string::npos);
+        CHECK(bytes.find(R"("kind":"click")") != std::string::npos);
 
         // A handle and not a payload: nothing about the frame's content is in
         // it, which is what makes the result a reference under R2.
         CHECK(bytes.find("pixel") == std::string::npos);
         CHECK(bytes.find("image") == std::string::npos);
 
-        // A root-context observation renders its absent parent rather than
-        // dropping the member, so the two coordinates cannot collide.
-        auto rootSpec                  = observationSpec();
-        rootSpec.issuingParentIdentity = std::nullopt;
-        auto rootReference             = authority.mint(std::move(rootSpec));
-        REQUIRE(rootReference.has_value());
-        CHECK(
-            rootReference->wire().bytes().find(
-                R"("issuing_parent_identity":null)"
-            )
-            != std::string::npos
-        );
-        CHECK(rootReference->identity() != reference->identity());
+        CHECK(bytes.find("root_identity") == std::string::npos);
+        CHECK(bytes.find("issuing_parent_identity") == std::string::npos);
     }
 
     TEST_CASE("Minting refuses an observation whose scope cannot be established")
@@ -149,13 +151,16 @@ namespace uf::operator_runtime
         unexpiring.expiresAtUnixMillis = 0U;
         CHECK_FALSE(authority.mint(std::move(unexpiring)).has_value());
 
-        auto unnamedLocal                 = observationSpec();
-        unnamedLocal.localSemanticTargets = {"start-button", ""};
-        CHECK_FALSE(authority.mint(std::move(unnamedLocal)).has_value());
-
-        auto unnamedAction                = observationSpec();
-        unnamedAction.authorizedUiActions = {""};
-        CHECK_FALSE(authority.mint(std::move(unnamedAction)).has_value());
+        for (auto const member : {0U, 1U, 2U, 3U})
+        {
+            auto unnamed = observationSpec();
+            auto& action = unnamed.uiActions.front();
+            if (member == 0U) action.uiTarget.clear();
+            if (member == 1U) action.binding.clear();
+            if (member == 2U) action.action.clear();
+            if (member == 3U) action.kind.clear();
+            CHECK_FALSE(authority.mint(std::move(unnamed)).has_value());
+        }
 
         // Two observations with every binding equal are one observation, and a
         // second record of it would carry its own spent state.
@@ -247,49 +252,40 @@ namespace uf::operator_runtime
                 ObservationRefusal::ChangedGeneration,
             },
             ObservationAttack{
-                "missing-parent",
+                "unknown-ui-target",
                 [](SnapshotObservationConsumption claim)
                 {
-                    claim.issuingParentIdentity = std::nullopt;
+                    claim.uiTarget = "absent-button";
                     return claim;
                 },
-                ObservationRefusal::MissingParent,
+                ObservationRefusal::UnknownUiTarget,
             },
             ObservationAttack{
-                "another-parent",
+                "unknown-binding",
                 [](SnapshotObservationConsumption claim)
                 {
-                    claim.issuingParentIdentity = testHash("parent-2");
+                    claim.binding = "start.absent";
                     return claim;
                 },
-                ObservationRefusal::MissingParent,
+                ObservationRefusal::UnknownBinding,
             },
             ObservationAttack{
-                "another-root",
+                "unknown-action",
                 [](SnapshotObservationConsumption claim)
                 {
-                    claim.rootIdentity = testHash("root-2");
+                    claim.action = "dismiss";
                     return claim;
                 },
-                ObservationRefusal::MissingParent,
+                ObservationRefusal::UnknownAction,
             },
             ObservationAttack{
-                "unknown-local-target",
+                "action-kind-mismatch",
                 [](SnapshotObservationConsumption claim)
                 {
-                    claim.localSemanticTarget = "absent-button";
+                    claim.expectedActionKind = "move";
                     return claim;
                 },
-                ObservationRefusal::UnknownLocalTarget,
-            },
-            ObservationAttack{
-                "action-refused",
-                [](SnapshotObservationConsumption claim)
-                {
-                    claim.uiAction = "drag";
-                    return claim;
-                },
-                ObservationRefusal::ActionRefused,
+                ObservationRefusal::ActionKindMismatch,
             },
         };
 
@@ -308,33 +304,63 @@ namespace uf::operator_runtime
             ));
         }
 
-        // None of the ten attacks spent the authority, so the call that is
+        // None of the attacks spent the authority, so the call that is
         // entitled to it still is: no rejected action published anything.
         CHECK(authority.resolve(admitted).has_value());
     }
 
-    TEST_CASE("A snapshot-local semantic target declared twice is refused")
+    TEST_CASE("An observed UI action identity declared twice is refused")
     {
         auto authority = SnapshotObservationAuthority{};
         auto ambiguous = observationSpec();
-        ambiguous.localSemanticTargets = {
-            "menu-button",
-            "start-button",
-            "start-button",
-        };
+        ambiguous.uiActions.emplace_back(ambiguous.uiActions.back());
         auto reference = authority.mint(std::move(ambiguous));
         REQUIRE(reference.has_value());
 
         auto const duplicated = consumptionOf(*reference);
         auto const refusal    = authority.refuse(duplicated);
         REQUIRE(refusal.has_value());
-        CHECK(*refusal == ObservationRefusal::DuplicateLocal);
+        CHECK(*refusal == ObservationRefusal::DuplicateIdentifier);
 
-        // The unambiguous sibling target in the same observation is admitted,
-        // so the refusal is about the named target and not about the frame.
-        auto unambiguous                = duplicated;
-        unambiguous.localSemanticTarget = "menu-button";
+        // The unambiguous sibling tuple in the same observation is admitted.
+        auto unambiguous               = duplicated;
+        unambiguous.uiTarget           = "menu-button";
+        unambiguous.binding            = "menu.present";
+        unambiguous.action             = "hover";
+        unambiguous.expectedActionKind = "move";
         CHECK_FALSE(authority.refuse(unambiguous).has_value());
+    }
+
+    TEST_CASE("framework.ui.click refuses a binding absent from the named observation")
+    {
+        auto authority = SnapshotObservationAuthority{};
+        auto reference = authority.mint(observationSpec());
+        REQUIRE(reference.has_value());
+        auto consumption    = consumptionOf(*reference);
+        consumption.binding = "start.missing";
+
+        auto const refused = authority.resolve(consumption);
+        auto const refusedAsUnknownBinding = !refused.has_value()
+            && std::string{refused.error().message()}
+                == "unknown_binding: the named observation contains no such binding "
+                   "identifier for that ui_target: start.missing";
+        CHECK(refusedAsUnknownBinding);
+    }
+
+    TEST_CASE("framework.ui.click refuses an observed action whose kind is not click")
+    {
+        auto authority = SnapshotObservationAuthority{};
+        auto reference = authority.mint(observationSpec());
+        REQUIRE(reference.has_value());
+        auto consumption               = consumptionOf(*reference);
+        consumption.expectedActionKind = "move";
+
+        auto const refused = authority.resolve(consumption);
+        auto const refusedAsActionKindMismatch = !refused.has_value()
+            && std::string{refused.error().message()}
+                == "action_kind_mismatch: the named observation declares a different "
+                   "action kind than this Tool: activate";
+        CHECK(refusedAsActionKindMismatch);
     }
 
     TEST_CASE("At most one native input consumes one observation authority")
@@ -348,8 +374,11 @@ namespace uf::operator_runtime
         REQUIRE(resolved.has_value());
         CHECK(resolved->referenceIdentity() == reference->identity());
         CHECK(resolved->controlledTargetId() == "target-1");
-        CHECK(resolved->localSemanticTarget() == "start-button");
-        CHECK(resolved->uiAction() == "click");
+        CHECK(resolved->screenshotSha256() == testHash("screenshot-1"));
+        CHECK(resolved->uiTarget() == "start-button");
+        CHECK(resolved->binding() == "start.present");
+        CHECK(resolved->action() == "activate");
+        CHECK(resolved->actionKind() == "click");
         CHECK(resolved->hostGeneration() == 7U);
 
         // The frame identity comes out of the minted reference and is never
@@ -367,8 +396,11 @@ namespace uf::operator_runtime
 
         // A second local target of the same observation is refused too: the
         // budget is one input per authority, not one input per target.
-        auto sibling                = admitted;
-        sibling.localSemanticTarget = "menu-button";
+        auto sibling               = admitted;
+        sibling.uiTarget           = "menu-button";
+        sibling.binding            = "menu.present";
+        sibling.action             = "hover";
+        sibling.expectedActionKind = "move";
         auto const siblingRefusal   = authority.refuse(sibling);
         REQUIRE(siblingRefusal.has_value());
         CHECK(*siblingRefusal == ObservationRefusal::AlreadyConsumed);
@@ -405,21 +437,19 @@ namespace uf::operator_runtime
         REQUIRE(forgedRefusal.has_value());
         CHECK(*forgedRefusal == ObservationRefusal::Unminted);
 
-        // Nor does another run's observation resolve here. The run shows up in
-        // the reference as its root identity, so a reference minted under
-        // another root is other bytes and is not recognised at all -- it never
-        // reaches the coordinate comparison.
-        auto foreign             = SnapshotObservationAuthority{};
-        auto foreignSpec         = observationSpec();
-        foreignSpec.rootIdentity = testHash("root-2");
-        auto foreignReference    = foreign.mint(std::move(foreignSpec));
+        // Nor does another authority's observation resolve here, even when its
+        // wire bindings are otherwise valid.
+        auto foreign                  = SnapshotObservationAuthority{};
+        auto foreignSpec              = observationSpec();
+        foreignSpec.frameIdentityHash = testHash("frame-2");
+        auto foreignReference         = foreign.mint(std::move(foreignSpec));
         REQUIRE(foreignReference.has_value());
         auto const crossed = authority.refuse(consumptionOf(*foreignReference));
         REQUIRE(crossed.has_value());
         CHECK(*crossed == ObservationRefusal::Unminted);
     }
 
-    TEST_CASE("The Framework Tool Catalog declares eleven built-in Tools")
+    TEST_CASE("The Framework Tool Catalog declares twenty-four built-in Tools")
     {
         auto catalog = FrameworkToolCatalogOwner::create();
         REQUIRE(catalog.has_value());
@@ -439,43 +469,76 @@ namespace uf::operator_runtime
                 ToolIdempotency::ReadSafe,
             },
             CatalogExpectation{
-                "framework.input.deliver",
+                "framework.input.click",
                 ToolMutability::Mutating,
                 ToolSurface::Privileged,
                 ToolIdempotency::NonIdempotent,
             },
             CatalogExpectation{
-                "framework.input.semantic_target",
+                "framework.input.drag",
                 ToolMutability::Mutating,
-                ToolSurface::Semantic,
+                ToolSurface::Privileged,
                 ToolIdempotency::NonIdempotent,
             },
-            // Reading the project's own authoring store is the project's own
-            // vocabulary and changes nothing, so deny-all admits it. WRITING it
-            // is the authoring-write effect line, and it is Privileged because
-            // its capture arm names a rectangle of the screen -- a Tool is
-            // judged by the more restricted of the vocabularies it speaks
-            // (docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md
-            // V4).
             CatalogExpectation{
-                "framework.project.read",
+                "framework.input.hold",
+                ToolMutability::Mutating,
+                ToolSurface::Privileged,
+                ToolIdempotency::NonIdempotent,
+            },
+            CatalogExpectation{
+                "framework.input.key",
+                ToolMutability::Mutating,
+                ToolSurface::Privileged,
+                ToolIdempotency::NonIdempotent,
+            },
+            CatalogExpectation{
+                "framework.input.move",
+                ToolMutability::Mutating,
+                ToolSurface::Privileged,
+                ToolIdempotency::NonIdempotent,
+            },
+            CatalogExpectation{
+                "framework.input.scroll",
+                ToolMutability::Mutating,
+                ToolSurface::Privileged,
+                ToolIdempotency::NonIdempotent,
+            },
+            // Text paths and contents are Project vocabulary. Copying a
+            // retained evidence artifact is Privileged because its digest
+            // names machine evidence rather than Project semantics.
+            CatalogExpectation{
+                "framework.project.read_text",
                 ToolMutability::ReadOnly,
                 ToolSurface::Semantic,
                 ToolIdempotency::ReadSafe,
             },
             CatalogExpectation{
-                "framework.project.write",
+                "framework.project.write_file",
                 ToolMutability::Mutating,
                 ToolSurface::Privileged,
                 ToolIdempotency::DeliverySafe,
             },
-            // The three measuring Tools an observation's body issues. Each is
-            // Privileged because a rectangle of pixels is the machine's
-            // vocabulary; a child's surface is bounded by its parent's
-            // declaration rather than by the Operator's top-of-run grant, which
-            // is what keeps a body measuring under deny-all.
+            CatalogExpectation{
+                "framework.project.write_text",
+                ToolMutability::Mutating,
+                ToolSurface::Semantic,
+                ToolIdempotency::DeliverySafe,
+            },
+            CatalogExpectation{
+                "framework.screen.capture",
+                ToolMutability::ReadOnly,
+                ToolSurface::Semantic,
+                ToolIdempotency::ReadSafe,
+            },
             CatalogExpectation{
                 "framework.screen.census_grid",
+                ToolMutability::ReadOnly,
+                ToolSurface::Privileged,
+                ToolIdempotency::ReadSafe,
+            },
+            CatalogExpectation{
+                "framework.screen.crop",
                 ToolMutability::ReadOnly,
                 ToolSurface::Privileged,
                 ToolIdempotency::ReadSafe,
@@ -497,6 +560,42 @@ namespace uf::operator_runtime
                 ToolMutability::ReadOnly,
                 ToolSurface::Privileged,
                 ToolIdempotency::ReadSafe,
+            },
+            CatalogExpectation{
+                "framework.ui.click",
+                ToolMutability::Mutating,
+                ToolSurface::Semantic,
+                ToolIdempotency::NonIdempotent,
+            },
+            CatalogExpectation{
+                "framework.ui.drag",
+                ToolMutability::Mutating,
+                ToolSurface::Semantic,
+                ToolIdempotency::NonIdempotent,
+            },
+            CatalogExpectation{
+                "framework.ui.hold",
+                ToolMutability::Mutating,
+                ToolSurface::Semantic,
+                ToolIdempotency::NonIdempotent,
+            },
+            CatalogExpectation{
+                "framework.ui.key",
+                ToolMutability::Mutating,
+                ToolSurface::Semantic,
+                ToolIdempotency::NonIdempotent,
+            },
+            CatalogExpectation{
+                "framework.ui.move",
+                ToolMutability::Mutating,
+                ToolSurface::Semantic,
+                ToolIdempotency::NonIdempotent,
+            },
+            CatalogExpectation{
+                "framework.ui.scroll",
+                ToolMutability::Mutating,
+                ToolSurface::Semantic,
+                ToolIdempotency::NonIdempotent,
             },
             CatalogExpectation{
                 "framework.workflow.status",
@@ -526,7 +625,7 @@ namespace uf::operator_runtime
             );
         }
 
-        // A controller that is not restricted to semantic tools sees all eleven,
+        // A controller that is not restricted to semantic tools sees all tools,
         // in the byte order the catalog declares them.
         auto noCapabilities = std::array<std::string, 0U>{};
         auto const offered  = catalog->offeredTools(
@@ -547,48 +646,33 @@ namespace uf::operator_runtime
         CHECK(audit->effectBounds.empty());
         CHECK(audit->uiActionBounds.empty());
         CHECK(audit->requiredCapabilities.empty());
-        CHECK(audit->limits.maximumDispatches == 0U);
 
-        // The two input Tools declare ONE effect line between them: same type,
-        // same scope, same payload schema and the same highest risk band. An
-        // input that landed is external and irreversible however it was aimed,
-        // and what separates the two Tools is the vocabulary they are stated in
-        // rather than a number in a bound
-        // (docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md).
-        auto const semantic = catalog->describe(
-            "framework.input.semantic_target"
-        );
-        auto const machine = catalog->describe("framework.input.deliver");
+        // Each verb owns its own effect type, while raw and semantic variants
+        // retain the policy-axis surface distinction.
+        auto const semantic = catalog->describe("framework.ui.click");
+        auto const machine = catalog->describe("framework.input.click");
         REQUIRE(semantic.has_value());
         REQUIRE(machine.has_value());
         REQUIRE(semantic->effectBounds.size() == 1U);
         REQUIRE(machine->effectBounds.size() == 1U);
         CHECK(
             semantic->effectBounds.front().namespacedType
-            == "framework.input.deliver"
+            == "framework.ui.click"
         );
         CHECK(semantic->effectBounds.front().maximumRisk == Risk::Critical);
         CHECK(machine->effectBounds.front().maximumRisk == Risk::Critical);
-        CHECK(
-            semantic->effectBounds.front().scopeKind
-            == machine->effectBounds.front().scopeKind
-        );
-        CHECK(
-            semantic->effectBounds.front().payloadSchemaHash
-            == machine->effectBounds.front().payloadSchemaHash
-        );
-        // The one machine-aimed Tool is Privileged and the declared-target one
-        // is not, which is the whole of the difference the catalog states.
+        CHECK(machine->effectBounds.front().namespacedType == "framework.input.click");
+        CHECK(semantic->effectBounds.front().scopeKind == machine->effectBounds.front().scopeKind);
+        // Machine aiming is privileged; observation-bound aiming is semantic.
         CHECK(machine->surface == ToolSurface::Privileged);
         CHECK(semantic->surface == ToolSurface::Semantic);
         CHECK(semantic->timeout.onTimeout == TimeoutAction::Reobserve);
 
-        // Observation is the one Tool that spends an observation, and it spends
-        // exactly one without dispatching anything.
+        // Capture is the one screen Tool that samples the controlled target.
+        auto const capture = catalog->describe("framework.screen.capture");
         auto const observe = catalog->describe("framework.screen.observe");
+        REQUIRE(capture.has_value());
         REQUIRE(observe.has_value());
-        CHECK(observe->limits.maximumObservations == 1U);
-        CHECK(observe->limits.maximumDispatches == 0U);
 
         // SCREEN OBSERVATION IS CALLABLE UNDER DENY-ALL, and this is the whole
         // of what makes it so
@@ -599,7 +683,9 @@ namespace uf::operator_runtime
         // It is the framework's own verification eating; its risk is zero.
         CHECK(observe->mutability == ToolMutability::ReadOnly);
         CHECK(observe->effectBounds.empty());
-        auto arguments = CanonicalJson::parseExact("{}");
+        auto arguments = CanonicalJson::parseExact(
+            R"({"screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000"})"
+        );
         REQUIRE(arguments.has_value());
         auto const observeCall = catalog->validate(
             "framework.screen.observe",
@@ -621,7 +707,7 @@ namespace uf::operator_runtime
         // hash compared against itself pins nothing.
         CHECK(
             catalog->toolCatalogHash().hex()
-            == "a6fd2afbf07ceeb53bdc8dbaf4073a94f25a4f91f6e8619b3c1da59225397c8b"
+            == "620c25591a727c03fb905dce2384943514d6d0942a3e9cb8620d0a8f03c20d4d"
         );
 
         auto material = CanonicalJson::parseExact(catalog->canonicalJcs());
@@ -641,8 +727,34 @@ namespace uf::operator_runtime
             bool             admitted{};
         };
         constexpr auto k_cases = std::array{
-            ArgumentCase{"framework.screen.observe", "{}", true},
-            ArgumentCase{"framework.screen.observe", R"({"scale":1})", false},
+            ArgumentCase{"framework.screen.capture", "{}", true},
+            ArgumentCase{"framework.screen.capture", R"({"scale":1})", false},
+            ArgumentCase{
+                "framework.screen.observe",
+                R"({"screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000"})",
+                true,
+            },
+            ArgumentCase{"framework.screen.observe", "{}", false},
+            ArgumentCase{
+                "framework.screen.observe",
+                R"({"screenshot_sha256":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"})",
+                false,
+            },
+            ArgumentCase{
+                "framework.screen.crop",
+                R"({"height":20,"screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000","width":10,"x":1,"y":2})",
+                true,
+            },
+            ArgumentCase{
+                "framework.screen.crop",
+                R"({"height":20,"width":10,"x":1,"y":2})",
+                false,
+            },
+            ArgumentCase{
+                "framework.screen.read_lines",
+                R"({"height":20,"screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000","width":10,"x":1,"y":2})",
+                true,
+            },
             ArgumentCase{"framework.workflow.status", "{}", true},
             ArgumentCase{"framework.workflow.status", R"({"verbose":true})", false},
             ArgumentCase{
@@ -658,99 +770,104 @@ namespace uf::operator_runtime
                 false,
             },
             ArgumentCase{
-                "framework.input.semantic_target",
-                R"({"observation_reference":{"schema":"x"},"semantic_target":"start-button","ui_action":"click"})",
+                "framework.ui.click",
+                R"({"action":"activate","binding":"start.present","observation_reference":{"schema":"x"},"ui_target":"start-button"})",
                 true,
             },
             ArgumentCase{
-                "framework.input.semantic_target",
-                R"({"observation_reference":"{}","semantic_target":"start-button","ui_action":"click"})",
+                "framework.ui.drag",
+                R"({"action":"activate","binding":"start.present","observation_reference":{"schema":"x"},"ui_target":"start-button"})",
+                true,
+            },
+            ArgumentCase{
+                "framework.ui.hold",
+                R"({"action":"activate","binding":"start.present","observation_reference":{"schema":"x"},"return_screen":"observe","ui_target":"start-button"})",
+                true,
+            },
+            ArgumentCase{
+                "framework.ui.key",
+                R"({"action":"activate","binding":"start.present","observation_reference":{"schema":"x"},"ui_target":"start-button"})",
+                true,
+            },
+            ArgumentCase{
+                "framework.ui.move",
+                R"({"action":"activate","binding":"start.present","observation_reference":{"schema":"x"},"ui_target":"start-button"})",
+                true,
+            },
+            ArgumentCase{
+                "framework.ui.scroll",
+                R"({"action":"activate","binding":"start.present","observation_reference":{"schema":"x"},"ui_target":"start-button"})",
+                true,
+            },
+            ArgumentCase{
+                "framework.ui.click",
+                R"({"action":"activate","binding":"start.present","observation_reference":"{}","ui_target":"start-button"})",
                 false,
             },
             ArgumentCase{
-                "framework.input.semantic_target",
-                R"({"observation_reference":{},"semantic_target":"","ui_action":"click"})",
+                "framework.ui.hold",
+                R"({"action":"activate","binding":"start.present","observation_reference":{},"return_screen":"again","ui_target":"start-button"})",
                 false,
             },
-            // One arm per verb, and each arm's members are decided by its own
-            // tag. The six admitted cases below are the whole enumeration; the
-            // refusals under them are the three ways a tagged union can be
-            // wrong -- a tag outside the set, an arm short a member, and an arm
-            // carrying a member that belongs to a different one.
+            ArgumentCase{
+                "framework.input.click",
+                R"({"screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000","x":10,"y":20})",
+                true,
+            },
+            ArgumentCase{
+                "framework.input.hold",
+                R"({"duration_ms":250,"return_screen":"capture","screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000","x":10,"y":20})",
+                true,
+            },
+            ArgumentCase{
+                "framework.input.move",
+                R"({"screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000","x":10,"y":20})",
+                true,
+            },
+            ArgumentCase{
+                "framework.input.drag",
+                R"({"screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000","to_x":30,"to_y":40,"travel_ms":600,"x":10,"y":20})",
+                true,
+            },
+            ArgumentCase{
+                "framework.input.key",
+                R"({"key":"Escape","screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000"})",
+                true,
+            },
+            ArgumentCase{
+                "framework.input.scroll",
+                R"({"notches":-3,"screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000"})",
+                true,
+            },
+            ArgumentCase{
+                "framework.input.click",
+                R"({"screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000","x":10.5,"y":20})",
+                false,
+            },
+            ArgumentCase{"framework.input.click", R"({"x":10,"y":20})", false},
             ArgumentCase{
                 "framework.input.deliver",
                 R"({"action":"click","x":10,"y":20})",
-                true,
-            },
-            ArgumentCase{
-                "framework.input.deliver",
-                R"({"action":"hold","x":10,"y":20})",
-                true,
-            },
-            ArgumentCase{
-                "framework.input.deliver",
-                R"({"action":"move","x":10,"y":20})",
-                true,
-            },
-            ArgumentCase{
-                "framework.input.deliver",
-                R"({"action":"drag","to_x":30,"to_y":40,"travel_ms":600,"x":10,"y":20})",
-                true,
-            },
-            ArgumentCase{
-                "framework.input.deliver",
-                R"({"action":"key","key":"Escape"})",
-                true,
-            },
-            ArgumentCase{
-                "framework.input.deliver",
-                R"({"action":"scroll","notches":-3})",
-                true,
-            },
-            ArgumentCase{
-                "framework.input.deliver",
-                R"({"action":"click","x":10.5,"y":20})",
-                false,
-            },
-            ArgumentCase{"framework.input.deliver", R"({"x":10,"y":20})", false},
-            // The free string is gone: a verb the catalog cannot validate is an
-            // unbound call it cannot refuse by name.
-            ArgumentCase{
-                "framework.input.deliver",
-                R"({"action":"tap","x":10,"y":20})",
-                false,
-            },
-            // Each arm's fields are REQUIRED. A drag without its endpoint and a
-            // hold without a coordinate are not calls with absent members; they
-            // are not that arm at all.
-            ArgumentCase{
-                "framework.input.deliver",
-                R"({"action":"drag","travel_ms":600,"x":10,"y":20})",
                 false,
             },
             ArgumentCase{
-                "framework.input.deliver",
-                R"({"action":"hold"})",
-                false,
-            },
-            // x and y descend into the aiming arms and live nowhere else. A key
-            // names no position, and forcing it to carry one would be an
-            // accident dressed as a method.
-            ArgumentCase{
-                "framework.input.deliver",
-                R"({"action":"key","key":"Escape","x":10,"y":20})",
+                "framework.input.drag",
+                R"({"screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000","travel_ms":600,"x":10,"y":20})",
                 false,
             },
             ArgumentCase{
-                "framework.input.deliver",
-                R"({"action":"scroll","notches":-3,"x":10,"y":20})",
+                "framework.input.hold",
+                R"({"screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000","x":10,"y":20})",
                 false,
             },
-            // A pixel is an index into a surface, so a negative one is not a
-            // point the contract can carry at all.
             ArgumentCase{
-                "framework.input.deliver",
-                R"({"action":"click","x":-1,"y":20})",
+                "framework.input.key",
+                R"({"key":"Escape","screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000","x":10,"y":20})",
+                false,
+            },
+            ArgumentCase{
+                "framework.input.click",
+                R"({"screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000","x":-1,"y":20})",
                 false,
             },
         };

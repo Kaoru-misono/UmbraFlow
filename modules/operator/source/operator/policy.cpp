@@ -209,19 +209,6 @@ namespace uf::operator_runtime
         }
     }
 
-    auto policyDecisionWireName(PolicyDecision decision) noexcept
-        -> std::string_view
-    {
-        switch (decision)
-        {
-        case PolicyDecision::Allow: return "allow";
-        case PolicyDecision::Deny: return "deny";
-        case PolicyDecision::RequireApproval: return "require_approval";
-        }
-
-        UF_UNREACHABLE_MSG("Unknown PolicyDecision value");
-    }
-
     auto denyAllPolicyArtifact(
         ContentHash const& operatorProtocolSchemaHash
     ) -> std::string

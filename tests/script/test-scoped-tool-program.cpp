@@ -12,8 +12,8 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
-#include <memory>
 #include <span>
 #include <stop_token>
 #include <string>
@@ -21,68 +21,28 @@
 #include <utility>
 #include <vector>
 
-// The scoped program type: the same closed graph, the same fresh quota-bound VM
-// and the same deep-freeze discipline as the pure one, plus exactly one native
-// seam. What is proved here is what a reader cannot see from inside a VM -- that
-// the pure resolver still carries no scoped name, that only the catalog's
-// Framework modules are handed the capability table, that the call ordinals come
-// from the seam alone, and that a Tool Runtime refusal is teardown rather than a
-// value a script can catch.
 namespace uf::script
 {
     namespace
     {
         constexpr auto k_entryPoints = std::array{std::string_view{"derive"}};
 
-        // Test-local Luau facades over the one native primitive. The real ones
-        // live in the Framework bundle; these carry only what these cases drive.
         constexpr auto k_toolsFacade = std::string_view{R"LUAU(
 local native = ...
-local invoke = native.invoke
 return {
-    call = function(name, arguments, body)
-        return invoke(name, arguments, body)
+    call = function(name, arguments)
+        return native.invoke(name, arguments)
     end,
     raw = function(...)
-        return invoke(...)
+        return native.invoke(...)
     end,
 }
 )LUAU"};
 
-        constexpr auto k_screenFacade = std::string_view{R"LUAU(
-local native = ...
-return {
-    observe = function(request, body)
-        return native.invoke("framework.screen.observe", request, body)
-    end,
-}
+        constexpr auto k_passthroughFacade = std::string_view{R"LUAU(
+local _native = ...
+return {}
 )LUAU"};
-
-        constexpr auto k_workflowFacade = std::string_view{R"LUAU(
-local native = ...
-return {
-    wait = function(request)
-        return native.invoke("framework.workflow.wait", request, nil)
-    end,
-}
-)LUAU"};
-
-        constexpr auto k_auditFacade = std::string_view{R"LUAU(
-local native = ...
-return {
-    record = function(record)
-        return native.invoke("framework.audit.record", record, nil)
-    end,
-}
-)LUAU"};
-
-        struct ToolCallRecord final
-        {
-            std::string toolName{};
-            std::string arguments{};
-            std::string parentPosition{};
-            uint64      childIndex{0};
-        };
 
         [[nodiscard]]
         auto parsed(std::string_view text) -> json::Value
@@ -93,42 +53,92 @@ return {
         }
 
         [[nodiscard]]
-        auto positionOf(std::string_view text) -> ContentHash
+        auto digestOf(std::string_view text) -> std::string
         {
             auto const hash = sha256(std::as_bytes(std::span{text}));
             REQUIRE(hash.has_value());
-            return *hash;
+            return hash->hex();
         }
 
         [[nodiscard]]
-        auto digestOf(std::string_view text) -> std::string
+        auto runRequest(std::stop_token cancellation = {}) -> ScopedRunRequest
         {
-            return positionOf(text).hex();
-        }
-
-        // The durable position a root run is anchored on. It stands for the
-        // row of the root-positioned call the run implements: a run is never
-        // anchored on nothing, and there is no spelling of "no position" for a
-        // case to reach for.
-        [[nodiscard]]
-        auto rootRunPosition() -> ContentHash
-        {
-            return positionOf("root-run-position");
-        }
-
-        [[nodiscard]]
-        auto runRequest(
-            ContentHash parent = rootRunPosition(),
-            std::stop_token cancellation = {},
-            uint64 maximumElapsedMillis = 5'000U
-        ) -> ScopedRunRequest
-        {
+            auto identity = sha256(std::as_bytes(std::span{"leaf-call"}));
+            REQUIRE(identity.has_value());
             return ScopedRunRequest{
-                .parentPosition       = std::move(parent),
-                .budgetOwner          = "fixture.scoped",
-                .maximumElapsedMillis = maximumElapsedMillis,
+                .callIdentity = *identity,
+                .budgetOwner  = "fixture.project.leaf",
+                .maximumElapsedMillis = 5'000U,
                 .cancellation         = cancellation,
             };
+        }
+
+        [[nodiscard]]
+        auto frameworkModules() -> std::vector<FrameworkModule>
+        {
+            return {
+                FrameworkModule{
+                    .name   = "@umbraflow/audit",
+                    .source = k_passthroughFacade,
+                },
+                FrameworkModule{
+                    .name   = "@umbraflow/screen",
+                    .source = k_passthroughFacade,
+                },
+                FrameworkModule{
+                    .name   = "@umbraflow/tools",
+                    .source = k_toolsFacade,
+                },
+                FrameworkModule{
+                    .name   = "@umbraflow/workflow",
+                    .source = k_passthroughFacade,
+                },
+            };
+        }
+
+        [[nodiscard]]
+        auto pluginSource(
+            std::string_view pluginId,
+            std::string_view prologue,
+            std::string_view body
+        ) -> std::string
+        {
+            return std::string{prologue} + "\nreturn {\n    plugin_id = \""
+                 + std::string{pluginId} + "\",\n    derive = function(input)\n"
+                 + std::string{body} + "\n    end,\n}\n";
+        }
+
+        [[nodiscard]]
+        auto compileScoped(
+            std::string_view pluginId,
+            std::string_view source,
+            std::vector<FrameworkModule> const& modules,
+            std::vector<PureDataProgram::Resource> resources          = {},
+            std::vector<PureDataProgram::Resource> frameworkResources = {}
+        ) -> Result<ScopedToolProgram>
+        {
+            return ScopedToolProgram::compile(
+                pluginId,
+                "main",
+                {PureDataProgram::Module{
+                    .name   = "main",
+                    .source = std::string{source},
+                }},
+                k_entryPoints,
+                std::move(resources),
+                modules,
+                std::move(frameworkResources)
+            );
+        }
+
+        [[nodiscard]]
+        auto scopedProgram(std::string_view pluginId, std::string_view source)
+            -> ScopedToolProgram
+        {
+            auto const modules = frameworkModules();
+            auto program       = compileScoped(pluginId, source, modules);
+            REQUIRE(program.has_value());
+            return *std::move(program);
         }
 
         [[nodiscard]]
@@ -141,427 +151,64 @@ return {
                 .bytes = std::move(bytes),
             };
         }
-
-        [[nodiscard]]
-        auto scopedFrameworkModules() -> std::vector<FrameworkModule>
-        {
-            return {
-                FrameworkModule{.name = "@umbraflow/audit", .source = k_auditFacade},
-                FrameworkModule{.name = "@umbraflow/screen", .source = k_screenFacade},
-                FrameworkModule{.name = "@umbraflow/tools", .source = k_toolsFacade},
-                FrameworkModule{
-                    .name   = "@umbraflow/workflow",
-                    .source = k_workflowFacade,
-                },
-            };
-        }
-
-        [[nodiscard]]
-        auto pluginSource(
-            std::string_view pluginId,
-            std::string_view prologue,
-            std::string_view deriveBody
-        ) -> std::string
-        {
-            return std::string{prologue} + "\nreturn {\n    plugin_id = \""
-                 + std::string{pluginId} + "\",\n    derive = function(input)\n"
-                 + std::string{deriveBody} + "\n    end,\n}\n";
-        }
-
-        // Answers every call with the coordinate the seam assigned, so a script
-        // that returns the answer proves what the seam handed the runtime.
-        [[nodiscard]]
-        auto recordingRuntime(
-            std::shared_ptr<std::vector<ToolCallRecord>> log
-        ) -> ToolRuntimeDispatch
-        {
-            return [log = std::move(log)](
-                       std::string_view toolName,
-                       json::Value const& arguments,
-                       ToolCallCoordinate const& coordinate,
-                       std::stop_token,
-                       ToolCallBody body
-                   ) -> Result<json::Value> {
-                log->emplace_back(ToolCallRecord{
-                    .toolName       = std::string{toolName},
-                    .arguments      = json::canonicalBytes(arguments),
-                    .parentPosition = coordinate.parentPosition.hex(),
-                    .childIndex     = coordinate.childIndex,
-                });
-                if (body)
-                {
-                    UF_TRY(body(positionOf(
-                        coordinate.parentPosition.hex()
-                            + ":"
-                            + std::to_string(coordinate.childIndex)
-                    )));
-                }
-                return json::Value::ofObject({
-                    json::Member{"arguments", arguments},
-                    json::Member{
-                        "child",
-                        json::Value::ofNumber(static_cast<double>(coordinate.childIndex)),
-                    },
-                    json::Member{"tool", json::Value::ofString(std::string{toolName})},
-                });
-            };
-        }
-
-        // Refuses once the issuing context reaches `refuseAt`, which is how a
-        // replay divergence or a spent budget reaches a run.
-        [[nodiscard]]
-        auto runtimeRefusingAt(uint64 refuseAt) -> ToolRuntimeDispatch
-        {
-            return [refuseAt](
-                       std::string_view,
-                       json::Value const&,
-                       ToolCallCoordinate const& coordinate,
-                       std::stop_token,
-                       ToolCallBody
-                   ) -> Result<json::Value> {
-                if (coordinate.childIndex >= refuseAt)
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "the recorded call at this coordinate names another tool"
-                    );
-                }
-                return json::Value::ofBoolean(true);
-            };
-        }
-
-        [[nodiscard]]
-        auto compileScoped(
-            std::string_view pluginId,
-            std::string_view source,
-            ToolRuntimeDispatch dispatchTool,
-            std::vector<FrameworkModule> const& frameworkModules,
-            std::vector<PureDataProgram::Resource> resources          = {},
-            std::vector<PureDataProgram::Resource> frameworkResources = {}
-        ) -> Result<ScopedToolProgram>
-        {
-            auto modules = std::vector<PureDataProgram::Module>{
-                PureDataProgram::Module{.name = "main", .source = std::string{source}},
-            };
-            return ScopedToolProgram::compile(
-                pluginId,
-                "main",
-                std::move(modules),
-                k_entryPoints,
-                std::move(resources),
-                frameworkModules,
-                std::move(frameworkResources),
-                std::move(dispatchTool)
-            );
-        }
-
-        [[nodiscard]]
-        auto scopedProgram(
-            std::string_view pluginId,
-            std::string_view source,
-            ToolRuntimeDispatch dispatchTool
-        ) -> ScopedToolProgram
-        {
-            auto const modules = scopedFrameworkModules();
-            auto program = compileScoped(pluginId, source, std::move(dispatchTool), modules);
-            REQUIRE(program.has_value());
-            return *std::move(program);
-        }
-    } // namespace
-
-    TEST_CASE("a scoped program reaches the Tool Runtime through one native primitive")
-    {
-        auto const log     = std::make_shared<std::vector<ToolCallRecord>>();
-        auto const program = scopedProgram(
-            "fixture.scoped.reach",
-            pluginSource(
-                "fixture.scoped.reach",
-                "",
-                "        local tools = require(\"@umbraflow/tools\")\n"
-                "        return tools.call(\"framework.audit.record\", input)"
-            ),
-            recordingRuntime(log)
-        );
-
-        auto const answer = program.invoke(
-            "derive",
-            parsed(R"({"note":"kept"})"),
-            runRequest()
-        );
-        REQUIRE(answer.has_value());
-        CHECK(
-            json::canonicalBytes(*answer)
-            == R"({"arguments":{"note":"kept"},"child":1,"tool":"framework.audit.record"})"
-        );
-
-        REQUIRE(log->size() == 1U);
-        CHECK((*log)[0].toolName == "framework.audit.record");
-        CHECK((*log)[0].arguments == R"({"note":"kept"})");
-        CHECK((*log)[0].parentPosition == rootRunPosition().hex());
-        CHECK((*log)[0].childIndex == 1U);
-
-        auto const unregistered =
-            program.invoke(
-            "reduce",
-            json::Value{},
-            runRequest()
-        );
-        REQUIRE_FALSE(unregistered.has_value());
-        CHECK(
-            std::string{unregistered.error().message()}
-                .find("scoped tool entry point is not registered")
-            != std::string::npos
-        );
-        CHECK(log->size() == 1U);
     }
 
-    TEST_CASE("the seam numbers each issuing context and script cannot influence it")
-    {
-        auto const log     = std::make_shared<std::vector<ToolCallRecord>>();
-        auto const program = scopedProgram(
-            "fixture.scoped.ordinals",
-            pluginSource(
-                "fixture.scoped.ordinals",
-                "",
-                "        local tools = require(\"@umbraflow/tools\")\n"
-                "        tools.call(\"a.one\", input)\n"
-                "        tools.call(\"a.two\", input)\n"
-                "        return tools.call(\"a.three\", input)"
-            ),
-            recordingRuntime(log)
-        );
-
-        auto const root = program.invoke(
-            "derive",
-            json::Value{},
-            runRequest()
-        );
-        REQUIRE(root.has_value());
-
-        // A second invoke is a second issuing context, so its numbering starts
-        // again at 1 under its own parent rather than continuing the first.
-        auto const child = program.invoke(
-            "derive",
-            json::Value{},
-            runRequest(positionOf("second-run-position"))
-        );
-        REQUIRE(child.has_value());
-
-        REQUIRE(log->size() == 6U);
-        auto const expected = std::array{
-            std::string_view{"a.one"},
-            std::string_view{"a.two"},
-            std::string_view{"a.three"},
-        };
-        for (auto index = std::size_t{0}; index < 3U; ++index)
-        {
-            CHECK((*log)[index].toolName == expected[index]);
-            CHECK((*log)[index].childIndex == index + 1U);
-            CHECK((*log)[index].parentPosition == rootRunPosition().hex());
-
-            CHECK((*log)[index + 3U].toolName == expected[index]);
-            CHECK((*log)[index + 3U].childIndex == index + 1U);
-            CHECK(
-                (*log)[index + 3U].parentPosition
-                == positionOf("second-run-position").hex()
-            );
-        }
-    }
-
-    TEST_CASE("a Tool Runtime refusal tears the run down past every pcall")
+    TEST_CASE("a Project Tool handler that issues a Tool call is refused by name")
     {
         auto const program = scopedProgram(
-            "fixture.scoped.refusal",
+            "fixture.project.leaf",
             pluginSource(
-                "fixture.scoped.refusal",
+                "fixture.project.leaf",
                 "",
                 "        local tools = require(\"@umbraflow/tools\")\n"
-                "        tools.call(\"a.one\", input)\n"
                 "        local caught = pcall(function()\n"
-                "            return tools.call(\"a.two\", input)\n"
+                "            return tools.call(\"framework.screen.observe\", input)\n"
                 "        end)\n"
                 "        return { caught = caught }"
-            ),
-            runtimeRefusingAt(2U)
+            )
         );
-
-        auto const answer = program.invoke(
-            "derive",
-            json::Value{},
-            runRequest()
-        );
+        auto const answer = program.invoke("derive", json::Value{}, runRequest());
         REQUIRE_FALSE(answer.has_value());
-        CHECK(
-            std::string{answer.error().message()}
-                .find("the recorded call at this coordinate names another tool")
-            != std::string::npos
-        );
-    }
-
-    // Aimed at the single-entry reducer type rather than at the five-function
-    // contract's entries, so that what it pins survives their deletion. What
-    // this refusal is about is the PROGRAM TYPE: a pure closure cannot name a
-    // scoped module whatever its entry set is, and that is what makes reduction
-    // and dispatch two types rather than two spellings of one.
-    TEST_CASE("the pure resolver refuses each scoped module by name")
-    {
-        constexpr auto reducerEntryPoints = std::array{
-            std::string_view{"reduce"},
-        };
-        for (auto const scopedName : ScopedToolProgram::scopedModuleNames())
-        {
-            auto modules = std::vector<PureDataProgram::Module>{
-                PureDataProgram::Module{
-                    .name   = "main",
-                    .source = "return {\n"
-                              "    plugin_id = \"fixture.reducer\",\n"
-                              "    reduce = function(_input)\n"
-                              "        return require(\""
-                              + std::string{scopedName}
-                              + "\")\n"
-                                "    end,\n"
-                                "}\n",
-                },
-            };
-            auto const program = PureDataProgram::compile(
-                "fixture.reducer",
-                "main",
-                std::move(modules),
-                reducerEntryPoints,
-                {}
-            );
-            REQUIRE(program.has_value());
-
-            auto const answer = program->invoke("reduce", json::Value{});
-            REQUIRE_FALSE(answer.has_value());
-            CHECK(
-                std::string{answer.error().message()}.find(
-                    "rejected an unknown module: " + std::string{scopedName}
-                )
-                != std::string::npos
-            );
-        }
-    }
-
-    TEST_CASE("a scoped program admits exactly its own scoped module catalog")
-    {
-        constexpr auto expected = std::array{
-            std::string_view{"@umbraflow/audit"},
-            std::string_view{"@umbraflow/screen"},
-            std::string_view{"@umbraflow/tools"},
-            std::string_view{"@umbraflow/workflow"},
-        };
-        auto const published = ScopedToolProgram::scopedModuleNames();
-        REQUIRE(published.size() == expected.size());
-        for (auto index = std::size_t{0}; index < expected.size(); ++index)
-        {
-            CHECK(published[index] == expected[index]);
-        }
-
-        auto const source = pluginSource("fixture.scoped.catalog", "", "        return input");
-
-        auto incomplete = scopedFrameworkModules();
-        incomplete.pop_back();
-        auto const missing = compileScoped(
-            "fixture.scoped.catalog",
-            source,
-            recordingRuntime(std::make_shared<std::vector<ToolCallRecord>>()),
-            incomplete
-        );
-        REQUIRE_FALSE(missing.has_value());
-        CHECK(
-            std::string{missing.error().message()}
-                .find("requires the Framework module @umbraflow/workflow")
-            != std::string::npos
-        );
-
-        auto hidden = scopedFrameworkModules();
-        hidden.front().projectVisible = false;
-        auto const invisible = compileScoped(
-            "fixture.scoped.catalog",
-            source,
-            recordingRuntime(std::make_shared<std::vector<ToolCallRecord>>()),
-            hidden
-        );
-        REQUIRE_FALSE(invisible.has_value());
-        CHECK(
-            std::string{invisible.error().message()}
-                .find("project-visible Framework module: @umbraflow/audit")
-            != std::string::npos
-        );
-
-        auto const complete = scopedFrameworkModules();
-        auto const seamless =
-            compileScoped(
-                "fixture.scoped.catalog",
-                source,
-                ToolRuntimeDispatch{},
-                complete
-            );
-        REQUIRE_FALSE(seamless.has_value());
-        CHECK(
-            std::string{seamless.error().message()}.find("requires a Tool Runtime")
-            != std::string::npos
-        );
-    }
-
-    TEST_CASE("only the catalog's Framework modules are handed the capability table")
-    {
-        auto const log     = std::make_shared<std::vector<ToolCallRecord>>();
-        auto const program = scopedProgram(
-            "fixture.scoped.chunk",
-            pluginSource(
-                "fixture.scoped.chunk",
-                "local chunkArguments = select(\"#\", ...)",
-                "        local tools = require(\"@umbraflow/tools\")\n"
-                "        local wrote = pcall(function() tools.call = nil end)\n"
-                "        return {\n"
-                "            chunkArguments = chunkArguments,\n"
-                "            frozen = wrote == false,\n"
-                "        }"
+        auto const message = std::string{answer.error().message()};
+        CHECK_MESSAGE(
+            message.contains(
+                "Project Tool handler fixture.project.leaf may not issue Tool call "
+                "framework.screen.observe"
             ),
-            recordingRuntime(log)
+            "Project Tool handler fixture.project.leaf must refuse Tool call "
+            "framework.screen.observe by name"
         );
-
-        auto const answer = program.invoke(
-            "derive",
-            json::Value{},
-            runRequest()
-        );
-        REQUIRE(answer.has_value());
-        CHECK(json::canonicalBytes(*answer) == R"({"chunkArguments":0,"frozen":true})");
-        CHECK(log->empty());
     }
 
-    TEST_CASE("a Tool call while the closure is admitted is refused")
+    TEST_CASE("a Tool call while the Project closure is admitted is refused")
     {
-        auto const modules = scopedFrameworkModules();
+        auto const modules = frameworkModules();
         auto const program = compileScoped(
-            "fixture.scoped.admission",
+            "fixture.project.admission",
             pluginSource(
-                "fixture.scoped.admission",
+                "fixture.project.admission",
                 "local tools = require(\"@umbraflow/tools\")\n"
-                "tools.call(\"a.one\", {})",
+                "tools.call(\"framework.screen.observe\", {})",
                 "        return input"
             ),
-            recordingRuntime(std::make_shared<std::vector<ToolCallRecord>>()),
             modules
         );
         REQUIRE_FALSE(program.has_value());
-        CHECK(
-            std::string{program.error().message()}
-                .find("may not call a Tool while it is admitted")
-            != std::string::npos
+        CHECK_MESSAGE(
+            std::string{program.error().message()}.contains(
+                "may not call a Tool while it is admitted: "
+                "framework.screen.observe"
+            ),
+            "Project closure admission must raise a named Tool-call refusal"
         );
     }
 
-    TEST_CASE("the Tool primitive refuses a malformed call without ending the run")
+    TEST_CASE("malformed Tool primitive calls stay catchable inside a leaf")
     {
-        auto const log     = std::make_shared<std::vector<ToolCallRecord>>();
         auto const program = scopedProgram(
-            "fixture.scoped.malformed",
+            "fixture.project.malformed",
             pluginSource(
-                "fixture.scoped.malformed",
+                "fixture.project.malformed",
                 "",
                 "        local tools = require(\"@umbraflow/tools\")\n"
                 "        local arity, arityError = pcall(function()\n"
@@ -570,257 +217,94 @@ return {
                 "        local named, namedError = pcall(function()\n"
                 "            return tools.call(\"NotCanonical\", {})\n"
                 "        end)\n"
-                "        local shaped, shapedError = pcall(function()\n"
-                "            return tools.call(\"a.one\", tools.call)\n"
-                "        end)\n"
-                "        return {\n"
-                "            arity = arity,\n"
-                "            arityError = tostring(arityError),\n"
-                "            named = named,\n"
-                "            namedError = tostring(namedError),\n"
-                "            shaped = shaped,\n"
-                "            shapedError = tostring(shapedError),\n"
-                "        }"
-            ),
-            recordingRuntime(log)
+                "        return { arity = arity, arityError = tostring(arityError),\n"
+                "            named = named, namedError = tostring(namedError) }"
+            )
         );
-
-        auto const answer = program.invoke(
-            "derive",
-            json::Value{},
-            runRequest()
-        );
+        auto const answer = program.invoke("derive", json::Value{}, runRequest());
         REQUIRE(answer.has_value());
         auto const bytes = json::canonicalBytes(*answer);
-        CHECK(bytes.find(R"("arity":false)") != std::string::npos);
-        CHECK(
-            bytes.find("takes a tool name, one argument value and an optional")
-            != std::string::npos
-        );
-        CHECK(bytes.find(R"("named":false)") != std::string::npos);
-        CHECK(bytes.find("rejected a non-canonical tool name") != std::string::npos);
-        CHECK(bytes.find(R"("shaped":false)") != std::string::npos);
-        CHECK(bytes.find("a type no JSON document has") != std::string::npos);
-
-        // None of the three reached the Tool Runtime, so none of them spent a
-        // child index either.
-        CHECK(log->empty());
+        CHECK(bytes.contains(R"("arity":false)"));
+        CHECK(bytes.contains("takes a tool name and one argument value"));
+        CHECK(bytes.contains(R"("named":false)"));
+        CHECK(bytes.contains("rejected a non-canonical tool name"));
     }
 
-    TEST_CASE("a scoped run spinning in pure computation is torn down by its stop token")
+    TEST_CASE("the pure resolver refuses each scoped module by name")
     {
-        auto const stopSource = std::make_shared<std::stop_source>();
-        auto const program    = scopedProgram(
-            "fixture.scoped.spin",
-            pluginSource(
-                "fixture.scoped.spin",
-                "",
-                "        local tools = require(\"@umbraflow/tools\")\n"
-                "        tools.call(\"a.one\", input)\n"
-                "        local total = 0\n"
-                "        while true do\n"
-                "            total = total + 1\n"
-                "        end\n"
-                "        return { total = total }"
-            ),
-            [stopSource](
-                std::string_view,
-                json::Value const&,
-                ToolCallCoordinate const&,
-                std::stop_token,
-                ToolCallBody
-            ) -> Result<json::Value> {
-                stopSource->request_stop();
-                return json::Value::ofBoolean(true);
-            }
-        );
-
-        auto const answer = program.invoke(
-            "derive",
-            json::Value{},
-            runRequest(rootRunPosition(), stopSource->get_token())
-        );
-        REQUIRE_FALSE(answer.has_value());
-        CHECK(automationErrorKind(answer.error()) == AutomationErrorKind::Cancelled);
-        CHECK(
-            std::string{answer.error().message()}.find("the host requested cancellation")
-            != std::string::npos
-        );
+        constexpr auto entries = std::array{std::string_view{"reduce"}};
+        for (auto const scopedName : ScopedToolProgram::scopedModuleNames())
+        {
+            auto program = PureDataProgram::compile(
+                "fixture.pure",
+                "main",
+                {PureDataProgram::Module{
+                    .name = "main",
+                    .source = "local _ = require(\"" + std::string{scopedName}
+                        + "\")\nreturn { plugin_id = \"fixture.pure\", "
+                          "reduce = function(input) return input end }",
+                }},
+                entries,
+                {},
+                {}
+            );
+            REQUIRE_FALSE(program.has_value());
+            CHECK(std::string{program.error().message()}.contains(
+                "rejected an unknown module: " + std::string{scopedName}
+            ));
+        }
     }
 
-    TEST_CASE("one issuing context cannot exceed its fixed Tool call ceiling")
+    TEST_CASE("a scoped program admits exactly its scoped module catalog")
     {
-        auto const program = scopedProgram(
-            "fixture.scoped.ceiling",
-            pluginSource(
-                "fixture.scoped.ceiling",
-                "",
-                "        local tools = require(\"@umbraflow/tools\")\n"
-                "        local total = 0\n"
-                "        for index = 1, 4096 do\n"
-                "            if tools.call(\"a.one\", input) then\n"
-                "                total = total + 1\n"
-                "            end\n"
-                "        end\n"
-                "        return { total = total }"
-            ),
-            runtimeRefusingAt(ScopedToolProgram::k_maximumToolCallsPerContext + 1U)
-        );
+        constexpr auto expected = std::array{
+            std::string_view{"@umbraflow/audit"},
+            std::string_view{"@umbraflow/screen"},
+            std::string_view{"@umbraflow/tools"},
+            std::string_view{"@umbraflow/workflow"},
+        };
+        CHECK(std::ranges::equal(ScopedToolProgram::scopedModuleNames(), expected));
 
-        auto const answer = program.invoke(
-            "derive",
-            json::Value{},
-            runRequest()
+        auto incomplete = frameworkModules();
+        incomplete.pop_back();
+        auto missing = compileScoped(
+            "fixture.project.catalog",
+            pluginSource("fixture.project.catalog", "", "        return input"),
+            incomplete
         );
-        REQUIRE_FALSE(answer.has_value());
-        CHECK(
-            std::string{answer.error().message()}
-                .find("exceeded its fixed scoped Tool call ceiling")
-            != std::string::npos
-        );
+        REQUIRE_FALSE(missing.has_value());
+        CHECK(std::string{missing.error().message()}.contains(
+            "requires the Framework module @umbraflow/workflow"
+        ));
     }
 
-    // The reservation is a property of the shared runtime, so it must hold for
-    // BOTH program types: the scoped one is the type whose Framework modules
-    // actually read a pinned resource, and a reservation that covered only the
-    // pure type would leave the case that motivates it uncovered.
-    TEST_CASE("the reserved resource namespace holds for the scoped program type")
+    TEST_CASE("the reserved resource namespace holds for Project Tool programs")
     {
-        auto const modules = scopedFrameworkModules();
+        auto const modules = frameworkModules();
         auto const source  = pluginSource(
-            "fixture.scoped.reserved",
+            "fixture.project.reserved",
             "",
             R"(        return resource.readJson("umbraflow.fixture-catalog"))"
         );
-
-        auto const shadowed = compileScoped(
-            "fixture.scoped.reserved",
+        auto shadowed = compileScoped(
+            "fixture.project.reserved",
             source,
-            recordingRuntime(std::make_shared<std::vector<ToolCallRecord>>()),
             modules,
             {jsonResource("umbraflow.fixture-catalog", R"({"pinned":"project"})")}
         );
         REQUIRE_FALSE(shadowed.has_value());
-        CHECK(
-            std::string{shadowed.error().message()}
-            == "pure data resource name is reserved for the Framework: "
-               "umbraflow.fixture-catalog"
-        );
 
-        auto const supplied = compileScoped(
-            "fixture.scoped.reserved",
+        auto supplied = compileScoped(
+            "fixture.project.reserved",
             source,
-            recordingRuntime(std::make_shared<std::vector<ToolCallRecord>>()),
             modules,
             {},
             {jsonResource("umbraflow.fixture-catalog", R"({"pinned":"framework"})")}
         );
         REQUIRE(supplied.has_value());
-        auto const answer = supplied->invoke(
-            "derive",
-            parsed("{}"),
-            runRequest()
-        );
+        auto const answer = supplied->invoke("derive", parsed("{}"), runRequest());
         REQUIRE(answer.has_value());
         CHECK(json::canonicalBytes(*answer) == R"({"pinned":"framework"})");
-    }
-
-    TEST_CASE("a yield inside a structured Tool body is refused by name")
-    {
-        auto const log = std::make_shared<std::vector<ToolCallRecord>>();
-        auto const program = scopedProgram(
-            "fixture.scoped.body-yield",
-            pluginSource(
-                "fixture.scoped.body-yield",
-                "",
-                "        local screen = require(\"@umbraflow/screen\")\n"
-                "        return screen.observe({}, function()\n"
-                "            coroutine.yield()\n"
-                "        end)"
-            ),
-            recordingRuntime(log)
-        );
-
-        auto const answer = program.invoke("derive", parsed("{}"), runRequest());
-        REQUIRE_FALSE(answer.has_value());
-        CHECK(
-            std::string{answer.error().message()}.contains(
-                "a Tool body may not yield or suspend a coroutine; only framework "
-                "structured child dispatch may re-enter the VM"
-            )
-        );
-    }
-
-    TEST_CASE("a nested Tool body reports the owning registration memory budget")
-    {
-        auto const log = std::make_shared<std::vector<ToolCallRecord>>();
-        auto const program = scopedProgram(
-            "fixture.scoped.body-memory",
-            pluginSource(
-                "fixture.scoped.body-memory",
-                "",
-                "        local screen = require(\"@umbraflow/screen\")\n"
-                "        return screen.observe({}, function()\n"
-                "            local retained = {}\n"
-                "            for index = 1, 30000 do\n"
-                "                retained[index] = string.rep(tostring(index), 1024)\n"
-                "            end\n"
-                "        end)"
-            ),
-            recordingRuntime(log)
-        );
-        auto const owner = std::string{"fixture.project.memory-owner"};
-        auto const position = positionOf("memory-budget-owner-position");
-        auto const answer = program.invoke(
-            "derive",
-            parsed("{}"),
-            ScopedRunRequest{
-                .parentPosition = position,
-                .budgetOwner    = owner,
-                .maximumElapsedMillis   = 5'000U,
-            }
-        );
-        REQUIRE_FALSE(answer.has_value());
-        auto const message = std::string{answer.error().message()};
-        INFO(message);
-        CHECK(message.contains("Luau memory ceiling"));
-        CHECK(message.contains(std::to_string(PureDataProgram::k_memoryQuotaBytes)));
-        CHECK(message.contains(owner));
-        CHECK(message.contains(position.hex()));
-    }
-
-    TEST_CASE("a nested Tool body reports the owning registration duration budget")
-    {
-        auto const log = std::make_shared<std::vector<ToolCallRecord>>();
-        auto const program = scopedProgram(
-            "fixture.scoped.body-duration",
-            pluginSource(
-                "fixture.scoped.body-duration",
-                "",
-                "        local screen = require(\"@umbraflow/screen\")\n"
-                "        return screen.observe({}, function()\n"
-                "            while true do end\n"
-                "        end)"
-            ),
-            recordingRuntime(log)
-        );
-        auto const owner = std::string{"fixture.project.duration-owner"};
-        auto const position = positionOf("duration-budget-owner-position");
-        auto const answer = program.invoke(
-            "derive",
-            parsed("{}"),
-            ScopedRunRequest{
-                .parentPosition       = position,
-                .budgetOwner          = owner,
-                .maximumElapsedMillis = 10U,
-            }
-        );
-        REQUIRE_FALSE(answer.has_value());
-        auto const message = std::string{answer.error().message()};
-        INFO(message);
-        CHECK(message.contains("maximum_elapsed_ms=10"));
-        CHECK(message.contains(owner));
-        CHECK(message.contains(position.hex()));
     }
 
     TEST_CASE("the scoped environment has its own pinned identity")
@@ -830,59 +314,22 @@ return {
         auto const pure     = pluginEnvironmentHash();
         REQUIRE(scoped.has_value());
         REQUIRE(pure.has_value());
-
         CHECK(json::canonicalBytes(parsed(material)) == material);
         CHECK(scoped->hex() != pure->hex());
         CHECK(scoped->hex() == digestOf(material));
+
+        // A published identity needs a literal to compare against. Comparing
+        // the hash to a digest of the same material only proves the hash
+        // function ran; it is the literal below that turns an unannounced
+        // change to the environment into a red test, and so into a release
+        // note. Changing it is the point at which the change becomes a break.
         CHECK(
             scoped->hex()
-            == "e15fe8ed81a8edf041ccd45e14f953670f8337d420ea2f7e6fd9f99ccaecfc77"
+            == "30d312235ad2e7471cb7946e5d8e34502fa61807a4c3e79000abbff8f9026273"
         );
-
-        // What the digest covers, named. A preimage over the catalog alone would
-        // leave a build that changed what invoke ANSWERS WITH unmoved.
-        CHECK(
-            material.find(
-                R"("scoped_modules":["@umbraflow/audit","@umbraflow/screen",)"
-                R"("@umbraflow/tools","@umbraflow/workflow"])"
-            )
-            != std::string::npos
-        );
-        CHECK(
-            material.find(
-                R"("failure_behaviour":"runtime_refusal_is_terminal_uncatchable_vm_teardown_v1")"
-            )
-            != std::string::npos
-        );
-        CHECK(material.find(R"("invoke_arity":3)") != std::string::npos);
-        CHECK(
-            material.find(
-                R"("wall_time_source":"outer_project_tool_registration.timeout.maximum_elapsed_ms")"
-            )
-            != std::string::npos
-        );
-        CHECK(
-            material.find(R"("tool_calls_per_context":1024)") != std::string::npos
-        );
-
-        // Moving one scoped module name moves the digest, and so does moving the
-        // facade contract; the two are covered independently.
-        auto movedName = material;
-        auto const namePosition = movedName.find("@umbraflow/workflow");
-        REQUIRE(namePosition != std::string::npos);
-        movedName.replace(namePosition, std::string_view{"@umbraflow/workflow"}.size(),
-                          "@umbraflow/workflox");
-        CHECK(digestOf(movedName) != scoped->hex());
-
-        auto movedContract = material;
-        auto const contractPosition =
-            movedContract.find("one_frozen_decoded_json_value");
-        REQUIRE(contractPosition != std::string::npos);
-        movedContract.replace(
-            contractPosition,
-            std::string_view{"one_frozen_decoded_json_value"}.size(),
-            "one_mutable_decoded_json_valve"
-        );
-        CHECK(digestOf(movedContract) != scoped->hex());
+        CHECK(material.contains(R"("interactive_tool_calls":1024)"));
+        CHECK(material.contains(
+            R"("failure_behaviour":"runtime_refusal_is_terminal_uncatchable_vm_teardown_v1")"
+        ));
     }
-} // namespace uf::script
+}

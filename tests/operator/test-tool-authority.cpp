@@ -63,7 +63,7 @@ namespace uf::operator_runtime
             "call identity"
         );
 
-        // The seam owns the child index, so there is no factory a caller can
+        // The seam owns the call sequence, so there is no factory a caller can
         // hand an ordinal to at all. R4 makes that structural rather than
         // documented, and this is the compile-time reading of it.
         template <typename Ordinal>
@@ -75,7 +75,7 @@ namespace uf::operator_runtime
 
         static_assert(
             !CallerSuppliedSequenceAccepted<uint64>,
-            "The Tool Runtime seam assigns the child index; no caller may pass "
+            "The Tool Runtime seam assigns the call sequence; no caller may pass "
             "one"
         );
 
@@ -179,20 +179,19 @@ namespace uf::operator_runtime
         auto frameworkCatalog = FrameworkToolCatalogOwner::create();
         REQUIRE(frameworkCatalog.has_value());
 
-        auto observeArguments = CanonicalJson::parseExact("{}");
-        REQUIRE(observeArguments.has_value());
-        auto observe = frameworkCatalog->validate(
-            "framework.screen.observe",
-            std::move(*observeArguments)
+        auto captureArguments = CanonicalJson::parseExact("{}");
+        REQUIRE(captureArguments.has_value());
+        auto capture = frameworkCatalog->validate(
+            "framework.screen.capture",
+            std::move(*captureArguments)
         );
-        REQUIRE(observe.has_value());
-        REQUIRE(std::holds_alternative<FrameworkToolProvider>(observe->provider()));
+        REQUIRE(capture.has_value());
+        REQUIRE(std::holds_alternative<FrameworkToolProvider>(capture->provider()));
         CHECK(
-            std::get<FrameworkToolProvider>(observe->provider()).toolCatalogHash
+            std::get<FrameworkToolProvider>(capture->provider()).toolCatalogHash
             == frameworkCatalog->toolCatalogHash()
         );
-        CHECK(observe->descriptor().mutability == ToolMutability::ReadOnly);
-        CHECK(observe->descriptor().limits.maximumObservations == 1U);
+        CHECK(capture->descriptor().mutability == ToolMutability::ReadOnly);
 
         auto waitArguments = CanonicalJson::parseExact(
             R"({"duration_ms":500})"
@@ -203,7 +202,6 @@ namespace uf::operator_runtime
             std::move(*waitArguments)
         );
         REQUIRE(wait.has_value());
-        CHECK(wait->descriptor().limits.maximumWaits == 1U);
 
         // The two elapsed ceilings differ ON PURPOSE, and only for this Tool:
         // the workflow limit is the longest wait a caller may ask for and is
@@ -212,27 +210,30 @@ namespace uf::operator_runtime
         // returning call against. Equal numbers would time out the longest
         // legal wait every time, since sleeping for the ceiling returns after
         // it.
-        CHECK(wait->descriptor().limits.maximumElapsedMillis == 60'000U);
         CHECK(wait->descriptor().timeout.maximumElapsedMillis == 66'000U);
 
         // An Agent is offered the Semantic Framework Tools and none of the
-        // Privileged ones: bare-coordinate input is absent rather than present
-        // and refused, and so are the three measuring Tools and the authoring
-        // write -- an Agent that wants a measurement writes an observation with
-        // a body, where the child's surface is judged against what the
-        // observation declared instead.
+        // Privileged ones: bare-coordinate input, measuring Tools, crop and
+        // evidence-file writes are absent rather than present and refused.
         auto noCapabilities = std::array<std::string, 0U>{};
         auto const offered = frameworkCatalog->offeredTools(
             controllerProfile(ControllerKind::Agent),
             noCapabilities
         );
-        REQUIRE(offered.size() == 6U);
+        REQUIRE(offered.size() == 13U);
         CHECK(offered[0].name == "framework.audit.record");
-        CHECK(offered[1].name == "framework.input.semantic_target");
-        CHECK(offered[2].name == "framework.project.read");
-        CHECK(offered[3].name == "framework.screen.observe");
-        CHECK(offered[4].name == "framework.workflow.status");
-        CHECK(offered[5].name == "framework.workflow.wait");
+        CHECK(offered[1].name == "framework.project.read_text");
+        CHECK(offered[2].name == "framework.project.write_text");
+        CHECK(offered[3].name == "framework.screen.capture");
+        CHECK(offered[4].name == "framework.screen.observe");
+        CHECK(offered[5].name == "framework.ui.click");
+        CHECK(offered[6].name == "framework.ui.drag");
+        CHECK(offered[7].name == "framework.ui.hold");
+        CHECK(offered[8].name == "framework.ui.key");
+        CHECK(offered[9].name == "framework.ui.move");
+        CHECK(offered[10].name == "framework.ui.scroll");
+        CHECK(offered[11].name == "framework.workflow.status");
+        CHECK(offered[12].name == "framework.workflow.wait");
 
         auto catalogMaterial = CanonicalJson::parseExact(
             frameworkCatalog->canonicalJcs()
@@ -244,7 +245,27 @@ namespace uf::operator_runtime
         );
     }
 
-    TEST_CASE("Framework wait and observe arguments are exact and bounded")
+    TEST_CASE("framework.project.write is refused as an unknown Tool")
+    {
+        auto catalog = FrameworkToolCatalogOwner::create();
+        REQUIRE(catalog.has_value());
+        auto arguments = CanonicalJson::parseExact("{}");
+        REQUIRE(arguments.has_value());
+
+        auto const refused = catalog->validate(
+            "framework.project.write",
+            std::move(*arguments)
+        );
+        REQUIRE_FALSE(refused.has_value());
+        CHECK_MESSAGE(
+            refused.error().message()
+                == "Framework Tool Catalog declares no tool named "
+                    "framework.project.write",
+            "framework.project.write must be refused as an unknown Tool"
+        );
+    }
+
+    TEST_CASE("Framework wait and screen arguments are exact and bounded")
     {
         auto frameworkCatalog = FrameworkToolCatalogOwner::create();
         REQUIRE(frameworkCatalog.has_value());
@@ -659,8 +680,10 @@ namespace uf::operator_runtime
             {
                 return std::vector<ToolCatalogEntry>{
                     ToolCatalogEntry{
-                        .name       = name,
-                        .descriptor = descriptor,
+                        .name        = name,
+                        .description = "A fixture Project Tool leaf.",
+                        .inputSchema = json::Value::ofObject({}),
+                        .descriptor  = descriptor,
                     },
                 };
             },
@@ -709,41 +732,6 @@ namespace uf::operator_runtime
         REQUIRE(changedProvider.has_value());
         CHECK(first->identity() != changedProvider->identity());
 
-        auto secondParent = toolCallAt(
-            *root,
-            nullptr,
-            2U,
-            execution,
-            *invocation
-        );
-        REQUIRE(secondParent.has_value());
-        auto child = toolCallAt(
-            *root,
-            &*first,
-            1U,
-            execution,
-            *invocation
-        );
-        auto movedParent = toolCallAt(
-            *root,
-            &*secondParent,
-            1U,
-            execution,
-            *invocation
-        );
-        auto movedSequence = toolCallAt(
-            *root,
-            &*first,
-            2U,
-            execution,
-            *invocation
-        );
-        REQUIRE(child.has_value());
-        REQUIRE(movedParent.has_value());
-        REQUIRE(movedSequence.has_value());
-        CHECK(child->identity() != first->identity());
-        CHECK(child->identity() != movedParent->identity());
-        CHECK(child->identity() != movedSequence->identity());
     }
 
     TEST_CASE("Framework and Project calls use one validated identity builder")
@@ -770,7 +758,7 @@ namespace uf::operator_runtime
         REQUIRE(frameworkCatalog.has_value());
         REQUIRE(frameworkArguments.has_value());
         auto frameworkInvocation = frameworkCatalog->validate(
-            "framework.screen.observe",
+            "framework.screen.capture",
             std::move(*frameworkArguments)
         );
         REQUIRE(frameworkInvocation.has_value());
@@ -809,73 +797,18 @@ namespace uf::operator_runtime
         // The seam owns the ordinal, so there is no out-of-range ordinal for a
         // caller to present: a fresh context starts at one and every issue
         // advances by exactly one, whether or not the calls are alike.
-        auto counted = ToolCallIssuingContext::forRoot(*root, execution);
-        CHECK(counted.issuedChildren() == 0U);
+        auto counted     = ToolCallIssuingContext::forRoot(*root, execution);
         auto firstIssued = counted.issue(*projectInvocation);
         REQUIRE(firstIssued.has_value());
         CHECK(firstIssued->sequence() == 1U);
-        CHECK(counted.issuedChildren() == 1U);
         auto secondIssued = counted.issue(*projectInvocation);
         REQUIRE(secondIssued.has_value());
         CHECK(secondIssued->sequence() == 2U);
         CHECK(secondIssued->identity() != firstIssued->identity());
-        CHECK(counted.issuedChildren() == 2U);
-
-        // A handler's context numbers from one again, and its children are
-        // parented on the handler call rather than on the run root. That is
-        // what makes a replayed child cost its parent exactly one increment
-        // regardless of how large its subtree was.
-        auto handlerContext = ToolCallIssuingContext::forHandler(*firstIssued);
-        auto handlerChild   = handlerContext.issue(*frameworkInvocation);
-        REQUIRE(handlerChild.has_value());
-        CHECK(handlerChild->sequence() == 1U);
-        CHECK(handlerChild->parentIdentity() == firstIssued->identity());
-        CHECK(counted.issuedChildren() == 2U);
 
         // The run's own context is anchored on the root request itself, so a
         // call it issues names a real parent coordinate rather than none.
         CHECK(firstIssued->parentIdentity() == root->identity());
-
-        auto foreignPreimage = CanonicalJson::parseExact("{}");
-        REQUIRE(foreignPreimage.has_value());
-        auto foreignRoot = ToolRootRequestIdentity::create(
-            "principal-1",
-            "request-2",
-            std::move(*foreignPreimage)
-        );
-        REQUIRE(foreignRoot.has_value());
-        auto foreignParent = toolCallAt(
-            *foreignRoot,
-            nullptr,
-            1U,
-            execution,
-            *projectInvocation
-        );
-        REQUIRE(foreignParent.has_value());
-
-        // A handler context takes its root from the call it implements, so a
-        // position issued under a foreign parent belongs to that foreign root
-        // no matter which root the caller had in hand. The caller cannot claim
-        // otherwise, and the ledger is what refuses the claim: a position is
-        // persisted under the root its own parent chain names.
-        auto foreignChild = toolCallAt(
-            *root,
-            &*foreignParent,
-            1U,
-            execution,
-            *projectInvocation
-        );
-        REQUIRE(foreignChild.has_value());
-        CHECK(foreignChild->rootIdentity() == foreignRoot->identity());
-
-        auto const misfiled = prepared.store.persistToolCallPosition(
-            *root,
-            *foreignChild
-        );
-        REQUIRE_FALSE(misfiled.has_value());
-        CHECK(misfiled.error().message().contains(
-            "belongs to a different root request"
-        ));
     }
 
 
@@ -952,8 +885,7 @@ namespace uf::operator_runtime
                     test_support::toolClosureSource("fixture.control")
                 ),
             },
-            {},
-            test_support::refusingToolRuntime()
+            {}
         );
         REQUIRE_FALSE(refused.has_value());
         CHECK(refused.error().message().contains(

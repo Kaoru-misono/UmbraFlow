@@ -1,30 +1,10 @@
 --!strict
--- Bounded waiting, delivery classification, the human stop, child-flow
--- composition, and recovery -- with no blind retry anywhere in the module.
+-- Bounded waiting, workflow status, and the human stop.
 --
 -- Every call here goes through `@umbraflow/tools`, which is the SDK's one
 -- spelling of a Tool call; the private capability table this module is also
 -- handed as its chunk argument is deliberately unused, for the reason
 -- `@umbraflow/screen` states.
---
--- ## Why nothing here can turn a `possible` outcome into a retry
---
--- `possible` means the Operator durably crossed the dispatch boundary and never
--- learned whether the effect landed. Re-issuing such a call is how a bounded
--- mutation becomes two, so the SDK must not offer it. That is enforced by the
--- SHAPE of this module rather than by a warning in a comment:
---
---  * No function here takes a prior answer together with a tool name or an
---    argument value. An answer carries the classification, the position
---    identity and the Tool's own result -- and deliberately NOT the arguments
---    the call was made with -- so re-issuing a recorded call is not expressible
---    from anything this module hands a script.
---  * No function here accepts an answer AND issues a Tool call at all, so
---    there is no shape a script could aim at the answered call's own Tool.
---  * `recover` dispatches on the classification and has NO default arm. A
---    script that did not write a `possible` arm gets a refusal naming the
---    classification it failed to handle, rather than falling through into
---    whatever branch it wrote for the ordinary case.
 --
 -- Cancellation never arrives here as an error. A hard stop destroys the VM
 -- without resuming the script, deliberately indistinguishable from a crash; a
@@ -45,40 +25,15 @@ local k_completedMember = "completed"
 -- The empty JSON object, which a Luau table literal cannot spell.
 local emptyObject = canon.emptyObject
 
--- The three-way partition of the eight delivery classifications. Every
--- classification is in exactly one of them, so a script that branches on all
--- three has branched on all eight.
-local k_pendingStates = table.freeze({
-    proposed = true,
-    admitted = true,
-    dispatching = true,
-})
-local k_settledStates = table.freeze({
-    confirmed = true,
-    proven_absent = true,
-    terminal_failure = true,
-})
-local k_uncertainStates = table.freeze({
-    possible = true,
-    terminally_unresolved = true,
-})
-
 local function reject(message: string): never
     error("workflow " .. message, 3)
-end
-
-local function fromTool(answer: any, expected: string, where: string): any
-    if tools.tool_name(answer) ~= expected then
-        reject(where .. " needs the answer of " .. expected)
-    end
-    return answer
 end
 
 -- The bound comes from the pinned catalog descriptor rather than a literal
 -- here, so a release that changes what the wait Tool admits changes what this
 -- module admits, in one place, with the catalog identity moving under it.
 local function waitCeiling(): number
-    local contract = rawget(tools.describe(k_waitTool), "argument_contract")
+    local contract = rawget(tools.describe(k_waitTool), "input_schema")
     if type(contract) ~= "table" then
         reject("the catalog descriptor for " .. k_waitTool .. " states no argument contract")
     end
@@ -112,11 +67,13 @@ end
 -- it to stand down -- it is a recorded fact about a Tool call and not an error
 -- raised into the script.
 function workflow.stopped(answer: any): boolean
-    local waited = fromTool(answer, k_waitTool, "stopped")
-    if tools.state(waited) ~= "confirmed" then
+    if type(answer) ~= "table"
+        or rawget(answer, "ok") ~= true
+        or rawget(answer, "delivery") ~= "confirmed"
+    then
         reject("stopped needs a confirmed wait")
     end
-    local payload = rawget(waited, "result")
+    local payload = rawget(answer, "result")
     if type(payload) ~= "table" then
         reject("a confirmed wait must carry an object result")
     end
@@ -125,64 +82,6 @@ function workflow.stopped(answer: any): boolean
         reject("a confirmed wait must state whether it completed")
     end
     return completed == false
-end
-
-function workflow.pending(answer: any): boolean
-    return k_pendingStates[tools.state(answer)] == true
-end
-
-function workflow.settled(answer: any): boolean
-    return k_settledStates[tools.state(answer)] == true
-end
-
-function workflow.uncertain(answer: any): boolean
-    return k_uncertainStates[tools.state(answer)] == true
-end
-
-function workflow.delivered(answer: any): boolean
-    return tools.state(answer) == "confirmed"
-end
-
-function workflow.absent(answer: any): boolean
-    return tools.state(answer) == "proven_absent"
-end
-
-function workflow.refused(answer: any): boolean
-    return tools.state(answer) == "terminal_failure"
-end
-
--- Compose a child flow: call a Tool whose own handler may issue Tool calls, so
--- the call opens a new issuing context numbered under this call's position. A
--- Tool the catalog admits no child call for is a leaf, and calling it is
--- `tools.call`; naming it here is a mistake worth a refusal rather than a
--- silent synonym.
-function workflow.child_flow(name: any, arguments: any): any
-    local children = rawget(tools.describe(name), "child_effects")
-    if type(children) ~= "table" then
-        reject("the catalog descriptor for " .. tostring(name) .. " states no child effects")
-    end
-    local maximum = rawget(children :: any, "maximum_child_calls")
-    if type(maximum) ~= "number" or maximum <= 0 then
-        reject("child_flow names a tool the catalog admits no child call for: " .. tostring(name))
-    end
-    return tools.call(name, arguments)
-end
-
--- Branch on the delivery classification with no default arm. `handlers` is a
--- table keyed by classification; the arm for THIS answer's classification must
--- be a function, and a missing arm is a refusal naming the classification. That
--- is what keeps `possible` from being swept into the branch a script wrote for
--- the ordinary case.
-function workflow.recover(answer: any, handlers: any): any
-    local state = tools.state(answer)
-    if type(handlers) ~= "table" then
-        reject("recover needs a table of handlers keyed by classification")
-    end
-    local arm = rawget(handlers, state)
-    if type(arm) ~= "function" then
-        reject("recover has no handler for the " .. state .. " outcome")
-    end
-    return arm(answer)
 end
 
 return table.freeze(workflow)

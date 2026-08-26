@@ -26,7 +26,7 @@ namespace uf::operator_runtime
         // another would have to guess, and this repository migrates rather than
         // teaching a reader two shapes.
         constexpr auto k_referenceSchema = std::string_view{
-            "framework.observation_reference/1"
+            "framework.observation_reference/2"
         };
 
         [[nodiscard]]
@@ -36,40 +36,28 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
-        auto namesEmptyEntry(std::span<std::string const> values) -> bool
+        auto actionNamesAreValid(ObservedUiAction const& action) -> bool
         {
-            return std::ranges::any_of(
-                values,
-                [](std::string const& value) { return value.empty(); }
-            );
+            return !action.uiTarget.empty() && !action.binding.empty()
+                && !action.action.empty() && !action.kind.empty();
         }
 
         [[nodiscard]]
-        auto stringArrayMaterial(std::span<std::string const> values)
+        auto uiActionsMaterial(std::span<ObservedUiAction const> actions)
             -> json::Value
         {
             auto rendered = std::vector<json::Value>{};
-            rendered.reserve(values.size());
-            for (auto const& value : values)
+            rendered.reserve(actions.size());
+            for (auto const& action : actions)
             {
-                rendered.emplace_back(json::Value::ofString(value));
+                rendered.emplace_back(json::Value::ofObject({
+                    {"action", json::Value::ofString(action.action)},
+                    {"binding", json::Value::ofString(action.binding)},
+                    {"kind", json::Value::ofString(action.kind)},
+                    {"ui_target", json::Value::ofString(action.uiTarget)},
+                }));
             }
             return json::Value::ofArray(std::move(rendered));
-        }
-
-        // JSON null when the observation was issued from a root context. The
-        // absence is itself part of the coordinate, so it is rendered rather
-        // than omitted: a document that dropped the member would compare equal
-        // to one whose parent had merely not been written yet.
-        [[nodiscard]]
-        auto parentMaterial(std::optional<ContentHash> const& parent)
-            -> json::Value
-        {
-            if (!parent)
-            {
-                return json::Value{};
-            }
-            return json::Value::ofString(parent->hex());
         }
 
         // Both counters are rendered as decimal strings rather than JSON
@@ -87,8 +75,6 @@ namespace uf::operator_runtime
             -> json::Value
         {
             return json::Value::ofObject({
-                {"authorized_ui_actions",
-                 stringArrayMaterial(spec.authorizedUiActions)},
                 {"controlled_target_id",
                  json::Value::ofString(spec.controlledTargetId)},
                 {"expires_at_unix_ms",
@@ -96,17 +82,14 @@ namespace uf::operator_runtime
                 {"frame_identity_hash",
                  json::Value::ofString(spec.frameIdentityHash.hex())},
                 {"host_generation", counterMaterial(spec.hostGeneration)},
-                {"issuing_parent_identity",
-                 parentMaterial(spec.issuingParentIdentity)},
-                {"local_semantic_targets",
-                 stringArrayMaterial(spec.localSemanticTargets)},
                 {"project_registration_hash",
                  json::Value::ofString(spec.projectRegistrationHash.hex())},
-                {"root_identity",
-                 json::Value::ofString(spec.rootIdentity.hex())},
                 {"runtime_artifact_root_hash",
                  json::Value::ofString(spec.runtimeArtifactRootHash.hex())},
                 {"schema", json::Value::ofString(std::string{k_referenceSchema})},
+                {"screenshot_sha256",
+                 json::Value::ofString(spec.screenshotSha256.hex())},
+                {"ui_actions", uiActionsMaterial(spec.uiActions)},
             });
         }
 
@@ -172,51 +155,92 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
-        auto refusedAsMissingParent(
-            SnapshotObservationSpec const& spec,
+        auto sameActionIdentity(
+            ObservedUiAction const& action,
             SnapshotObservationConsumption const& consumption
         ) -> bool
         {
-            return consumption.rootIdentity != spec.rootIdentity
-                || consumption.issuingParentIdentity
-                    != spec.issuingParentIdentity;
+            return action.uiTarget == consumption.uiTarget
+                && action.binding == consumption.binding
+                && action.action == consumption.action;
         }
 
         [[nodiscard]]
-        auto refusedAsDuplicateLocal(
+        auto refusedAsDuplicateIdentifier(
             SnapshotObservationSpec const& spec,
             SnapshotObservationConsumption const& consumption
         ) -> bool
         {
-            return std::ranges::count(
-                       spec.localSemanticTargets,
-                       consumption.localSemanticTarget
-                   )
-                > 1;
+            return std::ranges::count_if(
+                spec.uiActions,
+                [&consumption](ObservedUiAction const& action)
+                {
+                    return sameActionIdentity(action, consumption);
+                }
+            ) > 1;
         }
 
         [[nodiscard]]
-        auto refusedAsUnknownLocalTarget(
+        auto refusedAsUnknownUiTarget(
             SnapshotObservationSpec const& spec,
             SnapshotObservationConsumption const& consumption
         ) -> bool
         {
-            return !std::ranges::contains(
-                spec.localSemanticTargets,
-                consumption.localSemanticTarget
+            return std::ranges::none_of(
+                spec.uiActions,
+                [&consumption](ObservedUiAction const& action)
+                {
+                    return action.uiTarget == consumption.uiTarget;
+                }
             );
         }
 
         [[nodiscard]]
-        auto refusedAsActionRefused(
+        auto refusedAsUnknownBinding(
             SnapshotObservationSpec const& spec,
             SnapshotObservationConsumption const& consumption
         ) -> bool
         {
-            return !std::ranges::contains(
-                spec.authorizedUiActions,
-                consumption.uiAction
+            return std::ranges::none_of(
+                spec.uiActions,
+                [&consumption](ObservedUiAction const& action)
+                {
+                    return action.uiTarget == consumption.uiTarget
+                        && action.binding == consumption.binding;
+                }
             );
+        }
+
+        [[nodiscard]]
+        auto refusedAsUnknownAction(
+            SnapshotObservationSpec const& spec,
+            SnapshotObservationConsumption const& consumption
+        ) -> bool
+        {
+            return std::ranges::none_of(
+                spec.uiActions,
+                [&consumption](ObservedUiAction const& action)
+                {
+                    return sameActionIdentity(action, consumption);
+                }
+            );
+        }
+
+        [[nodiscard]]
+        auto refusedAsActionKindMismatch(
+            SnapshotObservationSpec const& spec,
+            SnapshotObservationConsumption const& consumption
+        ) -> bool
+        {
+            auto const found = std::ranges::find_if(
+                spec.uiActions,
+                [&consumption](ObservedUiAction const& action)
+                {
+                    return sameActionIdentity(action, consumption);
+                }
+            );
+            return found != spec.uiActions.end()
+                && found->kind != consumption.expectedActionKind;
         }
 
         constexpr auto k_bindingRefusals = std::array{
@@ -238,20 +262,24 @@ namespace uf::operator_runtime
                 &refusedAsChangedGeneration,
             },
             BindingRefusal{
-                ObservationRefusal::MissingParent,
-                &refusedAsMissingParent,
+                ObservationRefusal::DuplicateIdentifier,
+                &refusedAsDuplicateIdentifier,
             },
             BindingRefusal{
-                ObservationRefusal::DuplicateLocal,
-                &refusedAsDuplicateLocal,
+                ObservationRefusal::UnknownUiTarget,
+                &refusedAsUnknownUiTarget,
             },
             BindingRefusal{
-                ObservationRefusal::UnknownLocalTarget,
-                &refusedAsUnknownLocalTarget,
+                ObservationRefusal::UnknownBinding,
+                &refusedAsUnknownBinding,
             },
             BindingRefusal{
-                ObservationRefusal::ActionRefused,
-                &refusedAsActionRefused,
+                ObservationRefusal::UnknownAction,
+                &refusedAsUnknownAction,
+            },
+            BindingRefusal{
+                ObservationRefusal::ActionKindMismatch,
+                &refusedAsActionKindMismatch,
             },
         };
 
@@ -274,10 +302,11 @@ namespace uf::operator_runtime
             case ObservationRefusal::ForeignRegistration:
             case ObservationRefusal::ForeignRuntimeArtifact:
             case ObservationRefusal::ChangedGeneration:
-            case ObservationRefusal::MissingParent:
-            case ObservationRefusal::DuplicateLocal:
-            case ObservationRefusal::UnknownLocalTarget:
-            case ObservationRefusal::ActionRefused:
+            case ObservationRefusal::DuplicateIdentifier:
+            case ObservationRefusal::UnknownUiTarget:
+            case ObservationRefusal::UnknownBinding:
+            case ObservationRefusal::UnknownAction:
+            case ObservationRefusal::ActionKindMismatch:
                 return AutomationErrorKind::ActionRejected;
             }
 
@@ -299,11 +328,13 @@ namespace uf::operator_runtime
         case ObservationRefusal::ForeignRuntimeArtifact:
             return "foreign_runtime_artifact";
         case ObservationRefusal::ChangedGeneration: return "changed_generation";
-        case ObservationRefusal::MissingParent: return "missing_parent";
-        case ObservationRefusal::DuplicateLocal: return "duplicate_local";
-        case ObservationRefusal::UnknownLocalTarget:
-            return "unknown_local_target";
-        case ObservationRefusal::ActionRefused: return "action_refused";
+        case ObservationRefusal::DuplicateIdentifier:
+            return "duplicate_identifier";
+        case ObservationRefusal::UnknownUiTarget: return "unknown_ui_target";
+        case ObservationRefusal::UnknownBinding: return "unknown_binding";
+        case ObservationRefusal::UnknownAction: return "unknown_action";
+        case ObservationRefusal::ActionKindMismatch:
+            return "action_kind_mismatch";
         }
 
         UF_UNREACHABLE_MSG("Unknown ObservationRefusal value");
@@ -335,18 +366,21 @@ namespace uf::operator_runtime
         case ObservationRefusal::ChangedGeneration:
             return "changed_generation: the Host generation moved after this "
                    "observation reference was minted";
-        case ObservationRefusal::MissingParent:
-            return "missing_parent: this observation reference was issued from "
-                   "another call position";
-        case ObservationRefusal::DuplicateLocal:
-            return "duplicate_local: this observation declares the named "
-                   "snapshot-local semantic target more than once";
-        case ObservationRefusal::UnknownLocalTarget:
-            return "unknown_local_target: this observation declares no such "
-                   "snapshot-local semantic target";
-        case ObservationRefusal::ActionRefused:
-            return "action_refused: this observation authorises no such UI "
-                   "action";
+        case ObservationRefusal::DuplicateIdentifier:
+            return "duplicate_identifier: this observation names one UI action "
+                   "identity more than once";
+        case ObservationRefusal::UnknownUiTarget:
+            return "unknown_ui_target: the named observation contains no such "
+                   "ui_target identifier";
+        case ObservationRefusal::UnknownBinding:
+            return "unknown_binding: the named observation contains no such "
+                   "binding identifier for that ui_target";
+        case ObservationRefusal::UnknownAction:
+            return "unknown_action: the named observation contains no such "
+                   "action identifier for that binding";
+        case ObservationRefusal::ActionKindMismatch:
+            return "action_kind_mismatch: the named observation declares a "
+                   "different action kind than this Tool";
         }
 
         UF_UNREACHABLE_MSG("Unknown ObservationRefusal value");
@@ -381,16 +415,22 @@ namespace uf::operator_runtime
     ResolvedSnapshotObservation::ResolvedSnapshotObservation(
         ContentHash referenceIdentity,
         ContentHash frameIdentityHash,
+        ContentHash screenshotSha256,
         std::string controlledTargetId,
-        std::string localSemanticTarget,
-        std::string uiAction,
+        std::string uiTarget,
+        std::string binding,
+        std::string action,
+        std::string actionKind,
         uint64 hostGeneration
     )
         : m_referenceIdentity{referenceIdentity}
         , m_frameIdentityHash{frameIdentityHash}
+        , m_screenshotSha256{screenshotSha256}
         , m_controlledTargetId{std::move(controlledTargetId)}
-        , m_localSemanticTarget{std::move(localSemanticTarget)}
-        , m_uiAction{std::move(uiAction)}
+        , m_uiTarget{std::move(uiTarget)}
+        , m_binding{std::move(binding)}
+        , m_action{std::move(action)}
+        , m_actionKind{std::move(actionKind)}
         , m_hostGeneration{hostGeneration}
     {
     }
@@ -405,22 +445,39 @@ namespace uf::operator_runtime
         return m_frameIdentityHash;
     }
 
+    auto ResolvedSnapshotObservation::screenshotSha256() const -> ContentHash
+    {
+        return m_screenshotSha256;
+    }
+
     auto ResolvedSnapshotObservation::controlledTargetId() const noexcept
         -> std::string const&
     {
         return m_controlledTargetId;
     }
 
-    auto ResolvedSnapshotObservation::localSemanticTarget() const noexcept
+    auto ResolvedSnapshotObservation::uiTarget() const noexcept
         -> std::string const&
     {
-        return m_localSemanticTarget;
+        return m_uiTarget;
     }
 
-    auto ResolvedSnapshotObservation::uiAction() const noexcept
+    auto ResolvedSnapshotObservation::binding() const noexcept
         -> std::string const&
     {
-        return m_uiAction;
+        return m_binding;
+    }
+
+    auto ResolvedSnapshotObservation::action() const noexcept
+        -> std::string const&
+    {
+        return m_action;
+    }
+
+    auto ResolvedSnapshotObservation::actionKind() const noexcept
+        -> std::string const&
+    {
+        return m_actionKind;
     }
 
     auto ResolvedSnapshotObservation::hostGeneration() const noexcept -> uint64
@@ -458,15 +515,12 @@ namespace uf::operator_runtime
                 "an observation reference must carry a non-zero expiry instant"
             );
         }
-        if (namesEmptyEntry(spec.localSemanticTargets))
+        if (!std::ranges::all_of(spec.uiActions, &actionNamesAreValid))
         {
             return refuseSpec(
-                "a snapshot-local semantic target must carry a name"
+                "an observed UI action must name its ui_target, binding, "
+                "action and kind"
             );
-        }
-        if (namesEmptyEntry(spec.authorizedUiActions))
-        {
-            return refuseSpec("an authorised UI action must carry a name");
         }
         UF_TRY_VALUE_CONTEXT(
             wire,
@@ -556,9 +610,32 @@ namespace uf::operator_runtime
         auto const refusal = refuse(consumption);
         if (refusal)
         {
+            auto diagnostic = std::string{observationRefusalDiagnostic(*refusal)};
+            switch (*refusal)
+            {
+            case ObservationRefusal::UnknownUiTarget:
+                diagnostic += ": " + consumption.uiTarget;
+                break;
+            case ObservationRefusal::UnknownBinding:
+                diagnostic += ": " + consumption.binding;
+                break;
+            case ObservationRefusal::UnknownAction:
+            case ObservationRefusal::ActionKindMismatch:
+                diagnostic += ": " + consumption.action;
+                break;
+            case ObservationRefusal::Unminted:
+            case ObservationRefusal::AlreadyConsumed:
+            case ObservationRefusal::Stale:
+            case ObservationRefusal::ForeignTarget:
+            case ObservationRefusal::ForeignRegistration:
+            case ObservationRefusal::ForeignRuntimeArtifact:
+            case ObservationRefusal::ChangedGeneration:
+            case ObservationRefusal::DuplicateIdentifier:
+                break;
+            }
             return fail(
                 refusalErrorKind(*refusal),
-                std::string{observationRefusalDiagnostic(*refusal)}
+                std::move(diagnostic)
             );
         }
         auto const* const p_reference = findMinted(
@@ -573,9 +650,12 @@ namespace uf::operator_runtime
         return ResolvedSnapshotObservation{
             p_reference->identity(),
             spec.frameIdentityHash,
+            spec.screenshotSha256,
             spec.controlledTargetId,
-            consumption.localSemanticTarget,
-            consumption.uiAction,
+            consumption.uiTarget,
+            consumption.binding,
+            consumption.action,
+            consumption.expectedActionKind,
             spec.hostGeneration,
         };
     }

@@ -402,24 +402,6 @@
         "event_cursor": { "$ref": "#/$defs/SubscriptionCursor" }
       }
     },
-    "WorkflowLimits": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "maximum_steps",
-        "maximum_dispatches",
-        "maximum_observations",
-        "maximum_waits",
-        "maximum_elapsed_ms"
-      ],
-      "properties": {
-        "maximum_steps": { "type": "integer", "minimum": 0 },
-        "maximum_dispatches": { "type": "integer", "minimum": 0 },
-        "maximum_observations": { "type": "integer", "minimum": 1 },
-        "maximum_waits": { "type": "integer", "minimum": 0 },
-        "maximum_elapsed_ms": { "type": "integer", "minimum": 1 }
-      }
-    },
     "TimeoutPolicy": {
       "type": "object",
       "additionalProperties": false,

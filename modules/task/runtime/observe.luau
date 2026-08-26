@@ -87,14 +87,19 @@ local function measureLocator(state: any, binding: any, locatorId: string): any
     return record
 end
 
--- What one Host read produced, narrowed by the Reader that asked for it.
+-- What one Host read produced, narrowed by the declaration that asked for it.
 --
 -- A reading is the WHOLE set of lines, so the floor judges the set: one line
 -- below it makes the reading low_confidence rather than making that line
 -- disappear.  Dropping it would hand a consumer a shorter block than the frame
 -- holds, with nothing in the answer to say so, which is the fail-open shape
 -- this path refuses everywhere else.
-local function readLines(reader: any, reading: any): any
+--
+-- `normalization` is absent for exactly one caller: a Collection's detection,
+-- which is asking WHERE the lines are and never what they say.  Those lines
+-- therefore carry no text at all, rather than text normalised under a rule the
+-- declaration never stated.
+local function readLines(reading: any, floor: number, normalization: string?): any
     if type(reading.lines) ~= "table" or #reading.lines == 0 then
         return { kind = "unknown", reason = "ocr_unreadable" }
     end
@@ -113,37 +118,38 @@ local function readLines(reader: any, reading: any): any
             return { kind = "unknown", reason = "ocr_unreadable" }
         end
         if line.confidence < lowest then lowest = line.confidence end
-        lines[index] = table.freeze({
-            text = normalize(line.text, reader.normalization),
-            rect = table.freeze({ line.rect[1], line.rect[2], line.rect[3], line.rect[4] }),
-        })
+        local rectangle =
+            table.freeze({ line.rect[1], line.rect[2], line.rect[3], line.rect[4] })
+        lines[index] = if normalization == nil
+            then table.freeze({ rect = rectangle })
+            else table.freeze({
+                text = normalize(line.text, normalization),
+                rect = rectangle,
+            })
     end
-    if lowest < reader.confidence_floor then
+    if lowest < floor then
         return { kind = "unknown", reason = "low_confidence", confidence = lowest }
     end
     return { kind = "read", lines = table.freeze(lines), confidence = lowest }
 end
 
-local function readText(
-    state: any,
-    key: string,
-    readerId: string,
-    area: { number }
-): any
-    local cached = state.reader_values[key]
+-- One Host read of one rectangle, under the layout, floor and normalization the
+-- site that owns that rectangle declared. The declaration travels here as a
+-- value rather than as an id looked up in the model: a rectangle and the way it
+-- is read are one statement, made in one place.
+local function readText(state: any, key: string, area: { number }, read: any): any
+    local cached = state.readings[key]
     if cached ~= nil then return cached end
-    local reader = state.model.reader_by_id[readerId]
-    if reader == nil then error("RuntimeModel references unknown Reader '" .. readerId .. "'", 3) end
-    -- The Reader's own layout travels to the Host, which runs a different
-    -- pipeline for each: the model states how many lines its rectangle holds
-    -- and the Host never guesses.
+    -- The declared layout travels to the Host, which runs a different pipeline
+    -- for each: the model states how many lines its rectangle holds and the
+    -- Host never guesses.
     local reading = requireNative("runtime_read")(
         state.ticket,
         area[1],
         area[2],
         area[3],
         area[4],
-        reader.layout
+        read.layout
     )
     local result
     if type(reading) ~= "table" then
@@ -155,9 +161,9 @@ local function readText(
     elseif reading.kind ~= "read" then
         result = { kind = "unknown", reason = "ocr_unreadable" }
     else
-        result = readLines(reader, reading)
+        result = readLines(reading, read.confidence_floor, read.normalization)
     end
-    state.reader_values[key] = result
+    state.readings[key] = result
     return result
 end
 
@@ -199,7 +205,7 @@ local function overTicket(
         ticket = ticket,
         evidence_cycle = evidence.begin_cycle(),
         locator_records = {},
-        reader_values = {},
+        readings = {},
         predicate_records = {},
     }
     local cycle = {}
@@ -218,51 +224,38 @@ local function overTicket(
     end
 
     -- Every reading the resolved state reports, measured on demand rather than
-    -- during resolve_state: a Reader costs one Host read out of the cycle's
-    -- pool, and a state that resolved no Surface has nothing to attribute one
-    -- to.  Exhausting that pool leaves the reading Unknown, which resolve_readings
-    -- drops, so a model that declares more reads than a cycle can pay for
-    -- reports fewer readings and never a wrong one.
+    -- during resolve_state: a read costs one Host read out of the cycle's pool,
+    -- and a state that resolved no Surface has no Readout to spend one on.
+    -- Exhausting that pool leaves the reading Unknown, which is reported as
+    -- such, so a model that declares more reads than a cycle can pay for
+    -- reports an honest failure and never a wrong value.
+    --
+    -- There is no measurement pass before this one. A Readout carries no
+    -- detector, and its Surface being on the stack -- which resolve_state has
+    -- already measured -- is the whole of its gate.
     function cycle:resolve_readings(resolvedState: any): { any }
         local current = requireCycle(self)
-        local candidates = resolution.reading_bindings(
+        local readouts = resolution.stack_readouts(
             current.model,
             current.evidence_cycle,
             resolvedState
         )
-        if candidates ~= nil then
-            for _, binding in candidates do measureBinding(current, binding) end
-            -- Second pass, and the order is the point: a Reader costs a Host read
-            -- and reads the Binding's own rectangle, so only a Binding the first
-            -- pass measured present may spend one.
-            for _, binding in resolution.reading_targets(
-                current.model,
-                current.evidence_cycle,
-                resolvedState,
-                current.predicate_records
-            ) do
-                for _, readerId in binding.reads do
-                    readText(
-                        current,
-                        model.reading_key(binding.id, readerId),
-                        readerId,
-                        binding.placement.rect
-                    )
-                end
+        if readouts ~= nil then
+            for _, readout in readouts do
+                readText(current, model.readout_key(readout.id), readout.rect, readout)
             end
         end
         return resolution.resolve_readings(
             current.model,
             current.evidence_cycle,
             resolvedState,
-            current.predicate_records,
-            current.reader_values
+            current.readings
         )
     end
 
     -- A collection is measured only after its Surface resolved on this cycle.
-    -- Its declared search rectangle bounds the block read but creates no item;
-    -- the trusted Reader's detected lines are the sole item-existence evidence.
+    -- Its declared search rectangle bounds the detection read but creates no
+    -- item; the detected lines are the sole item-existence evidence.
     function cycle:resolve_collection(resolvedState: any, collectionId: any): (any?, string?)
         local current = requireCycle(self)
         local resolved, reason = resolution.resolve_collection(
@@ -270,26 +263,29 @@ local function overTicket(
             current.evidence_cycle,
             resolvedState,
             collectionId,
-            current.reader_values
+            current.readings
         )
         if resolved ~= nil or reason ~= "not_measured" then return resolved, reason end
         local collection = current.model.collection_by_id[collectionId]
+        -- `block` is stated here rather than declared in the model: a read whose
+        -- job is to find out how many lines a region holds cannot be told there
+        -- is one, so the layout is a property of what detection IS.
         readText(
             current,
-            model.collection_reading_key(collection.id, collection.placement.reader),
-            collection.placement.reader,
-            collection.placement.search_rect
+            model.collection_detection_key(collection.id),
+            collection.placement.search_rect,
+            { layout = "block", confidence_floor = collection.placement.confidence_floor }
         )
         local targets = resolution.collection_read_targets(
             current.model,
             current.evidence_cycle,
             resolvedState,
             collectionId,
-            current.reader_values
+            current.readings
         )
         if targets ~= nil then
             for _, target in targets do
-                readText(current, target.key, target.reader, target.rect)
+                readText(current, target.key, target.rect, target.read)
             end
         end
         return resolution.resolve_collection(
@@ -297,7 +293,7 @@ local function overTicket(
             current.evidence_cycle,
             resolvedState,
             collectionId,
-            current.reader_values
+            current.readings
         )
     end
 
@@ -404,7 +400,7 @@ local function overTicket(
 end
 
 local function requireModel(runtimeModel: any, verb: string): any
-    if not model.is_runtime_model(runtimeModel) then error(verb .. " needs RuntimeModel v3", 3) end
+    if not model.is_runtime_model(runtimeModel) then error(verb .. " needs RuntimeModel v4", 3) end
     local hostBinding = project.host_binding(runtimeModel)
     if hostBinding == nil then error(verb .. " only accepts project.load_project() output", 3) end
     return hostBinding

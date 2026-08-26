@@ -17,16 +17,13 @@ namespace uf::operator_runtime
 {
     class OperatorCoordinator;
 
-    // How a call reaches the world at all.
-    //
-    // A call answered by a bound Project entry reaches the world ONLY through
-    // child Tool calls: the scoped program type has no other capability, so
-    // every effect it causes is a durable row of its own. A call answered by a
-    // Framework provider reaches the world directly, and what that provider did
-    // is knowable only from the outcome it reported.
+    // How a call reaches the world at all. A Project handler is a pure leaf: its
+    // VM has immutable inputs and resources, and its Tool primitive terminates
+    // the handler instead of issuing a call. A Framework provider is a direct
+    // leaf whose implementation may reach the world.
     enum class ToolEffectComposition : uint8
     {
-        RecordedChildren,
+        PureLeaf,
         DirectLeaf,
     };
 
@@ -42,7 +39,7 @@ namespace uf::operator_runtime
 
     inline constexpr auto k_toolAnswerers = std::array{
         ToolAnswerer{"framework", ToolEffectComposition::DirectLeaf},
-        ToolAnswerer{"project", ToolEffectComposition::RecordedChildren},
+        ToolAnswerer{"project", ToolEffectComposition::PureLeaf},
     };
 
     // The same lookup from the two spellings a call's answerer arrives in: the
@@ -64,13 +61,11 @@ namespace uf::operator_runtime
     // refuses, whether a completion may report terminal failure, and whether an
     // executor may convert a provider's failure to uncertainty.
     //
-    // Two facts decide it, and neither is sufficient alone. A composed call
-    // re-executes effect-free up to the recorded frontier however mutating it
-    // is, because its whole effect surface is children that already carry their
-    // own classification. A read-only leaf declares no effect for a delivery to
-    // be uncertain about, so re-running its provider delivers nothing twice.
-    // Only a mutating leaf in flight is the non-replayable atom: the world may
-    // or may not have moved and no record can say.
+    // A pure leaf can be re-entered because no external effect can escape its
+    // handler. A read-only direct leaf declares no effect for a delivery to be
+    // uncertain about. Only a mutating direct leaf in flight is the
+    // non-replayable atom: the world may or may not have moved and no record can
+    // say.
     //
     // It is declared here rather than beside any one of its four callers
     // because a second statement of it is the drift the re-entry ruling is most
@@ -321,69 +316,6 @@ namespace uf::operator_runtime
         [[nodiscard]] auto historyRevision() const noexcept -> uint64;
     };
 
-    // The authority one live handler invocation holds to issue child calls.
-    //
-    // It is unforgeable for the reason ToolCallAdmission is: only the
-    // Coordinator can mint one, and only over a call whose durable state is
-    // already dispatching. That is what makes "a child call belongs to a
-    // handler that is actually running" a fact about the ledger rather than a
-    // claim a caller makes, and it is why a call arriving under a parent that
-    // is not dispatching is refused as a changed parent.
-    //
-    // The grant deliberately carries no effect bound of its own. What the
-    // parent may delegate is the parent descriptor's registered child-effect
-    // declaration, which the grant row records at issue time; re-stating it
-    // here would be a second copy of one catalog statement.
-    //
-    // Unlike ToolCallAdmission and ToolCallDispatch it stays copyable, and the
-    // reason is that it is evidence rather than a capability. Holding one
-    // authorises nothing on its own: every admission that presents a grant
-    // re-reads the durable parent row and refuses one whose parent is no longer
-    // dispatching, exactly as every entry point re-reads the session row behind
-    // a ControllerBinding. It is also a deterministic derivation of the parent
-    // position and that parent's descriptor, so anyone able to name the parent
-    // can mint the identical grant again for as long as the parent is running,
-    // and nobody can use either the original or a copy once it is not. A
-    // duplicate therefore confers nothing the original does not and cannot
-    // outlive the window the original works in, which is what distinguishes it
-    // from a licence to run provider code.
-    class ToolDelegationGrant final
-    {
-        friend class OperatorCoordinator;
-
-        std::string m_grantId;
-        ContentHash m_rootIdentity;
-        ContentHash m_parentCallIdentity;
-        uint64      m_parentAttemptNumber;
-
-        // The principal that executes the children, recorded separately from
-        // the run's origin actor. Section 3.3 requires the handler execution
-        // principal never to substitute its own profile for the origin's
-        // admitted objective, so the two travel as two values and are written
-        // to two column pairs.
-        std::string m_executionPrincipalId;
-
-        ToolDelegationGrant(
-            std::string grantId,
-            ContentHash rootIdentity,
-            ContentHash parentCallIdentity,
-            uint64 parentAttemptNumber,
-            std::string executionPrincipalId
-        );
-
-    public:
-        [[nodiscard]]
-        auto grantId() const noexcept UF_LIFETIME_BOUND -> std::string const&;
-
-        [[nodiscard]] auto rootIdentity() const -> ContentHash;
-        [[nodiscard]] auto parentCallIdentity() const -> ContentHash;
-        [[nodiscard]] auto parentAttemptNumber() const noexcept -> uint64;
-
-        [[nodiscard]]
-        auto executionPrincipalId() const noexcept UF_LIFETIME_BOUND
-            -> std::string const&;
-    };
-
     enum class ToolOutcomeLookup : uint8
     {
         Created,
@@ -405,4 +337,13 @@ namespace uf::operator_runtime
         std::optional<CanonicalJson> payload{};
         std::optional<CanonicalJson> evidence{};
     };
+
+    // The direct answer a synchronous caller reads. Only provider conclusions
+    // and reconciliations reach this boundary; an internal ledger state is a
+    // protocol violation and remains a raised Result failure.
+    [[nodiscard]]
+    auto toolCallAnswer(
+        ContentHash callIdentity,
+        ToolCallReplay const& replay
+    ) -> Result<json::Value>;
 }

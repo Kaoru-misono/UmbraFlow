@@ -11,7 +11,7 @@ local function variants(name: string, value: any): any
 end
 
 local runtime = model.compile({
-    schema_version = 3,
+    schema_version = 4,
     base_resolution = { 800, 600 },
     base_dpi = { 96, 96 },
     ui_targets = {
@@ -25,7 +25,6 @@ local runtime = model.compile({
         { id = "title.locator", kind = "template", asset_path = "assets/title.png", threshold = 0.9 },
         { id = "confirm.locator", kind = "template", asset_path = "assets/confirm.png", threshold = 0.9 },
     },
-    readers = {},
     bindings = {
         {
             id = "screen.identity",
@@ -82,7 +81,7 @@ local runtime = model.compile({
     },
     collections = {},
     surfaces = {
-        { id = "screen", kind = "scene", covers = {}, identity = { "screen.identity" } },
+        { id = "screen", covers = {}, identity = { "screen.identity" } },
     },
     transitions = {},
 })

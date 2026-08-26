@@ -1,4 +1,4 @@
-"""Canonical RuntimeModel v3 validation and TOML compilation.
+"""Canonical RuntimeModel v4 validation and TOML compilation.
 
 This module compiles runtime-model.toml and never reads one back. The only reader
 of that file is the trusted Luau parser in modules/task/runtime/project.luau; a
@@ -18,7 +18,21 @@ from typing import Any
 from .contracts import validate as validate_contract
 
 
-_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schema" / "umbraflow-runtime-v3.schema.json"
+_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schema" / "umbraflow-runtime-v4.schema.json"
+
+
+# The list sections of one RuntimeModel, and the TOML section each is written
+# under. One table rather than two, because the compiler that canonicalizes them
+# and the writer that emits them must agree about which sections exist.
+_SECTIONS = {
+    "ui_targets": "ui_target",
+    "locators": "locator",
+    "surfaces": "surface",
+    "bindings": "binding",
+    "collections": "collection",
+    "readouts": "readout",
+    "transitions": "transition",
+}
 
 
 class SchemaIssue(ValueError):
@@ -31,7 +45,7 @@ class SchemaIssue(ValueError):
 def _schema_issues(value: Any) -> list[SchemaIssue]:
     return [
         SchemaIssue(error["message"], error["path"])
-        for error in validate_contract("umbraflow-runtime-v3.schema.json", value)
+        for error in validate_contract("umbraflow-runtime-v4.schema.json", value)
     ]
 
 
@@ -100,7 +114,7 @@ def _validate_surface_graph(surfaces: dict[str, dict[str, Any]], errors: list[Sc
         if identifier in visited:
             return
         visiting.add(identifier)
-        for covered in surfaces[identifier]["covers"]:
+        for covered in surfaces[identifier].get("covers", []):
             if covered in surfaces:
                 visit(covered)
         visiting.remove(identifier)
@@ -111,7 +125,7 @@ def _validate_surface_graph(surfaces: dict[str, dict[str, Any]], errors: list[Sc
 
 
 def _surface_covers(surfaces: dict[str, dict[str, Any]], upper: str, lower: str) -> bool:
-    pending = list(surfaces[upper]["covers"])
+    pending = list(surfaces[upper].get("covers", []))
     visited: set[str] = set()
     while pending:
         current = pending.pop()
@@ -119,7 +133,7 @@ def _surface_covers(surfaces: dict[str, dict[str, Any]], upper: str, lower: str)
             return True
         if current not in visited and current in surfaces:
             visited.add(current)
-            pending.extend(surfaces[current]["covers"])
+            pending.extend(surfaces[current].get("covers", []))
     return False
 
 
@@ -131,9 +145,9 @@ def _valid_surface_stack(stack: list[str], surfaces: dict[str, dict[str, Any]]) 
         if surface is None:
             return False
         if offset == 0:
-            if surface["kind"] != "scene":
+            if surface.get("covers"):
                 return False
-        elif surface["kind"] == "scene" or not _surface_covers(surfaces, identifier, stack[offset - 1]):
+        elif not _surface_covers(surfaces, identifier, stack[offset - 1]):
             return False
     return True
 
@@ -145,21 +159,20 @@ def validate_runtime_model(model: dict[str, Any]) -> list[dict[str, str]]:
     for field in ("base_resolution", "base_dpi"):
         if not all(isinstance(value, int) and not isinstance(value, bool) for value in model[field]):
             errors.append(SchemaIssue("must contain positive integers", f"$.{field}"))
-    targets = _index(model["ui_targets"], "ui_targets", errors)
-    locators = _index(model["locators"], "locators", errors)
-    readers = _index(model["readers"], "readers", errors)
-    surfaces = _index(model["surfaces"], "surfaces", errors)
-    bindings = _index(model["bindings"], "bindings", errors)
+    # An absent list IS the empty list, which is why every read of one goes
+    # through .get(): the trusted parser applies that rule uniformly and a
+    # second reader that demanded the member would refuse models it accepts.
+    targets = _index(model.get("ui_targets", []), "ui_targets", errors)
+    locators = _index(model.get("locators", []), "locators", errors)
+    surfaces = _index(model.get("surfaces", []), "surfaces", errors)
+    bindings = _index(model.get("bindings", []), "bindings", errors)
     collections = _index(model.get("collections", []), "collections", errors)
-    _index(model["transitions"], "transitions", errors)
-    for offset, locator in enumerate(model["locators"]):
+    _index(model.get("readouts", []), "readouts", errors)
+    _index(model.get("transitions", []), "transitions", errors)
+    for offset, locator in enumerate(model.get("locators", [])):
         _validate_asset_path(locator["asset_path"], f"$.locators[{offset}].asset_path", errors)
-    for offset, surface in enumerate(model["surfaces"]):
-        if surface["kind"] == "scene" and surface["covers"]:
-            errors.append(SchemaIssue("a scene cannot cover another surface", f"$.surfaces[{offset}].covers"))
-        if surface["kind"] != "scene" and not surface["covers"]:
-            errors.append(SchemaIssue("an overlay or interrupt must cover a surface", f"$.surfaces[{offset}].covers"))
-        for covered in surface["covers"]:
+    for offset, surface in enumerate(model.get("surfaces", [])):
+        for covered in surface.get("covers", []):
             if covered not in surfaces:
                 errors.append(SchemaIssue("surface covers a missing surface", f"$.surfaces[{offset}].covers"))
             if covered == surface["id"]:
@@ -172,9 +185,16 @@ def validate_runtime_model(model: dict[str, Any]) -> list[dict[str, str]]:
             elif binding["surface"] != surface["id"]:
                 errors.append(SchemaIssue("surface identity binding belongs to another surface", identity_path))
     _validate_surface_graph(surfaces, errors)
-    if not any(surface["kind"] == "scene" for surface in model["surfaces"]):
-        errors.append(SchemaIssue("needs at least one scene", "$.surfaces"))
-    for offset, binding in enumerate(model["bindings"]):
+    for offset, readout in enumerate(model.get("readouts", [])):
+        if readout["surface"] not in surfaces:
+            errors.append(SchemaIssue("readout refers to a missing surface", f"$.readouts[{offset}].surface"))
+        _validate_rect(
+            readout["rect"],
+            model["base_resolution"],
+            f"$.readouts[{offset}].rect",
+            errors,
+        )
+    for offset, binding in enumerate(model.get("bindings", [])):
         if binding["surface"] not in surfaces:
             errors.append(SchemaIssue("binding refers to a missing surface", f"$.bindings[{offset}].surface"))
         if binding["ui_target"] not in targets:
@@ -196,7 +216,7 @@ def validate_runtime_model(model: dict[str, Any]) -> list[dict[str, str]]:
         # The point exists exactly when something aims at it. A binding granting
         # only keystrokes is in the same position as one granting no action at
         # all: neither names a coordinate, so neither may carry one.
-        aimed = any(action["kind"] == "click" for action in binding["actions"])
+        aimed = any(action["kind"] == "click" for action in binding.get("actions", []))
         if aimed and action_point is None:
             errors.append(
                 SchemaIssue(
@@ -224,10 +244,10 @@ def validate_runtime_model(model: dict[str, Any]) -> list[dict[str, str]]:
                 errors,
             )
         target = targets.get(binding["ui_target"])
-        if binding["actions"] and target is not None and target["kind"] != "control":
+        if binding.get("actions") and target is not None and target["kind"] != "control":
             errors.append(SchemaIssue("a region UI target cannot grant actions", f"$.bindings[{offset}].actions"))
         action_ids: set[str] = set()
-        for action_offset, action in enumerate(binding["actions"]):
+        for action_offset, action in enumerate(binding.get("actions", [])):
             if action["id"] in action_ids:
                 errors.append(
                     SchemaIssue("binding contains a duplicate action id", f"$.bindings[{offset}].actions[{action_offset}].id")
@@ -246,7 +266,7 @@ def validate_runtime_model(model: dict[str, Any]) -> list[dict[str, str]]:
                 not in {
                     predicate["locator"]
                     for group in ("all", "any")
-                    for predicate in variant["detector"][group]
+                    for predicate in variant["detector"].get(group, [])
                     if predicate["kind"] == "locator_present"
                 }
                 for variant in binding["variants"]
@@ -260,13 +280,14 @@ def validate_runtime_model(model: dict[str, Any]) -> list[dict[str, str]]:
     for offset, collection in enumerate(model.get("collections", [])):
         if collection["surface"] not in surfaces:
             errors.append(SchemaIssue("collection refers to a missing surface", f"$.collections[{offset}].surface"))
-        detector_reader = readers.get(collection["placement"]["reader"])
-        if detector_reader is None:
-            errors.append(SchemaIssue("collection placement refers to a missing reader", f"$.collections[{offset}].placement.reader"))
-        elif detector_reader["layout"] != "block":
-            errors.append(SchemaIssue("collection placement reader must use block layout", f"$.collections[{offset}].placement.reader"))
+        _validate_rect(
+            collection["placement"]["search_rect"],
+            model["base_resolution"],
+            f"$.collections[{offset}].placement.search_rect",
+            errors,
+        )
         action_ids: set[str] = set()
-        for action_offset, action in enumerate(collection["actions"]):
+        for action_offset, action in enumerate(collection.get("actions", [])):
             action_path = f"$.collections[{offset}].actions[{action_offset}]"
             if action["id"] in action_ids:
                 errors.append(SchemaIssue("collection contains a duplicate action id", f"{action_path}.id"))
@@ -274,28 +295,20 @@ def validate_runtime_model(model: dict[str, Any]) -> list[dict[str, str]]:
             if action["proof_locator"] not in locators:
                 errors.append(SchemaIssue("action proof locator is missing", f"{action_path}.proof_locator"))
         read_names: set[str] = set()
-        for read_offset, read in enumerate(collection["reads"]):
-            read_path = f"$.collections[{offset}].reads[{read_offset}].reader"
-            if read["reader"] in read_names:
-                errors.append(SchemaIssue("collection repeats a reporting reader", read_path))
-            read_names.add(read["reader"])
-            if read["reader"] not in readers:
-                errors.append(SchemaIssue("collection read refers to a missing reader", read_path))
+        for read_offset, read in enumerate(collection.get("reads", [])):
+            read_path = f"$.collections[{offset}].reads[{read_offset}].id"
+            if read["id"] in read_names:
+                errors.append(SchemaIssue("collection repeats a reporting read id", read_path))
+            read_names.add(read["id"])
         predicate = collection.get("predicate")
-        if predicate is not None:
-            predicate_path = f"$.collections[{offset}].predicate"
-            if readers.get(predicate["reader"]) is None:
-                errors.append(
-                    SchemaIssue("collection predicate refers to a missing reader", f"{predicate_path}.reader")
+        if predicate is not None and predicate["read"] not in read_names:
+            errors.append(
+                SchemaIssue(
+                    "collection predicate must name a read declared in collection.reads",
+                    f"$.collections[{offset}].predicate.read",
                 )
-            elif predicate["reader"] not in read_names:
-                errors.append(
-                    SchemaIssue(
-                        "collection predicate reader must be declared in collection.reads",
-                        f"{predicate_path}.reader",
-                    )
-                )
-    for offset, transition in enumerate(model["transitions"]):
+            )
+    for offset, transition in enumerate(model.get("transitions", [])):
         if not _valid_surface_stack(transition["from_surfaces"], surfaces):
             errors.append(SchemaIssue("from_surfaces is not a valid ordered surface stack", f"$.transitions[{offset}].from_surfaces"))
         if not _valid_surface_stack(transition["to_surfaces"], surfaces):
@@ -307,7 +320,9 @@ def validate_runtime_model(model: dict[str, Any]) -> list[dict[str, str]]:
             else collections.get(trigger["collection"])
         )
         action = transition["trigger"]["action"]
-        if owner is None or not any(row["id"] == action for row in owner["actions"]):
+        if owner is None or not any(
+            row["id"] == action for row in owner.get("actions", [])
+        ):
             errors.append(SchemaIssue("transition trigger is missing", f"$.transitions[{offset}].trigger"))
     return [{"path": error.path, "message": error.message} for error in errors]
 
@@ -336,23 +351,19 @@ def _toml_value(value: Any) -> str:
     raise SchemaIssue(f"unsupported TOML value {value!r}")
 
 
+def _float(value: Any) -> float:
+    return 0.0 if value == 0 else float(value)
+
+
 def _canonical_model(model: dict[str, Any]) -> dict[str, Any]:
     result = copy.deepcopy(model)
-    result.setdefault("collections", [])
-    for collection in (
-        "ui_targets",
-        "locators",
-        "readers",
-        "surfaces",
-        "bindings",
-        "collections",
-        "transitions",
-    ):
+    for collection in _SECTIONS:
+        result.setdefault(collection, [])
         result[collection].sort(key=lambda row: row["id"])
     for locator in result["locators"]:
-        locator["threshold"] = 0.0 if locator["threshold"] == 0 else float(locator["threshold"])
-    for reader in result["readers"]:
-        reader["confidence_floor"] = 0.0 if reader["confidence_floor"] == 0 else float(reader["confidence_floor"])
+        locator["threshold"] = _float(locator["threshold"])
+    for readout in result["readouts"]:
+        readout["confidence_floor"] = _float(readout["confidence_floor"])
     detectors = [
         variant["detector"]
         for binding in result["bindings"]
@@ -360,35 +371,36 @@ def _canonical_model(model: dict[str, Any]) -> dict[str, Any]:
     ]
     for detector in detectors:
         for group in ("all", "any", "none"):
+            detector.setdefault(group, [])
             detector[group].sort(key=lambda row: json.dumps(row, sort_keys=True, separators=(",", ":")))
     for surface in result["surfaces"]:
+        surface.setdefault("covers", [])
         surface["covers"].sort()
         surface["identity"].sort()
     for binding in result["bindings"]:
         binding["variants"].sort(key=lambda row: row["name"])
+        binding.setdefault("actions", [])
         binding["actions"].sort(key=lambda row: row["id"])
     for collection in result["collections"]:
+        collection.setdefault("actions", [])
         collection["actions"].sort(key=lambda row: row["id"])
+        collection.setdefault("reads", [])
+        collection["placement"]["confidence_floor"] = _float(
+            collection["placement"]["confidence_floor"]
+        )
+        for read in collection["reads"]:
+            read["confidence_floor"] = _float(read["confidence_floor"])
     return result
 
 
 def runtime_model_to_toml(model: dict[str, Any]) -> str:
     model = _canonical_model(model)
-    collections = {
-        "ui_targets": "ui_target",
-        "locators": "locator",
-        "readers": "reader",
-        "surfaces": "surface",
-        "bindings": "binding",
-        "collections": "collection",
-        "transitions": "transition",
-    }
     lines = [
         f"schema_version = {_toml_value(model['schema_version'])}",
         f"base_resolution = {_toml_value(model['base_resolution'])}",
         f"base_dpi = {_toml_value(model['base_dpi'])}",
     ]
-    for collection, singular in collections.items():
+    for collection, singular in _SECTIONS.items():
         for record in sorted(model[collection], key=lambda item: item["id"]):
             lines.extend(["", f"[[{singular}]]"])
             for key in sorted(record):

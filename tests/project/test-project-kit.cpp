@@ -334,7 +334,7 @@ namespace uf::project
         [[nodiscard]]
         auto collectionModel(std::string_view slots) -> std::string
         {
-            return std::string{R"toml(schema_version = 3
+            return std::string{R"toml(schema_version = 4
     base_resolution = [1920, 1080]
     base_dpi = [96, 96]
 
@@ -348,13 +348,6 @@ namespace uf::project
     asset_path = "assets/header.png"
     threshold = 0.9
 
-    [[reader]]
-    id = "options.text"
-    kind = "text"
-    confidence_floor = 0.8
-    layout = "block"
-    normalization = "trim"
-
     [[binding]]
     id = "settings.header"
     surface = "settings"
@@ -366,7 +359,7 @@ namespace uf::project
     [[collection]]
     id = "options"
     surface = "settings"
-    placement = { kind = "detected", search_rect = [120, 300, 1680, 300], reader = "options.text", order = "left_to_right", slots = { )toml"}
+    placement = { kind = "detected", search_rect = [120, 300, 1680, 300], confidence_floor = 0.8, order = "left_to_right", slots = { )toml"}
                 + std::string{slots}
                 + R"toml( } }
     actions = []
@@ -374,7 +367,6 @@ namespace uf::project
 
     [[surface]]
     id = "settings"
-    kind = "scene"
     covers = []
     identity = ["settings.header"]
     )toml";

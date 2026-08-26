@@ -149,14 +149,7 @@ namespace uf::operator_runtime::conformance::expedition
                 : ToolIdempotency::DeliverySafe;
             tools.emplace_back(json::Value::ofObject({
                 {"argument_schema", parsedJson(k_toolArgumentSchema)},
-                {"body", json::Value::ofBoolean(false)},
-                {"child_effects", json::Value::ofObject({
-                     {"child_tool_names", json::Value::ofArray({})},
-                     {"maximum_child_calls", json::Value::ofNumber(0)},
-                     {"maximum_child_mutability", json::Value::ofString("read_only")},
-                     {"maximum_child_risk", json::Value::ofString("read_only")},
-                     {"maximum_child_surface", json::Value::ofString("semantic")},
-                 })},
+                {"description", json::Value::ofString("Run this Project Tool leaf handler.")},
                 {"effect_bounds", json::Value::ofArray({json::Value::ofObject({
                      {"maximum_risk", json::Value::ofString("high")},
                      {"namespaced_type", json::Value::ofString("expedition.march")},
@@ -182,13 +175,6 @@ namespace uf::operator_runtime::conformance::expedition
                      json::Value::ofString("expedition.step"),
                  })},
                 {"version", json::Value::ofString(std::string{tool.version})},
-                {"workflow_limits", json::Value::ofObject({
-                     {"maximum_dispatches", json::Value::ofNumber(8)},
-                     {"maximum_elapsed_ms", json::Value::ofNumber(600'000)},
-                     {"maximum_observations", json::Value::ofNumber(256)},
-                     {"maximum_steps", json::Value::ofNumber(8)},
-                     {"maximum_waits", json::Value::ofNumber(64)},
-                 })},
             }));
         }
         return json::canonicalBytes(json::Value::ofArray(std::move(tools)));

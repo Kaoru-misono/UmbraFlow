@@ -191,7 +191,7 @@ namespace uf::operator_runtime
         REQUIRE(catalog.has_value());
         REQUIRE(arguments.has_value());
         auto invocation = catalog->validate(
-            "framework.screen.observe",
+            "framework.screen.capture",
             std::move(*arguments)
         );
         REQUIRE(invocation.has_value());
@@ -215,8 +215,10 @@ namespace uf::operator_runtime
         );
 
         auto const intent = OperatorTaskHost::ToolCallInputIntent{
-            .uiTarget = test_support::k_fixtureUiAction.uiTarget,
-            .uiAction = test_support::k_fixtureUiAction.action,
+            .uiTarget     = test_support::k_fixtureUiAction.uiTarget,
+            .binding      = "fixture.target.primary",
+            .action       = test_support::k_fixtureUiAction.action,
+            .expectedKind = "click",
         };
 
         auto admitted = owner->coordinator().admitToolCall(
@@ -254,7 +256,11 @@ namespace uf::operator_runtime
             *call,
             lease,
             generation,
-            OperatorTaskHost::ToolCallInputIntent{.uiAction = intent.uiAction},
+            OperatorTaskHost::ToolCallInputIntent{
+                .binding      = intent.binding,
+                .action       = intent.action,
+                .expectedKind = intent.expectedKind,
+            },
             runtime.context()
         );
         REQUIRE_FALSE(unnamed.has_value());
@@ -288,8 +294,10 @@ namespace uf::operator_runtime
             lease,
             generation,
             OperatorTaskHost::ToolCallInputIntent{
-                .uiTarget = "fixture.absent",
-                .uiAction = intent.uiAction,
+                .uiTarget     = "fixture.absent",
+                .binding      = intent.binding,
+                .action       = intent.action,
+                .expectedKind = intent.expectedKind,
             },
             runtime.context()
         );
@@ -301,8 +309,10 @@ namespace uf::operator_runtime
             lease,
             generation,
             OperatorTaskHost::ToolCallInputIntent{
-                .uiTarget = intent.uiTarget,
-                .uiAction = "fixture.absent",
+                .uiTarget     = intent.uiTarget,
+                .binding      = intent.binding,
+                .action       = "fixture.absent",
+                .expectedKind = intent.expectedKind,
             },
             runtime.context()
         );
@@ -320,8 +330,10 @@ namespace uf::operator_runtime
             lease,
             generation,
             OperatorTaskHost::ToolCallInputIntent{
-                .uiTarget = "fixture.marker",
-                .uiAction = intent.uiAction,
+                .uiTarget     = "fixture.marker",
+                .binding      = "fixture.surface.anchor",
+                .action       = intent.action,
+                .expectedKind = intent.expectedKind,
             },
             runtime.context()
         );

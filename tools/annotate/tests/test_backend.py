@@ -118,12 +118,7 @@ def runtime_model(*, threshold: float = 0.9, with_asset: bool = True) -> dict:
                 "threshold": threshold,
             }
         ]
-        readers: list[dict] = []
-        detector = {
-            "all": [{"kind": "locator_present", "locator": "confirm-template"}],
-            "any": [],
-            "none": [],
-        }
+        detector = {"all": [{"kind": "locator_present", "locator": "confirm-template"}]}
         placement = {
             "kind": "fixed",
             "rect": [10, 20, 100, 40],
@@ -137,29 +132,21 @@ def runtime_model(*, threshold: float = 0.9, with_asset: bool = True) -> dict:
         # legitimate home of a text_equals predicate is a Collection's
         # predicate, exercised by test_collection_predicate_text_equals_*.
         locators = []
-        readers = [
-            {
-                "id": "caption-reader",
-                "kind": "text",
-                "confidence_floor": 0.8,
-                "layout": "single_line",
-                "normalization": "trim",
-            }
-        ]
         detector = {
-            "all": [{"kind": "text_equals", "reader": "caption-reader", "value": "Ready"}],
-            "any": [],
-            "none": [],
+            "all": [{"kind": "text_equals", "read": "caption", "value": "Ready"}],
         }
         placement = {"kind": "fixed", "rect": [10, 20, 100, 40]}
         actions = []
+    # The empty lists this model would otherwise carry -- surface.covers, the
+    # detector's any and none, transitions -- are simply left out: in v4 an
+    # absent list IS the empty list, and the happy path is where that rule has
+    # to hold, because every consumer downstream of here reads this document.
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "base_resolution": [1920, 1080],
         "base_dpi": [96, 96],
         "ui_targets": [{"id": "confirm-button", "kind": "control"}],
         "locators": locators,
-        "readers": readers,
         "bindings": [
             {
                 "id": "camp-confirm",
@@ -170,15 +157,22 @@ def runtime_model(*, threshold: float = 0.9, with_asset: bool = True) -> dict:
                 "actions": actions,
             }
         ],
+        "readouts": [
+            {
+                "id": "camp-banner",
+                "surface": "camp-scene",
+                "rect": [200, 40, 600, 60],
+                "layout": "single_line",
+                "confidence_floor": 0.8,
+                "normalization": "trim",
+            }
+        ],
         "surfaces": [
             {
                 "id": "camp-scene",
-                "kind": "scene",
-                "covers": [],
                 "identity": ["camp-confirm"],
             }
         ],
-        "transitions": [],
     }
 
 
@@ -507,7 +501,7 @@ def _shared_vector_lines() -> list[str]:
 
 class SchemaAndJcsTests(unittest.TestCase):
     def test_official_draft_202012_runtime_validation_matches_direct_validator(self) -> None:
-        schema_path = Path("schema/umbraflow-runtime-v3.schema.json")
+        schema_path = Path("schema/umbraflow-runtime-v4.schema.json")
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         direct = Draft202012Validator(schema)
         cases = [
@@ -518,7 +512,7 @@ class SchemaAndJcsTests(unittest.TestCase):
         ]
         for value in cases:
             with self.subTest(value=value):
-                official_errors = validate_contract("umbraflow-runtime-v3.schema.json", value)
+                official_errors = validate_contract("umbraflow-runtime-v4.schema.json", value)
                 self.assertEqual(bool(official_errors), not direct.is_valid(value))
         self.assertFalse(hasattr(model_file, "RuntimeSchema"))
 
@@ -526,7 +520,7 @@ class SchemaAndJcsTests(unittest.TestCase):
         # Two producers of one rule -- the published schema and the backend's
         # own checks -- held to the same eight answers. Neither is asked about
         # itself: the rows say what is legal, and both must agree with the rows.
-        schema_path = Path("schema/umbraflow-runtime-v3.schema.json")
+        schema_path = Path("schema/umbraflow-runtime-v4.schema.json")
         direct = Draft202012Validator(json.loads(schema_path.read_text(encoding="utf-8")))
         click = {"id": "press", "kind": "click", "proof_locator": "confirm-template"}
         key = {
@@ -574,18 +568,9 @@ class SchemaAndJcsTests(unittest.TestCase):
                 self.assertTrue(model_file.validate_runtime_model(value))
 
     def test_collection_action_and_transition_have_one_owner(self) -> None:
-        schema_path = Path("schema/umbraflow-runtime-v3.schema.json")
+        schema_path = Path("schema/umbraflow-runtime-v4.schema.json")
         direct = Draft202012Validator(json.loads(schema_path.read_text(encoding="utf-8")))
         value = runtime_model()
-        value["readers"] = [
-            {
-                "id": "options-reader",
-                "kind": "text",
-                "confidence_floor": 0.8,
-                "layout": "block",
-                "normalization": "trim",
-            }
-        ]
         value["collections"] = [
             {
                 "id": "event-options",
@@ -593,7 +578,7 @@ class SchemaAndJcsTests(unittest.TestCase):
                 "placement": {
                     "kind": "detected",
                     "search_rect": [100, 100, 600, 200],
-                    "reader": "options-reader",
+                    "confidence_floor": 0.8,
                     "order": "left_to_right",
                     "slots": {
                         "origin": 300,
@@ -611,7 +596,6 @@ class SchemaAndJcsTests(unittest.TestCase):
                         "offset": [40, 20],
                     }
                 ],
-                "reads": [],
             }
         ]
         value["transitions"] = [
@@ -637,6 +621,20 @@ class SchemaAndJcsTests(unittest.TestCase):
         self.assertTrue(model_file.validate_runtime_model(missing_action))
 
     def test_runtime_artifact_schema_accepts_zero_assets_and_enforces_all_ceilings(self) -> None:
+        # The generation is compared against the contract that defines it, not
+        # against the constant that stamps it: a publisher left on the previous
+        # generation writes manifests the Host refuses one by one, and nothing
+        # else here would notice, because every other use of the constant is
+        # the constant checking itself.
+        runtime_generation = re.search(
+            r"-v(\d+)\.schema\.json$",
+            json.loads(
+                Path("schema/umbraflow-runtime-v4.schema.json").read_text(encoding="utf-8")
+            )["$id"],
+        )
+        self.assertIsNotNone(runtime_generation)
+        self.assertEqual(RUNTIME_MODEL_FORMAT, int(runtime_generation.group(1)))
+
         sha = "a" * 64
         valid = {
             "runtime_artifact_format": RUNTIME_ARTIFACT_FORMAT,
@@ -813,7 +811,7 @@ def _schema_registry() -> Registry:
     registry = Registry()
     for name in (
         "umbraflow-annotation-workspace-v2.schema.json",
-        "umbraflow-runtime-v3.schema.json",
+        "umbraflow-runtime-v4.schema.json",
         "umbraflow-runtime-artifact-v1.schema.json",
     ):
         schema = json.loads((Path("schema") / name).read_text(encoding="utf-8"))
@@ -1408,15 +1406,6 @@ class PublicationBoundaryTests(WorkspaceTestCase):
         # one compiles and publishes, and its TOML names text_equals exactly
         # once -- inside the [[collection]] record, never in a detector.
         value = runtime_model()
-        value["readers"] = [
-            {
-                "id": "options-reader",
-                "kind": "text",
-                "confidence_floor": 0.8,
-                "layout": "block",
-                "normalization": "trim",
-            }
-        ]
         value["collections"] = [
             {
                 "id": "event-options",
@@ -1424,7 +1413,7 @@ class PublicationBoundaryTests(WorkspaceTestCase):
                 "placement": {
                     "kind": "detected",
                     "search_rect": [100, 100, 600, 200],
-                    "reader": "options-reader",
+                    "confidence_floor": 0.8,
                     "order": "left_to_right",
                     "slots": {
                         "origin": 300,
@@ -1434,13 +1423,19 @@ class PublicationBoundaryTests(WorkspaceTestCase):
                         "maximum_slots": 4,
                     },
                 },
-                "actions": [],
                 "reads": [
-                    {"reader": "options-reader", "offset": [0, 0], "size": [400, 24]}
+                    {
+                        "id": "option-label",
+                        "offset": [0, 0],
+                        "size": [400, 24],
+                        "layout": "single_line",
+                        "confidence_floor": 0.8,
+                        "normalization": "trim",
+                    }
                 ],
                 "predicate": {
                     "kind": "text_equals",
-                    "reader": "options-reader",
+                    "read": "option-label",
                     "value": "Ready",
                 },
             }
@@ -1450,6 +1445,15 @@ class PublicationBoundaryTests(WorkspaceTestCase):
         text = compiled.decode("utf-8")
         self.assertEqual(text.count("text_equals"), 1)
         self.assertIn("predicate = { ", text)
+
+        # The predicate names a sibling read by id, so the only way it can be
+        # wrong is naming one the collection never declared.
+        missing_read = copy.deepcopy(value)
+        missing_read["collections"][0]["predicate"]["read"] = "absent-read"
+        self.assertEqual(
+            [row["path"] for row in model_file.validate_runtime_model(missing_read)],
+            ["$.collections[0].predicate.read"],
+        )
 
         self.workspace.add_candidate(candidate_id="options-model")
         self.workspace.accept("options-model", 1)

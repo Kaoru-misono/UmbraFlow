@@ -109,51 +109,6 @@ namespace uf::operator_runtime::conformance
         // be a second account of what framework.* does with only one of them
         // being the Framework's. So it refuses by name.
         //
-        // Which runs reach it is the project's decision rather than this
-        // suite's. A catalog whose descriptors declare no child call cannot
-        // reach it at all; a catalog whose handler calls a Framework Tool gets
-        // this sentence, which is the honest answer to a capability the suite
-        // does not have.
-        [[nodiscard]]
-        auto conformanceFrameworkTools() -> ToolBodyProvider
-        {
-            return [](
-                       ToolCallPositionIdentity const& call,
-                       ToolBodyRun body
-                   )
-                -> Result<ToolCallCompletion>
-            {
-                if (body)
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "the conformance fixture call does not declare a body"
-                    );
-                }
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "a conformance run has no Framework Tool provider, so it "
-                    "cannot answer " + call.toolName()
-                );
-            };
-        }
-    }
-
-    auto provisioningToolRuntime() -> script::ToolRuntimeDispatch
-    {
-        return [](
-                   std::string_view,
-                   json::Value const&,
-                   script::ToolCallCoordinate const&,
-                   std::stop_token,
-                   script::ToolCallBody
-               ) -> Result<json::Value>
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "a registration compiled for provisioning admits no Tool call"
-            );
-        };
     }
 
     auto setProjectDirectory(std::filesystem::path directory) -> void
@@ -269,8 +224,7 @@ namespace uf::operator_runtime::conformance
 
     auto loadGeneration(
         deployment::ConformanceProject const& project,
-        ProjectRole role,
-        script::ToolRuntimeDispatch dispatchTool
+        ProjectRole role
     ) -> ProjectGenerationHandle
     {
         auto const& one = deploymentFor(project, role);
@@ -282,8 +236,7 @@ namespace uf::operator_runtime::conformance
                 .entryModule = one.toolClosure.entryModule,
                 .modules     = one.toolClosure.modules,
             },
-            one.projectResources,
-            std::move(dispatchTool)
+            one.projectResources
         );
         REQUIRE(result.has_value());
         return *result;
@@ -432,8 +385,7 @@ namespace uf::operator_runtime::conformance
         );
         auto const generation = loadGeneration(
             project,
-            ProjectRole::UnderTest,
-            provisioningToolRuntime()
+            ProjectRole::UnderTest
         );
         REQUIRE(store.registerProject(underTest.generation).has_value());
         REQUIRE(store.provisionProjectInstance(
@@ -584,12 +536,7 @@ namespace uf::operator_runtime::conformance
     auto toolRuntimeOver(PreparedStore& prepared) -> PreparedToolRuntime
     {
         auto observations = std::make_unique<SnapshotObservationAuthority>();
-        auto dispatcher   = ProjectToolDispatcher::create(
-            prepared.store,
-            *observations,
-            prepared.policyAuthority,
-            conformanceFrameworkTools()
-        );
+        auto dispatcher   = ProjectToolDispatcher::create(prepared.store);
         REQUIRE(dispatcher.has_value());
 
         // The one registration a run dispatches through, compiled with the
@@ -597,11 +544,7 @@ namespace uf::operator_runtime::conformance
         // rather than the one prepareStore provisioned from, because the
         // dispatcher a seam reaches cannot exist until the session it serves
         // does, and provisioning runs before there is a session at all.
-        auto program = loadGeneration(
-            prepared.project,
-            ProjectRole::UnderTest,
-            dispatcher->toolRuntimeDispatch()
-        );
+        auto program = loadGeneration(prepared.project, ProjectRole::UnderTest);
         auto catalog = ToolStartCatalog::create(
             deploymentFor(prepared.project, ProjectRole::UnderTest)
                 .toolCatalogSchemaOwner

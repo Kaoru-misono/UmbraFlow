@@ -28,6 +28,7 @@
 #include <stop_token>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -188,6 +189,7 @@ namespace uf::engine
         // target generation an authorization was taken against, as the Operator
         // snapshot does, has no other source for it.
         [[nodiscard]] auto frameIdentity() const noexcept -> FrameIdentity;
+        [[nodiscard]] auto frameSize() const noexcept -> std::pair<uint32, uint32>;
     };
 
     // One rectangle of one frame's pixels, copied out of the observation that
@@ -505,6 +507,14 @@ namespace uf::engine
 
         [[nodiscard]]
         auto observe() -> Result<Observation>;
+
+        // Opens an observation over caller-owned immutable frame bytes. It
+        // validates the same geometry as a capture but never consults the frame
+        // source, so resolving or measuring a stored screenshot captures
+        // nothing. The returned Observation is owned by this EngineSession and
+        // is accepted by the same read/crop operations as a live observation.
+        [[nodiscard]]
+        auto observeRecorded(Frame frame) -> Result<Observation>;
 
         // Searches `searchRoi` of the frame `observation` holds for
         // `templateImage`, reporting the best position it found or nothing when

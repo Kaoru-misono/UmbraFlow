@@ -34,7 +34,7 @@ Parity for one of these is byte identity: read the file, do not copy it.
 | `https://umbraflow.dev/schema/project-tool-precondition/v1` | v1 | -- | `schema/umbraflow-project-tool-precondition-v1.schema.json` | `name`, `status` |
 | `https://umbraflow.dev/schema/project/directory` | v3 | `umbraflow-project/v3` | `schema/umbraflow-project-v3.schema.json` | `deployments`, `primary_deployment`, `runtime_artifact`, `schema`, `template_cuts` |
 | `https://umbraflow.dev/schema/umbraflow-runtime-artifact-v1.schema.json` | v1 | -- | `schema/umbraflow-runtime-artifact-v1.schema.json` | `runtime_artifact_format`, `runtime_model_format`, `page_model`, `assets` |
-| `https://umbraflow.dev/schema/umbraflow-runtime-v3.schema.json` | v3 | -- | `schema/umbraflow-runtime-v3.schema.json` | `runtime_model` |
+| `https://umbraflow.dev/schema/umbraflow-runtime-v4.schema.json` | v4 | -- | `schema/umbraflow-runtime-v4.schema.json` | `runtime_model` |
 | `https://umbraflow.local/schema/trace-v2` | v2 | `umbraflow-trace/v2` | `schema/umbraflow-trace-v2.schema.json` | `schema`, `event_type`, `session_id`, `session_manifest_hash`, `monotonic_sequence`, `recorded_at_unix_millis`, `audit`, `payload` |
 
 ### 1.2 Identities compiled from module bytes
@@ -179,8 +179,7 @@ Every Tool member below is mandatory:
 | Required member |
 | --- |
 | `argument_schema` |
-| `body` |
-| `child_effects` |
+| `description` |
 | `effect_bounds` |
 | `idempotency` |
 | `mutability` |
@@ -190,17 +189,13 @@ Every Tool member below is mandatory:
 | `timeout_policy` |
 | `ui_action_bounds` |
 | `version` |
-| `workflow_limits` |
 
-A Project Tool declares `body: false`: Project entry points take only
-their arguments and cannot receive a caller-supplied body. Framework
-built-ins declare their own body shape separately.
+A Project Tool entry point takes only its declared arguments. Tool
+calls have no caller-supplied body or callback protocol.
 
-Each entry carries `argument_schema` as a mandatory member whose value
-is either the string `unchecked` or an inline JSON Schema object. The
-two mean different things: `unchecked` is the project declining
-argument validation, and the framework still records the exact bytes it
-passed, their digest and their coordinates.
+Each entry carries `description` and `argument_schema` as mandatory
+members. `argument_schema` is the Tool's flat inline JSON Schema; there
+is no unchecked spelling, body, or child-effect declaration.
 
 ## 3. CLI surface
 
@@ -612,10 +607,10 @@ classification inside the value it answers with.
 
 | Reserved scoped module | Exports | Source SHA-256 |
 | --- | --- | --- |
-| `@umbraflow/audit` | `record`, `recorded` | `59ca9c95641c7582282ea718017f2893f60e0573f9375705048b817eeb497425` |
-| `@umbraflow/screen` | `actions`, `observation`, `observe`, `targets`, `use`, `used` | `82c2c1042e2fc1583e3b7eb352a56bb50c0383841dfa853a331bfa81dfaceeb9` |
-| `@umbraflow/tools` | `call`, `call_identity`, `catalog_hash`, `describe`, `evidence`, `knows`, `names`, `result`, `state`, `states`, `tool_name` | `c64a623869a21f16f50a35505b52ec66570f08c89b5d88dd5947c6a969869ecd` |
-| `@umbraflow/workflow` | `absent`, `child_flow`, `delivered`, `pending`, `recover`, `refused`, `settled`, `status`, `stopped`, `uncertain`, `wait` | `fb9e9e178384ac9c824d74843a6a45839679d7c5b36d60390e9df8ccfee6799d` |
+| `@umbraflow/audit` | `record` | `d154c50398cd7dcff7e5cb81d839c6d556f2a1efeade5a59d537e9e14ebe5b73` |
+| `@umbraflow/screen` | `capture`, `crop`, `observation`, `observe`, `ui_actions`, `use`, `used` | `df1ee617bf071e1c5047b1f7603bf615fdc2cb45527c80fa016459b58c390c1a` |
+| `@umbraflow/tools` | `call`, `catalog_hash`, `describe`, `knows`, `names` | `f495bfee576aff4b1894e39f687f115e3c7bc41f7023d030d0673b241bfc80c1` |
+| `@umbraflow/workflow` | `status`, `stopped`, `wait` | `67debc25de08abc3ed29f9d85d042bb32811ab0c85b3b7f03e4f2d4dce395861` |
 
 ### 4.2 Identity preimage
 
@@ -696,9 +691,9 @@ the three a call is still passing through. `possible` and
 target-wide mutation barrier, because neither says what the world did.
 
 Read from `k_toolCallStateNames` and `toolCallStateHasOutcome` in
-`modules/operator/source/operator/tool-runtime.cpp`. A scoped script reads the same set as
-`tools.states` from `modules/task/runtime/tools.luau`, and this generator
-requires the two to be the same list in the same order.
+`modules/operator/source/operator/tool-runtime.cpp`. The three nonterminal states remain
+internal. A synchronous caller sees only the terminal half as
+`delivery`, validated by `checkedAnswer` in `modules/task/runtime/tools.luau`.
 
 | State | Carries an outcome |
 | --- | --- |
@@ -719,20 +714,21 @@ are the whole of what an answer is:
 
 | Answer member |
 | --- |
-| `tool` |
-| `state` |
+| `ok` |
+| `delivery` |
 | `call_identity` |
 | `result` |
-| `evidence` |
+| `error` |
 
-`result` and `evidence` are absent when the recorded outcome carries
-none, and their accessors answer a `@umbraflow/result` failure rather
-than a value -- `umbraflow.tools.no_result`, `umbraflow.tools.no_evidence`.
+Success carries `ok = true`, `delivery = confirmed`, and `result`.
+A provider that ran and failed carries `ok = false`, its terminal
+`delivery`, and an `error` object with `code`, the provider message
+verbatim, and `retryable`.
 
 A Tool Runtime *refusal* never reaches this envelope at all: it is
 terminal for the run, the VM is destroyed without resuming the script,
 and no `pcall` can observe one. A Tool that ran and failed is not a
-refusal -- its classification travels in `state`.
+refusal -- its classification travels in `delivery`.
 
 ### 5.3 Root request idempotency
 
@@ -845,7 +841,6 @@ authority nobody held.
 | `required_approvals` |
 | `approval_tokens` |
 | `approval_expires_at_unix_millis` |
-| `delegation_grant_id` |
 
 ### 5.6 `tool_runtime_protocol_identity`
 

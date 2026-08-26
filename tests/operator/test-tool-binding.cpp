@@ -48,13 +48,6 @@ namespace uf::operator_runtime
                 .requiredCapabilities = {},
                 .effectBounds         = {},
                 .uiActionBounds       = {},
-                .limits               = WorkflowLimits{
-                    .maximumSteps        = 1U,
-                    .maximumDispatches   = 1U,
-                    .maximumObservations = 1U,
-                    .maximumWaits        = 0U,
-                    .maximumElapsedMillis = 1'000U,
-                },
                 .timeout = TimeoutPolicy{
                     .maximumElapsedMillis = 1'000U,
                     .onTimeout            = TimeoutAction::Stop,
@@ -193,8 +186,10 @@ namespace uf::operator_runtime
                     for (auto const& name : names)
                     {
                         entries.emplace_back(ToolCatalogEntry{
-                            .name       = name,
-                            .descriptor = declaredDescriptor(),
+                            .name        = name,
+                            .description = "A fixture Project Tool leaf.",
+                            .inputSchema = json::Value::ofObject({}),
+                            .descriptor  = declaredDescriptor(),
                         });
                     }
                     return entries;

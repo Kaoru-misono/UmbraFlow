@@ -162,7 +162,7 @@ namespace uf::cli
     //
     // The model directory is required for OcrArgs' reason, one layer further
     // down: TaskContext::cycleRead answers a session with no OCR adapter
-    // with UnsupportedCapability, and a Reader the model declared would
+    // with UnsupportedCapability, and a Readout the model declared would
     // otherwise reach the plugin as a reading that failed rather than as a
     // refusal naming the flag nobody passed.
     struct ObserveArgs final
@@ -263,7 +263,7 @@ namespace uf::cli
     // it, and each for the reason ObserveArgs gives one layer down: the
     // project, the Operator production root that already holds its installed
     // RuntimeArtifact, the live target the run acts in, and the models a
-    // Reader the project's model declares would otherwise fail open without.
+    // Readout the project's model declares would otherwise fail open without.
     //
     // The request key is required and never derived. It is what the durable
     // root request is idempotent on, so a front end that minted one would make
@@ -308,13 +308,14 @@ namespace uf::cli
 
     [[nodiscard]] auto invokeUsageText() noexcept -> std::string_view;
 
-    // The Operator production root to sweep, and nothing else. There is no
-    // project and no target: what the pass reads is the root's own reference
-    // set, and a project named here could only narrow a decision that is only
-    // correct when it is taken over the whole set at once.
+    // The Operator production root to sweep and the evidence lifetime the
+    // operator selected. There is no project and no target: what the pass reads
+    // is the root's own reference set, and a project named here could only
+    // narrow a decision that is correct when taken over the whole set at once.
     struct ReclaimArgs final
     {
         std::filesystem::path runtime{};
+        uint64                evidenceRetentionMillis{};
 
         auto operator==(ReclaimArgs const&) const -> bool = default;
     };

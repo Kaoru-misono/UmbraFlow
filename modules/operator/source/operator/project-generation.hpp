@@ -141,8 +141,7 @@ namespace uf::operator_runtime
             VerifiedProjectGeneration const& generation,
             ProjectToolCatalogSchemaOwner catalog,
             ClosureModules toolClosure,
-            std::vector<ProjectResourceBlob> exactResources,
-            script::ToolRuntimeDispatch dispatchTool
+            std::vector<ProjectResourceBlob> exactResources
         ) -> Result<ProjectGenerationHandle>;
 
         [[nodiscard]]

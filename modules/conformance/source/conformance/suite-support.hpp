@@ -113,27 +113,10 @@ namespace uf::operator_runtime::conformance
         std::string toolName
     ) -> ValidatedToolInvocation;
 
-    // The Tool Runtime seam a registration is compiled with when it is
-    // registered only to be provisioned from.
-    //
-    // At the point prepareStore registers it, no session, controller, lease or
-    // observation authority exists yet, so no scoped call could be admitted
-    // through any seam it was handed. That is why it refuses, and it is a fact
-    // about the setup rather than about the suite -- the runs a case builds
-    // with toolRuntimeOver below dispatch real Tool calls through the
-    // dispatcher's own seam.
-    [[nodiscard]]
-    auto provisioningToolRuntime() -> script::ToolRuntimeDispatch;
-
-    // `dispatchTool` is the host adapter the compiled tool closure reaches the
-    // Tool Runtime through, and it is a parameter rather than a default because the
-    // two callers want opposite things: provisioning wants the refusal above,
-    // and a run wants its own dispatcher's seam.
     [[nodiscard]]
     auto loadGeneration(
         deployment::ConformanceProject const& project,
-        ProjectRole role,
-        script::ToolRuntimeDispatch dispatchTool
+        ProjectRole role
     ) -> ProjectGenerationHandle;
 
     // The PolicyArtifact bytes a run pins, built from the effect types this

@@ -40,13 +40,13 @@ from .store import (
 
 _SCHEMA_ROOT = Path(__file__).resolve().parents[2] / "schema"
 # The two generations a RuntimeArtifact manifest declares: the v1 in
-# umbraflow-runtime-artifact-v1.schema.json and the v3 in
-# umbraflow-runtime-v3.schema.json. The Host reads the same two numbers as
+# umbraflow-runtime-artifact-v1.schema.json and the v4 in
+# umbraflow-runtime-v4.schema.json. The Host reads the same two numbers as
 # k_runtimeArtifactFormat and k_runtimeModelFormat. They are generations rather
 # than digests of those two files so that editing either file's prose does not
 # refuse every artifact already published against it.
 RUNTIME_ARTIFACT_FORMAT = 1
-RUNTIME_MODEL_FORMAT = 3
+RUNTIME_MODEL_FORMAT = 4
 _MANIFEST_NAME = "runtime-artifact.manifest.json"
 _MODEL_NAME = "runtime-model.toml"
 _RELEASE_MANIFEST_NAME = "release.manifest.json"
@@ -103,7 +103,9 @@ def _runtime_assets(candidate: Mapping[str, Any]) -> dict[str, tuple[str, str]]:
         assets[path] = (digest, asset_type)
     referenced = {
         _asset_path(locator["asset_path"]).as_posix()
-        for locator in candidate["runtime_model"]["locators"]
+        # An absent list is the empty list, so a model that declares no
+        # locator closes over no asset rather than failing to be read.
+        for locator in candidate["runtime_model"].get("locators", [])
         if locator["kind"] == "template"
     }
     if set(assets) != referenced:

@@ -30,7 +30,7 @@ complete:
 | Code | Checked-in authority |
 |---|---|
 | RA | `schema/umbraflow-runtime-artifact-v1.schema.json` |
-| RM | `schema/umbraflow-runtime-v3.schema.json` |
+| RM | `schema/umbraflow-runtime-v4.schema.json` |
 | PR | `schema/umbraflow-project-registration-v1.schema.json` |
 | OP | `schema/umbraflow-operator-v1.schema.json` |
 | PL | `schema/umbraflow-policy-v1.schema.json` |
@@ -103,7 +103,7 @@ Where the named requirement gates are declared:
 
 - `tests/operator/test-product-contract.cpp` — `schema-product-p01`-`p03` and
   `contract-product-p01`-`p04`, `p05-fixtures`, `p06`;
-- `tests/task/test-runtime-v3-contract.cpp` plus trusted Luau fixtures —
+- `tests/task/test-runtime-v4-contract.cpp` plus trusted Luau fixtures —
   `contract-runtime-u01`-`u08`, plus the Host delivery and fence cases, which
   carry prose names and run only under the aggregate;
 - `tests/operator/test-state-contract.cpp` — `schema-state-s01`, `s02`, `s04`

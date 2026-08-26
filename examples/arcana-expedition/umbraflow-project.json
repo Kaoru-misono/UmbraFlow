@@ -88,15 +88,7 @@
               }
             }
           },
-          "body": false,
-          "child_effects": {
-            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
-            "child_tool_names": [],
-            "maximum_child_calls": 0,
-            "maximum_child_mutability": "read_only",
-            "maximum_child_risk": "read_only",
-            "maximum_child_surface": "semantic"
-          },
+          "description": "Run this Project Tool leaf handler.",
           "effect_bounds": [
             {
               "maximum_risk": "high",
@@ -117,14 +109,7 @@
           "ui_action_bounds": [
             "expedition.step"
           ],
-          "version": "3",
-          "workflow_limits": {
-            "maximum_dispatches": 8,
-            "maximum_elapsed_ms": 600000,
-            "maximum_observations": 256,
-            "maximum_steps": 8,
-            "maximum_waits": 64
-          }
+          "version": "3"
         },
         {
           "argument_schema": {
@@ -143,15 +128,7 @@
               }
             }
           },
-          "body": false,
-          "child_effects": {
-            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
-            "child_tool_names": [],
-            "maximum_child_calls": 0,
-            "maximum_child_mutability": "read_only",
-            "maximum_child_risk": "read_only",
-            "maximum_child_surface": "semantic"
-          },
+          "description": "Run this Project Tool leaf handler.",
           "effect_bounds": [
             {
               "maximum_risk": "high",
@@ -172,14 +149,7 @@
           "ui_action_bounds": [
             "expedition.step"
           ],
-          "version": "3",
-          "workflow_limits": {
-            "maximum_dispatches": 8,
-            "maximum_elapsed_ms": 600000,
-            "maximum_observations": 256,
-            "maximum_steps": 8,
-            "maximum_waits": 64
-          }
+          "version": "3"
         },
         {
           "argument_schema": {
@@ -198,15 +168,7 @@
               }
             }
           },
-          "body": false,
-          "child_effects": {
-            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
-            "child_tool_names": [],
-            "maximum_child_calls": 0,
-            "maximum_child_mutability": "read_only",
-            "maximum_child_risk": "read_only",
-            "maximum_child_surface": "semantic"
-          },
+          "description": "Run this Project Tool leaf handler.",
           "effect_bounds": [
             {
               "maximum_risk": "high",
@@ -227,14 +189,7 @@
           "ui_action_bounds": [
             "expedition.step"
           ],
-          "version": "2",
-          "workflow_limits": {
-            "maximum_dispatches": 8,
-            "maximum_elapsed_ms": 600000,
-            "maximum_observations": 256,
-            "maximum_steps": 8,
-            "maximum_waits": 64
-          }
+          "version": "2"
         },
         {
           "argument_schema": {
@@ -253,15 +208,7 @@
               }
             }
           },
-          "body": false,
-          "child_effects": {
-            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
-            "child_tool_names": [],
-            "maximum_child_calls": 0,
-            "maximum_child_mutability": "read_only",
-            "maximum_child_risk": "read_only",
-            "maximum_child_surface": "semantic"
-          },
+          "description": "Run this Project Tool leaf handler.",
           "effect_bounds": [
             {
               "maximum_risk": "high",
@@ -282,14 +229,7 @@
           "ui_action_bounds": [
             "expedition.step"
           ],
-          "version": "3",
-          "workflow_limits": {
-            "maximum_dispatches": 8,
-            "maximum_elapsed_ms": 600000,
-            "maximum_observations": 256,
-            "maximum_steps": 8,
-            "maximum_waits": 64
-          }
+          "version": "3"
         }
       ],
       "resources": [
@@ -383,15 +323,7 @@
               }
             }
           },
-          "body": false,
-          "child_effects": {
-            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
-            "child_tool_names": [],
-            "maximum_child_calls": 0,
-            "maximum_child_mutability": "read_only",
-            "maximum_child_risk": "read_only",
-            "maximum_child_surface": "semantic"
-          },
+          "description": "Run this Project Tool leaf handler.",
           "effect_bounds": [
             {
               "maximum_risk": "high",
@@ -412,14 +344,7 @@
           "ui_action_bounds": [
             "expedition.step"
           ],
-          "version": "3",
-          "workflow_limits": {
-            "maximum_dispatches": 8,
-            "maximum_elapsed_ms": 600000,
-            "maximum_observations": 256,
-            "maximum_steps": 8,
-            "maximum_waits": 64
-          }
+          "version": "3"
         },
         {
           "argument_schema": {
@@ -438,15 +363,7 @@
               }
             }
           },
-          "body": false,
-          "child_effects": {
-            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
-            "child_tool_names": [],
-            "maximum_child_calls": 0,
-            "maximum_child_mutability": "read_only",
-            "maximum_child_risk": "read_only",
-            "maximum_child_surface": "semantic"
-          },
+          "description": "Run this Project Tool leaf handler.",
           "effect_bounds": [
             {
               "maximum_risk": "high",
@@ -467,14 +384,7 @@
           "ui_action_bounds": [
             "expedition.step"
           ],
-          "version": "3",
-          "workflow_limits": {
-            "maximum_dispatches": 8,
-            "maximum_elapsed_ms": 600000,
-            "maximum_observations": 256,
-            "maximum_steps": 8,
-            "maximum_waits": 64
-          }
+          "version": "3"
         },
         {
           "argument_schema": {
@@ -493,15 +403,7 @@
               }
             }
           },
-          "body": false,
-          "child_effects": {
-            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
-            "child_tool_names": [],
-            "maximum_child_calls": 0,
-            "maximum_child_mutability": "read_only",
-            "maximum_child_risk": "read_only",
-            "maximum_child_surface": "semantic"
-          },
+          "description": "Run this Project Tool leaf handler.",
           "effect_bounds": [
             {
               "maximum_risk": "high",
@@ -522,14 +424,7 @@
           "ui_action_bounds": [
             "expedition.step"
           ],
-          "version": "2",
-          "workflow_limits": {
-            "maximum_dispatches": 8,
-            "maximum_elapsed_ms": 600000,
-            "maximum_observations": 256,
-            "maximum_steps": 8,
-            "maximum_waits": 64
-          }
+          "version": "2"
         },
         {
           "argument_schema": {
@@ -548,15 +443,7 @@
               }
             }
           },
-          "body": false,
-          "child_effects": {
-            "$comment": "The empty declaration, written out. This Tool issues no child call, and this is how a Tool says so: no names, no calls, and the most restricted ceiling of each kind.",
-            "child_tool_names": [],
-            "maximum_child_calls": 0,
-            "maximum_child_mutability": "read_only",
-            "maximum_child_risk": "read_only",
-            "maximum_child_surface": "semantic"
-          },
+          "description": "Run this Project Tool leaf handler.",
           "effect_bounds": [
             {
               "maximum_risk": "high",
@@ -577,14 +464,7 @@
           "ui_action_bounds": [
             "expedition.step"
           ],
-          "version": "3",
-          "workflow_limits": {
-            "maximum_dispatches": 8,
-            "maximum_elapsed_ms": 600000,
-            "maximum_observations": 256,
-            "maximum_steps": 8,
-            "maximum_waits": 64
-          }
+          "version": "3"
         }
       ],
       "resources": [

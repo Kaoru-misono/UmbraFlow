@@ -34,11 +34,11 @@ unity_build = false
 #
 # service is where every Operator-reaching verb goes through. explore.cpp,
 # observe.cpp and
-# invoke.cpp start a ProductLifecycle, reclaim.cpp calls reclaimRuntimeArtifacts,
+# invoke.cpp start a ProductLifecycle, reclaim.cpp calls reclaimOperatorStores,
 # and upgrade.cpp and approve.cpp call the two release doors; those functions
 # hold the only production calls that open an OperatorCoordinator -- no file in
 # this module constructs one. operator is still declared because reclaim.cpp
-# names the ReclaimedRuntimeArtifacts that pass returns and invoke.cpp names the
+# restates the two store reclamation results and invoke.cpp names the
 # three actor transports and the ToolCallReplay they answer with; neither
 # appears in a header here, because reclaim.hpp restates the two counts and
 # invoke.hpp restates the replay, exactly as open-project.hpp restates a load as

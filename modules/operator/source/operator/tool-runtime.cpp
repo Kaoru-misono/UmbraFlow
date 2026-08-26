@@ -198,14 +198,18 @@ namespace uf::operator_runtime
                  json::Value::ofString(std::string{answerer.providerKind})},
                 {"reaches_world_through",
                  json::Value::ofString(std::string{
-                     answerer.composition == ToolEffectComposition::RecordedChildren
-                         ? "recorded_children"
+                     answerer.composition == ToolEffectComposition::PureLeaf
+                         ? "pure_leaf"
                          : "direct_leaf",
                  })},
             }));
         }
 
         return json::canonicalBytes(json::Value::ofObject({
+            {"answer_contract",
+             json::Value::ofString(
+                 "ok_call_identity_delivery_result_or_error_v1"
+             )},
             {"answerers", json::Value::ofArray(std::move(answererRows))},
             {"completion_states",
              json::Value::ofArray(std::move(completionRows))},
@@ -381,47 +385,6 @@ namespace uf::operator_runtime
         return m_historyRevision;
     }
 
-    ToolDelegationGrant::ToolDelegationGrant(
-        std::string grantId,
-        ContentHash rootIdentity,
-        ContentHash parentCallIdentity,
-        uint64 parentAttemptNumber,
-        std::string executionPrincipalId
-    )
-        : m_grantId{std::move(grantId)}
-        , m_rootIdentity{rootIdentity}
-        , m_parentCallIdentity{parentCallIdentity}
-        , m_parentAttemptNumber{parentAttemptNumber}
-        , m_executionPrincipalId{std::move(executionPrincipalId)}
-    {
-    }
-
-    auto ToolDelegationGrant::grantId() const noexcept -> std::string const&
-    {
-        return m_grantId;
-    }
-
-    auto ToolDelegationGrant::rootIdentity() const -> ContentHash
-    {
-        return m_rootIdentity;
-    }
-
-    auto ToolDelegationGrant::parentCallIdentity() const -> ContentHash
-    {
-        return m_parentCallIdentity;
-    }
-
-    auto ToolDelegationGrant::parentAttemptNumber() const noexcept -> uint64
-    {
-        return m_parentAttemptNumber;
-    }
-
-    auto ToolDelegationGrant::executionPrincipalId() const noexcept
-        -> std::string const&
-    {
-        return m_executionPrincipalId;
-    }
-
     ToolCallDispatch::ToolCallDispatch(
         ContentHash callIdentity,
         uint64 attemptNumber,
@@ -446,5 +409,64 @@ namespace uf::operator_runtime
     auto ToolCallDispatch::historyRevision() const noexcept -> uint64
     {
         return m_historyRevision;
+    }
+
+    auto toolCallAnswer(
+        ContentHash callIdentity,
+        ToolCallReplay const& replay
+    ) -> Result<json::Value>
+    {
+        if (!toolCallStateHasOutcome(replay.state))
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "a synchronous Tool call reached the answer boundary before "
+                "a terminal delivery value was recorded"
+            );
+        }
+        if (!replay.payload)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "a terminal Tool call has no recorded payload"
+            );
+        }
+
+        auto const delivery = std::string{toolCallStateWireName(replay.state)};
+        if (replay.state == ToolCallState::Confirmed)
+        {
+            return json::Value::ofObject({
+                {"ok", json::Value::ofBoolean(true)},
+                {"call_identity", json::Value::ofString(callIdentity.hex())},
+                {"delivery", json::Value::ofString(delivery)},
+                {"result", replay.payload->value()},
+            });
+        }
+
+        auto const& error     = replay.payload->value();
+        auto const* code      = error.find("code");
+        auto const* message   = error.find("message");
+        auto const* retryable = error.find("retryable");
+        if (
+            error.kind() != json::ValueKind::Object
+            || error.members().size() != 3U || code == nullptr
+            || code->kind() != json::ValueKind::String || message == nullptr
+            || message->kind() != json::ValueKind::String
+            || retryable == nullptr
+            || retryable->kind() != json::ValueKind::Boolean
+        )
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "a failed Tool call payload is not the published code, message, "
+                "retryable error object"
+            );
+        }
+        return json::Value::ofObject({
+            {"ok", json::Value::ofBoolean(false)},
+            {"call_identity", json::Value::ofString(callIdentity.hex())},
+            {"delivery", json::Value::ofString(delivery)},
+            {"error", error},
+        });
     }
 }

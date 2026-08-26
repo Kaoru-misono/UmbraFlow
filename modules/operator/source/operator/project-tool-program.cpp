@@ -29,16 +29,9 @@ namespace uf::operator_runtime
         }
 
         // The discovery projection one Tool contributes to the pinned catalog
-        // resource the scoped facades read. It carries what discovery needs and
-        // stops there: the name a call is spelled by, the version it answers
-        // under, the per-call elapsed ceiling any duration a caller states must
-        // lie within, and how many children the descriptor admits.
-        //
-        // That ceiling is the WORKFLOW limit and not the timeout policy's wall
-        // clock. The two were one number while nothing enforced the timeout;
-        // once ToolRuntimeExecutor judges a returning call against it, the wall
-        // clock has to leave room for the work a stated duration names, so a
-        // duration bounded by it would make the longest legal call time out.
+        // resource the scoped facades read: name, description and flat input
+        // schema. Version remains because the caller pins the catalog that
+        // chose the handler contract.
         //
         // It is deliberately not the whole descriptor. Every remaining bound is
         // ENFORCEMENT data, evaluated by admission on the exact catalog bytes
@@ -47,39 +40,9 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto discoveryEntry(ToolCatalogEntry const& tool) -> json::Value
         {
-            auto const argumentContract = json::Value::ofObject({
-                {"maximum_duration_ms",
-                 json::Value::ofNumber(
-                     static_cast<double>(tool.descriptor.limits.maximumElapsedMillis)
-                 )},
-            });
-            auto const childEffects = json::Value::ofObject({
-                {"maximum_child_calls",
-                 json::Value::ofNumber(
-                     static_cast<double>(tool.descriptor.childEffects.maximumChildCalls)
-                 )},
-            });
-            auto body = json::Value::ofBoolean(tool.descriptor.body.takesBody);
-            if (!tool.descriptor.body.taggedBy.empty())
-            {
-                auto arms = std::vector<json::Member>{};
-                arms.reserve(tool.descriptor.body.arms.size());
-                for (auto const& arm : tool.descriptor.body.arms)
-                {
-                    arms.emplace_back(
-                        arm.name,
-                        json::Value::ofBoolean(arm.takesBody)
-                    );
-                }
-                body = json::Value::ofObject({
-                    {"arms", json::Value::ofObject(std::move(arms))},
-                    {"tag", json::Value::ofString(tool.descriptor.body.taggedBy)},
-                });
-            }
             return json::Value::ofObject({
-                {"argument_contract", argumentContract},
-                {"body", std::move(body)},
-                {"child_effects", childEffects},
+                {"description", json::Value::ofString(tool.description)},
+                {"input_schema", tool.inputSchema},
                 {"name", json::Value::ofString(tool.name)},
                 {"tool_version", json::Value::ofString(tool.descriptor.toolVersion)},
             });
@@ -89,23 +52,6 @@ namespace uf::operator_runtime
         // template over the two owners rather than one function each because
         // the two are the same reading of two authorities that share no base
         // and need none; the instantiation set is these two and is closed here.
-        template <typename Catalog>
-        [[nodiscard]]
-        auto catalogEntries(Catalog const& catalog)
-            -> Result<std::vector<ToolCatalogEntry>>
-        {
-            auto entries = std::vector<ToolCatalogEntry>{};
-            for (auto const& name : catalog.toolNames())
-            {
-                UF_TRY_VALUE(descriptor, catalog.describe(name));
-                entries.emplace_back(ToolCatalogEntry{
-                    .name       = name,
-                    .descriptor = std::move(descriptor),
-                });
-            }
-            return entries;
-        }
-
         [[nodiscard]]
         auto scriptModules(std::vector<ProjectModuleBlob> blobs)
             -> std::vector<script::PureDataProgram::Module>
@@ -130,8 +76,8 @@ namespace uf::operator_runtime
     ) -> Result<script::PureDataProgram::Resource>
     {
 
-        UF_TRY_VALUE(entries, catalogEntries(frameworkCatalog));
-        UF_TRY_VALUE(projectEntries, catalogEntries(projectCatalog));
+        auto entries        = frameworkCatalog.entries();
+        auto projectEntries = projectCatalog.entries();
         for (auto& entry : projectEntries)
         {
             entries.emplace_back(std::move(entry));

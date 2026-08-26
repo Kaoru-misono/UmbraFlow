@@ -1,12 +1,12 @@
 --!strict
--- Unique TOML parser and immutable RuntimeModel v3 field contract.
+-- Unique TOML parser and immutable RuntimeModel v4 field contract.
 
 local function rejects(action: () -> any, message: string?)
     assert(not pcall(action), message)
 end
 
 local valid = [==[
-schema_version = 3
+schema_version = 4
 base_resolution = [1920, 1080]
 base_dpi = [96, 96]
 
@@ -29,20 +29,6 @@ id = "save.template"
 kind = "template"
 asset_path = "assets/templates/save.png"
 threshold = 0.92
-
-[[reader]]
-id = "header.text"
-kind = "text"
-confidence_floor = 0.80
-layout = "single_line"
-normalization = "trim"
-
-[[reader]]
-id = "options.text"
-kind = "text"
-confidence_floor = 0.80
-layout = "block"
-normalization = "trim"
 
 [[binding]]
 id = "settings.header"
@@ -87,13 +73,21 @@ surface = "settings"
 placement = {
   kind = "detected",
   search_rect = [120, 300, 1680, 300],
-  reader = "options.text",
+  confidence_floor = 0.80,
   order = "left_to_right",
   slots = { origin = 631, pitch = 316, extent = 1080, tolerance = 2, maximum_slots = 8 },
 }
 actions = [{ id = "pick", kind = "click", proof_locator = "save.template", offset = [12, 18] }]
-reads = [{ reader = "header.text", offset = [0, -40], size = [320, 40] }]
-predicate = { kind = "text_equals", reader = "header.text", value = "Enabled" }
+reads = [{ id = "label", offset = [0, -40], size = [320, 40], layout = "single_line", confidence_floor = 0.80, normalization = "trim" }]
+predicate = { kind = "text_equals", read = "label", value = "Enabled" }
+
+[[readout]]
+id = "settings.title"
+surface = "settings"
+rect = [40, 30, 600, 80]
+layout = "single_line"
+confidence_floor = 0.80
+normalization = "trim"
 
 [[stitched_map]]
 id = "route"
@@ -103,7 +97,6 @@ minimum_ratio = 0.75
 
 [[surface]]
 id = "settings"
-kind = "scene"
 covers = []
 identity = ["settings.header"]
 
@@ -120,7 +113,7 @@ assert(type(model.canonical_bytes(runtime)) == "string")
 assert(#model.canonical_bytes(runtime) > 0)
 local reformatted = project.parse("# canonical formatting must not matter\n" .. valid .. "\n")
 assert(model.canonical_bytes(reformatted) == model.canonical_bytes(runtime))
-assert(runtime.schema_version == 3)
+assert(runtime.schema_version == 4)
 assert(runtime.ui_target_by_id.save_button.kind == "control")
 assert(runtime.ui_target_by_id.save_button.placement == nil)
 assert(runtime.ui_target_by_id.save_button.variant == nil)
@@ -143,11 +136,13 @@ assert(runtime.collection_by_id.options.placement.slots.tolerance == 2)
 assert(runtime.collection_by_id.options.actions[1].id == "pick")
 assert(runtime.collection_by_id.options.actions[1].offset[1] == 12)
 assert(#runtime.collection_by_id.options.reads == 1)
+assert(runtime.collection_by_id.options.reads[1].id == "label")
 assert(runtime.collection_by_id.options.reads[1].offset[1] == 0)
 assert(runtime.collection_by_id.options.reads[1].offset[2] == -40)
 assert(runtime.collection_by_id.options.reads[1].size[1] == 320)
 assert(runtime.collection_by_id.options.reads[1].size[2] == 40)
 assert(runtime.collection_by_id.options.predicate.value == "Enabled")
+assert(runtime.collection_by_id.options.predicate.read == "label")
 
 -- T-009: text is evidence about a Surface, never its identity. The only legal
 -- home of a text predicate is a Collection's filter, exercised above; a
@@ -157,7 +152,7 @@ rejects(function()
     project.parse(string.gsub(
         valid,
         '{ kind = "locator_present", locator = "header.template" }',
-        '{ kind = "locator_present", locator = "header.template" }, { kind = "text_equals", reader = "header.text", value = "Settings" }'
+        '{ kind = "locator_present", locator = "header.template" }, { kind = "text_equals", read = "label", value = "Settings" }'
     ))
 end, "T-009 a Binding detector must not name text_equals")
 assert(runtime.stitched_map_by_id.route.collection == "options")
@@ -184,7 +179,8 @@ rejects(function() runtime.ui_targets[1].kind = "control" end)
 -- No second document builder or caller identity attachment is accepted.
 assert(project.build == nil)
 rejects(function() project.parse(valid .. "\n[[forged_section]]\nid = \"forged\"\n") end)
-rejects(function() project.parse(string.gsub(valid, "schema_version = 3", "schema_version = 1")) end)
+rejects(function() project.parse(string.gsub(valid, "schema_version = 4", "schema_version = 1")) end)
+rejects(function() project.parse(string.gsub(valid, "schema_version = 4", "schema_version = 3")) end)
 
 -- Hash and placement have one authority each: Artifact owns hashes, Binding
 -- owns all placement. Unsupported spellings fail instead of falling back.
@@ -215,27 +211,6 @@ rejects(function()
     project.parse(string.gsub(valid, 'name = "enabled"', 'name = "enabled"\n  variant = "other"'))
 end)
 
--- A Reader states its layout and inherits nothing. There is no default because
--- a single_line read of a rectangle holding several lines comes back as one run
--- of nonsense rather than failing, so a model that says nothing would be given
--- the answer that cannot report its own mistake.
-assert(project.parse(valid).reader_by_id["header.text"].layout == "single_line")
-rejects(function()
-    project.parse(string.gsub(valid, 'layout = "single_line"\n', ""))
-end)
-rejects(function()
-    project.parse(string.gsub(valid, 'layout = "single_line"', 'layout = "paragraph"'))
-end)
-assert(
-    project.parse(string.gsub(valid, 'layout = "single_line"', 'layout = "block"'))
-        .reader_by_id["header.text"].layout == "block"
-)
-
--- Six action kinds, and the placement rule follows the kinds present rather
--- than the count. A keystroke and a wheel scroll name no coordinate, so a
--- Binding granting only those carries no action_point and one that carries
--- anyway is refused; a click, drag, hold or move requires one.
---
 -- Plain substring replacement rather than gsub: every model fragment below
 -- contains a rectangle, and `[` opens a character class in a Lua pattern.
 local function replace(text: string, from: string, to: string): string
@@ -245,6 +220,90 @@ local function replace(text: string, from: string, to: string): string
     return string.sub(text, 1, start - 1) .. to .. string.sub(text, start + #from)
 end
 
+-- R1: there is no Reader record. Every statement about how a rectangle is read
+-- belongs to whoever drew that rectangle, so the section that used to hold
+-- those statements is not a section this vocabulary has, and no reading site
+-- may point at one.
+assert(runtime.reader_by_id == nil, "R1 a compiled model publishes no Reader index")
+assert(runtime.readers == nil, "R1 a compiled model has no Reader vocabulary")
+rejects(function()
+    project.parse(
+        valid
+            .. '\n[[reader]]\nid = "orphan"\nkind = "text"\nconfidence_floor = 0.5\n'
+            .. 'layout = "block"\nnormalization = "trim"\n'
+    )
+end, "R1 [[reader]] is not a section this vocabulary has")
+rejects(function()
+    project.parse(replace(
+        valid,
+        '  confidence_floor = 0.80,\n  order = "left_to_right",',
+        '  reader = "options.text",\n  order = "left_to_right",'
+    ))
+end, "R1 a Collection's detection names no Reader")
+rejects(function()
+    project.parse(replace(valid, '{ id = "label", offset', '{ reader = "label", offset'))
+end, "R1 a Collection's read is named by its own id")
+
+-- R2: a Readout is a fixed rectangle on one Surface, read on its own terms. It
+-- names no UiTarget and carries no detector; its Surface is its whole gate.
+assert(runtime.readout_by_id["settings.title"].surface == "settings")
+assert(runtime.readout_by_id["settings.title"].rect[3] == 600)
+assert(runtime.readout_by_id["settings.title"].layout == "single_line")
+assert(runtime.readout_by_id["settings.title"].confidence_floor == 0.80)
+assert(runtime.readout_by_id["settings.title"].normalization == "trim")
+assert(runtime.readouts_by_surface.settings[1].id == "settings.title")
+rejects(function()
+    project.parse(replace(valid, 'id = "settings.title"\nsurface = "settings"', 'id = "settings.title"\nsurface = "absent"'))
+end, "R2 a Readout must name a declared Surface")
+rejects(function()
+    project.parse(replace(valid, 'rect = [40, 30, 600, 80]\nlayout', 'rect = [40, 30, 600, 1080]\nlayout'))
+end, "R2 a Readout rectangle must stay inside base_resolution")
+rejects(function()
+    project.parse(replace(valid, 'surface = "settings"\nrect = [40, 30, 600, 80]\n', 'surface = "settings"\n'))
+end, "R2 a Readout must declare the rectangle it reads")
+rejects(function()
+    project.parse(replace(
+        valid,
+        'rect = [40, 30, 600, 80]\nlayout = "single_line"\n',
+        'rect = [40, 30, 600, 80]\nui_target = "header"\nlayout = "single_line"\n'
+    ))
+end, "R2 a Readout attaches to no UiTarget")
+
+-- R2's other half: a Binding measures and does not report text. The member that
+-- made it report was `reads`, and it is gone rather than tolerated.
+rejects(function()
+    project.parse(replace(
+        valid,
+        'actions = [{ id = "activate", kind = "click", proof_locator = "save.template" }]',
+        'actions = [{ id = "activate", kind = "click", proof_locator = "save.template" }]\nreads = ["settings.title"]'
+    ))
+end, "R2 a Binding declares no reads")
+
+-- Every read states its own layout and inherits nothing. There is no default
+-- because a single_line read of a rectangle holding several lines comes back as
+-- one run of nonsense rather than failing, so a model that says nothing would
+-- be given the answer that cannot report its own mistake.
+rejects(function()
+    project.parse(replace(valid, 'layout = "single_line"\nconfidence_floor = 0.80\n', 'confidence_floor = 0.80\n'))
+end, "a Readout states its layout")
+rejects(function()
+    project.parse(replace(valid, 'layout = "single_line"\nconfidence_floor = 0.80\nnormalization', 'layout = "paragraph"\nconfidence_floor = 0.80\nnormalization'))
+end, "a Readout layout comes from a closed vocabulary")
+assert(
+    project.parse(replace(
+        valid,
+        'layout = "single_line"\nconfidence_floor = 0.80\nnormalization',
+        'layout = "block"\nconfidence_floor = 0.80\nnormalization'
+    )).readout_by_id["settings.title"].layout == "block"
+)
+rejects(function()
+    project.parse(replace(valid, ', layout = "single_line", confidence_floor = 0.80, normalization = "trim" }', ' }'))
+end, "a Collection read states how its rectangle is read")
+
+-- Six action kinds, and the placement rule follows the kinds present rather
+-- than the count. A keystroke and a wheel scroll name no coordinate, so a
+-- Binding granting only those carries no action_point and one that carries
+-- anyway is refused; a click, drag, hold or move requires one.
 local clickAction = '{ id = "activate", kind = "click", proof_locator = "save.template" }'
 local keyAction = '{ id = "activate", kind = "key", key = "ENTER", proof_locator = "save.template" }'
 local dragAction = '{ id = "pan", kind = "drag", offset = [-400, 0], duration_ms = 600, proof_locator = "save.template" }'
@@ -253,18 +312,11 @@ local moveAction = '{ id = "hover", kind = "move", proof_locator = "save.templat
 local scrollAction = '{ id = "wheel", kind = "scroll", notches = -3, proof_locator = "save.template" }'
 local actionPointLine = '  action_point = [1710, 965],\n'
 
--- A collection's Reader is its item detector, so the declaration accepts only
--- block layout and cannot fall back to geometry or to a fixed placement.
+-- A Collection's detection reads a region it must find the lines inside, so its
+-- floor is the one thing it states about that read and cannot be left out.
 rejects(function()
-    project.parse(replace(
-        valid,
-        'id = "options.text"\nkind = "text"\nconfidence_floor = 0.80\nlayout = "block"',
-        'id = "options.text"\nkind = "text"\nconfidence_floor = 0.80\nlayout = "single_line"'
-    ))
-end, "T-002 collection detector must require block layout")
-rejects(function()
-    project.parse(replace(valid, '  reader = "options.text",\n', ""))
-end, "T-002 collection detector must require a Reader")
+    project.parse(replace(valid, '  confidence_floor = 0.80,\n  order = "left_to_right",', '  order = "left_to_right",'))
+end, "T-002 a Collection's detection must declare its confidence floor")
 rejects(function()
     project.parse(replace(valid, '  slots = { origin = 631, pitch = 316, extent = 1080, tolerance = 2, maximum_slots = 8 },\n', ""))
 end, "T-002 collection placement must require a slot layout")
@@ -304,6 +356,12 @@ end, "a transition trigger naming both a Binding and Collection must be refused"
 rejects(function()
     project.parse(replace(valid, 'offset = [12, 18]', ''))
 end, "a Collection click must name one item-origin offset")
+
+-- A Collection predicate points at a sibling read and at nothing else. There is
+-- no vocabulary outside the Collection for it to reach into.
+rejects(function()
+    project.parse(replace(valid, 'read = "label", value = "Enabled"', 'read = "absent", value = "Enabled"'))
+end, "a Collection predicate must name a read declared in collection.reads")
 
 local keyed = project.parse(
     replace(replace(valid, clickAction, keyAction), actionPointLine, "")
@@ -388,6 +446,73 @@ rejects(function()
     ))
 end)
 
+-- R3: a Surface states what it covers and nothing beside it. Covering nothing
+-- is the bottom of a stack, and there is no second member saying so.
+assert(runtime.surface_by_id.settings.kind == nil, "R3 a Surface has no kind")
+assert(#runtime.surface_by_id.settings.covers == 0)
+rejects(function()
+    project.parse(replace(valid, 'id = "settings"\ncovers = []', 'id = "settings"\nkind = "scene"\ncovers = []'))
+end, "R3 `kind` is not a member a Surface has")
+-- The cover graph is where a stack's shape is decided, and a cycle in it has no
+-- bottom to resolve from.
+rejects(function()
+    project.parse(replace(
+        valid,
+        'id = "settings"\ncovers = []\nidentity = ["settings.header"]',
+        'id = "settings"\ncovers = ["popup"]\nidentity = ["settings.header"]\n\n'
+            .. '[[surface]]\nid = "popup"\ncovers = ["settings"]\nidentity = ["settings.header"]'
+    ))
+end, "R3 a cover cycle has no bottom and is refused")
+
+-- R4: an absent list IS the empty list. Each member below says nothing when it
+-- is written empty, so writing it is a second spelling of leaving it out.
+local terseSource = replace(
+    valid,
+    '[[transition]]\nid = "settings.saved"\nfrom_surfaces = ["settings"]\n'
+        .. 'trigger = { collection = "options", action = "pick" }\nto_surfaces = ["settings"]\n',
+    ''
+)
+terseSource = replace(
+    terseSource,
+    'actions = []\n\n[[binding]]\nid = "settings.save"',
+    '\n[[binding]]\nid = "settings.save"'
+)
+terseSource = replace(
+    terseSource,
+    'actions = [{ id = "pick", kind = "click", proof_locator = "save.template", offset = [12, 18] }]\n'
+        .. 'reads = [{ id = "label", offset = [0, -40], size = [320, 40], layout = "single_line", confidence_floor = 0.80, normalization = "trim" }]\n'
+        .. 'predicate = { kind = "text_equals", read = "label", value = "Enabled" }\n',
+    ''
+)
+terseSource = replace(terseSource, 'covers = []\n', '')
+terseSource = replace(terseSource, '    any = [],\n    none = [],\n', '')
+local terseParse = { pcall(project.parse, terseSource) }
+assert(
+    terseParse[1],
+    "R4 a row that says nothing by leaving a list out must parse: "
+        .. tostring(terseParse[2])
+)
+local terse = terseParse[2]
+assert(#terse.binding_by_id["settings.header"].actions == 0, "R4 an absent actions list is empty")
+assert(#terse.collection_by_id.options.actions == 0)
+assert(#terse.collection_by_id.options.reads == 0)
+assert(terse.collection_by_id.options.predicate == nil)
+assert(#terse.surface_by_id.settings.covers == 0, "R4 an absent covers list is empty")
+assert(#terse.binding_by_id["settings.header"].variants[1].detector.any == 0)
+assert(#terse.binding_by_id["settings.header"].variants[1].detector.none == 0)
+-- The empty list is still the empty list, and still refused where something was
+-- required: absent means empty, never absent means unconstrained.
+rejects(function()
+    project.parse(replace(valid, 'identity = ["settings.header"]', ''))
+end, "R4 a Surface identity that says nothing is refused for being empty")
+rejects(function()
+    project.parse(replace(
+        valid,
+        '    all = [{ kind = "locator_present", locator = "header.template" }],\n',
+        ''
+    ))
+end, "R4 a detector with no positive evidence is refused for being empty")
+
 -- The genesis model: the document that declares nothing.
 --
 -- It compiles, and what it compiles to can do nothing -- no ui target, no
@@ -396,33 +521,18 @@ end)
 -- declaring nothing declares nothing, while making the state every project
 -- starts from unrepresentable.
 local genesis = project.parse([==[
-schema_version = 3
+schema_version = 4
 base_resolution = [1, 1]
 base_dpi = [96, 96]
 ]==])
 assert(#genesis.ui_targets == 0)
 assert(#genesis.bindings == 0)
+assert(#genesis.readouts == 0)
 assert(#genesis.surfaces == 0)
 assert(#genesis.declared_surface_ids == 0)
 assert(#genesis.declared_ui_target_ids == 0)
 assert(#genesis.declared_action_ids == 0)
 assert(genesis.base_resolution[1] == 1)
 assert(genesis.base_dpi[1] == 96)
-
--- A model that DOES declare Surfaces still needs a scene, because a stack of
--- overlays over no scene resolves to nothing. The genesis model has no stack.
-rejects(function()
-    project.parse([==[
-schema_version = 3
-base_resolution = [1, 1]
-base_dpi = [96, 96]
-
-[[surface]]
-id = "overlay.only"
-kind = "overlay"
-covers = []
-identity = []
-]==])
-end, "a model declaring Surfaces still needs at least one scene")
 
 return 1

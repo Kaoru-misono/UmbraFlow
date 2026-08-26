@@ -224,9 +224,8 @@ namespace uf::operator_runtime
     // Operator-selected admission material have no input in this factory, so
     // none can change or be smuggled into the call identity.
     //
-    // Only ToolCallIssuingContext can mint one. That is what makes R4's
-    // "scripts never see or influence the child index" structural: there is no
-    // factory a caller can hand an ordinal to.
+    // Only ToolCallIssuingContext can mint one. A caller cannot select a replay
+    // coordinate because there is no factory it can hand an ordinal to.
     class ToolCallPositionIdentity final
     {
         friend class ToolCallIssuingContext;
@@ -311,21 +310,12 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto descriptor() const noexcept UF_LIFETIME_BOUND
             -> ToolDescriptor const&;
-
-        [[nodiscard]] auto asParent() const -> ToolCallParent;
     };
 
-    // The one place a call coordinate comes from. Per R4 the call sequence is a
-    // monotone child index per issuing context -- the root script's context,
-    // and one per live handler invocation -- assigned and incremented
-    // exclusively by this seam. A caller cannot see, pass, or influence it:
+    // The one place a root call coordinate comes from. The call sequence is a
+    // monotone index assigned and incremented exclusively by this seam. A caller cannot see, pass, or influence it:
     // issue() takes the invocation and nothing that could name a position, and
     // ToolCallPositionIdentity has no other factory.
-    //
-    // Per-parent rather than run-global numbering is what keeps each context's
-    // numbering a function of its own behaviour: a replayed parent's handler
-    // never runs, so a replayed child costs its parent exactly one increment
-    // regardless of how large its subtree was.
     //
     // This is a value and stores no borrow. It is the run context's member in
     // production, which is what gives the scoped invoke primitive a counter
@@ -335,7 +325,7 @@ namespace uf::operator_runtime
         ContentHash           m_rootIdentity;
         ToolCallParent        m_parent;
         ToolExecutionIdentity m_executionIdentity;
-        uint32                m_issuedChildren{};
+        uint32                m_issuedCalls{};
 
         ToolCallIssuingContext(
             ContentHash rootIdentity,
@@ -360,25 +350,6 @@ namespace uf::operator_runtime
             ToolExecutionIdentity executionIdentity
         ) -> ToolCallIssuingContext;
 
-        // The context one live handler invocation issues its children from,
-        // anchored on the position of the call that handler implements.
-        //
-        // It takes a durable parent coordinate and nothing else -- not an
-        // ordinal, and not the enclosing context either. A restarted dispatcher
-        // has no enclosing context to hold: the process that held it is the one
-        // that died, and the call it is re-entering is a row it just read. So
-        // the parent is the authority, and the ledger is what refuses a call
-        // arriving under a parent that is not dispatching.
-        //
-        // The execution identity comes from the handler call rather than from a
-        // parameter, because a handler's children run under the exact pinned
-        // environment the handler itself was admitted under; a caller able to
-        // state a different one could move what a child call's identity attests
-        // to without moving the parent's.
-        [[nodiscard]]
-        static auto forHandler(ToolCallPositionIdentity const& handlerCall)
-            -> ToolCallIssuingContext;
-
         [[nodiscard]]
         auto issue(ValidatedToolInvocation const& invocation)
             -> Result<ToolCallPositionIdentity>;
@@ -397,10 +368,6 @@ namespace uf::operator_runtime
         auto parent() const noexcept UF_LIFETIME_BOUND
             -> ToolCallParent const&;
 
-        // How many children this context has issued. It is what seals the
-        // context at teardown: a restarted script that terminates leaving
-        // recorded calls beyond this count unconsumed is divergence.
-        [[nodiscard]] auto issuedChildren() const noexcept -> uint32;
     };
 
     // Both p03 predicates are shared by the offer and accept sides. Neither side
@@ -421,6 +388,8 @@ namespace uf::operator_runtime
     struct ToolCatalogEntry final
     {
         std::string    name{};
+        std::string    description{};
+        json::Value    inputSchema{};
         ToolDescriptor descriptor{};
     };
 
@@ -488,6 +457,8 @@ namespace uf::operator_runtime
         // because "a declared Tool with no binding" is a statement about the
         // set and cannot be answered one name at a time.
         [[nodiscard]] auto toolNames() const -> std::vector<std::string>;
+
+        [[nodiscard]] auto entries() const -> std::vector<ToolCatalogEntry>;
 
         // Takes the two things an ordinary caller is allowed to name -- which
         // tool, and the exact canonical arguments -- and nothing else. It
@@ -610,6 +581,8 @@ namespace uf::operator_runtime
         // assembled one describe() at a time by a caller that does not already
         // know the names.
         [[nodiscard]] auto toolNames() const -> std::vector<std::string>;
+
+        [[nodiscard]] auto entries() const -> std::vector<ToolCatalogEntry>;
 
         [[nodiscard]]
         auto validate(

@@ -1,5 +1,5 @@
 --!strict
--- Ergonomic wrappers over the Framework observation Tool, plus the lifetime and
+-- Ergonomic wrappers over the Framework screen Tools, plus the lifetime and
 -- result helpers a snapshot handle needs.
 --
 -- Every call here goes through `@umbraflow/tools`, which is the SDK's one
@@ -8,11 +8,11 @@
 -- the native primitive would be a second place where argument shaping, catalog
 -- checking and answer validation could drift.
 --
--- Two ergonomics here earn their place and neither is cosmetic. First, the
--- observation Tool takes exactly the empty JSON OBJECT, and a Luau `{}` decodes
--- as an empty ARRAY at the value boundary -- so every script that spelled the
--- arguments itself would spell them wrong. `canon.emptyObject` is the one value
--- that crosses as `{}`, and it is written here once. Second, the observation
+-- Two ergonomics here earn their place and neither is cosmetic. First, capture
+-- takes exactly the empty JSON OBJECT, and a Luau `{}` decodes as an empty ARRAY
+-- at the value boundary -- so every script that spelled the arguments itself
+-- would spell them wrong. `canon.emptyObject` is the one value that crosses as
+-- `{}`, and it is written here once. Second, the observation
 -- reference is single-use authority: `use` is the only route from a handle to
 -- the reference an input Tool consumes, and it refuses a second use in this run
 -- BEFORE a Tool-call budget is spent on a reference the Operator would refuse
@@ -30,10 +30,11 @@ local resultModule = require("@umbraflow/result")
 
 local screen = {}
 
+local k_captureTool = "framework.screen.capture"
 local k_observeTool = "framework.screen.observe"
+local k_cropTool = "framework.screen.crop"
 local k_referenceMember = "observation_reference"
-local k_targetsMember = "local_semantic_targets"
-local k_actionsMember = "authorized_ui_actions"
+local k_uiActionsMember = "ui_actions"
 
 -- The empty JSON object, which a Luau table literal cannot spell.
 local emptyObject = canon.emptyObject
@@ -47,13 +48,6 @@ local function reject(message: string): never
     error("screen " .. message, 3)
 end
 
-local function fromTool(answer: any, expected: string, where: string): any
-    if tools.tool_name(answer) ~= expected then
-        reject(where .. " needs the answer of " .. expected)
-    end
-    return answer
-end
-
 local function checkedHandle(handle: any): any
     if type(handle) ~= "table" then
         reject("handle must be the object an observation answered with")
@@ -65,30 +59,67 @@ local function checkedHandle(handle: any): any
     return reference
 end
 
-local function stringList(reference: any, member: string): any
-    local values = rawget(reference, member)
+local function uiActionList(reference: any): any
+    local values = rawget(reference, k_uiActionsMember)
     if type(values) ~= "table" then
-        reject("observation reference must carry a " .. member .. " list")
+        reject("observation reference must carry a ui_actions list")
     end
     local count = rawlen(values :: any)
-    local copied: { string } = {}
+    local copied: { any } = {}
     for index = 1, count do
         local value = rawget(values :: any, index)
-        if type(value) ~= "string" then
-            reject(member .. " must hold only strings")
+        if type(value) ~= "table" then
+            reject("ui_actions must hold only action objects")
         end
-        copied[index] = value :: string
+        local uiTarget = rawget(value, "ui_target")
+        local binding = rawget(value, "binding")
+        local action = rawget(value, "action")
+        local kind = rawget(value, "kind")
+        if type(uiTarget) ~= "string" or type(binding) ~= "string"
+            or type(action) ~= "string" or type(kind) ~= "string"
+        then
+            reject("each ui_actions entry must name ui_target, binding, action and kind")
+        end
+        copied[index] = table.freeze({
+            ui_target = uiTarget,
+            binding = binding,
+            action = action,
+            kind = kind,
+        })
     end
     return table.freeze(copied)
 end
 
--- Read one frame. Read-only: it persists a durable observation reference but
--- performs no external-world effect, so it needs no plan authority.
-function screen.observe(body: any?): any
-    if body ~= nil and type(body) ~= "function" then
-        reject("observe body must be a function when present")
-    end
-    return tools.call(k_observeTool, emptyObject, body)
+-- Capture one frame as durable evidence. The returned receipt names its bytes;
+-- observation and measurement take that name explicitly.
+function screen.capture(): any
+    return tools.call(k_captureTool, emptyObject)
+end
+
+-- Resolve one already-captured screenshot into an observation handle. This
+-- performs no capture; the Tool reconstructs only the retained frame named by
+-- the required hash and closes that cycle before it answers.
+function screen.observe(screenshotSha256: string): any
+    return tools.call(k_observeTool, {
+        screenshot_sha256 = screenshotSha256,
+    })
+end
+
+-- Derive a new screenshot artifact without writing to the Project.
+function screen.crop(
+    screenshotSha256: string,
+    x: number,
+    y: number,
+    width: number,
+    height: number
+): any
+    return tools.call(k_cropTool, {
+        screenshot_sha256 = screenshotSha256,
+        x = x,
+        y = y,
+        width = width,
+        height = height,
+    })
 end
 
 -- The handle a completed observation carries, as a `@umbraflow/result`
@@ -96,13 +127,16 @@ end
 -- delivery classification is the error code, so a caller that ignores the
 -- envelope cannot mistake an unconfirmed observation for a frame it saw.
 function screen.observation(answer: any): any
-    local observed = fromTool(answer, k_observeTool, "observation")
-    local state = tools.state(observed)
-    if state ~= "confirmed" then
+    if type(answer) ~= "table" then
+        reject("observation needs a Tool answer")
+    end
+    local ok = rawget(answer, "ok")
+    local delivery = rawget(answer, "delivery")
+    if ok ~= true then
         -- THE RECORDED REASON REACHES THE READER, VERBATIM. An outcome that did
         -- not confirm carries the framework's own account of why -- the
-        -- provider's message, its kind and its failure response -- and the
-        -- Operator persists it, replays it, and hands it back on this very
+        -- provider's exact error -- and the Operator persists it, replays it,
+        -- and hands it back on this very
         -- answer. Answering with a constant sentence here threw all of that
         -- away one step before the only reader who has no other way to see it:
         -- a chunk author is not an operator with the ledger open.
@@ -113,23 +147,26 @@ function screen.observation(answer: any): any
         -- this function replaced it with "the observation did not confirm".
         -- Three probes were then read as "the screen has no text on it".
         --
-        -- The code keeps classifying by state, because a caller matching on a
-        -- category should not have to parse prose.
-        local recorded = resultModule.unwrap_or(tools.result(observed), nil)
-        local reason = nil
-        if type(recorded) == "table" then
-            local message = rawget(recorded, "message")
-            if type(message) == "string" and message ~= "" then
-                reason = message
-            end
+        -- The code keeps classifying by delivery, because a caller matching on
+        -- a category should not have to parse prose.
+        local recorded = rawget(answer, "error")
+        if type(delivery) ~= "string" or type(recorded) ~= "table" then
+            reject("an unconfirmed observation must carry delivery and error")
+        end
+        local reason = rawget(recorded, "message")
+        if type(reason) ~= "string" or reason == "" then
+            reject("an unconfirmed observation error must carry its message")
         end
         return resultModule.err(
-            "umbraflow.screen." .. state,
-            reason or "the observation did not confirm, and recorded no reason",
+            "umbraflow.screen." .. delivery,
+            reason,
             recorded
         )
     end
-    local payload = resultModule.unwrap_or(tools.result(observed), nil)
+    if delivery ~= "confirmed" then
+        reject("a successful observation must be confirmed")
+    end
+    local payload = rawget(answer, "result")
     if type(payload) ~= "table" then
         reject("a confirmed observation must carry an object result")
     end
@@ -154,15 +191,9 @@ function screen.used(handle: any): boolean
     return usedHandles[handle] == true
 end
 
--- The snapshot-local semantic targets Project interpretation may name against
--- this observation.
-function screen.targets(handle: any): any
-    return stringList(checkedHandle(handle), k_targetsMember)
-end
-
--- The UI actions this observation's evidence supports.
-function screen.actions(handle: any): any
-    return stringList(checkedHandle(handle), k_actionsMember)
+-- The exact target/binding/action tuples this observation resolved.
+function screen.ui_actions(handle: any): any
+    return uiActionList(checkedHandle(handle))
 end
 
 return table.freeze(screen)

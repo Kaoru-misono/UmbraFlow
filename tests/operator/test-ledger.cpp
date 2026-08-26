@@ -51,7 +51,16 @@ namespace uf::operator_runtime
         // moves whenever the stored DDL does, and sixteen hand-copies were
         // sixteen places to forget.
         constexpr auto k_targetSchemaIdentity = std::string_view{
-            "sha256:045925eefabef97b964f6a21db0da81cdc6a2c293c21e7f495011fe3d1b9277f"
+            "sha256:181f202e9d7516dff603a006dfabf4fef372a0413710e2bb23ad9cb75dc1bc12"
+        };
+
+        // The identity the generation immediately before genesis_transitions
+        // created, and the source of its pair. A root written by that
+        // generation is what every Operator root on disk today is, and it also
+        // pins the genesis RuntimeArtifact of the format era that generation
+        // belonged to.
+        constexpr auto k_genesisTransitionsSourceIdentity = std::string_view{
+            "sha256:f6a8064ca9b4d6fb0cfdce68e3d99f8e3cfd9e507183366f0d313458146afe77"
         };
 
         // The identity the generation immediately before the genesis
@@ -636,10 +645,26 @@ namespace uf::operator_runtime
         // It must run FIRST in every wind-back: admitTheGenesisGeneration is
         // the last step of every registered migration, so undoing it is the
         // first thing a fixture that reproduces the source generation does.
+        auto restoreLegacyNestedToolCallSchema(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void;
+
+        // The newest generation's wind-back: the audit table a genesis
+        // materialisation that moved is recorded in. Every wind-back chain in
+        // this file begins at restoreLegacyNestedToolCallSchema, and that is
+        // where this runs, because a chain winds back newest-first.
+        auto removeGenesisTransitions(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void
+        {
+            database.execute("DROP TABLE genesis_transitions");
+        }
+
         auto restoreGenesisGenerationSchema(
             test_support::OperatorDatabaseProbe& database
         ) -> void
         {
+            restoreLegacyNestedToolCallSchema(database);
             auto const priorInstallations = positiveGenerationCheck(
                 storedCreate(database, "runtime_installations")
             );
@@ -1078,6 +1103,72 @@ namespace uf::operator_runtime
         constexpr auto k_delegationGrantColumn = std::string_view{
             "delegation_grant_id TEXT REFERENCES tool_delegation_grants(grant_id),"
         };
+
+        constexpr auto k_legacyToolDelegationGrantsDdl = std::string_view{
+            "CREATE TABLE tool_delegation_grants("
+            "grant_id TEXT PRIMARY KEY CHECK(length(grant_id)=64 AND "
+            "grant_id NOT GLOB '*[^0-9a-f]*'),"
+            "root_identity TEXT NOT NULL REFERENCES tool_runs(root_identity),"
+            "parent_call_identity TEXT NOT NULL REFERENCES "
+            "tool_call_history(call_identity),"
+            "parent_attempt_number INTEGER NOT NULL "
+            "CHECK(parent_attempt_number > 0),"
+            "parent_tool_name TEXT NOT NULL CHECK("
+            "length(CAST(parent_tool_name AS BLOB)) BETWEEN 1 AND 256),"
+            "execution_principal_id TEXT NOT NULL,"
+            "execution_principal_kind TEXT NOT NULL CHECK(execution_principal_kind "
+            "IN ('script','agent','human')),"
+            "child_tool_names TEXT NOT NULL,"
+            "maximum_child_surface TEXT NOT NULL CHECK(maximum_child_surface IN "
+            "('semantic','privileged')),"
+            "maximum_child_mutability TEXT NOT NULL CHECK(maximum_child_mutability "
+            "IN ('read_only','mutating')),"
+            "maximum_child_risk TEXT NOT NULL CHECK(maximum_child_risk IN "
+            "('read_only','low','medium','high','critical')),"
+            "maximum_child_calls INTEGER NOT NULL CHECK(maximum_child_calls > 0),"
+            "UNIQUE(parent_call_identity, parent_attempt_number)"
+            ") STRICT"
+        };
+
+        // Every registered source generation after the nesting cut carried
+        // this column and table. A migration fixture starts from today's leaf
+        // schema, so it restores those exact stored DDL bytes before winding
+        // back later changes. The one pre-nesting fixture removes them again.
+        auto restoreLegacyNestedToolCallSchema(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void
+        {
+            removeGenesisTransitions(database);
+            auto attempts = storedCreate(database, "tool_admission_attempts");
+            if (attempts.find("delegation_grant_id") != std::string::npos)
+            {
+                return;
+            }
+            auto const at = attempts.find("CHECK((effect_envelope");
+            REQUIRE(at != std::string::npos);
+            attempts.insert(at, k_delegationGrantColumn);
+            constexpr auto columns = std::string_view{
+                "call_identity, attempt_number, root_identity, "
+                "origin_principal_id, origin_principal_kind, "
+                "execution_principal_id, execution_principal_kind, session_id, "
+                "session_epoch, controlled_target_id, project_registration_hash, "
+                "policy_hash, capability_profile_hash, lease_id, lease_revision, "
+                "fencing_token, budget_snapshot, budget_snapshot_hash, "
+                "effect_envelope, effect_envelope_hash, required_approvals, "
+                "approval_tokens, approval_expires_at_unix_millis"
+            };
+            database.execute(
+                "PRAGMA foreign_keys=OFF;"
+                + std::string{k_legacyToolDelegationGrantsDdl} + ";"
+                  "ALTER TABLE tool_admission_attempts RENAME TO "
+                  "leaf_tool_admission_attempts;"
+                + attempts + ";INSERT INTO tool_admission_attempts("
+                + std::string{columns} + ", delegation_grant_id) SELECT "
+                + std::string{columns} + ", NULL FROM leaf_tool_admission_attempts;"
+                  "DROP TABLE leaf_tool_admission_attempts;"
+                  "PRAGMA foreign_keys=ON;"
+            );
+        }
 
         constexpr auto k_priorToolCallPositionColumns = std::string_view{
             "call_identity, root_identity, parent_call_identity, call_sequence, "
@@ -3352,7 +3443,7 @@ namespace uf::operator_runtime
         );
     }
 
-    TEST_CASE("Tool root and call identities rejoin exact positions across restart")
+    TEST_CASE("Tool root and root-positioned call identities rejoin across restart")
     {
         auto temporary        = TemporaryDirectory{};
         auto const production = temporary.path() / "production";
@@ -3371,21 +3462,12 @@ namespace uf::operator_runtime
         auto frameworkCatalog = FrameworkToolCatalogOwner::create();
         REQUIRE(frameworkCatalog.has_value());
         auto observeArguments = CanonicalJson::parseExact("{}");
-        auto waitArguments = CanonicalJson::parseExact(
-            R"({"duration_ms":250})"
-        );
         REQUIRE(observeArguments.has_value());
-        REQUIRE(waitArguments.has_value());
         auto observe = frameworkCatalog->validate(
-            "framework.screen.observe",
+            "framework.screen.capture",
             std::move(*observeArguments)
         );
-        auto wait = frameworkCatalog->validate(
-            "framework.workflow.wait",
-            std::move(*waitArguments)
-        );
         REQUIRE(observe.has_value());
-        REQUIRE(wait.has_value());
 
         auto const execution = ToolExecutionIdentity{
             .runIdentity                 = hashOf("run-1"),
@@ -3400,7 +3482,7 @@ namespace uf::operator_runtime
             execution,
             *observe
         );
-        auto parent = toolCallAt(
+        auto second = toolCallAt(
             *root,
             nullptr,
             2U,
@@ -3408,15 +3490,7 @@ namespace uf::operator_runtime
             *observe
         );
         REQUIRE(first.has_value());
-        REQUIRE(parent.has_value());
-        auto child = toolCallAt(
-            *root,
-            &*parent,
-            1U,
-            execution,
-            *wait
-        );
-        REQUIRE(child.has_value());
+        REQUIRE(second.has_value());
 
         {
             auto store = OperatorCoordinator::open(production);
@@ -3456,13 +3530,7 @@ namespace uf::operator_runtime
             REQUIRE(repeatedCall.has_value());
             CHECK(repeatedCall->lookup == ToolIdentityLookup::Existing);
 
-            auto missingParent = store->persistToolCallPosition(*root, *child);
-            REQUIRE_FALSE(missingParent.has_value());
-            CHECK(missingParent.error().message().contains(
-                "parent call to be persisted first"
-            ));
-            REQUIRE(store->persistToolCallPosition(*root, *parent).has_value());
-            REQUIRE(store->persistToolCallPosition(*root, *child).has_value());
+            REQUIRE(store->persistToolCallPosition(*root, *second).has_value());
 
             auto foreignPreimage = CanonicalJson::parseExact("{}");
             REQUIRE(foreignPreimage.has_value());
@@ -3509,20 +3577,20 @@ namespace uf::operator_runtime
                 database.readRows(
                     "SELECT root_identity, coalesce(parent_call_identity, ''), "
                     "call_sequence, canonical_args FROM tool_call_positions "
-                    "WHERE call_identity='" + child->identity().hex() + "'"
+                    "WHERE call_identity='" + second->identity().hex() + "'"
                 )
                 == std::vector<std::vector<std::string>>{
                     {
                         root->identity().hex(),
-                        parent->identity().hex(),
-                        "1",
-                        child->canonicalArgs(),
+                        root->identity().hex(),
+                        "2",
+                        second->canonicalArgs(),
                     },
                 }
             );
             CHECK(
                 database.readRows("SELECT count(*) FROM tool_call_positions")
-                == std::vector<std::vector<std::string>>{{"3"}}
+                == std::vector<std::vector<std::string>>{{"2"}}
             );
         }
 
@@ -3563,7 +3631,7 @@ namespace uf::operator_runtime
         REQUIRE(observeArguments.has_value());
         REQUIRE(waitArguments.has_value());
         auto observe = catalog->validate(
-            "framework.screen.observe",
+            "framework.screen.capture",
             std::move(*observeArguments)
         );
         auto wait = catalog->validate(
@@ -3742,29 +3810,8 @@ namespace uf::operator_runtime
                 .has_value()
         );
 
-        // A miss whose parent the record does NOT have is a call that arrived
-        // under a different parent, and it is reported as one rather than as an
-        // absent position.
-        auto unrecordedParent =
-            toolCallAt(*other, nullptr, 3U, execution, *observe);
-        REQUIRE(unrecordedParent.has_value());
-        auto orphan =
-            toolCallAt(*other, &*unrecordedParent, 1U, execution, *observe);
-        REQUIRE(orphan.has_value());
-        auto const changedParent =
-            prepared.store.replayToolCall(*other, *orphan);
-        REQUIRE_FALSE(changedParent.has_value());
-        CHECK(changedParent.error().message().contains(
-            "arrived under a different parent"
-        ));
-        CHECK(changedParent.error().message().contains(
-            "ordinal 1 under parent coordinate "
-            + unrecordedParent->identity().hex()
-        ));
-
-        // Both runs say so durably, and the first says which divergence stopped
-        // it. The store is released first because one connection holds the
-        // database.
+        // The divergent run says so durably while an ordinal beyond a root
+        // context's frontier leaves the other run running.
         auto const databasePath = prepared.store.databasePath();
         {
             auto released = std::move(prepared.store);
@@ -3779,13 +3826,13 @@ namespace uf::operator_runtime
                 {"terminated", divergenceReason},
             }
         );
-        CHECK(
-            database.readRows(
-                "SELECT state FROM tool_root_requests "
-                "WHERE root_identity='" + other->identity().hex() + "'"
-            )
-            == std::vector<std::vector<std::string>>{{"terminated"}}
+        auto const otherState = database.readRows(
+            "SELECT state FROM tool_root_requests WHERE root_identity='"
+            + other->identity().hex() + "'"
         );
+        REQUIRE(otherState.size() == 1U);
+        REQUIRE(otherState.front().size() == 1U);
+        CHECK(otherState.front().front() == "running");
     }
 
     TEST_CASE("Tool identity replay refuses stored canonical-byte tampering")
@@ -3805,7 +3852,7 @@ namespace uf::operator_runtime
         REQUIRE(frameworkCatalog.has_value());
         REQUIRE(arguments.has_value());
         auto invocation = frameworkCatalog->validate(
-            "framework.screen.observe",
+            "framework.screen.capture",
             std::move(*arguments)
         );
         REQUIRE(invocation.has_value());
@@ -3890,7 +3937,7 @@ namespace uf::operator_runtime
         REQUIRE(catalog.has_value());
         REQUIRE(arguments.has_value());
         auto invocation = catalog->validate(
-            "framework.screen.observe",
+            "framework.screen.capture",
             std::move(*arguments)
         );
         REQUIRE(invocation.has_value());
@@ -4016,7 +4063,7 @@ namespace uf::operator_runtime
         REQUIRE(catalog.has_value());
         REQUIRE(arguments.has_value());
         auto invocation = catalog->validate(
-            "framework.screen.observe",
+            "framework.screen.capture",
             std::move(*arguments)
         );
         REQUIRE(invocation.has_value());
@@ -4040,15 +4087,7 @@ namespace uf::operator_runtime
             call->executionIdentity(),
             *invocation
         );
-        auto childCall = toolCallAt(
-            *root,
-            &*call,
-            1U,
-            call->executionIdentity(),
-            *invocation
-        );
         REQUIRE(nextCall.has_value());
-        REQUIRE(childCall.has_value());
         REQUIRE(prepared.store.persistToolRootRequest(*root).has_value());
         REQUIRE(prepared.store.persistToolCallPosition(*root, *call).has_value());
         auto proposed = prepared.store.replayToolCall(*root, *call);
@@ -4093,20 +4132,6 @@ namespace uf::operator_runtime
         CHECK(refusedNext.error().message().contains(
             "no deterministic terminal outcome"
         ));
-        auto refusedChild = prepared.store.admitToolCall(
-            ToolAdmissionRequest{
-                .controller      = prepared.controller,
-                .lease           = prepared.lease,
-                .root            = *root,
-                .call            = *childCall,
-                .policyAuthority = prepared.policyAuthority,
-            }
-        );
-        REQUIRE_FALSE(refusedChild.has_value());
-        CHECK(refusedChild.error().message().contains(
-            "requires a delegation grant for a child call"
-        ));
-
         auto dispatch = prepared.store.beginToolCallDispatch(*admission);
         REQUIRE(dispatch.has_value());
         CHECK(dispatch->historyRevision() == 3U);
@@ -4215,7 +4240,7 @@ namespace uf::operator_runtime
         REQUIRE(catalog.has_value());
         REQUIRE(arguments.has_value());
         auto invocation = catalog->validate(
-            "framework.screen.observe",
+            "framework.screen.capture",
             std::move(*arguments)
         );
         REQUIRE(invocation.has_value());
@@ -4378,10 +4403,10 @@ namespace uf::operator_runtime
         CHECK(answered->state == ToolCallState::Confirmed);
     }
 
-    // A mutating Project Tool is COMPOSED: a bound handler answers it, and
-    // every effect it has is a child call carrying its own classification. Its
-    // interrupted dispatch is therefore replayable, and the target-wide barrier
-    // it holds is released by re-entry rather than by reconciliation.
+    // A Project Tool handler is a pure leaf: its fresh VM receives immutable
+    // inputs and resources but no Tool or external-effect capability. Its
+    // interrupted dispatch is therefore replayable even when the declaration
+    // is mutating, and re-entry releases its target-wide barrier.
     TEST_CASE(
         "restart keeps an unanswered mutating handler dispatching and barring its target"
     )
@@ -4494,8 +4519,8 @@ namespace uf::operator_runtime
         REQUIRE_FALSE(blocked.has_value());
         CHECK(blocked.error().message().contains("state dispatching"));
 
-        // Nothing may reconcile it, because nothing about it is uncertain: it
-        // is a dispatch waiting to be continued, not a delivery nobody can
+        // Nothing may reconcile it, because no effect can escape the handler:
+        // it is a dispatch waiting to be replayed, not a delivery nobody can
         // classify.
         auto explanation = CanonicalJson::parseExact(
             R"({"reason":"a query has no business here"})"
@@ -4592,7 +4617,7 @@ namespace uf::operator_runtime
         REQUIRE(catalog.has_value());
         REQUIRE(arguments.has_value());
         auto invocation = catalog->validate(
-            "framework.screen.observe",
+            "framework.screen.capture",
             std::move(*arguments)
         );
         REQUIRE(invocation.has_value());
@@ -4744,7 +4769,7 @@ namespace uf::operator_runtime
         REQUIRE(catalog.has_value());
         REQUIRE(arguments.has_value());
         auto observe = catalog->validate(
-            "framework.screen.observe",
+            "framework.screen.capture",
             std::move(*arguments)
         );
         REQUIRE(observe.has_value());
@@ -5324,7 +5349,7 @@ namespace uf::operator_runtime
             REQUIRE(catalog.has_value());
             REQUIRE(arguments.has_value());
             auto invocation = catalog->validate(
-                "framework.screen.observe",
+                "framework.screen.capture",
                 std::move(*arguments)
             );
             REQUIRE(invocation.has_value());
@@ -5605,10 +5630,8 @@ namespace uf::operator_runtime
             ) == attemptRows
         );
 
-        // No call recorded before this generation consumed an observation or
-        // stood on a delegation grant, because neither existed: the backfill is
-        // the only value those rows can carry rather than a sentinel standing
-        // in for an unknown one.
+        // The observation reference is backfilled absent. Nested-call storage
+        // does not survive the leaf migration at all.
         CHECK(
             target.readRows(
                 "SELECT count(*) FROM tool_call_positions "
@@ -5617,12 +5640,15 @@ namespace uf::operator_runtime
         );
         CHECK(
             target.readRows(
-                "SELECT count(*) FROM tool_admission_attempts "
-                "WHERE delegation_grant_id IS NOT NULL"
+                "SELECT count(*) FROM pragma_table_info('tool_admission_attempts') "
+                "WHERE name='delegation_grant_id'"
             ) == std::vector<std::vector<std::string>>{{"0"}}
         );
         CHECK(
-            target.readRows("SELECT count(*) FROM tool_delegation_grants")
+            target.readRows(
+                "SELECT count(*) FROM sqlite_schema WHERE type='table' "
+                "AND name='tool_delegation_grants'"
+            )
             == std::vector<std::vector<std::string>>{{"0"}}
         );
         CHECK(
@@ -5631,6 +5657,102 @@ namespace uf::operator_runtime
                 "schema_identity_transitions WHERE source_identity='"
                 + sourceIdentity + "'"
             ).size() == 1U
+        );
+    }
+
+    TEST_CASE("the nested-call schema migrates to Project Tool leaf storage exactly")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        {
+            auto prepared = prepareStore(temporary.path());
+            auto preimage = CanonicalJson::parseExact(
+                R"({"objective":"leaf-schema-migration"})"
+            );
+            REQUIRE(preimage.has_value());
+            auto root = ToolRootRequestIdentity::create(
+                "controller-1",
+                "leaf-schema-migration",
+                std::move(*preimage)
+            );
+            REQUIRE(root.has_value());
+            auto invocation = toolInvocation(
+                prepared.project,
+                prepared.project.toolName("command-1")
+            );
+            auto call = toolCallAt(
+                *root,
+                nullptr,
+                1U,
+                ToolExecutionIdentity{
+                    .runIdentity = hashOf("leaf-migration-run"),
+                    .frameworkReleaseIdentity =
+                        hashOf("leaf-migration-framework"),
+                    .toolRuntimeProtocolIdentity =
+                        hashOf("leaf-migration-protocol"),
+                    .environmentIdentity =
+                        hashOf("leaf-migration-environment"),
+                },
+                invocation
+            );
+            REQUIRE(call.has_value());
+            auto effects = std::vector{
+                test_support::routineToolEffect(prepared.project),
+            };
+            auto admitted = prepared.store.admitToolCall(
+                ToolAdmissionRequest{
+                    .controller      = prepared.controller,
+                    .lease           = prepared.lease,
+                    .root            = *root,
+                    .call            = *call,
+                    .policyAuthority = prepared.policyAuthority,
+                    .mutation = ToolAdmissionRequest::Mutation{
+                        .effects = effects,
+                    },
+                }
+            );
+            REQUIRE(admitted.has_value());
+        }
+
+        auto attemptRows = std::vector<std::vector<std::string>>{};
+        {
+            auto nested = test_support::OperatorDatabaseProbe{databasePath};
+            restoreLegacyNestedToolCallSchema(nested);
+            attemptRows = nested.readRows(
+                "SELECT call_identity, attempt_number, origin_principal_id, "
+                "execution_principal_id FROM tool_admission_attempts"
+            );
+            CHECK(
+                exactSchemaIdentity(nested)
+                == "sha256:045925eefabef97b964f6a21db0da81cdc6a2c293c21e7f495011fe3d1b9277f"
+            );
+        }
+        REQUIRE_FALSE(attemptRows.empty());
+
+        {
+            auto migrated = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(migrated.has_value(), migrated.error().message());
+        }
+        auto target = test_support::OperatorDatabaseProbe{databasePath};
+        CHECK(
+            target.readRows(
+                "SELECT call_identity, attempt_number, origin_principal_id, "
+                "execution_principal_id FROM tool_admission_attempts"
+            ) == attemptRows
+        );
+        CHECK(
+            target.readRows(
+                "SELECT count(*) FROM pragma_table_info('tool_admission_attempts') "
+                "WHERE name='delegation_grant_id'"
+            ) == std::vector<std::vector<std::string>>{{"0"}}
+        );
+        CHECK(
+            target.readRows(
+                "SELECT count(*) FROM sqlite_schema WHERE type='table' "
+                "AND name='tool_delegation_grants'"
+            )
+            == std::vector<std::vector<std::string>>{{"0"}}
         );
     }
 
@@ -5763,7 +5885,7 @@ namespace uf::operator_runtime
         REQUIRE(catalog.has_value());
         REQUIRE(arguments.has_value());
         auto invocation = catalog->validate(
-            "framework.screen.observe",
+            "framework.screen.capture",
             std::move(*arguments)
         );
         REQUIRE(invocation.has_value());
@@ -5904,7 +6026,7 @@ namespace uf::operator_runtime
             REQUIRE(catalog.has_value());
             REQUIRE(arguments.has_value());
             auto invocation = catalog->validate(
-                "framework.screen.observe",
+                "framework.screen.capture",
                 std::move(*arguments)
             );
             REQUIRE(invocation.has_value());
@@ -6484,7 +6606,7 @@ namespace uf::operator_runtime
         REQUIRE(catalog.has_value());
         REQUIRE(arguments.has_value());
         auto invocation = catalog->validate(
-            "framework.screen.observe",
+            "framework.screen.capture",
             std::move(*arguments)
         );
         REQUIRE(invocation.has_value());
@@ -7922,6 +8044,302 @@ namespace uf::operator_runtime
                 "schema_identity_transitions WHERE source_identity='"
                 + sourceIdentity + "'"
             ) == expectedTransition
+        );
+    }
+
+    // H_genesis is a framework constant, and the framework has moved it: the
+    // RuntimeModel format cut changed the three bytes of the empty model, so
+    // every root created before the cut pins generation 0 to a digest this
+    // binary no longer computes. Generation 0 is layout rather than history, so
+    // the root's materialisation of the constant is migrated to follow it --
+    // and every row a future pin travels through moves with it, while the pure
+    // event logs keep their bytes.
+    //
+    // The fixture is a whole pre-cut root: the schema that generation stored
+    // AND the genesis digest that generation wrote, which is what every
+    // Operator root on disk today actually is. It therefore doubles as the
+    // reproduction the genesis_transitions schema pair owes.
+    //
+    // Emptying k_formerGenesisArtifactRootHashes, or dropping any one of the
+    // three rewrites in migrateGenesisArtifactRoot, reds this.
+    TEST_CASE("an Operator root pinned to a superseded genesis migrates onto the current one")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        auto const genesisHash  = task::genesisArtifactRootHash();
+        REQUIRE(genesisHash.has_value());
+        REQUIRE_FALSE(task::k_formerGenesisArtifactRootHashes.empty());
+        auto const superseded =
+            std::string{task::k_formerGenesisArtifactRootHashes.front()};
+        REQUIRE(superseded != genesisHash->hex());
+
+        auto releaseRootHash = std::string{};
+        {
+            auto prepared   = prepareStore(temporary.path());
+            releaseRootHash = prepared.runtimeArtifactRootHash.hex();
+        }
+
+        // The superseded genesis artifact as a pre-cut root holds it: a
+        // directory under the production root named by the digest that root
+        // pins. Its BYTES are deliberately not reproduced -- the old
+        // RuntimeModel spelling does not live in this repository any more, and
+        // the migration rewrites digests without reading one.
+        auto const supersededDirectory =
+            production / "runtime-artifacts" / superseded;
+        REQUIRE(std::filesystem::create_directory(supersededDirectory));
+        test_support::writeFile(
+            supersededDirectory / "runtime-artifact.manifest.json",
+            "the superseded genesis artifact this root was created with"
+        );
+        auto discarded = std::error_code{};
+        std::filesystem::remove_all(
+            production / "runtime-artifacts" / genesisHash->hex(),
+            discarded
+        );
+
+        auto sourceIdentity = std::string{};
+        {
+            auto prior = test_support::OperatorDatabaseProbe{databasePath};
+
+            // Generation 0 holds the superseded digest, and so does the
+            // generation a failed upgrade rolled back onto -- which is the
+            // active pin. rollbackRuntimeArtifactUpgrade appends the restored
+            // hash as a NEW generation, so genesis is reachable above 0.
+            prior.execute(
+                "INSERT INTO runtime_artifacts(artifact_root_hash) VALUES('"
+                + superseded + "')"
+            );
+            prior.execute(
+                "UPDATE runtime_installations SET artifact_root_hash='"
+                + superseded + "' WHERE installed_generation=0"
+            );
+            prior.execute(
+                "INSERT INTO runtime_installations(installed_generation, "
+                "artifact_root_hash) VALUES(2, '" + superseded + "')"
+            );
+            prior.execute(
+                "UPDATE runtime_state SET installed_generation=2, "
+                "active_runtime_artifact_root_hash='" + superseded
+                + "' WHERE singleton=1"
+            );
+            prior.execute(
+                "UPDATE sessions SET installed_generation=2, "
+                "runtime_artifact_root_hash='" + superseded
+                + "' WHERE session_id='session-1'"
+            );
+
+            // The two pure event logs, each naming the superseded digest.
+            // Neither carries a foreign key and neither is a pin a future load
+            // travels through, so both must come out byte-identical.
+            prior.execute(
+                "INSERT INTO runtime_upgrade_failures(attempted_generation, "
+                "attempted_artifact_root_hash, restored_generation, "
+                "restored_artifact_root_hash, reason) VALUES(1, '"
+                + releaseRootHash + "', 2, '" + superseded
+                + "', 'the fixture upgrade failed')"
+            );
+            prior.execute(
+                "INSERT INTO release_capability_approvals(artifact_root_hash, "
+                "capability_profile_hash, controller_capabilities, "
+                "evidence_hash, session_epoch) VALUES('" + superseded
+                + "', 'profile', '[]', 'evidence', 1)"
+            );
+
+            // And the schema that generation stored.
+            removeGenesisTransitions(prior);
+            sourceIdentity = exactSchemaIdentity(prior);
+        }
+        CHECK_MESSAGE(
+            sourceIdentity == k_genesisTransitionsSourceIdentity,
+            "the fixture must reproduce the exact identity this pair migrates from"
+        );
+
+        auto const priorFailures = std::vector<std::vector<std::string>>{
+            {"1", releaseRootHash, "2", superseded, "the fixture upgrade failed"},
+        };
+        auto const priorApprovals = std::vector<std::vector<std::string>>{
+            {superseded, "profile", "[]", "evidence", "1"},
+        };
+
+        {
+            auto migrated = OperatorCoordinator::open(production);
+            auto const migratedWhy = migrated.has_value()
+                ? std::string{}
+                : std::string{migrated.error().message()};
+            REQUIRE_MESSAGE(migrated.has_value(), migratedWhy);
+
+            auto const active = migrated->activeRuntimeArtifactPin();
+            REQUIRE(active.has_value());
+            CHECK_MESSAGE(
+                active->installedGeneration == 2U,
+                "the generation a rollback produced is untouched by the "
+                "materialisation moving"
+            );
+            CHECK_MESSAGE(
+                active->artifactRootHash == *genesisHash,
+                "the active pin names the RuntimeArtifact this binary computes"
+            );
+
+            // Nothing names the superseded digest any more, so the collector
+            // that already owns unreferenced artifacts takes it -- there is no
+            // hand-deletion inside the migration and none is needed.
+            auto const reclaimed = migrated->reclaimUnreferencedRuntimeArtifacts();
+            REQUIRE(reclaimed.has_value());
+            CHECK_MESSAGE(
+                !std::filesystem::exists(supersededDirectory),
+                "the superseded genesis artifact becomes reclaimable"
+            );
+        }
+
+        auto after = test_support::OperatorDatabaseProbe{databasePath};
+        CHECK(exactSchemaIdentity(after) == k_targetSchemaIdentity);
+        auto const expectedInstallations = std::vector<std::vector<std::string>>{
+            {"0", genesisHash->hex()},
+            {"1", releaseRootHash},
+            {"2", genesisHash->hex()},
+        };
+        CHECK_MESSAGE(
+            after.readRows(
+                "SELECT installed_generation, artifact_root_hash FROM "
+                "runtime_installations ORDER BY installed_generation"
+            ) == expectedInstallations,
+            "every generation holding the superseded genesis moves, not only "
+            "generation 0"
+        );
+        auto const expectedSession = std::vector<std::vector<std::string>>{
+            {"session-1", "2", genesisHash->hex()},
+        };
+        CHECK_MESSAGE(
+            after.readRows(
+                "SELECT session_id, installed_generation, "
+                "runtime_artifact_root_hash FROM sessions ORDER BY session_id"
+            ) == expectedSession,
+            "a session pinned to the superseded genesis follows its parent"
+        );
+        auto const expectedState =
+            std::vector<std::vector<std::string>>{{"2", genesisHash->hex()}};
+        CHECK_MESSAGE(
+            after.readRows(
+                "SELECT installed_generation, active_runtime_artifact_root_hash "
+                "FROM runtime_state WHERE singleton=1"
+            ) == expectedState,
+            "a never-upgraded root would otherwise open its first session "
+            "against an artifact the current parser refuses by declared format"
+        );
+        CHECK_MESSAGE(
+            after.readRows(
+                "SELECT attempted_generation, attempted_artifact_root_hash, "
+                "restored_generation, restored_artifact_root_hash, reason FROM "
+                "runtime_upgrade_failures"
+            ) == priorFailures,
+            "a pure event log records what happened and keeps its bytes"
+        );
+        CHECK_MESSAGE(
+            after.readRows(
+                "SELECT artifact_root_hash, capability_profile_hash, "
+                "controller_capabilities, evidence_hash, session_epoch FROM "
+                "release_capability_approvals"
+            ) == priorApprovals,
+            "a pure event log records what happened and keeps its bytes"
+        );
+        auto const expectedGenesisTransition =
+            std::vector<std::vector<std::string>>{{superseded, genesisHash->hex()}};
+        CHECK(
+            after.readRows(
+                "SELECT source_artifact_root_hash, target_artifact_root_hash "
+                "FROM genesis_transitions"
+            ) == expectedGenesisTransition
+        );
+        auto const expectedSchemaTransition = std::vector<std::vector<std::string>>{
+            {sourceIdentity, std::string{k_targetSchemaIdentity}},
+        };
+        CHECK(
+            after.readRows(
+                "SELECT source_identity, target_identity FROM "
+                "schema_identity_transitions WHERE source_identity='"
+                + sourceIdentity + "'"
+            ) == expectedSchemaTransition
+        );
+    }
+
+    // The other side of the same door, and the only thing the refusal still
+    // claims: generation 0 names the framework's empty model, and a digest the
+    // framework never wrote is refused by name rather than carried. Recognising
+    // a superseded genesis is not a licence to accept an unknown one.
+    //
+    // Adding the unregistered digest to k_formerGenesisArtifactRootHashes, or
+    // dropping the refusal branch, reds this.
+    TEST_CASE("an Operator root pinning generation 0 to an unregistered digest is refused")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        auto const genesisHash  = task::genesisArtifactRootHash();
+        REQUIRE(genesisHash.has_value());
+        auto const unregistered =
+            hashOf("a genesis this framework never wrote").hex();
+        REQUIRE_FALSE(std::ranges::contains(
+            task::k_formerGenesisArtifactRootHashes,
+            std::string_view{unregistered}
+        ));
+
+        {
+            auto const created = OperatorCoordinator::open(production);
+            REQUIRE(created.has_value());
+        }
+        {
+            auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            prior.execute(
+                "INSERT INTO runtime_artifacts(artifact_root_hash) VALUES('"
+                + unregistered + "')"
+            );
+            prior.execute(
+                "UPDATE runtime_installations SET artifact_root_hash='"
+                + unregistered + "' WHERE installed_generation=0"
+            );
+            prior.execute(
+                "UPDATE runtime_state SET active_runtime_artifact_root_hash='"
+                + unregistered + "' WHERE singleton=1"
+            );
+        }
+
+        auto const refused = OperatorCoordinator::open(production);
+        REQUIRE_FALSE(refused.has_value());
+        auto const why = std::string{refused.error().message()};
+        CHECK_MESSAGE(
+            why.contains("sha256:" + unregistered),
+            "the refusal names the digest the root actually pins: ",
+            why
+        );
+        CHECK_MESSAGE(
+            why.contains("sha256:" + genesisHash->hex()),
+            "the refusal names the genesis RuntimeArtifact this binary "
+            "computes: ",
+            why
+        );
+        CHECK_MESSAGE(
+            why.contains("nor a genesis this framework superseded"),
+            "the refusal says what it now claims -- not merely that the two "
+            "digests differ: ",
+            why
+        );
+
+        // Refused, and left intact: nothing about the root was rewritten on
+        // the way out.
+        auto after = test_support::OperatorDatabaseProbe{databasePath};
+        auto const expected =
+            std::vector<std::vector<std::string>>{{unregistered}};
+        CHECK(
+            after.readRows(
+                "SELECT artifact_root_hash FROM runtime_installations "
+                "WHERE installed_generation=0"
+            ) == expected
+        );
+        CHECK(
+            after.readRows(
+                "SELECT source_artifact_root_hash FROM genesis_transitions"
+            ).empty()
         );
     }
 

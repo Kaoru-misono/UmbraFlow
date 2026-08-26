@@ -10,20 +10,27 @@
 
 namespace uf::cli
 {
-    auto reclaimProduct(ReclaimArgs const& args) -> Result<ReclaimedRuntime>
+    auto reclaimProduct(ReclaimArgs const& args) -> Result<ReclaimedOperatorRoot>
     {
         UF_TRY_VALUE(
             reclaimed,
-            service::reclaimRuntimeArtifacts(args.runtime)
+            service::reclaimOperatorStores(
+                args.runtime,
+                args.evidenceRetentionMillis
+            )
         );
-        return ReclaimedRuntime{
+        return ReclaimedOperatorRoot{
             .runtime             = args.runtime,
-            .artifactDirectories = reclaimed.artifactDirectories,
-            .stagingDirectories  = reclaimed.stagingDirectories,
+            .artifactDirectories = reclaimed.runtime.artifactDirectories,
+            .stagingDirectories  = reclaimed.runtime.stagingDirectories,
+            .evidenceBlobs       = reclaimed.evidence.blobs,
+            .evidenceStagings    = reclaimed.evidence.stagings,
         };
     }
 
-    auto formatReclaimedRuntime(ReclaimedRuntime const& reclaimed) -> std::string
+    auto formatReclaimedOperatorRoot(
+        ReclaimedOperatorRoot const& reclaimed
+    ) -> std::string
     {
         // The counts are printed whether or not they are zero. A sweep that
         // found nothing is the ordinary outcome, and a verb that stayed silent
@@ -32,13 +39,19 @@ namespace uf::cli
         return std::format(
             "{:<22}{}\n"
             "  {:<24}{}\n"
+            "  {:<24}{}\n"
+            "  {:<24}{}\n"
             "  {:<24}{}\n",
             "reclaimed runtime",
             reclaimed.runtime.string(),
             "artifact directories",
             reclaimed.artifactDirectories,
             "staging directories",
-            reclaimed.stagingDirectories
+            reclaimed.stagingDirectories,
+            "evidence blobs",
+            reclaimed.evidenceBlobs,
+            "evidence stagings",
+            reclaimed.evidenceStagings
         );
     }
 }

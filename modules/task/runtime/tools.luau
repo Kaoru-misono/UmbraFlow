@@ -1,6 +1,5 @@
 --!strict
--- Tool discovery, description, calling, and answer access for scoped Project
--- code.
+-- Tool discovery, description, and direct calling for scoped Project code.
 --
 -- This module owns the ONE spelling of "make a Tool call" in the Framework SDK.
 -- `@umbraflow/screen`, `@umbraflow/workflow` and `@umbraflow/audit` are handed
@@ -8,23 +7,22 @@
 -- Tool Runtime through `tools.call`, so argument shaping, catalog checking and
 -- answer validation exist once rather than four times.
 --
--- The chunk argument is the private capability table a scoped Tool program or
--- interactive scoped Tool session builds for one run and then drops. It carries
+-- The chunk argument is the private capability table an interactive scoped Tool
+-- session builds for one run and then drops. Project Tool handlers are leaves
+-- and therefore never receive this capability. It carries
 -- exactly one primitive,
--- `invoke(toolName, argumentsValue, body)`, which runs the Tool to completion and
+-- `invoke(toolName, argumentsValue)`, which runs the Tool to completion and
 -- answers one frozen decoded JSON value. Two facts about it shape everything
 -- below. It is synchronous, so nothing here yields, polls in the background, or
 -- takes a completion callback. And a REFUSAL from it is terminal: the run is
 -- recorded as failed and the VM is destroyed without resuming this script, so
 -- no `pcall` in this module or above it can observe one. A Tool that ran and
--- failed is not a refusal -- its classification travels in the answer's `state`
--- member, which is what `@umbraflow/workflow` reads.
+-- failed is not a refusal -- it returns `ok = false`, its terminal delivery
+-- value, and the provider's error directly.
 --
 -- The call's POSITION is assigned by the seam and is never a parameter here.
--- The issuing context is the run itself: a root automation script's calls are
--- parentless positions under the run's own root request, and a Tool handler's
--- calls are parented under that handler's recorded position. Both are numbered
--- from 1 by the C++ seam. A script that could name its ordinal could name
+-- The issuing context is the interactive request itself, and its call is a
+-- parentless position under that request. A script that could name its ordinal could name
 -- another call's position and inherit that call's recorded outcome without
 -- authorisation, so `call` takes a tool name and one value and nothing else.
 --
@@ -36,20 +34,12 @@
 -- every call, so a catalog that disagreed with the Operator can only make this
 -- module refuse early, never make the Operator accept.
 --
--- One answer has exactly this shape, and every accessor below rejects anything
--- else:
+-- One answer has exactly one of these shapes:
 --
---     {
---         tool          = "<the tool name the seam ran>",
---         call_identity = "<64 lowercase hex, the recorded position>",
---         state         = "<one of the eight delivery classifications>",
---         result        = <the Tool's own answer, absent when it carries none>,
---         evidence      = <canonical evidence, absent when there is none>,
---     }
+--     { ok = true, call_identity = "<hash>", delivery = "confirmed", result = <value> }
+--     { ok = false, call_identity = "<hash>", delivery = "<terminal>", error = <error> }
 
 local native = ...
-local collections = require("@umbraflow/collections")
-local resultModule = require("@umbraflow/result")
 
 local tools = {}
 
@@ -61,18 +51,14 @@ local k_catalogResource = "umbraflow.tool-catalog"
 
 local k_identityHexLength = 64
 
--- The delivery vocabulary, spelled exactly as the Operator's ToolCallState wire
--- names. It is published so a script can enumerate what it must be prepared
--- for, and it is the set `workflow.recover` requires an arm from.
-local k_states = table.freeze({
-    "proposed",
-    "admitted",
-    "dispatching",
-    "confirmed",
-    "proven_absent",
-    "possible",
-    "terminal_failure",
-    "terminally_unresolved",
+-- Only terminal delivery values cross a synchronous call boundary. Proposed,
+-- admitted and dispatching remain ledger states and are not answers.
+local k_deliveries = table.freeze({
+    confirmed = true,
+    proven_absent = true,
+    possible = true,
+    terminal_failure = true,
+    terminally_unresolved = true,
 })
 
 local function reject(message: string): never
@@ -94,8 +80,6 @@ if type(invoke) ~= "function" then
     refuseLoad("requires the scoped Tool Runtime invoke primitive")
 end
 
-local stateSet = collections.set(k_states)
-
 local function contentHash(value: any, where: string): string
     if type(value) ~= "string" or #value ~= k_identityHexLength then
         reject(where .. " must be a 64 character content hash")
@@ -110,15 +94,35 @@ local function checkedAnswer(answer: any): any
     if type(answer) ~= "table" then
         reject("answer must be the object the Tool Runtime returned")
     end
-    local name = rawget(answer, "tool")
-    if type(name) ~= "string" or name == "" then
-        reject("answer must name the tool it came from")
+    local ok = rawget(answer, "ok")
+    if type(ok) ~= "boolean" then
+        reject("answer must carry an ok boolean")
     end
-    local state = rawget(answer, "state")
-    if type(state) ~= "string" or not collections.has(stateSet, state) then
-        reject("answer must carry a known delivery classification")
+    local delivery = rawget(answer, "delivery")
+    if type(delivery) ~= "string" or k_deliveries[delivery] ~= true then
+        reject("answer must carry a terminal delivery value")
     end
     local _ = contentHash(rawget(answer, "call_identity"), "answer call_identity")
+    if ok then
+        if delivery ~= "confirmed" or rawget(answer, "result") == nil then
+            reject("an ok answer must be confirmed and carry result")
+        end
+        if rawget(answer, "error") ~= nil then
+            reject("an ok answer must not carry error")
+        end
+    else
+        if delivery == "confirmed" or rawget(answer, "result") ~= nil then
+            reject("a failed answer must be unconfirmed and carry no result")
+        end
+        local recorded = rawget(answer, "error")
+        if type(recorded) ~= "table"
+            or type(rawget(recorded, "code")) ~= "string"
+            or type(rawget(recorded, "message")) ~= "string"
+            or type(rawget(recorded, "retryable")) ~= "boolean"
+        then
+            reject("a failed answer must carry a code, message, retryable error")
+        end
+    end
     return answer
 end
 
@@ -155,26 +159,6 @@ local function loadedCatalog(): ({ [string]: any }, { string }, string)
         if type(name) ~= "string" or name == "" then
             refuseLoad("catalog descriptor must name its tool")
         end
-        local body = rawget(entry, "body")
-        if type(body) == "table" then
-            local tag = rawget(body, "tag")
-            local arms = rawget(body, "arms")
-            if type(tag) ~= "string" or tag == "" or type(arms) ~= "table" then
-                refuseLoad("catalog tagged body declaration must name a tag and arms")
-            end
-            local armCount = 0
-            for arm, takesBody in pairs(arms :: any) do
-                if type(arm) ~= "string" or arm == "" or type(takesBody) ~= "boolean" then
-                    refuseLoad("catalog body arms must map names to booleans")
-                end
-                armCount += 1
-            end
-            if armCount == 0 then
-                refuseLoad("catalog tagged body declaration must carry arms")
-            end
-        elseif type(body) ~= "boolean" then
-            refuseLoad("catalog descriptor must declare body as a boolean or tagged arms")
-        end
         -- Strictly increasing, which refuses an unsorted catalog and a
         -- duplicated tool in one comparison. The catalog owner renders the
         -- array in UTF-8 order of the names, so a catalog that arrives out of
@@ -196,9 +180,6 @@ local descriptorByName, catalogNames, catalogHash = loadedCatalog()
 -- The identity of the exact catalog bytes this run was pinned to. A script that
 -- records it has recorded which descriptions it acted on.
 tools.catalog_hash = catalogHash
-
--- The eight delivery classifications, in the Operator's own order.
-tools.states = k_states
 
 function tools.names(): any
     return catalogNames
@@ -238,8 +219,8 @@ function tools.describe(name: any): any
 end
 
 -- Issue one Tool call at this run's next position. `arguments` is the value the
--- Tool's own argument contract states; it is a table because every Tool
--- contract in the catalog takes an object, and an empty object is spelled
+-- Tool's own input schema states; it is a table because every Tool schema in
+-- the catalog takes an object, and an empty object is spelled
 -- `canon.emptyObject` rather than `{}`, which is an empty ARRAY at this
 -- boundary.
 --
@@ -247,7 +228,7 @@ end
 -- budget is spent on it. It is not an authority check: the Operator judges the
 -- name, the arguments, the policy and the grants again, and only its verdict
 -- decides anything.
-function tools.call(name: any, arguments: any, body: any?): any
+function tools.call(name: any, arguments: any): any
     if type(name) ~= "string" then
         reject("call needs a tool name string")
     end
@@ -263,66 +244,7 @@ function tools.call(name: any, arguments: any, body: any?): any
     if type(arguments) ~= "table" then
         reject("call needs an object value for arguments")
     end
-    if body ~= nil and type(body) ~= "function" then
-        reject("call body must be a function when present")
-    end
-    local bodyDeclaration = rawget(descriptor, "body")
-    local takesBody = false
-    if type(bodyDeclaration) == "boolean" then
-        takesBody = bodyDeclaration :: boolean
-    else
-        local tag = rawget(bodyDeclaration, "tag")
-        local selectedArm = rawget(arguments, tag)
-        if type(selectedArm) ~= "string" then
-            reject("call arguments must select the tagged body arm " .. tag)
-        end
-        local selected = rawget(rawget(bodyDeclaration, "arms"), selectedArm)
-        if type(selected) ~= "boolean" then
-            reject("call arguments select an undeclared body arm " .. selectedArm)
-        end
-        takesBody = selected :: boolean
-    end
-    if body ~= nil and not takesBody then
-        reject("call body is not declared for this Tool arm")
-    end
-    return checkedAnswer(invoke(name, arguments, body))
-end
-
-function tools.tool_name(answer: any): string
-    return rawget(checkedAnswer(answer), "tool")
-end
-
-function tools.call_identity(answer: any): string
-    return rawget(checkedAnswer(answer), "call_identity")
-end
-
-function tools.state(answer: any): string
-    return rawget(checkedAnswer(answer), "state")
-end
-
--- The Tool's own answer, as a `@umbraflow/result` envelope: an outcome that
--- carries no payload is a failure of the request "give me the payload" and not
--- a value a caller can mistake for one.
-function tools.result(answer: any): any
-    local payload = rawget(checkedAnswer(answer), "result")
-    if payload == nil then
-        return resultModule.err(
-            "umbraflow.tools.no_result",
-            "the recorded outcome carries no result"
-        )
-    end
-    return resultModule.ok(payload)
-end
-
-function tools.evidence(answer: any): any
-    local recorded = rawget(checkedAnswer(answer), "evidence")
-    if recorded == nil then
-        return resultModule.err(
-            "umbraflow.tools.no_evidence",
-            "the recorded outcome carries no evidence"
-        )
-    end
-    return resultModule.ok(recorded)
+    return checkedAnswer(invoke(name, arguments))
 end
 
 return table.freeze(tools)

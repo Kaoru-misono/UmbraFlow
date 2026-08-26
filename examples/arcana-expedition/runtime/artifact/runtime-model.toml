@@ -1,4 +1,4 @@
-schema_version = 3
+schema_version = 4
 base_resolution = [1600, 900]
 base_dpi = [144, 144]
 
@@ -52,6 +52,5 @@ actions = [{ id = "expedition.press", kind = "click", proof_locator = "expeditio
 
 [[surface]]
 id = "expedition.surface"
-kind = "scene"
 covers = []
 identity = ["expedition.camp.banner"]

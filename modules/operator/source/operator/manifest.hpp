@@ -44,9 +44,9 @@ namespace uf::operator_runtime
     // The one spelling of a Tool name, wherever one is written: a namespaced
     // dotted name whose namespace is its owner's registered namespace and whose
     // local name is what follows the dot that ends it. A Tool declaration's
-    // `name`, a ProjectRegistration `tool_name`, and every child Tool name a
-    // ChildEffectDeclaration grants are this one type; a document admitting any
-    // other spelling would declare a Tool no authoring tier could bind.
+    // `name` and a ProjectRegistration `tool_name` are this one type; a
+    // document admitting any other spelling would declare a Tool no authoring
+    // tier could bind.
     [[nodiscard]]
     auto validateToolName(std::string_view name, std::string_view field) -> Status;
 

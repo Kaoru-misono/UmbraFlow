@@ -123,15 +123,21 @@ migrated.
 > of them.
 
 **RuntimeArtifact** — a verified manifest, one `runtime-model.toml`, and the
-manifest-listed assets under `assets/`. Pinned as
+manifest-listed assets under `assets/`. The C++ side pins all three names as
 `k_runtimeArtifactManifestFileName`, `k_runtimeModelFileName` and
 `k_runtimeAssetDirectoryName` in `modules/task/source/task/runtime-model-file.hpp`.
+The trusted parser (`modules/task/runtime/model.luau`) and the authoring
+publisher (`tools/annotate/publication.py`) state the directory name again in
+their own languages, where a C++ constant cannot reach; those two are the only
+other spellings, and each is checked against the same artifact.
 Never an annotation screenshot bundle.
 
 **RuntimeModel** — the schema-owned tree inside `runtime-model.toml`. Its nouns are
-`ui_target`, `locator`, `reader`, `binding`, `surface` and `transition`, and its
-top level also carries `schema_version`, `base_resolution` and `base_dpi`.
-`$defs.runtime_model` in `schema/umbraflow-runtime-v3.schema.json`; built,
+`ui_target`, `locator`, `binding`, `collection`, `readout`, `surface` and
+`transition`, and its top level also carries `schema_version`, `base_resolution`
+and `base_dpi`. Every one of those lists may be omitted and an omitted list is
+the empty list, so there is one spelling of "nothing here" rather than two.
+`$defs.runtime_model` in `schema/umbraflow-runtime-v4.schema.json`; built,
 checked and frozen by `model.compile` in `modules/task/runtime/model.luau`.
 
 **UiTarget** — semantic identity alone: no pixels, no placement, no page. Spelled
@@ -155,11 +161,23 @@ host's handle to one loaded model, not one row of it.
 `$defs.binding`, `$defs.resolved_binding` and `$defs.receipt_request`; built at
 `model.luau`'s `bindingBuilder`. It is the live word.
 
-**Surface** — one screen state: `{id, kind, covers, identity}` with `kind` one of
-`scene | overlay | interrupt` (`$defs.surface`). A scene covers nothing; an
-overlay or interrupt must name a lower surface it covers, which is what makes
-stacking a declared fact rather than runtime bookkeeping. Stack validity is
-`model.valid_surface_stack` / `model.surface_covers`.
+**Surface** — one screen state: `{id, covers?, identity}` (`$defs.surface`).
+`covers` is the whole of where a Surface sits: covering nothing is the bottom of
+a stack, and covering something is being layered over it, which is what makes
+stacking a declared fact rather than runtime bookkeeping. There is no `kind`
+beside it — a `scene | overlay | interrupt` enum and a `covers` list were one
+fact in two spellings whose agreement had to be enforced in both directions, and
+that spelling made a full-screen dimming popup undeclarable except as a lie.
+Stack validity is `model.valid_surface_stack` / `model.surface_covers`.
+
+**Readout** — one fixed rectangle on one Surface whose text is reported whenever
+that Surface is on the resolved stack: `{id, surface, rect, layout,
+confidence_floor, normalization}` (`$defs.readout`; `readoutBuilder` in
+`model.luau`). It carries no detector and must not: a readout region prints a
+value the target rewrites every frame, so there is no stable ink in it to match.
+Its Surface is its whole gate, and it attaches to no UiTarget. There is no
+`Reader` record — the three members above sit on each reading site, because they
+describe one rectangle and only a site owns one.
 
 **Transition** — `{id, from_surfaces, trigger, to_surfaces}`, where the trigger
 is `{binding, action}` (`$defs.transition`). Destinations are a set. Where a
@@ -228,8 +246,8 @@ gone with the documents they judged.
 dotted name whose namespace is its owner's registered namespace and whose local
 name is what follows the namespace-ending dot. `validateToolName` and
 `validateToolNameOwnership` in `modules/operator/source/operator/manifest.{hpp,cpp}`
-are the only judges; a Tool Catalog `name`, a registration `tool_name` and every
-child Tool name a `ChildEffectDeclaration` grants are this one type.
+are the only judges; a Tool Catalog `name` and a registration `tool_name` are
+this one type.
 **Ownership is the whole of the rule.** Framework owns `framework` —
 `k_frameworkToolNamespace` in `manifest.hpp` — and a Project owns its own
 registered namespace, which is its `plugin_id`. Because a registrant's namespace
@@ -239,25 +257,41 @@ is stated once, `validateSharedClaims` refuses a `plugin_id` falling inside
 `schema/umbraflow-project-registration-v4.schema.json` and `$defs.NamespacedName`
 in `schema/umbraflow-project-v3.schema.json`.
 
+**Tool call** — one Tool name plus one flat JSON object whose schema describes
+every property. Different behaviours have different names. Calls do not take a
+caller callback, select a tagged arm, open an implicit observation scope, or
+nest under another Tool call. A Project Tool handler is a leaf transform over
+its explicit arguments; sequencing and references between calls belong to the
+caller.
+_Avoid_: Tool body, body arm, `body`, `child_effects`, child Tool, nested Tool
+call, observation frame as a caller-visible scope, "innermost open frame".
+
+**Tool answer** — the direct frozen value returned by one synchronous Tool call:
+`ok`, `call_identity`, a terminal `delivery`, and exactly one of `result` or
+`error`. Provider and domain failures are failed answers; protocol, admission
+and replay violations refuse the call. The durable ledger records the outcome
+and artifact receipt, while large or binary bytes remain in the evidence store.
+_Avoid_: answer envelope interrogation, `tools.state`, `tools.result`,
+`tools.evidence`, proposed/admitted/dispatching as caller-visible answers.
+
 **Tool admission** — the one path a Tool call is admitted through:
 `OperatorCoordinator::admitToolCall` (`modules/operator/source/operator/ledger.hpp`),
 which accepts exactly one value, `ToolAdmissionRequest`
 (`modules/operator/source/operator/tool-admission-request.hpp`). Policy,
-approvals, envelope intersection, session and target authority and budgets are
-evaluated once, inside admission, on that value.
+approvals, session and target authority and budgets are evaluated once, inside
+admission, on that value.
 
 **Agent, human operator and project automation are all first-class callers of
 it**, and each is definitionally a *translator* into that value rather than a
 path of its own: `AgentToolAdapter`/`AgentToolUse`,
 `HumanToolAdapter`/`HumanToolCommand` and
 `ProjectAutomationAdapter`/`ProjectAutomationStart` in
-`modules/operator/source/operator/tool-actor-adapters.hpp`, beside the fourth
-producer the scoped seam has always been — one Tool calling another. An adapter
+`modules/operator/source/operator/tool-actor-adapters.hpp`. An adapter
 resolves the actor's identity, canonicalises the arguments its transport
 carries, and is then out of the frame; it can state neither the caller
 idempotency namespace nor the call ordinal, so it can neither hang a request key
-on another principal's root nor alias another call's position. A fifth caller is
-a fifth translator. A proposed caller that cannot be expressed as a translation
+on another principal's root nor alias another call's position. Another caller is
+another translator. A proposed caller that cannot be expressed as a translation
 into `ToolAdmissionRequest` is a finding about the design and never a reason for
 a second admission path.
 
@@ -445,7 +479,7 @@ _Avoid_: executable conformance resolution.
 (`modules/trace/source/trace/event.cpp`), it is `k_traceSchema` in
 `event.hpp`, and `schema/umbraflow-trace-v2.schema.json` pins it as a `const`.
 
-**The RuntimeModel id does not travel.** `umbraflow-runtime/v3` occurs exactly
+**The RuntimeModel id does not travel.** `umbraflow-runtime/v4` occurs exactly
 twice in the tree, as `model.schema` and `project.schema` in
 `modules/task/runtime/{model,project}.luau`, and nothing reads either back. What
 actually travels in `runtime-model.toml` and is validated is the integer
@@ -462,7 +496,7 @@ in-band id. The `$id`s are not uniform, so read the file rather than guessing:
 `trace-v2` are short ids under `https://umbraflow.local/schema/`;
 `umbraflow-annotation-workspace-v2.schema.json`,
 `umbraflow-runtime-artifact-v1.schema.json` and
-`umbraflow-runtime-v3.schema.json` spell the full file name under
+`umbraflow-runtime-v4.schema.json` spell the full file name under
 `https://umbraflow.dev/schema/`; and the rest are `name/version` paths under
 that same host — `project/directory`, `collection-fact/v1`,
 `declarative-workflow-tool/v1`, `fact/v1`, `fact-provenance/v1`,
@@ -540,14 +574,11 @@ projection lists in prose.
 release-owned module closure can reach. It has no global name: the host gives it
 to the closure at boot and drops its own script-visible reference.
 
-- scoped Tool code — `ScopedToolProgram` for a registered Project handler and
-  `ScopedToolSession` for an interactive chunk install the same `invoke` native
-  primitive. The former adapts calls to a handler coordinate; the latter adapts
-  them to the session's root admission door. Neither difference is visible to
-  Luau. A structured body re-enters synchronously through the same adapter, so
-  child calls are parented under their body-taking Tool; yield, suspension and
-  an escaping callback remain refused. Each handler invocation or interactive
-  chunk owns one fresh VM and its own execution window.
+- scoped Tool code — `ScopedToolProgram` runs a registered Project handler as a
+  pure leaf, while `ScopedToolSession` installs the `invoke` primitive for an
+  interactive chunk. A handler attempt to issue a Tool call is refused by the
+  requested Tool's name. Each handler invocation or interactive chunk owns one
+  fresh VM and its own execution window.
 - trusted RuntimeModel resolution, `RuntimeNativeState::install` —
   `runtime_model_bytes`,
   `runtime_semantic_hash`, `runtime_model_finalize`, `runtime_asset`,
@@ -557,14 +588,15 @@ Both are deep-frozen at the end of the build. **Neither carries a click, a key
 press or any other input primitive**, and `math.random`/`math.randomseed` are
 nilled outright by `installSandbox` rather than offered here.
 
-**There is deliberately no `framework.screen.crop`.** A crop's answer is a
-frame's pixels, and a Tool result is canonical JSON inside a durable ledger row,
-so a cropping Tool would put pixels inside a hashed record — which is the
-`framework.screen.capture` Tool this design deleted, under another name. Keeping
-a piece of the screen is an authoring write and is spelled as one, on
-`framework.project.write`'s `capture` arm: the host encodes the PNG through
-`TaskContext::cycleCrop` (`modules/task/source/task/task-context.hpp`) and the
-call answers with the file's content hash, never its pixels.
+**Screenshot artifact** — the immutable PNG value returned by
+`framework.screen.capture` or `framework.screen.crop`, identified by its
+`screenshot_sha256` receipt. Measuring Tools take that digest explicitly and
+never bind by call position. The bytes live in the Operator evidence store, not
+inline in the durable Tool row. Keeping the whole screenshot or a crop in the
+Project is a second call to `framework.project.write_file`, whose
+`file_sha256` names the already durable artifact; a failure between the two
+calls remains visible. Retention, replay export and expiry policy remain the
+Operator's unresolved choice.
 _Avoid_: `buildExplorationSurface`, `explorationToolCapabilities`,
 `buildAnnotationSurface`, `annotationPrivateCapabilities`, "the authoring
 private surface", "the exploration VM", native driver, raw verbs.
@@ -743,7 +775,7 @@ of these is a type anywhere in the tree:
 - `Element` / `model.Element`, and its own retired spellings `recognizer`,
   `region`, `annotation` (the three-way kind), `RecognizerId`, `ElementId`. The
   RuntimeModel splits what `Element` conflated into `ui_target` (identity),
-  `locator`/`reader` (evidence) and `binding` (placement and actions).
+  `locator` (evidence) and `binding` (placement and actions).
 - `CompiledElement`, `CompiledAppearance`, `RuntimeElementSpec`,
   `RecognizerDefinition` — the per-element compiler, retired 2026-08-01: the
   layer-two model IS the runtime form, and a template is now a PNG blob named by
@@ -763,12 +795,12 @@ of these is a type anywhere in the tree:
 - **`Appearance` / `model.Appearance` / `appearance`** — renamed to `variant`.
   This direction has been recorded backwards before: `variant` is the live word
   (three uses in `model.luau`, six in
-  `schema/umbraflow-runtime-v3.schema.json`) and `appearance` occurs nowhere in
+  `schema/umbraflow-runtime-v4.schema.json`) and `appearance` occurs nowhere in
   the runtime model or its schema. `std::variant` and the UUID variant field keep
   their own names and are unrelated.
 - `navigation.Edge`, `navigation.stack_new`, `walk_edge`, `rect_override`, and
   the runtime page stack. The successors are `$defs.surface` with its
-  `kind`/`covers` pair and `$defs.transition`; overlay depth is a declared
+  `covers` list and `$defs.transition`; overlay depth is a declared
   covering relation checked by `model.valid_surface_stack`, not a stack a run
   keeps. The design constraints that outlived the spelling: no `go(any page)`
   pathfinding in the host, and an overlay is never modelled as an ordinary

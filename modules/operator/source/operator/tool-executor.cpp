@@ -22,13 +22,7 @@ namespace uf::operator_runtime
         {
             auto const kind = automationErrorKind(error);
             auto payload = json::Value::ofObject({
-                {"failure_response",
-                 json::Value::ofString(
-                     std::string{
-                         failureResponseWireName(failureResponse(error))
-                     }
-                 )},
-                {"kind",
+                {"code",
                  json::Value::ofString(
                      kind
                          ? std::string{automationErrorWireName(*kind)}
@@ -36,6 +30,7 @@ namespace uf::operator_runtime
                  )},
                 {"message",
                  json::Value::ofString(std::string{error.message()})},
+                {"retryable", json::Value::ofBoolean(false)},
             });
             UF_TRY_VALUE(
                 canonical,
@@ -102,38 +97,15 @@ namespace uf::operator_runtime
         ) -> Result<CanonicalJson>
         {
             auto payload = json::Value::ofObject({
-                {"elapsed_ms",
-                 json::Value::ofNumber(static_cast<double>(elapsedMillis))},
-                {"failure_response",
-                 json::Value::ofString(
-                     std::string{
-                         failureResponseWireName(
-                             failureResponse(AutomationErrorKind::Timeout)
-                         )
-                     }
-                 )},
-                {"kind",
+                {"code",
                  json::Value::ofString(
                      std::string{
                          automationErrorWireName(AutomationErrorKind::Timeout)
                      }
                  )},
-                {"maximum_elapsed_ms",
-                 json::Value::ofNumber(
-                     static_cast<double>(
-                         call.descriptor().timeout.maximumElapsedMillis
-                     )
-                 )},
                 {"message",
                  json::Value::ofString(timeoutMessage(call, elapsedMillis))},
-                {"on_timeout",
-                 json::Value::ofString(
-                     std::string{
-                         timeoutActionWireName(
-                             call.descriptor().timeout.onTimeout
-                         )
-                     }
-                 )},
+                {"retryable", json::Value::ofBoolean(false)},
             });
             UF_TRY_VALUE(
                 canonical,

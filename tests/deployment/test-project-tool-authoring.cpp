@@ -60,10 +60,6 @@ namespace uf::deployment
 
         using operator_runtime::ProjectToolBinding;
         using operator_runtime::ProjectGenerationRegistrar;
-        using operator_runtime::Risk;
-        using operator_runtime::ToolMutability;
-        using operator_runtime::ToolSurface;
-
         constexpr auto k_pluginId     = std::string_view{"chaos.project"};
         constexpr auto k_dismissTool  = std::string_view{"chaos.project.dismiss"};
         constexpr auto k_sweepTool    = std::string_view{"chaos.project.sweep"};
@@ -112,8 +108,7 @@ local tools = require("@umbraflow/tools")
 return {
     plugin_id = "chaos.project",
     dismiss = function(input)
-        local answer = tools.call("chaos.project.sweep", input)
-        return { outcome = tools.state(answer) }
+        return tools.call("chaos.project.sweep", input)
     end,
     sweep = function(_input)
         if tools.knows("chaos.project.dismiss") then
@@ -144,63 +139,31 @@ return {
         // one whose whole contract was written down, and there is no optional
         // member for an absence to be read as.
         //
-        // `childEffects` is spliced in whole so that a case can write the
-        // contradictory declaration the reader must refuse -- which a typed
-        // builder could not express.
         [[nodiscard]]
-        auto declaredTool(
-            std::string_view name,
-            std::string_view childEffects
-        ) -> std::string
+        auto declaredTool(std::string_view name) -> std::string
         {
             auto tool = std::string{R"json({"argument_schema":)json"};
             tool += umbraflow::k_toolArgumentSchema;
-            tool += R"json(,"body":false)json";
-            tool += R"json(,"child_effects":)json";
-            tool += childEffects;
-            tool += R"json(,"effect_bounds":[],"idempotency":"read_safe",)json";
+            tool += R"json(,"description":"A fixture Project Tool leaf.",)json";
+            tool += R"json("effect_bounds":[],"idempotency":"read_safe",)json";
             tool += R"json("mutability":"read_only","name":")json";
             tool += name;
             tool += R"json(","required_capabilities":[],"surface":"semantic",)json";
             tool += R"json("timeout_policy":{"maximum_elapsed_ms":30000,)json"
                 R"json("on_timeout":"stop"},"ui_action_bounds":[],)json";
-            tool += R"json("version":"1","workflow_limits":)json"
-                R"json({"maximum_dispatches":4,"maximum_elapsed_ms":60000,)json"
-                R"json("maximum_observations":16,"maximum_steps":4,)json"
-                R"json("maximum_waits":4}})json";
+            tool += R"json("version":"1"})json";
             return tool;
         }
 
-        // The empty declaration: no name, no call, and the most restricted
-        // ceiling of each kind. It is what a Tool that issues no child call
-        // states, and it is written out rather than left out.
-        constexpr auto k_noChildCalls = std::string_view{
-            R"json({"child_tool_names":[],"maximum_child_calls":0,)json"
-            R"json("maximum_child_mutability":"read_only",)json"
-            R"json("maximum_child_risk":"read_only",)json"
-            R"json("maximum_child_surface":"semantic"})json"
-        };
-
         // The Tools this deployment declares, inline, as the array the block's
-        // `tools` member carries. `chaos.project.dismiss` declares a real child
-        // effect set, because the whole point of giving child_effects a wire
-        // spelling is that a project can state one; `chaos.project.sweep`
-        // declares the empty one.
+        // `tools` member carries.
         [[nodiscard]]
-        auto toolsJson(uint32 maximumChildCalls = 2U) -> std::string
+        auto toolsJson() -> std::string
         {
-            auto delegating = std::string{R"json({"child_tool_names":[")json"};
-            delegating += k_sweepTool;
-            delegating += R"json("],"maximum_child_calls":)json";
-            delegating += std::to_string(maximumChildCalls);
-            delegating += R"json(,"maximum_child_mutability":"read_only",)json"
-                R"json("maximum_child_risk":"low",)json"
-                R"json("maximum_child_surface":"semantic"})json";
-
             auto rendered = std::string{"["};
-            rendered += declaredTool(k_dismissTool, delegating);
+            rendered += declaredTool(k_dismissTool);
             rendered += ",";
-            rendered += declaredTool(k_sweepTool, k_noChildCalls);
+            rendered += declaredTool(k_sweepTool);
             rendered += "]";
             return rendered;
         }
@@ -329,48 +292,6 @@ return {
             }
         };
 
-        // The one Tool Runtime seam a compiled program reaches, in the shape
-        // @umbraflow/tools requires an answer to have. It records what it was
-        // asked so a case can prove the call left the VM, and it carries no run
-        // state: every run-scoped value arrives in the ScopedRunRequest.
-        struct RecordedCall final
-        {
-            std::string toolName{};
-            std::string parentPosition{};
-            uint64      childIndex{0};
-        };
-
-        [[nodiscard]]
-        auto recordingRuntime(std::shared_ptr<std::vector<RecordedCall>> p_calls)
-            -> script::ToolRuntimeDispatch
-        {
-            return [p_calls = std::move(p_calls)](
-                       std::string_view toolName,
-                       json::Value const&,
-                       script::ToolCallCoordinate const& coordinate,
-                       std::stop_token,
-                       script::ToolCallBody
-                   ) -> Result<json::Value>
-            {
-                p_calls->emplace_back(RecordedCall{
-                    .toolName       = std::string{toolName},
-                    .parentPosition = coordinate.parentPosition.hex(),
-                    .childIndex     = coordinate.childIndex,
-                });
-                return json::Value::ofObject({
-                    {"call_identity",
-                     json::Value::ofString(hashOf("recorded-call").hex())},
-                    {"state", json::Value::ofString("confirmed")},
-                    {"tool", json::Value::ofString(std::string{toolName})},
-                });
-            };
-        }
-
-        [[nodiscard]] auto runPosition() -> ContentHash
-        {
-            return hashOf("authored-run-position");
-        }
-
         template <typename Value>
         [[nodiscard]] auto why(Result<Value> const& outcome) -> std::string
         {
@@ -386,8 +307,7 @@ return {
         [[nodiscard]]
         auto registerLoaded(
             ProjectGenerationRegistrar& registrar,
-            LoadedDeployment const& deployment,
-            std::shared_ptr<std::vector<RecordedCall>> p_calls
+            LoadedDeployment const& deployment
         ) -> Result<operator_runtime::ProjectGenerationHandle>
         {
             return registrar.registerGeneration(
@@ -397,8 +317,7 @@ return {
                     .entryModule = deployment.toolClosure.entryModule,
                     .modules     = deployment.toolClosure.modules,
                 },
-                deployment.projectResources,
-                recordingRuntime(std::move(p_calls))
+                deployment.projectResources
             );
         }
     }
@@ -427,28 +346,14 @@ return {
         CHECK(bindings[1].toolName == k_sweepTool);
         CHECK(bindings[1].entryPoint == k_sweepEntry);
 
-        // And the descriptor carries the child effect declaration the `tools`
-        // array spelled, which is the half of this cut that had no wire
-        // spelling at all before it.
         auto const dismiss =
             p_deployment->toolCatalogSchemaOwner.describe(k_dismissTool);
         REQUIRE(dismiss.has_value());
-        CHECK(dismiss->childEffects.childToolNames
-              == std::vector<std::string>{std::string{k_sweepTool}});
-        CHECK(dismiss->childEffects.maximumChildCalls == 2U);
-        CHECK(dismiss->childEffects.maximumChildRisk == Risk::Low);
-        CHECK(dismiss->childEffects.maximumChildSurface == ToolSurface::Semantic);
-        CHECK(
-            dismiss->childEffects.maximumChildMutability == ToolMutability::ReadOnly
-        );
         auto const sweep = p_deployment->toolCatalogSchemaOwner.describe(k_sweepTool);
         REQUIRE(sweep.has_value());
-        CHECK(sweep->childEffects.childToolNames.empty());
-        CHECK(sweep->childEffects.maximumChildCalls == 0U);
 
         auto       registrar = ProjectGenerationRegistrar{};
-        auto       p_calls   = std::make_shared<std::vector<RecordedCall>>();
-        auto const loaded    = registerLoaded(registrar, *p_deployment, p_calls);
+        auto const loaded    = registerLoaded(registrar, *p_deployment);
         INFO(why(loaded));
         REQUIRE(loaded.has_value());
 
@@ -468,8 +373,8 @@ return {
         // exported set the bridge admits exactly. A statement of
         // k_exportedEntryPoints the source did not honour cannot survive this.
         auto const request = script::ScopedRunRequest{
-            .parentPosition = runPosition(),
-            .budgetOwner    = "fixture.project-tool",
+            .callIdentity = hashOf("authored-run-position"),
+            .budgetOwner  = std::string{k_dismissTool},
             .maximumElapsedMillis   = 5'000U,
             .cancellation           = {},
         };
@@ -481,7 +386,6 @@ return {
         INFO(why(swept));
         REQUIRE(swept.has_value());
         CHECK(json::canonicalBytes(*swept) == R"({"outcome":"swept"})");
-        CHECK(p_calls->empty());
 
         auto const dismissed = loaded->invokeBoundTool(
             k_dismissTool,
@@ -489,12 +393,13 @@ return {
             request
         );
         INFO(why(dismissed));
-        REQUIRE(dismissed.has_value());
-        CHECK(json::canonicalBytes(*dismissed) == R"({"outcome":"confirmed"})");
-        REQUIRE(p_calls->size() == 1U);
-        CHECK(p_calls->front().toolName == k_sweepTool);
-        CHECK(p_calls->front().parentPosition == runPosition().hex());
-        CHECK(p_calls->front().childIndex == 1U);
+        REQUIRE_FALSE(dismissed.has_value());
+        CHECK_MESSAGE(
+            std::string{dismissed.error().message()}.contains(
+                "Project Tool handler chaos.project.dismiss may not issue Tool call chaos.project.sweep"
+            ),
+            "Project Tool handler chaos.project.dismiss must refuse Tool call chaos.project.sweep by name"
+        );
     }
 
     // The binding is inside the registration root, which is what stops a
@@ -531,44 +436,14 @@ return {
         CHECK(one.toolCatalogHash() == two.toolCatalogHash());
     }
 
-    // The other direction: child_effects IS catalog material, so editing it
-    // moves tool_catalog_hash and therefore the registration root.
-    TEST_CASE("a widened child effect declaration moves tool_catalog_hash")
-    {
-        auto const narrow = AuthoredProject{
-            toolsJson(2U),
-            bindingsJson(acceptedBindings()),
-            k_pluginSource,
-        };
-        auto const wide = AuthoredProject{
-            toolsJson(64U),
-            bindingsJson(acceptedBindings()),
-            k_pluginSource,
-        };
-        auto const first  = narrow.load();
-        auto const second = wide.load();
-        REQUIRE(first.has_value());
-        REQUIRE(second.has_value());
-
-        auto const& one = first->findDeployment("main")->generation;
-        auto const& two = second->findDeployment("main")->generation;
-        CHECK(one.toolCatalogHash() != two.toolCatalogHash());
-        CHECK(one.hash() != two.hash());
-    }
-
-    // A declaration that names a child while admitting no call is two halves of
-    // one permission contradicting each other. It is refused when the catalog
-    // authority is built -- which is at load, where the declaration is read,
-    // before any program exists.
-    TEST_CASE("an incoherent child effect declaration is refused where it is written")
+    TEST_CASE("a Project Tool declaration carrying child_effects is refused by name")
     {
         auto edited = toolsJson();
-        auto const at = edited.find(R"("maximum_child_calls":2)");
+        auto const at = edited.find(R"("description")");
         REQUIRE(at != std::string::npos);
-        edited.replace(
+        edited.insert(
             at,
-            std::string_view{R"("maximum_child_calls":2)"}.size(),
-            R"("maximum_child_calls":0)"
+            R"json("child_effects":{"child_tool_names":[],"maximum_child_calls":0},)json"
         );
         auto const authored = AuthoredProject{
             edited,
@@ -577,69 +452,27 @@ return {
         };
         auto const refused = authored.load();
         INFO(why(refused));
-        REQUIRE_FALSE(refused.has_value());
-        CHECK(
-            std::string{refused.error().message()}.contains(
-                "names a child tool but admits no child call"
-            )
+        auto const named = !refused.has_value()
+            && std::string{refused.error().message()}.contains("child_effects");
+        CHECK_MESSAGE(
+            named,
+            "Project Tool declaration must refuse child_effects by name"
         );
     }
 
-    // There is no absent form of child_effects. A tool that issues no child
-    // call writes the empty declaration; a tool that writes nothing is a
-    // document this framework does not read, rather than one whose silence
-    // means the empty declaration.
-    TEST_CASE("a Tool declaration omitting child_effects is refused, not defaulted")
+    TEST_CASE("a Project Tool declaration has no body member")
     {
-        auto stripped = toolsJson();
-        auto const empty = std::string{R"json(,"child_effects":)json"}
-            + std::string{k_noChildCalls};
-        auto const at = stripped.find(empty);
-        REQUIRE(at != std::string::npos);
-        stripped.erase(at, empty.size());
-
-        auto const authored = AuthoredProject{
-            stripped,
-            bindingsJson(acceptedBindings()),
-            k_pluginSource,
-        };
-        auto const refused = authored.load();
-        INFO(why(refused));
-        REQUIRE_FALSE(refused.has_value());
-        CHECK(std::string{refused.error().message()}.contains("child_effects"));
-    }
-
-    TEST_CASE("a Project Tool body declaration is explicit and closed")
-    {
-        constexpr auto k_body = std::string_view{R"json(,"body":false)json"};
-
-        SUBCASE("omitting body is refused, not defaulted")
+        for (auto const value : {std::string_view{"false"}, std::string_view{"true"}})
         {
-            auto stripped = toolsJson();
-            auto const at = stripped.find(k_body);
+            auto withBody = toolsJson();
+            auto const member = std::string{R"json("body":)json"} + std::string{value}
+                + ",";
+            auto const at = withBody.find(R"json("description")json");
             REQUIRE(at != std::string::npos);
-            stripped.erase(at, k_body.size());
+            withBody.insert(at, member);
 
             auto const authored = AuthoredProject{
-                stripped,
-                bindingsJson(acceptedBindings()),
-                k_pluginSource,
-            };
-            auto const refused = authored.load();
-            INFO(why(refused));
-            REQUIRE_FALSE(refused.has_value());
-            CHECK(std::string{refused.error().message()}.contains("body"));
-        }
-
-        SUBCASE("true is refused until Project Tool body semantics exist")
-        {
-            auto enabled = toolsJson();
-            auto const at = enabled.find(k_body);
-            REQUIRE(at != std::string::npos);
-            enabled.replace(at, k_body.size(), R"json(,"body":true)json");
-
-            auto const authored = AuthoredProject{
-                enabled,
+                withBody,
                 bindingsJson(acceptedBindings()),
                 k_pluginSource,
             };
@@ -670,11 +503,8 @@ return {
             REQUIRE(project.has_value());
 
             auto       registrar = ProjectGenerationRegistrar{};
-            auto const refused   = registerLoaded(
-                registrar,
-                *project->findDeployment("main"),
-                std::make_shared<std::vector<RecordedCall>>()
-            );
+            auto const refused =
+                registerLoaded(registrar, *project->findDeployment("main"));
             INFO(why(refused));
             REQUIRE_FALSE(refused.has_value());
             CHECK(std::string{refused.error().message()}.contains(
@@ -695,11 +525,8 @@ return {
             REQUIRE(project.has_value());
 
             auto       registrar = ProjectGenerationRegistrar{};
-            auto const refused   = registerLoaded(
-                registrar,
-                *project->findDeployment("main"),
-                std::make_shared<std::vector<RecordedCall>>()
-            );
+            auto const refused =
+                registerLoaded(registrar, *project->findDeployment("main"));
             INFO(why(refused));
             REQUIRE_FALSE(refused.has_value());
             CHECK(std::string{refused.error().message()}.contains(
@@ -725,11 +552,8 @@ return {
             REQUIRE(project.has_value());
 
             auto       registrar = ProjectGenerationRegistrar{};
-            auto const refused   = registerLoaded(
-                registrar,
-                *project->findDeployment("main"),
-                std::make_shared<std::vector<RecordedCall>>()
-            );
+            auto const refused =
+                registerLoaded(registrar, *project->findDeployment("main"));
             INFO(why(refused));
             REQUIRE_FALSE(refused.has_value());
             CHECK(std::string{refused.error().message()}.contains(

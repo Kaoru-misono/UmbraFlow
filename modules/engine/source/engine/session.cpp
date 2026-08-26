@@ -294,6 +294,11 @@ namespace uf::engine
         return m_frameIdentity;
     }
 
+    auto Observation::frameSize() const noexcept -> std::pair<uint32, uint32>
+    {
+        return {m_frame.width(), m_frame.height()};
+    }
+
     EngineSession::EngineSession(
         std::shared_ptr<detail::EngineSessionIdentity const> identity,
         std::unique_ptr<IFrameSource> frameSource,
@@ -580,6 +585,26 @@ namespace uf::engine
 
         UF_TRY(emit(engineEvent("engine.observed", identity)));
 
+        return Observation{std::move(frame), lease, identity, m_identity};
+    }
+
+    auto EngineSession::observeRecorded(Frame frame) -> Result<Observation>
+    {
+        UF_TRY(ensureCompatibleFrame(
+            frame,
+            m_config.liveFingerprint,
+            m_config.projectFingerprint
+        ));
+        UF_TRY_VALUE(
+            lease,
+            leaseForWorld(
+                frame,
+                TargetWorld::Recorded,
+                m_config.maxActionFrameAge
+            )
+        );
+        auto const identity = FrameIdentity::fromFrame(frame);
+        UF_TRY(emit(engineEvent("engine.observed", identity)));
         return Observation{std::move(frame), lease, identity, m_identity};
     }
 

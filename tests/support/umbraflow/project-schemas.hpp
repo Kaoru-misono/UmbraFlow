@@ -140,8 +140,6 @@ namespace uf::operator_runtime::test_support
         ToolIdempotency  idempotency{ToolIdempotency::NonIdempotent};
         std::string_view requiredCapability{};
         std::string_view uiActionBound{};
-        uint32           workflowSteps{};
-        uint32           workflowDispatches{};
         uint64           timeoutMillis{};
     };
 
@@ -165,8 +163,6 @@ namespace uf::operator_runtime::test_support
             .idempotency        = k_ordinaryIdempotency,
             .requiredCapability = "",
             .uiActionBound      = k_uiActionBound,
-            .workflowSteps      = 8,
-            .workflowDispatches = 8,
             .timeoutMillis      = k_ordinaryTimeoutMillis,
         },
         // Shorter than the 5000 ms the plugin's one step intent names, so
@@ -179,8 +175,6 @@ namespace uf::operator_runtime::test_support
             .idempotency        = k_ordinaryIdempotency,
             .requiredCapability = "",
             .uiActionBound      = k_uiActionBound,
-            .workflowSteps      = 8,
-            .workflowDispatches = 8,
             .timeoutMillis      = 1'000,
         },
         // The tool no session in this project holds a capability for. It is
@@ -193,8 +187,6 @@ namespace uf::operator_runtime::test_support
             .idempotency        = ToolIdempotency::ReadSafe,
             .requiredCapability = "authoring",
             .uiActionBound      = k_uiActionBound,
-            .workflowSteps      = 1,
-            .workflowDispatches = 1,
             .timeoutMillis      = k_ordinaryTimeoutMillis,
         },
         ToolSource{
@@ -204,8 +196,6 @@ namespace uf::operator_runtime::test_support
             .idempotency        = k_ordinaryIdempotency,
             .requiredCapability = "",
             .uiActionBound      = k_uiActionBound,
-            .workflowSteps      = 8,
-            .workflowDispatches = 8,
             .timeoutMillis      = k_ordinaryTimeoutMillis,
         },
         ToolSource{
@@ -215,8 +205,6 @@ namespace uf::operator_runtime::test_support
             .idempotency        = k_ordinaryIdempotency,
             .requiredCapability = "",
             .uiActionBound      = k_uiActionBound,
-            .workflowSteps      = 8,
-            .workflowDispatches = 8,
             .timeoutMillis      = k_ordinaryTimeoutMillis,
         },
         ToolSource{
@@ -226,8 +214,6 @@ namespace uf::operator_runtime::test_support
             .idempotency        = k_ordinaryIdempotency,
             .requiredCapability = "",
             .uiActionBound      = k_uiActionBound,
-            .workflowSteps      = 8,
-            .workflowDispatches = 8,
             .timeoutMillis      = k_ordinaryTimeoutMillis,
         },
         ToolSource{
@@ -237,8 +223,6 @@ namespace uf::operator_runtime::test_support
             .idempotency        = k_ordinaryIdempotency,
             .requiredCapability = "",
             .uiActionBound      = k_uiActionBound,
-            .workflowSteps      = 8,
-            .workflowDispatches = 8,
             .timeoutMillis      = k_ordinaryTimeoutMillis,
         },
         ToolSource{
@@ -248,8 +232,6 @@ namespace uf::operator_runtime::test_support
             .idempotency        = ToolIdempotency::ReadSafe,
             .requiredCapability = "",
             .uiActionBound      = k_uiActionBound,
-            .workflowSteps      = 8,
-            .workflowDispatches = 8,
             .timeoutMillis      = k_ordinaryTimeoutMillis,
         },
         // Its own descriptor is the clamp the oversized proposal meets.
@@ -260,8 +242,6 @@ namespace uf::operator_runtime::test_support
             .idempotency        = k_ordinaryIdempotency,
             .requiredCapability = "",
             .uiActionBound      = k_uiActionBound,
-            .workflowSteps      = 8,
-            .workflowDispatches = 8,
             .timeoutMillis      = k_ordinaryTimeoutMillis,
         },
         // The machine-surface tool: it names a coordinate, so no online Agent
@@ -274,8 +254,6 @@ namespace uf::operator_runtime::test_support
             .idempotency        = ToolIdempotency::ReadSafe,
             .requiredCapability = "",
             .uiActionBound      = k_uiActionBound,
-            .workflowSteps      = 8,
-            .workflowDispatches = 8,
             .timeoutMillis      = k_ordinaryTimeoutMillis,
         },
         ToolSource{
@@ -285,8 +263,6 @@ namespace uf::operator_runtime::test_support
             .idempotency        = k_ordinaryIdempotency,
             .requiredCapability = "",
             .uiActionBound      = k_uiActionBound,
-            .workflowSteps      = 8,
-            .workflowDispatches = 8,
             .timeoutMillis      = k_ordinaryTimeoutMillis,
         },
         // Admits no step claiming it is safe to redeliver, which is the one
@@ -298,8 +274,6 @@ namespace uf::operator_runtime::test_support
             .idempotency        = ToolIdempotency::NonIdempotent,
             .requiredCapability = "",
             .uiActionBound      = k_uiActionBound,
-            .workflowSteps      = 8,
-            .workflowDispatches = 8,
             .timeoutMillis      = k_ordinaryTimeoutMillis,
         },
         // Bounds a UI action the plugin never proposes, so the allowed set of
@@ -311,8 +285,6 @@ namespace uf::operator_runtime::test_support
             .idempotency        = k_ordinaryIdempotency,
             .requiredCapability = "",
             .uiActionBound      = k_unboundUiAction,
-            .workflowSteps      = 8,
-            .workflowDispatches = 8,
             .timeoutMillis      = k_ordinaryTimeoutMillis,
         },
         ToolSource{
@@ -322,8 +294,6 @@ namespace uf::operator_runtime::test_support
             .idempotency        = k_ordinaryIdempotency,
             .requiredCapability = "",
             .uiActionBound      = k_uiActionBound,
-            .workflowSteps      = 2,
-            .workflowDispatches = 2,
             .timeoutMillis      = k_ordinaryTimeoutMillis,
         },
     };
@@ -409,14 +379,7 @@ namespace uf::operator_runtime::test_support
             }
             tools.emplace_back(json::Value::ofObject({
                 {"argument_schema", parsedJson(argumentSchema)},
-                {"body", json::Value::ofBoolean(false)},
-                {"child_effects", json::Value::ofObject({
-                     {"child_tool_names", json::Value::ofArray({})},
-                     {"maximum_child_calls", json::Value::ofNumber(0)},
-                     {"maximum_child_mutability", json::Value::ofString("read_only")},
-                     {"maximum_child_risk", json::Value::ofString("read_only")},
-                     {"maximum_child_surface", json::Value::ofString("semantic")},
-                 })},
+                {"description", json::Value::ofString("Run this Project Tool leaf handler.")},
                 {"effect_bounds", json::Value::ofArray({json::Value::ofObject({
                      {"maximum_risk", json::Value::ofString("high")},
                      {"namespaced_type", json::Value::ofString(std::string{k_effectType})},
@@ -446,17 +409,6 @@ namespace uf::operator_runtime::test_support
                      json::Value::ofString(std::string{tool.uiActionBound}),
                  })},
                 {"version", json::Value::ofString(std::string{k_toolVersion})},
-                {"workflow_limits", json::Value::ofObject({
-                     {"maximum_dispatches", json::Value::ofNumber(
-                          static_cast<double>(tool.workflowDispatches)
-                      )},
-                     {"maximum_elapsed_ms", json::Value::ofNumber(600'000)},
-                     {"maximum_observations", json::Value::ofNumber(256)},
-                     {"maximum_steps", json::Value::ofNumber(
-                          static_cast<double>(tool.workflowSteps)
-                      )},
-                     {"maximum_waits", json::Value::ofNumber(64)},
-                 })},
             }));
         }
         return json::canonicalBytes(json::Value::ofArray(std::move(tools)));

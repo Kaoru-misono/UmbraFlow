@@ -1,5 +1,5 @@
 --!strict
--- Two-stage, same-cycle RuntimeModel v3 resolver.
+-- Two-stage, same-cycle RuntimeModel v4 resolver.
 
 local model = require("@umbraflow/internal/model")
 local evidence = require("@umbraflow/internal/evidence")
@@ -287,7 +287,7 @@ function resolution.resolve_state(
     recordsByKey: any,
     expectedStack: { any }?
 ): any
-    if not model.is_runtime_model(runtimeModel) then error("resolve_state needs RuntimeModel v3", 2) end
+    if not model.is_runtime_model(runtimeModel) then error("resolve_state needs RuntimeModel v4", 2) end
     if not evidence.is_cycle_live(cycle) then error("resolve_state needs a live framework cycle", 2) end
     if expectedStack ~= nil then
         if not model.valid_surface_stack(runtimeModel, expectedStack) then
@@ -304,7 +304,7 @@ function resolution.resolve_state(
     for _, surface in runtimeModel.surfaces do
         local evaluated = evaluateSurface(runtimeModel, surface, recordsByKey, cycle)
         table.insert(evaluations, evaluated)
-        if surface.kind == "scene" then
+        if #surface.covers == 0 then
             if evaluated.kind == "present" then table.insert(scenes, surface) end
             if evaluated.kind == "unknown" then unknownScenes += 1 end
         elseif evaluated.kind == "present" then
@@ -337,7 +337,7 @@ function resolution.resolve_state(
     local scene = scenes[1]
     for _, evaluated in evaluations do
         local surface = evaluated.surface
-        if surface.kind ~= "scene" and evaluated.kind == "unknown"
+        if #surface.covers > 0 and evaluated.kind == "unknown"
             and model.surface_covers(runtimeModel, surface.id, scene.id)
         then
             return unknownState("unknown_layer_competitor", evaluations)
@@ -634,7 +634,7 @@ local function collectionItems(collection: any, reading: any): (any?, string?)
 end
 
 -- Resolves one Collection click against one measured item. The item index is
--- the stable slot ordinal, not the Reader's enumeration position. The point is
+-- the stable slot ordinal, not the detection's enumeration position. The point is
 -- an item-origin delta and refuses the frame edge instead of being clamped.
 function resolution.collection_action_point(
     runtimeModel: any,
@@ -664,10 +664,7 @@ function resolution.collection_action_point(
     if selectedAction.kind ~= "click" then return nil, "action_has_no_point" end
 
     local supplied = if type(readingsByKey) == "table" then readingsByKey else {}
-    local reading = supplied[model.collection_reading_key(
-        collection.id,
-        collection.placement.reader
-    )]
+    local reading = supplied[model.collection_detection_key(collection.id)]
     local fitted, itemReason = collectionItems(collection, reading)
     if fitted == nil then return nil, itemReason end
     if fitted.items == nil then return nil, "unknown_item" end
@@ -735,10 +732,7 @@ function resolution.collection_read_targets(
     )
     if collection == nil then return nil, targetReason end
     local supplied = if type(readingsByKey) == "table" then readingsByKey else {}
-    local reading = supplied[model.collection_reading_key(
-        collection.id,
-        collection.placement.reader
-    )]
+    local reading = supplied[model.collection_detection_key(collection.id)]
     local fitted, itemReason = collectionItems(collection, reading)
     if fitted == nil then return nil, itemReason end
     if fitted.items == nil then return freezeList({}), nil end
@@ -751,9 +745,9 @@ function resolution.collection_read_targets(
                 key = model.collection_item_reading_key(
                     collection.id,
                     item.index,
-                    read.reader
+                    read.id
                 ),
-                reader = read.reader,
+                read = read,
                 rect = area,
             }))
         end
@@ -761,7 +755,13 @@ function resolution.collection_read_targets(
     return freezeList(targets), nil
 end
 
-local function reportedReading(subjectId: string, readerId: string, reading: any): any
+-- One reported reading, named by the id of the site that declared it. That id
+-- is the whole of the name: a Readout owns its rectangle, and a Collection's
+-- per-item read is reported inside the item inside the Collection that already
+-- names both. The member this used to carry, `ui_target`, was a Binding-shaped
+-- name that a Collection filled with its own id, so a consumer reading it was
+-- told a UiTarget that had never existed.
+local function reportedReading(id: string, reading: any): any
     local kind = "unknown"
     local lines = nil
     local reason = "not_measured"
@@ -778,8 +778,7 @@ local function reportedReading(subjectId: string, readerId: string, reading: any
         end
     end
     return table.freeze({
-        ui_target = subjectId,
-        reader = readerId,
+        id = id,
         kind = kind,
         lines = lines,
         reason = reason,
@@ -796,7 +795,7 @@ local function collectionPredicateMatches(
     local reading = supplied[model.collection_item_reading_key(
         collection.id,
         itemIndex,
-        predicate.reader
+        predicate.read
     )]
     if type(reading) ~= "table" then return nil, "predicate_not_measured" end
     if reading.kind == "absent" then return false, nil end
@@ -811,8 +810,8 @@ end
 
 -- Resolves one variable-cardinality collection against the same live state
 -- that made its Surface available. A bare search rectangle contributes nothing:
--- only an absent or successful answer from the collection's trusted block
--- Reader can resolve a count. Unknown reading and overlapping spatial spans
+-- only an absent or successful answer from the collection's own trusted
+-- detection can resolve a count. Unknown reading and overlapping spatial spans
 -- refuse instead of fabricating items or inheriting adapter enumeration order.
 function resolution.resolve_collection(
     runtimeModel: any,
@@ -829,10 +828,7 @@ function resolution.resolve_collection(
     )
     if collection == nil then return nil, targetReason end
     local supplied = if type(readingsByKey) == "table" then readingsByKey else {}
-    local reading = supplied[model.collection_reading_key(
-        collection.id,
-        collection.placement.reader
-    )]
+    local reading = supplied[model.collection_detection_key(collection.id)]
     local fitted, itemReason = collectionItems(collection, reading)
     if fitted == nil then return nil, itemReason end
     if fitted.items == nil then
@@ -858,12 +854,11 @@ function resolution.resolve_collection(
         local readings = {}
         for _, read in collection.reads do
             table.insert(readings, reportedReading(
-                collection.id,
-                read.reader,
+                read.id,
                 supplied[model.collection_item_reading_key(
                     collection.id,
                     detected.index,
-                    read.reader
+                    read.id
                 )]
             ))
         end
@@ -880,12 +875,18 @@ function resolution.resolve_collection(
     }), nil
 end
 
--- The Bindings a resolved state could report readings from: every Binding on a
--- Surface of its stack that named a Reader in `reads`.  It is the reading
--- sibling of binding_candidates and refuses on the same terms, so a state from
--- another cycle or another model reports nothing rather than reporting readings
--- taken against a world it did not resolve.
-function resolution.reading_bindings(
+-- The Readouts a resolved state reports: every Readout on a Surface of its
+-- stack, in stack order and then declaration order.  It is the reading sibling
+-- of binding_candidates and refuses on the same terms, so a state from another
+-- cycle or another model reports nothing rather than reporting readings taken
+-- against a world it did not resolve.
+--
+-- The stack IS the gate, and there is nothing else to pass.  A Readout has no
+-- detector of its own -- the value printed in its rectangle changes every
+-- frame, so there is no stable ink there to measure -- and it needs none: the
+-- Surface's identity Bindings were measured present to put that Surface on the
+-- stack, and they are what proved this rectangle is this rectangle.
+function resolution.stack_readouts(
     runtimeModel: any,
     cycle: any,
     resolvedState: any
@@ -901,66 +902,20 @@ function resolution.reading_bindings(
     end
     local result = {}
     for _, surfaceId in stateEntry.stack do
-        for _, candidate in runtimeModel.bindings_by_surface[surfaceId] or {} do
-            if #candidate.reads > 0 then table.insert(result, candidate) end
+        for _, readout in runtimeModel.readouts_by_surface[surfaceId] or {} do
+            table.insert(result, readout)
         end
     end
     return freezeList(result)
 end
 
--- The Bindings a resolved state may report a reading from, out of the candidates
--- above: measured present, and the only present Binding of their UiTarget.
+-- What a resolved state reports it read: one entry per Readout on its stack,
+-- sorted by Readout id.  Each is `{ id, kind }` plus `lines` when it read and
+-- `reason` when it could not.
 --
--- A Binding contributes only while its own detector measures present, because a
--- Reader reads that Binding's rectangle: reading through a Binding that is not
--- showing returns whatever is at those pixels instead.  It is a separate verb
--- rather than a step inside resolve_readings so that the caller that spends the
--- Host reads and the projection that consumes them apply ONE rule -- an absent
--- Binding must not cost a read, and a rule spelled twice would agree by test
--- rather than by construction.
---
--- A Binding owns every visual variant sharing its placement and reads, so a
--- variant change does not change which reporting subject exists. Multiple
--- present Bindings of one UiTarget remain ambiguous because they are distinct
--- placements or roles, and that UiTarget alone reports nothing.
-function resolution.reading_targets(
-    runtimeModel: any,
-    cycle: any,
-    resolvedState: any,
-    recordsByKey: any
-): { any }
-    local candidates = resolution.reading_bindings(runtimeModel, cycle, resolvedState)
-    if candidates == nil then return freezeList({}) end
-
-    local present = {}
-    local seenTarget: { [string]: boolean } = {}
-    local ambiguousTarget: { [string]: boolean } = {}
-    for _, binding in candidates do
-        local evaluated = evaluateBinding(binding, recordsByKey, cycle)
-        if evaluated.kind == "present" then
-            if seenTarget[binding.ui_target] then
-                ambiguousTarget[binding.ui_target] = true
-            end
-            seenTarget[binding.ui_target] = true
-            table.insert(present, binding)
-        end
-    end
-
-    local result = {}
-    for _, binding in present do
-        if not ambiguousTarget[binding.ui_target] then table.insert(result, binding) end
-    end
-    return freezeList(result)
-end
-
--- What a resolved state reports it read: one entry per Reader every reporting
--- Binding named, sorted by UiTarget then Reader.  Each is
--- `{ ui_target, reader, kind }` plus `lines` when it read and `reason` when it
--- could not.
---
--- A reading is a LIST of lines under either Reader layout.  A `single_line`
--- Reader reports one element rather than a second shape, because a consumer
--- that has to ask which spelling it was handed has been handed two contracts.
+-- A reading is a LIST of lines under either layout.  A `single_line` read
+-- reports one element rather than a second shape, because a consumer that has
+-- to ask which spelling it was handed has been handed two contracts.
 --
 -- All three outcomes travel.  A consumer told only about successful reads
 -- cannot separate "nothing is written here" from "this frame was unreadable",
@@ -971,48 +926,36 @@ end
 -- already applies one function up to a predicate nothing measured.
 --
 -- The score still does not travel.  It has already been compared against the
--- Reader's confidence_floor, which is the trusted Reader's judgement and not
--- the caller's to re-take; carrying the number as well would put a value that
--- differs between two captures of one unchanged screen inside a hashed decision
--- basis.  A bounded reason is safe there, a float is not.
+-- confidence_floor the Readout declared, which is the declaration's judgement
+-- and not the caller's to re-take; carrying the number as well would put a
+-- value that differs between two captures of one unchanged screen inside a
+-- hashed decision basis.  A bounded reason is safe there, a float is not.
 --
 -- Each line's RECT does travel, and is hashed with the rest of this document.
--- That is the ruling and not an oversight: a block Reader's rectangle is
+-- That is the ruling and not an oversight: a `block` read's rectangle is
 -- measured, so it can move by a pixel between two captures of one unchanged
 -- screen exactly as the score can -- but unlike the score it has a decision
 -- left in it, because it is where the consumer acts.  A basis that omitted an
 -- input the consumer branches on would let a frozen plan be re-derived into a
 -- different action without the basis moving, and unsoundness outranks an extra
--- approval.  Under `single_line` the rect is the Binding's declared placement
+-- approval.  Under `single_line` the rect is the Readout's declared rectangle
 -- and cannot move at all.
 function resolution.resolve_readings(
     runtimeModel: any,
     cycle: any,
     resolvedState: any,
-    recordsByKey: any,
     readingsByKey: any
 ): { any }
     local supplied = if type(readingsByKey) == "table" then readingsByKey else {}
     local result = {}
-    for _, binding in resolution.reading_targets(
-        runtimeModel,
-        cycle,
-        resolvedState,
-        recordsByKey
-    ) do
-        for _, readerId in binding.reads do
-            table.insert(result, reportedReading(
-                binding.ui_target,
-                readerId,
-                supplied[model.reading_key(binding.id, readerId)]
-            ))
-        end
+    for _, readout in resolution.stack_readouts(runtimeModel, cycle, resolvedState) or {} do
+        table.insert(result, reportedReading(
+            readout.id,
+            supplied[model.readout_key(readout.id)]
+        ))
     end
     table.sort(result, function(left: any, right: any): boolean
-        if left.ui_target ~= right.ui_target then
-            return left.ui_target < right.ui_target
-        end
-        return left.reader < right.reader
+        return left.id < right.id
     end)
     return freezeList(result)
 end
@@ -1025,7 +968,7 @@ function resolution.resolve_binding(
     bindingId: any?,
     recordsByKey: any
 ): any
-    if not model.is_runtime_model(runtimeModel) then error("resolve_binding needs RuntimeModel v3", 2) end
+    if not model.is_runtime_model(runtimeModel) then error("resolve_binding needs RuntimeModel v4", 2) end
     if type(uiTarget) ~= "string" or runtimeModel.ui_target_by_id[uiTarget] == nil then
         error("resolve_binding needs a declared UiTarget", 2)
     end

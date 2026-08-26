@@ -36,6 +36,7 @@
 #include <chrono>
 #include <cstddef>
 #include <format>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -98,6 +99,26 @@ namespace uf::task
                 std::chrono::duration_cast<std::chrono::milliseconds>(duration)
                     .count()
             );
+        }
+
+        [[nodiscard]]
+        auto validateHoldDuration(MonotonicInstant::Duration duration) -> Status
+        {
+            if (
+                duration < MonotonicInstant::Duration::zero()
+                || duration > k_maxHoldDuration
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "a hold must keep the button down for between 0 and {} "
+                        "milliseconds",
+                        traceMillis(k_maxHoldDuration)
+                    )
+                );
+            }
+            return ok();
         }
 
         // The two fields every coordinate-naming exploration act opens its trace
@@ -399,6 +420,73 @@ namespace uf::task
         return m_openTicket;
     }
 
+    auto TaskContext::openRecordedCycle(
+        std::span<std::byte const> png,
+        FrameIdentity frameIdentity,
+        uint32 expectedWidth,
+        uint32 expectedHeight
+    ) -> Result<CycleTicket>
+    {
+        UF_TRY(m_cycles.requireClosed());
+        UF_TRY_VALUE(decoded, image::decodePng(png, "Operator screenshot evidence"));
+        if (
+            decoded.width != expectedWidth
+            || decoded.height != expectedHeight
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "screenshot receipt geometry {}x{} disagrees with its PNG {}x{}",
+                    expectedWidth,
+                    expectedHeight,
+                    decoded.width,
+                    decoded.height
+                )
+            );
+        }
+        UF_TRY_VALUE(bgra, image::rgba8ToBgra8(std::move(decoded.pixels)));
+        UF_TRY_VALUE(
+            transform,
+            CoordinateTransform::create(
+                Point<DesktopSpace>{0.0F, 0.0F},
+                static_cast<float>(decoded.width),
+                static_cast<float>(decoded.height),
+                decoded.width,
+                decoded.height
+            )
+        );
+        auto const widthSize = checkedCast<std::size_t>(decoded.width);
+        auto const rowBytes = widthSize.has_value()
+            ? checkedMultiply(*widthSize, std::size_t{4U})
+            : std::nullopt;
+        if (!rowBytes.has_value())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "screenshot receipt row-byte count exceeds addressable memory"
+            );
+        }
+        UF_TRY_VALUE(
+            frame,
+            Frame::create(
+                frameIdentity.frameId(),
+                frameIdentity.sessionId(),
+                frameIdentity.targetGeneration(),
+                MonotonicInstant::now(),
+                decoded.width,
+                decoded.height,
+                *rowBytes,
+                PixelFormat::Bgra8,
+                std::make_shared<FrameBuffer const>(std::move(bgra)),
+                transform
+            )
+        );
+        UF_TRY_VALUE(observation, m_session.observeRecorded(std::move(frame)));
+        m_openTicket = m_cycles.open(std::move(observation));
+        return m_openTicket;
+    }
+
     auto TaskContext::openObservationFrame() const noexcept
         -> std::optional<CycleTicket>
     {
@@ -628,6 +716,42 @@ namespace uf::task
         return blob;
     }
 
+    auto TaskContext::cycleEvidencePng(
+        CycleTicket ticket,
+        PixelRect rect
+    ) -> Result<CroppedBlob>
+    {
+        UF_TRY(m_cycles.requireOpen(ticket));
+        if (m_cycles.cropsCharged() >= m_config.maximumCropsPerCycle)
+        {
+            return fail(
+                AutomationErrorKind::RecognitionIncomplete,
+                std::format(
+                    "this observation cycle has already spent its budget of {} "
+                    "crops; open a new cycle to crop again",
+                    m_config.maximumCropsPerCycle
+                )
+            );
+        }
+        m_cycles.chargeCrop();
+        UF_TRY_VALUE(region, m_session.cropRegion(m_cycles.observation(), rect));
+        UF_TRY_VALUE(rgba, image::bgra8ToRgba8(std::move(region.pixels)));
+        UF_TRY_VALUE(
+            png,
+            image::encodeRgbaPng(
+                "screen evidence crop",
+                region.width,
+                region.height,
+                rgba
+            )
+        );
+        UF_TRY_VALUE(hash, sha256(png));
+        return CroppedBlob{
+            .png  = std::move(png),
+            .hash = hash,
+        };
+    }
+
     auto TaskContext::cycleCensusGrid(
         CycleTicket ticket,
         PixelRect rect,
@@ -703,6 +827,26 @@ namespace uf::task
             return std::nullopt;
         }
         return m_cycles.observation().frameIdentity().targetGeneration();
+    }
+
+    auto TaskContext::openCycleFrameIdentity() const noexcept
+        -> std::optional<FrameIdentity>
+    {
+        if (!m_cycles.isOpen())
+        {
+            return std::nullopt;
+        }
+        return m_cycles.observation().frameIdentity();
+    }
+
+    auto TaskContext::openCycleFrameSize() const noexcept
+        -> std::optional<std::pair<uint32, uint32>>
+    {
+        if (!m_cycles.isOpen())
+        {
+            return std::nullopt;
+        }
+        return m_cycles.observation().frameSize();
     }
 
     auto TaskContext::loadTemplate(
@@ -879,20 +1023,7 @@ namespace uf::task
     {
         // Both refusals precede the spend, so a chunk with a sign error or a
         // mistyped duration keeps its frame and leaves no button down.
-        if (
-            duration < MonotonicInstant::Duration::zero()
-            || duration > k_maxHoldDuration
-        )
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "a hold must keep the button down for between 0 and {} "
-                    "milliseconds",
-                    traceMillis(k_maxHoldDuration)
-                )
-            );
-        }
+        UF_TRY(validateHoldDuration(duration));
 
         UF_TRY_VALUE(observation, m_cycles.spend(ticket));
         UF_TRY_VALUE(
@@ -911,9 +1042,13 @@ namespace uf::task
         );
     }
 
-    auto TaskContext::cycleEngageHold(CycleTicket ticket, PixelPoint point)
-        -> Status
+    auto TaskContext::cycleEngageHold(
+        CycleTicket ticket,
+        PixelPoint point,
+        MonotonicInstant::Duration duration
+    ) -> Status
     {
+        UF_TRY(validateHoldDuration(duration));
         UF_TRY_VALUE(observation, m_cycles.spend(ticket));
         UF_TRY(m_session.engageHold(std::move(observation), point));
 
@@ -929,7 +1064,7 @@ namespace uf::task
         return m_session.holdEngaged();
     }
 
-    auto TaskContext::disengageInput() -> Result<uint64>
+    auto TaskContext::disengageInput() -> Result<engine::HoldReceipt>
     {
         UF_TRY_VALUE(receipt, m_session.disengageHold());
         auto const millis = static_cast<uint64>(
@@ -958,7 +1093,7 @@ namespace uf::task
                 inputActionEvent("hold", receipt.frameId, std::move(fields))
             )
         );
-        return millis;
+        return receipt;
     }
 
     auto TaskContext::cycleDrag(

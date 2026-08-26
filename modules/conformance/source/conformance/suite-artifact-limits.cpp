@@ -63,8 +63,7 @@ namespace uf::operator_runtime::conformance
                 .entryModule = underTest.toolClosure.entryModule,
                 .modules     = underTest.toolClosure.modules,
             },
-            std::move(blobs),
-            provisioningToolRuntime()
+            std::move(blobs)
         );
         REQUIRE_FALSE(registration.has_value());
         CHECK_MESSAGE(

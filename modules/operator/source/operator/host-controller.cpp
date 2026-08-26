@@ -24,6 +24,43 @@ namespace uf::operator_runtime
         }
     };
 
+    struct OperatorTaskHost::ToolCallHold::Impl final
+    {
+        std::unique_lock<std::mutex> lock;
+        task::HostHoldEngagement     engagement;
+
+        Impl(
+            std::unique_lock<std::mutex> ownedLock,
+            task::HostHoldEngagement ownedEngagement
+        )
+            : lock{std::move(ownedLock)}
+            , engagement{std::move(ownedEngagement)}
+        {
+        }
+    };
+
+    OperatorTaskHost::ToolCallHold::ToolCallHold(
+        std::unique_ptr<Impl> implementation
+    )
+        : m_impl{std::move(implementation)}
+    {
+    }
+
+    OperatorTaskHost::ToolCallHold::ToolCallHold(ToolCallHold&&) noexcept =
+        default;
+
+    auto OperatorTaskHost::ToolCallHold::operator=(ToolCallHold&&) noexcept
+        -> ToolCallHold& = default;
+
+    OperatorTaskHost::ToolCallHold::~ToolCallHold() = default;
+
+    auto OperatorTaskHost::ToolCallHold::duration() const noexcept
+        -> MonotonicInstant::Duration
+    {
+        UF_CHECK(m_impl != nullptr);
+        return m_impl->engagement.duration();
+    }
+
     OperatorTaskHost::OperatorTaskHost(std::unique_ptr<Impl> implementation)
         : m_impl{std::move(implementation)}
     {
@@ -154,7 +191,61 @@ namespace uf::operator_runtime
             std::move(reservation.authority),
             context,
             intent.uiTarget,
-            intent.uiAction
+            intent.binding,
+            intent.action,
+            intent.expectedKind
+        );
+    }
+
+    auto OperatorTaskHost::engageToolCallHold(
+        ToolCallPositionIdentity const& call,
+        ControlLease const& lease,
+        GenerationId runtimeGeneration,
+        ToolCallInputIntent const& intent,
+        task::TaskContext& context
+    ) -> Result<ToolCallHoldStart>
+    {
+        UF_TRY(requireControlledTarget(lease.controlledTargetId));
+        auto lock = std::unique_lock{m_impl->targetSerialization};
+        UF_TRY_VALUE(
+            reservation,
+            m_impl->coordinator.reserveToolCallDispatch(
+                call,
+                lease,
+                runtimeGeneration,
+                intent.uiTarget
+            )
+        );
+        UF_TRY_VALUE(
+            started,
+            m_impl->host.engageUiHold(
+                std::move(reservation.authority),
+                context,
+                intent.uiTarget,
+                intent.binding,
+                intent.action
+            )
+        );
+        if (auto* const p_terminal =
+                std::get_if<task::HostDeliveryReport>(&started))
+        {
+            return ToolCallHoldStart{std::move(*p_terminal)};
+        }
+        return ToolCallHoldStart{ToolCallHold{std::make_unique<ToolCallHold::Impl>(
+            std::move(lock),
+            std::get<task::HostHoldEngagement>(std::move(started))
+        )}};
+    }
+
+    auto OperatorTaskHost::finishToolCallHold(
+        ToolCallHold hold,
+        task::TaskContext& context
+    ) -> task::HostDeliveryReport
+    {
+        UF_CHECK(hold.m_impl != nullptr);
+        return m_impl->host.finishUiHold(
+            std::move(hold.m_impl->engagement),
+            context
         );
     }
 }

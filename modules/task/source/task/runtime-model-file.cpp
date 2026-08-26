@@ -181,7 +181,11 @@ namespace uf::task
         [[nodiscard]]
         auto validateAssetPath(std::string_view text) -> Status
         {
-            constexpr auto prefix = std::string_view{"assets/"};
+            // The one C++ spelling of the assets directory name. It was a
+            // literal here while k_runtimeAssetDirectoryName sat unread, which
+            // made CONTEXT.md's claim that the name is pinned there false.
+            auto const prefix
+                = std::string{k_runtimeAssetDirectoryName} + '/';
             if (!text.starts_with(prefix))
             {
                 return refuse(

@@ -5,6 +5,7 @@
 
 #include <operator/agent-profile.hpp>
 #include <operator/effective-plan.hpp>
+#include <operator/evidence-store.hpp>
 #include <operator/manifest.hpp>
 #include <operator/policy.hpp>
 #include <operator/project-generation.hpp>
@@ -23,10 +24,13 @@
 #include <task/exploration-session.hpp>
 #include <task/pixel-probe.hpp>
 #include <task/platform/confined-file.hpp>
+#include <task/project-files.hpp>
 #include <task/runtime-model-file.hpp>
 #include <task/task-host.hpp>
 
 #include <engine/session.hpp>
+
+#include <image/png.hpp>
 
 #include <trace/file-sink.hpp>
 #include <trace/recorder.hpp>
@@ -35,8 +39,10 @@
 
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
+#include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
 #include <core/safety/annotations.hpp>
+#include <core/text/utf8.hpp>
 #include <core/utility/scope-exit.hpp>
 
 #include <domain/content-hash.hpp>
@@ -46,6 +52,7 @@
 #include <json/value.hpp>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <format>
@@ -104,30 +111,77 @@ namespace uf::service
         // here so the provider switch and the seam that reads an argument
         // cannot disagree about which Tool they are talking about.
         constexpr auto k_observeTool = std::string_view{"framework.screen.observe"};
+        constexpr auto k_captureTool = std::string_view{"framework.screen.capture"};
         constexpr auto k_waitTool    = std::string_view{"framework.workflow.wait"};
         constexpr auto k_auditTool   = std::string_view{"framework.audit.record"};
         constexpr auto k_statusTool  = std::string_view{"framework.workflow.status"};
-        constexpr auto k_semanticInputTool = std::string_view{
-            "framework.input.semantic_target"
-        };
-        constexpr auto k_deliverInputTool = std::string_view{
-            "framework.input.deliver"
-        };
         constexpr auto k_censusGridTool = std::string_view{
             "framework.screen.census_grid"
         };
+        constexpr auto k_cropTool = std::string_view{"framework.screen.crop"};
         constexpr auto k_probeTool = std::string_view{
             "framework.screen.probe"
         };
         constexpr auto k_readLinesTool = std::string_view{
             "framework.screen.read_lines"
         };
-        constexpr auto k_projectReadTool = std::string_view{
-            "framework.project.read"
+        constexpr auto k_projectReadTextTool = std::string_view{
+            "framework.project.read_text"
         };
-        constexpr auto k_projectWriteTool = std::string_view{
-            "framework.project.write"
+        constexpr auto k_projectWriteFileTool = std::string_view{
+            "framework.project.write_file"
         };
+        constexpr auto k_projectWriteTextTool = std::string_view{
+            "framework.project.write_text"
+        };
+
+        enum class FrameworkInputKind : uint8
+        {
+            Click,
+            Drag,
+            Hold,
+            Key,
+            Move,
+            Scroll,
+        };
+
+        struct FrameworkInputTool final
+        {
+            std::string_view   name{};
+            FrameworkInputKind kind{FrameworkInputKind::Click};
+        };
+
+        constexpr auto k_rawInputTools = std::array{
+            FrameworkInputTool{"framework.input.click", FrameworkInputKind::Click},
+            FrameworkInputTool{"framework.input.drag", FrameworkInputKind::Drag},
+            FrameworkInputTool{"framework.input.hold", FrameworkInputKind::Hold},
+            FrameworkInputTool{"framework.input.key", FrameworkInputKind::Key},
+            FrameworkInputTool{"framework.input.move", FrameworkInputKind::Move},
+            FrameworkInputTool{"framework.input.scroll", FrameworkInputKind::Scroll},
+        };
+        constexpr auto k_uiInputTools = std::array{
+            FrameworkInputTool{"framework.ui.click", FrameworkInputKind::Click},
+            FrameworkInputTool{"framework.ui.drag", FrameworkInputKind::Drag},
+            FrameworkInputTool{"framework.ui.hold", FrameworkInputKind::Hold},
+            FrameworkInputTool{"framework.ui.key", FrameworkInputKind::Key},
+            FrameworkInputTool{"framework.ui.move", FrameworkInputKind::Move},
+            FrameworkInputTool{"framework.ui.scroll", FrameworkInputKind::Scroll},
+        };
+
+        [[nodiscard]]
+        auto inputKindWireName(FrameworkInputKind kind) noexcept -> std::string_view
+        {
+            switch (kind)
+            {
+            case FrameworkInputKind::Click: return "click";
+            case FrameworkInputKind::Drag: return "drag";
+            case FrameworkInputKind::Hold: return "hold";
+            case FrameworkInputKind::Key: return "key";
+            case FrameworkInputKind::Move: return "move";
+            case FrameworkInputKind::Scroll: return "scroll";
+            }
+            UF_UNREACHABLE_MSG("Unknown FrameworkInputKind value");
+        }
 
         // How long one minted observation authority may be presented for.
         // CALIBRATION: thirty seconds is a placeholder well above the time an
@@ -152,6 +206,45 @@ namespace uf::service
         auto counterMember(uint64 value) -> json::Value
         {
             return json::Value::ofString(std::to_string(value));
+        }
+
+        [[nodiscard]]
+        auto evidenceReceiptValue(
+            operator_runtime::EvidenceArtifactReceipt const& receipt
+        ) -> json::Value
+        {
+            auto members = std::vector<json::Member>{
+                {"byte_count", counterMember(receipt.byteCount)},
+                {"created_at_unix_ms", counterMember(receipt.createdAtUnixMillis)},
+                {"frame_identity",
+                 json::Value::ofObject({
+                     {"capture_session_id",
+                      counterMember(receipt.frameIdentity.sessionId().value())},
+                     {"frame_id", counterMember(receipt.frameIdentity.frameId().value())},
+                     {"target_generation",
+                      counterMember(
+                          receipt.frameIdentity.targetGeneration().value()
+                      )},
+                 })},
+                {"height", json::Value::ofNumber(static_cast<double>(receipt.height))},
+                {"media_type", json::Value::ofString(receipt.mediaType)},
+                {std::string{operator_runtime::k_screenshotSha256Member},
+                 json::Value::ofString(receipt.contentHash.hex())},
+                {"width", json::Value::ofNumber(static_cast<double>(receipt.width))},
+            };
+            if (receipt.rectangle)
+            {
+                members.emplace_back(
+                    "rectangle",
+                    json::Value::ofObject({
+                        {"height", counterMember(receipt.rectangle->height())},
+                        {"width", counterMember(receipt.rectangle->width())},
+                        {"x", counterMember(receipt.rectangle->x())},
+                        {"y", counterMember(receipt.rectangle->y())},
+                    })
+                );
+            }
+            return json::Value::ofObject(std::move(members));
         }
 
         [[nodiscard]]
@@ -350,34 +443,6 @@ namespace uf::service
             };
         }
 
-        // The Tool Runtime seam a release upgrade compiles its generation
-        // against. An upgrade session holds no lease, no controller binding and
-        // no observation authority, so it has nothing a Tool call could be
-        // admitted under; it registers a generation only to prove the shipped
-        // closure compiles under the environment the upgrade would run it in.
-        //
-        // It refuses rather than being absent, because a scoped program with no
-        // Tool Runtime is a pure program wearing the wrong type. The refusal is
-        // a value this seam always answers with and never a branch on which
-        // generation is running.
-        [[nodiscard]]
-        auto quiescentToolRuntime() -> script::ToolRuntimeDispatch
-        {
-            return [](
-                       std::string_view,
-                       json::Value const&,
-                       script::ToolCallCoordinate const&,
-                       std::stop_token,
-                       script::ToolCallBody
-                   ) -> Result<json::Value>
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "a release upgrade session dispatches no Tool call"
-                );
-            };
-        }
-
         [[nodiscard]]
         auto confirmedToolResult(json::Value value)
             -> Result<operator_runtime::ToolCallCompletion>
@@ -416,9 +481,9 @@ namespace uf::service
                 payload,
                 operator_runtime::CanonicalJson::parseExact(
                     json::canonicalBytes(json::Value::ofObject({
-                        {"delivered", json::Value::ofBoolean(false)},
-                        {"reason", json::Value::ofString(std::string{reason})},
-                        {"verdict", json::Value::ofString(std::string{verdict})},
+                        {"code", json::Value::ofString(std::string{verdict})},
+                        {"message", json::Value::ofString(std::string{reason})},
+                        {"retryable", json::Value::ofBoolean(false)},
                     }))
                 )
             );
@@ -482,6 +547,20 @@ namespace uf::service
                 );
             }
             return std::string{p_member->string()};
+        }
+
+        [[nodiscard]]
+        auto requiredHashArgument(
+            json::Value const& arguments,
+            std::string_view member
+        )
+            -> Result<ContentHash>
+        {
+            UF_TRY_VALUE(
+                hash,
+                requiredStringArgument(arguments, member)
+            );
+            return ContentHash::parse(std::format("sha256:{}", hash));
         }
 
         // Every numeric member below was already judged by the Framework Tool
@@ -803,40 +882,45 @@ namespace uf::service
         [[nodiscard]]
         auto observe(task::TaskContext& context) -> Result<ProductObservation>;
 
-        // What an observation with a BODY carries past the Tool provider
-        // boundary. A provider is handed the immutable call position and
-        // nothing else, so a body -- which is a closure inside the VM that
-        // issued the observe, and which has to be numbered under this call's
-        // own position -- travels beside that boundary rather than through it.
-        //
-        // Both members are borrows of the frame that started the call and
-        // nothing is retained: `request` is the admitted request runAdmitted
-        // holds for the whole dispatch, and `body` is consumed exactly once.
-        struct ToolBodyContext final
-        {
-            operator_runtime::ToolAdmissionRequest const* pRequest{};
-            operator_runtime::ToolBodyRun&                 body;
-        };
+        // One committed screenshot receipt and the cycle reconstructed from its
+        // digest-addressed PNG. openScreenshot leaves that cycle open; every
+        // caller closes it on one unconditional scope exit.
+        [[nodiscard]]
+        auto openScreenshot(
+            operator_runtime::ToolCallPositionIdentity const& call
+        ) -> Result<operator_runtime::EvidenceArtifactReceipt>;
+
+        [[nodiscard]]
+        auto openScreenshot(ContentHash const& screenshotSha256)
+            -> Result<operator_runtime::EvidenceArtifactReceipt>;
+
+        [[nodiscard]]
+        auto captureOpenCycle()
+            -> Result<operator_runtime::EvidenceArtifactReceipt>;
 
         [[nodiscard]]
         auto answerFrameworkTool(
-            operator_runtime::ToolCallPositionIdentity const& call,
-            ToolBodyContext* p_bodyContext
+            operator_runtime::ToolCallPositionIdentity const& call
         ) -> Result<operator_runtime::ToolCallCompletion>;
 
         [[nodiscard]]
         auto answerObserveTool(
-            operator_runtime::ToolCallPositionIdentity const& call,
-            ToolBodyContext* p_bodyContext
+            operator_runtime::ToolCallPositionIdentity const& call
         ) -> Result<operator_runtime::ToolCallCompletion>;
 
-        // The three measuring Tools. Each binds BY CALL POSITION to the
-        // innermost open observation frame and takes no frame handle at all, so
-        // a call outside every frame is refused by name -- "no open observation
-        // frame" -- rather than silently capturing one of its own, which is the
-        // semantic drift the frame ruling exists to kill
-        // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md
-        // W3).
+        [[nodiscard]]
+        auto answerCaptureTool(
+            operator_runtime::ToolCallPositionIdentity const& call
+        ) -> Result<operator_runtime::ToolCallCompletion>;
+
+        [[nodiscard]]
+        auto answerCropTool(
+            operator_runtime::ToolCallPositionIdentity const& call
+        ) -> Result<operator_runtime::ToolCallCompletion>;
+
+        // The three measuring Tools. Each opens the immutable evidence artifact
+        // its required screenshot_sha256 member names; none captures or consults
+        // dispatcher position state.
         [[nodiscard]]
         auto answerReadLinesTool(
             operator_runtime::ToolCallPositionIdentity const& call
@@ -855,28 +939,24 @@ namespace uf::service
         // The project's own authoring store, read and written through the
         // confined root the session was started against.
         [[nodiscard]]
-        auto answerProjectReadTool(
+        auto answerProjectReadTextTool(
             operator_runtime::ToolCallPositionIdentity const& call
         ) -> Result<operator_runtime::ToolCallCompletion>;
 
         [[nodiscard]]
-        auto answerProjectWriteTool(
+        auto answerProjectWriteFileTool(
             operator_runtime::ToolCallPositionIdentity const& call
         ) -> Result<operator_runtime::ToolCallCompletion>;
 
-        // The frame a measuring call binds to, or the refusal that names why
-        // there is none.
         [[nodiscard]]
-        auto measuringFrame(std::string_view toolName) -> Result<task::CycleTicket>;
+        auto answerProjectWriteTextTool(
+            operator_runtime::ToolCallPositionIdentity const& call
+        ) -> Result<operator_runtime::ToolCallCompletion>;
 
-        // Everything answerObserveTool does INSIDE the frame it opened. It is a
-        // separate function so the frame's close is one unconditional line after
-        // it rather than a line every early return has to remember, which is the
-        // same reason the dispatcher's held-input release is not a scope guard.
         [[nodiscard]]
         auto observedToolResult(
-            operator_runtime::ToolCallPositionIdentity const& call,
-            task::TaskContext& context
+            ProductObservation observed,
+            ContentHash screenshotSha256
         ) -> Result<operator_runtime::ToolCallCompletion>;
 
         [[nodiscard]]
@@ -892,8 +972,9 @@ namespace uf::service
         // posts it through the one Host delivery seam and records the
         // classification the ledger derived from what the Host reported.
         [[nodiscard]]
-        auto answerSemanticInputTool(
-            operator_runtime::ToolCallPositionIdentity const& call
+        auto answerUiInputTool(
+            operator_runtime::ToolCallPositionIdentity const& call,
+            FrameworkInputKind kind
         ) -> Result<operator_runtime::ToolCallCompletion>;
 
         // The same delivery, aimed in machine terms. It posts into THE FRAME
@@ -914,8 +995,9 @@ namespace uf::service
         // surface and the Operator's own privileged_surface_tools grant, which
         // is the authority saying plainly that nothing measured this point.
         [[nodiscard]]
-        auto answerDeliverInputTool(
-            operator_runtime::ToolCallPositionIdentity const& call
+        auto answerRawInputTool(
+            operator_runtime::ToolCallPositionIdentity const& call,
+            FrameworkInputKind kind
         ) -> Result<operator_runtime::ToolCallCompletion>;
 
         // The one place an admitted request becomes a durable answer,
@@ -925,8 +1007,7 @@ namespace uf::service
         [[nodiscard]]
         auto runAdmitted(
             operator_runtime::ToolAdmissionRequest const& request,
-            task::TaskContext& context,
-            operator_runtime::ToolBodyRun body
+            task::TaskContext& context
         ) -> Result<operator_runtime::ToolCallReplay>;
 
         // One top-of-run Tool call, admitted. It is factored out of invokeTool
@@ -941,27 +1022,14 @@ namespace uf::service
 
         // One Tool call issued from an interactive chunk.
         //
-        // Two routes and one rule deciding between them: a call written inside
-        // a Tool body is a CHILD of that body-taking call and goes through
-        // the dispatcher's coordinate-bearing host adapter, and every other call
-        // is issued at the
-        // top of this session's run. Neither is chosen by the chunk -- the chunk
-        // names a Tool and an argument value, and where the call lands is
-        // decided by whether a body is open.
+        // Every interactive call is an independent root call. A chunk names a
+        // Tool and one argument value; no lexical scope changes its position.
         [[nodiscard]]
         auto issueInteractiveCall(
             task::TaskContext& context,
             std::string_view toolName,
-            json::Value const& arguments,
-            script::ToolCallBody body
+            json::Value const& arguments
         ) -> Result<json::Value>;
-
-        // The innermost Tool whose body is running, and how many children that
-        // body has issued. Each nested body saves and restores the outer pair,
-        // so depth is represented only by the ledger's call tree and carries no
-        // framework depth constant.
-        std::optional<ContentHash> interactiveBodyCall{};
-        uint64                     interactiveBodyChildren{};
 
         // How many top-of-run calls this session's chunks have issued. It names
         // each one's ROOT REQUEST, so every top-level interactive call is its
@@ -974,6 +1042,27 @@ namespace uf::service
         // would leave every later call in that session refused for a reason
         // that has nothing to do with it. A human annotating writes independent
         // acts, and a refusal has to cost exactly the act it refused.
+        //
+        // THE COUNTER IS NOT THE KEY. It restarts at 1 in every process, so on
+        // its own it names "the Nth act of some session" -- and a root request
+        // key is an IDEMPOTENCY key: an exact retry rejoins the existing run and
+        // reuses its durable outcome. Two sessions numbering from 1 therefore
+        // both claimed `interactive-1`, and the second was taken for a retry of
+        // the first.
+        //
+        // Measured 2026-08-25 against a live target, and the loud half was not
+        // the bad half. Where the session identity had changed the ledger
+        // refused by name -- `diverged from durable history` -- and burned that
+        // key for the root forever. Where it had NOT changed, a fresh
+        // `framework.screen.observe` was served the PREVIOUS session's recorded
+        // outcome and the provider never ran: no admission attempt, no capture,
+        // a stale answer about a screen nobody had looked at. A system whose
+        // whole promise is that what happened in a run is traceable recorded a
+        // call that never touched the world.
+        //
+        // So the key carries the session that mints it, and two sessions cannot
+        // spell the same one. The counter stays, because within one session an
+        // exact retry of the Nth act still is one.
         uint64 interactiveRequests{};
 
         static constexpr auto k_interactiveRequestKeyPrefix = std::string_view{
@@ -1142,31 +1231,10 @@ namespace uf::service
         );
         auto& deployed = implementation->deployment();
 
-        // The provider is bound to the Impl rather than to any handle onto it.
-        // Impl is heap-allocated and neither copyable nor movable, and the
-        // dispatcher that stores this callable is a member of that same object,
-        // so the pointer cannot outlive what it names.
-        auto* const p_implementation = implementation.get();
         UF_TRY_VALUE(
             dispatcher,
             operator_runtime::ProjectToolDispatcher::create(
-                implementation->operatorHost.coordinator(),
-                implementation->observations,
-                implementation->policyAuthority,
-                operator_runtime::ToolBodyProvider{[p_implementation](
-                    operator_runtime::ToolCallPositionIdentity const& call,
-                    operator_runtime::ToolBodyRun body
-                ) -> Result<operator_runtime::ToolCallCompletion>
-                {
-                    auto bodyContext = Impl::ToolBodyContext{
-                        .pRequest = nullptr,
-                        .body     = body,
-                    };
-                    return p_implementation->answerFrameworkTool(
-                        call,
-                        &bodyContext
-                    );
-                }}
+                implementation->operatorHost.coordinator()
             )
         );
         implementation->toolDispatcher.emplace(std::move(dispatcher));
@@ -1181,8 +1249,7 @@ namespace uf::service
                     .entryModule = deployed.toolClosure.entryModule,
                     .modules     = deployed.toolClosure.modules,
                 },
-                deployed.projectResources,
-                implementation->dispatcher().toolRuntimeDispatch()
+                deployed.projectResources
             )
         );
         implementation->loadedGeneration.emplace(std::move(loadedGeneration));
@@ -1319,15 +1386,13 @@ namespace uf::service
             {
                 return [p_implementation, p_context = &callContext](
                            std::string_view toolName,
-                           json::Value const& arguments,
-                           script::ToolCallBody body
+                           json::Value const& arguments
                        ) -> Result<json::Value>
                 {
                     return p_implementation->issueInteractiveCall(
                         *p_context,
                         toolName,
-                        arguments,
-                        std::move(body)
+                        arguments
                     );
                 };
             }
@@ -1374,10 +1439,9 @@ namespace uf::service
     auto ProductLifecycle::observe(task::TaskContext& context)
         -> Result<ProductObservation>
     {
-        // The direct entry: one observation, taken and finished here. It is a
-        // frame with an empty body -- open, resolve, close in one call -- which
-        // is the degenerate case of the one rule rather than a second one, and
-        // the close is a scope exit for the reason every other close is.
+        // The direct product entry captures, resolves and closes one live frame.
+        // It is separate from framework.screen.observe, whose caller names an
+        // already-durable screenshot and which captures nothing.
         auto const release = scopeExit(
             [this, &context]() noexcept
             {
@@ -1412,68 +1476,223 @@ namespace uf::service
         };
     }
 
-    auto ProductLifecycle::Impl::answerObserveTool(
-        operator_runtime::ToolCallPositionIdentity const& call,
-        ToolBodyContext* p_bodyContext
+    auto ProductLifecycle::Impl::openScreenshot(
+        operator_runtime::ToolCallPositionIdentity const& call
+    ) -> Result<operator_runtime::EvidenceArtifactReceipt>
+    {
+        UF_TRY_VALUE(
+            arguments,
+            operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
+        );
+        UF_TRY_VALUE(
+            hash,
+            requiredHashArgument(
+                arguments.value(),
+                operator_runtime::k_screenshotSha256Member
+            )
+        );
+        return openScreenshot(hash);
+    }
+
+    auto ProductLifecycle::Impl::openScreenshot(
+        ContentHash const& screenshotSha256
+    ) -> Result<operator_runtime::EvidenceArtifactReceipt>
+    {
+        UF_TRY_VALUE(
+            receipt,
+            operatorHost.coordinator().evidenceArtifactReceipt(screenshotSha256)
+        );
+        if (!receipt)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                std::format(
+                    "screenshot_sha256 {} is missing or expired: no committed "
+                    "screenshot receipt names a retained evidence blob",
+                    screenshotSha256.hex()
+                )
+            );
+        }
+        UF_TRY_VALUE(
+            png,
+                operatorHost.coordinator().readEvidenceArtifact(
+                screenshotSha256,
+                image::k_maximumPngFileBytes
+            )
+        );
+        if (receipt->byteCount != png.size())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "screenshot_sha256 {} receipt names {} bytes but its durable "
+                    "blob has {}",
+                    screenshotSha256.hex(),
+                    receipt->byteCount,
+                    png.size()
+                )
+            );
+        }
+        UF_TRY(activeContext().openRecordedCycle(
+            png,
+            receipt->frameIdentity,
+            receipt->width,
+            receipt->height
+        ));
+        return *receipt;
+    }
+
+    auto ProductLifecycle::Impl::captureOpenCycle()
+        -> Result<operator_runtime::EvidenceArtifactReceipt>
+    {
+        auto& context = activeContext();
+        auto const ticket        = context.openObservationFrame();
+        auto const frameIdentity = context.openCycleFrameIdentity();
+        auto const frameSize     = context.openCycleFrameSize();
+        UF_CHECK(ticket.has_value() && frameIdentity.has_value() && frameSize.has_value());
+        auto const [width, height] = *frameSize;
+        UF_TRY_VALUE(rect, PixelRect::create(0U, 0U, width, height));
+        UF_TRY_VALUE(captured, context.cycleEvidencePng(*ticket, rect));
+        UF_TRY_VALUE(
+            receipt,
+            operatorHost.coordinator().publishEvidenceArtifact(
+                operator_runtime::EvidenceArtifactSpec{
+                    .bytes         = captured.png,
+                    .mediaType     = "image/png",
+                    .width         = width,
+                    .height        = height,
+                    .frameIdentity = *frameIdentity,
+                    .rectangle     = std::nullopt,
+                }
+            )
+        );
+        UF_CHECK(receipt.contentHash == captured.hash);
+        return receipt;
+    }
+
+    auto ProductLifecycle::Impl::answerCaptureTool(
+        operator_runtime::ToolCallPositionIdentity const& call
     ) -> Result<operator_runtime::ToolCallCompletion>
     {
-        auto* const p_context = &activeContext();
-        auto answered = std::optional<
-            Result<operator_runtime::ToolCallCompletion>
-        >{};
-        auto inner = p_bodyContext != nullptr
-            ? std::move(p_bodyContext->body)
-            : operator_runtime::ToolBodyRun{};
-        auto* const p_self = this;
-        auto scope = operator_runtime::ToolBodyRun{
-            [p_self, p_context, &call, &answered,
-             inner = std::move(inner)](ContentHash const& owningCall) mutable -> Status
+        static_cast<void>(call);
+        auto& context = activeContext();
+        UF_TRY(context.openCycle());
+        auto const close = scopeExit(
+            [&context]() noexcept
             {
-                UF_TRY(p_self->dispatcher().engageObservationFrame(
-                    call.identity(),
-                    [p_host = &p_self->operatorHost.host(), p_context]() -> Status
-                    {
-                        static_cast<void>(
-                            p_host->disengageObservationFrame(*p_context)
-                        );
-                        return ok();
-                    }
-                ));
-                answered.emplace(
-                    p_self->observedToolResult(call, *p_context)
-                );
-                if (!answered->has_value() || !inner)
-                {
-                    return answered->has_value()
-                        ? ok()
-                        : std::unexpected{std::move(*answered).error()};
-                }
-
-                return inner(owningCall);
+                static_cast<void>(context.sweepOpenCycle());
             }
-        };
+        );
+        UF_TRY_VALUE(receipt, captureOpenCycle());
+        return confirmedToolResult(evidenceReceiptValue(receipt));
+    }
 
-        auto ran = p_bodyContext != nullptr && p_bodyContext->pRequest != nullptr
-            ? dispatcher().runToolBody(
-                  generationHandle(),
-                  p_bodyContext->pRequest->controller,
-                  p_bodyContext->pRequest->lease,
-                  p_bodyContext->pRequest->root,
-                  call,
-                  std::move(scope)
-              )
-            : dispatcher().runChildToolBody(call, std::move(scope));
-        UF_TRY(std::move(ran));
-        UF_CHECK(answered.has_value() && answered->has_value());
-        return *std::move(answered);
+    auto ProductLifecycle::Impl::answerObserveTool(
+        operator_runtime::ToolCallPositionIdentity const& call
+    ) -> Result<operator_runtime::ToolCallCompletion>
+    {
+        auto& context = activeContext();
+        UF_TRY_VALUE(source, openScreenshot(call));
+        auto const close = scopeExit(
+            [&context]() noexcept
+            {
+                static_cast<void>(context.sweepOpenCycle());
+            }
+        );
+        UF_TRY_VALUE(
+            observation,
+            operatorHost.host().resolveOpenObservationFrame(generation, context)
+        );
+        UF_TRY_VALUE(
+            snapshot,
+            operatorHost.coordinator().createSnapshot(
+                controlLease(),
+                deployment().generation,
+                deployment().toolCatalogSchemaOwner,
+                deployment().observedInstanceIdentitySchemas,
+                observation
+            )
+        );
+        return observedToolResult(
+            ProductObservation{
+                .snapshot = std::move(snapshot),
+                .ui       = std::move(observation),
+            },
+            source.contentHash
+        );
+    }
+
+    auto ProductLifecycle::Impl::answerCropTool(
+        operator_runtime::ToolCallPositionIdentity const& call
+    ) -> Result<operator_runtime::ToolCallCompletion>
+    {
+        auto& context = activeContext();
+        UF_TRY_VALUE(source, openScreenshot(call));
+        auto const close = scopeExit(
+            [&context]() noexcept
+            {
+                static_cast<void>(context.sweepOpenCycle());
+            }
+        );
+        UF_TRY_VALUE(
+            arguments,
+            operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
+        );
+        UF_TRY_VALUE(rect, admittedRectangle(arguments.value()));
+        auto const ticket = context.openObservationFrame();
+        UF_CHECK(ticket.has_value());
+        UF_TRY_VALUE(cropped, context.cycleEvidencePng(
+            *ticket,
+            rect
+        ));
+
+        auto absoluteX = rect.x();
+        auto absoluteY = rect.y();
+        if (source.rectangle)
+        {
+            auto const x = checkedAdd(source.rectangle->x(), rect.x());
+            auto const y = checkedAdd(source.rectangle->y(), rect.y());
+            if (!x || !y)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "screen crop provenance rectangle exceeds uint32 geometry"
+                );
+            }
+            absoluteX = *x;
+            absoluteY = *y;
+        }
+        UF_TRY_VALUE(
+            provenance,
+            PixelRect::create(
+                absoluteX,
+                absoluteY,
+                rect.width(),
+                rect.height()
+            )
+        );
+        UF_TRY_VALUE(
+            receipt,
+            operatorHost.coordinator().publishEvidenceArtifact(
+                operator_runtime::EvidenceArtifactSpec{
+                    .bytes         = cropped.png,
+                    .mediaType     = "image/png",
+                    .width         = rect.width(),
+                    .height        = rect.height(),
+                    .frameIdentity = source.frameIdentity,
+                    .rectangle     = provenance,
+                }
+            )
+        );
+        UF_CHECK(receipt.contentHash == cropped.hash);
+        return confirmedToolResult(evidenceReceiptValue(receipt));
     }
 
     auto ProductLifecycle::Impl::observedToolResult(
-        operator_runtime::ToolCallPositionIdentity const& call,
-        task::TaskContext& context
+        ProductObservation observed,
+        ContentHash screenshotSha256
     ) -> Result<operator_runtime::ToolCallCompletion>
     {
-        UF_TRY_VALUE(observed, observe(context));
         UF_TRY_VALUE(
             stateResolution,
             operator_runtime::CanonicalJson::parseExact(
@@ -1481,20 +1700,37 @@ namespace uf::service
             )
         );
 
-        // The observation authority section 6 requires, bound to all six of
-        // the things it names. Every binding is read from what this run holds
-        // or from what the Host just resolved, and none of it is stated by a
-        // caller: a consumer that could name the frame, the target or the
-        // coordinate could present a reference against a world it never
-        // observed.
-        //
-        // TODO(cpp-debt): localSemanticTargets is the RuntimeModel's declared
-        // ui_target vocabulary rather than the targets THIS resolution
-        // reported, because the StateResolution document publishes readings
-        // only for declared Readers and this generation's models may declare
-        // none. Narrowing it needs the resolution to publish the targets it
-        // resolved; until it does, the reference is snapshot-scoped by its
-        // frame identity and model-scoped by its target vocabulary.
+        auto uiActions = std::vector<operator_runtime::ObservedUiAction>{};
+        if (auto const* const p_actions =
+                stateResolution.value().find("ui_actions"))
+        {
+            UF_CHECK(p_actions->kind() == json::ValueKind::Array);
+            uiActions.reserve(p_actions->items().size());
+            for (auto const& action : p_actions->items())
+            {
+                UF_CHECK(action.kind() == json::ValueKind::Object);
+                UF_TRY_VALUE(
+                    uiTarget,
+                    requiredStringArgument(action, "ui_target")
+                );
+                UF_TRY_VALUE(
+                    binding,
+                    requiredStringArgument(action, "binding")
+                );
+                UF_TRY_VALUE(actionId, requiredStringArgument(action, "action"));
+                UF_TRY_VALUE(kind, requiredStringArgument(action, "kind"));
+                uiActions.emplace_back(operator_runtime::ObservedUiAction{
+                    .uiTarget = std::move(uiTarget),
+                    .binding  = std::move(binding),
+                    .action   = std::move(actionId),
+                    .kind     = std::move(kind),
+                });
+            }
+        }
+
+        // Mint exactly the action tuples the Host resolved on this frame. A
+        // declared-but-absent binding never enters the reference, and a caller
+        // cannot substitute a sibling binding or action from the same model.
         UF_TRY_VALUE(
             reference,
             observations.mint(
@@ -1504,15 +1740,11 @@ namespace uf::service
                     .runtimeArtifactRootHash = observed.ui.artifactRootHash(),
                     .projectRegistrationHash = generationHandle().projectRegistrationHash(),
                     .frameIdentityHash       = observed.snapshot.identityHash,
+                    .screenshotSha256        = screenshotSha256,
                     .hostGeneration          = observed.ui.generation().value(),
-                    .rootIdentity            = call.rootIdentity(),
-                    .issuingParentIdentity   = call.parentIdentity(),
                     .expiresAtUnixMillis =
                         unixMillisNow() + k_observationAuthorityMillis,
-                    .localSemanticTargets =
-                        runtimeModel.declaredUi().uiTargets,
-                    .authorizedUiActions =
-                        runtimeModel.declaredUi().actions,
+                    .uiActions = std::move(uiActions),
                 }
             )
         );
@@ -1561,45 +1793,32 @@ namespace uf::service
         }));
     }
 
-    auto ProductLifecycle::Impl::measuringFrame(std::string_view toolName)
-        -> Result<task::CycleTicket>
-    {
-        auto const held = activeContext().openObservationFrame();
-        if (!held.has_value())
-        {
-            // The specific signal W3 requires, and the reason a measuring Tool
-            // takes no frame handle: a verb that captured a frame of its own
-            // here would answer about a screen nobody measured against, which
-            // is exactly the drift an observation frame exists to delete.
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                std::string{toolName}
-                    + " measures the frame its enclosing observation is "
-                      "holding, and there is no open observation frame; it is "
-                      "callable only inside the body of "
-                    + std::string{k_observeTool}
-            );
-        }
-        return *held;
-    }
-
     auto ProductLifecycle::Impl::answerReadLinesTool(
         operator_runtime::ToolCallPositionIdentity const& call
     ) -> Result<operator_runtime::ToolCallCompletion>
     {
+        auto& context = activeContext();
+        UF_TRY(openScreenshot(call));
+        auto const close = scopeExit(
+            [&context]() noexcept
+            {
+                static_cast<void>(context.sweepOpenCycle());
+            }
+        );
         UF_TRY_VALUE(
             arguments,
             operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
         );
         UF_TRY_VALUE(rect, admittedRectangle(arguments.value()));
-        UF_TRY_VALUE(ticket, measuringFrame(k_readLinesTool));
+        auto const ticket = context.openObservationFrame();
+        UF_CHECK(ticket.has_value());
 
         // Block layout and never the caller's choice: this Tool exists for the
         // region nobody can draw a rectangle inside, so a layout argument would
         // offer the caller the one answer it came here to avoid.
         UF_TRY_VALUE(
             lines,
-            activeContext().cycleRead(ticket, rect, ocr::TextLayout::Block)
+            context.cycleRead(*ticket, rect, ocr::TextLayout::Block)
         );
 
         auto rendered = std::vector<json::Value>{};
@@ -1629,21 +1848,29 @@ namespace uf::service
         operator_runtime::ToolCallPositionIdentity const& call
     ) -> Result<operator_runtime::ToolCallCompletion>
     {
+        auto& context = activeContext();
+        UF_TRY(openScreenshot(call));
+        auto const close = scopeExit(
+            [&context]() noexcept
+            {
+                static_cast<void>(context.sweepOpenCycle());
+            }
+        );
         UF_TRY_VALUE(
             arguments,
             operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
         );
         UF_TRY_VALUE(rect, admittedRectangle(arguments.value()));
         auto const key = admittedColourKey(arguments.value());
-        UF_TRY_VALUE(ticket, measuringFrame(k_probeTool));
+        auto const ticket = context.openObservationFrame();
+        UF_CHECK(ticket.has_value());
 
-        // The crop is taken and then measured, and the PNG is DROPPED here: a
-        // measurement crosses the Tool boundary and a frame's pixels never do.
-        // Keeping a piece of the screen is framework.project.write's capture
-        // arm, which is an authoring write and is judged as one.
+        // The crop is taken and then measured, and the PNG is dropped here.
+        // Keeping the same rectangle is a separate screen.crop call followed
+        // by framework.project.write_file over the returned artifact digest.
         UF_TRY_VALUE(
             cropped,
-            activeContext().cycleCrop(ticket, rect, std::nullopt)
+            context.cycleEvidencePng(*ticket, rect)
         );
         UF_TRY_VALUE(
             report,
@@ -1703,17 +1930,26 @@ namespace uf::service
         operator_runtime::ToolCallPositionIdentity const& call
     ) -> Result<operator_runtime::ToolCallCompletion>
     {
+        auto& context = activeContext();
+        UF_TRY(openScreenshot(call));
+        auto const close = scopeExit(
+            [&context]() noexcept
+            {
+                static_cast<void>(context.sweepOpenCycle());
+            }
+        );
         UF_TRY_VALUE(
             arguments,
             operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
         );
         UF_TRY_VALUE(rect, admittedRectangle(arguments.value()));
         auto const key = admittedColourKey(arguments.value());
-        UF_TRY_VALUE(ticket, measuringFrame(k_censusGridTool));
+        auto const ticket = context.openObservationFrame();
+        UF_CHECK(ticket.has_value());
         UF_TRY_VALUE(
             report,
-            activeContext().cycleCensusGrid(
-                ticket,
+            context.cycleCensusGrid(
+                *ticket,
                 rect,
                 admittedPixel(arguments.value(), "cell_width"),
                 admittedPixel(arguments.value(), "cell_height"),
@@ -1741,7 +1977,7 @@ namespace uf::service
         }));
     }
 
-    auto ProductLifecycle::Impl::answerProjectReadTool(
+    auto ProductLifecycle::Impl::answerProjectReadTextTool(
         operator_runtime::ToolCallPositionIdentity const& call
     ) -> Result<operator_runtime::ToolCallCompletion>
     {
@@ -1760,6 +1996,16 @@ namespace uf::service
                 static_cast<char>(std::to_integer<unsigned char>(value))
             );
         }
+        if (!isValidUtf8(text))
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "project file {} is not valid UTF-8 text",
+                    path
+                )
+            );
+        }
         UF_TRY_VALUE(hash, sha256(bytes));
         return confirmedToolResult(json::Value::ofObject({
             {"content", json::Value::ofString(std::move(text))},
@@ -1768,7 +2014,7 @@ namespace uf::service
         }));
     }
 
-    auto ProductLifecycle::Impl::answerProjectWriteTool(
+    auto ProductLifecycle::Impl::answerProjectWriteFileTool(
         operator_runtime::ToolCallPositionIdentity const& call
     ) -> Result<operator_runtime::ToolCallCompletion>
     {
@@ -1777,71 +2023,57 @@ namespace uf::service
             operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
         );
         auto const& value = arguments.value();
-        UF_TRY_VALUE(action, requiredStringArgument(value, "action"));
         UF_TRY_VALUE(path, requiredStringArgument(value, "path"));
-
-        // The bytes this call writes, from whichever of the two arms named
-        // them. The capture arm takes its own frame when its caller holds none
-        // -- word for word what an observe with no body and a top-level input
-        // both do -- and posts into the innermost open one when there is one,
-        // so a capture written from inside an observation's body keeps the
-        // frame that body measured.
-        auto& context = activeContext();
-        auto written  = [&]() -> Result<std::vector<std::byte>>
+        UF_TRY_VALUE(
+            fileSha256,
+            requiredHashArgument(value, operator_runtime::k_fileSha256Member)
+        );
+        UF_TRY_VALUE(
+            receipt,
+            operatorHost.coordinator().evidenceArtifactReceipt(fileSha256)
+        );
+        if (!receipt)
         {
-            if (action == "text")
-            {
-                UF_TRY_VALUE(content, requiredStringArgument(value, "content"));
-                auto bytes = std::vector<std::byte>{};
-                bytes.reserve(content.size());
-                for (auto const character : content)
-                {
-                    bytes.emplace_back(
-                        static_cast<std::byte>(
-                            static_cast<unsigned char>(character)
-                        )
-                    );
-                }
-                return bytes;
-            }
-            UF_CHECK(action == "capture");
-            UF_TRY_VALUE(rect, admittedRectangle(value));
-            auto const inheritedFrame = context.openObservationFrame();
-            if (!inheritedFrame.has_value())
-            {
-                UF_TRY(context.openCycle());
-            }
-            auto const closeOwnFrame = scopeExit(
-                [&context, owned = !inheritedFrame.has_value()]() noexcept
-                {
-                    if (owned)
-                    {
-                        static_cast<void>(context.sweepOpenCycle());
-                    }
-                }
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                std::format(
+                    "file_sha256 {} is missing or expired: no committed "
+                    "evidence receipt names a retained blob",
+                    fileSha256.hex()
+                )
             );
-            auto const capturing = context.openObservationFrame();
-            UF_CHECK(capturing.has_value());
-            UF_TRY_VALUE(
-                cropped,
-                context.cycleCrop(*capturing, rect, std::nullopt)
+        }
+        UF_TRY_VALUE(
+            bytes,
+            operatorHost.coordinator().readEvidenceArtifact(
+                fileSha256,
+                task::k_maximumProjectFileBytes
+            )
+        );
+        if (receipt->byteCount != bytes.size())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "file_sha256 {} receipt names {} bytes but its durable "
+                    "blob holds {}",
+                    fileSha256.hex(),
+                    receipt->byteCount,
+                    bytes.size()
+                )
             );
-            return cropped.png;
-        }();
-        UF_TRY_VALUE(bytes, std::move(written));
+        }
 
-        UF_TRY(context.projectWrite(path, bytes));
-        UF_TRY_VALUE(hash, sha256(bytes));
+        UF_TRY(activeContext().projectWrite(path, bytes));
         return confirmedToolResult(json::Value::ofObject({
-            {"action", json::Value::ofString(action)},
-            {"content_hash", json::Value::ofString(hash.hex())},
+            {"content_hash", json::Value::ofString(fileSha256.hex())},
             {"path", json::Value::ofString(path)},
             {"written_bytes",
              json::Value::ofNumber(static_cast<double>(bytes.size()))},
         }));
     }
 
-    auto ProductLifecycle::Impl::answerSemanticInputTool(
+    auto ProductLifecycle::Impl::answerProjectWriteTextTool(
         operator_runtime::ToolCallPositionIdentity const& call
     ) -> Result<operator_runtime::ToolCallCompletion>
     {
@@ -1849,26 +2081,52 @@ namespace uf::service
             arguments,
             operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
         );
+        auto const& value = arguments.value();
+        UF_TRY_VALUE(content, requiredStringArgument(value, "content"));
+        UF_TRY_VALUE(path, requiredStringArgument(value, "path"));
+
+        auto bytes = std::vector<std::byte>{};
+        bytes.reserve(content.size());
+        for (auto const character : content)
+        {
+            bytes.emplace_back(
+                static_cast<std::byte>(static_cast<unsigned char>(character))
+            );
+        }
+        UF_TRY(activeContext().projectWrite(path, bytes));
+        UF_TRY_VALUE(hash, sha256(bytes));
+        return confirmedToolResult(json::Value::ofObject({
+            {"content_hash", json::Value::ofString(hash.hex())},
+            {"path", json::Value::ofString(path)},
+            {"written_bytes",
+             json::Value::ofNumber(static_cast<double>(bytes.size()))},
+        }));
+    }
+
+    auto ProductLifecycle::Impl::answerUiInputTool(
+        operator_runtime::ToolCallPositionIdentity const& call,
+        FrameworkInputKind kind
+    ) -> Result<operator_runtime::ToolCallCompletion>
+    {
         UF_TRY_VALUE(
-            semanticTarget,
-            requiredStringArgument(arguments.value(), "semantic_target")
+            arguments,
+            operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
         );
         UF_TRY_VALUE(
-            uiAction,
-            requiredStringArgument(arguments.value(), "ui_action")
+            uiTarget,
+            requiredStringArgument(arguments.value(), "ui_target")
+        );
+        UF_TRY_VALUE(binding, requiredStringArgument(arguments.value(), "binding"));
+        UF_TRY_VALUE(
+            action,
+            requiredStringArgument(arguments.value(), "action")
         );
         auto const* const p_reference = arguments.value().find(
             operator_runtime::k_observationReferenceArgument
         );
         UF_CHECK(p_reference != nullptr);
 
-        // Everything except the two names the caller chose is read from this
-        // run's own live authority. The Tool's argument schema declares exactly
-        // three members, so there is no controlled target, registration,
-        // artifact, generation or coordinate a caller could state here even if
-        // it wanted to -- which is what makes "validated against the SAME
-        // snapshot, Binding, plan, lease and fence" structural rather than
-        // checked.
+        auto const expectedKind = inputKindWireName(kind);
         auto const consumption = operator_runtime::SnapshotObservationConsumption{
             .exactReferenceJcs       = json::canonicalBytes(*p_reference),
             .controlledTargetId      = controller().controlledTargetId(),
@@ -1876,10 +2134,10 @@ namespace uf::service
             .projectRegistrationHash =
                 generationHandle().projectRegistrationHash(),
             .hostGeneration        = generation.value(),
-            .rootIdentity          = call.rootIdentity(),
-            .issuingParentIdentity = call.parentIdentity(),
-            .localSemanticTarget   = semanticTarget,
-            .uiAction              = uiAction,
+            .uiTarget              = uiTarget,
+            .binding               = binding,
+            .action                = action,
+            .expectedActionKind    = std::string{expectedKind},
             .presentedAtUnixMillis = unixMillisNow(),
         };
 
@@ -1889,35 +2147,201 @@ namespace uf::service
         // call that is entitled to it.
         if (auto const refusal = observations.refuse(consumption))
         {
+            auto named = std::string{
+                operator_runtime::observationRefusalDiagnostic(*refusal)
+            };
+            switch (*refusal)
+            {
+            case operator_runtime::ObservationRefusal::UnknownUiTarget:
+                named += ": " + uiTarget;
+                break;
+            case operator_runtime::ObservationRefusal::UnknownBinding:
+                named += ": " + binding;
+                break;
+            case operator_runtime::ObservationRefusal::UnknownAction:
+            case operator_runtime::ObservationRefusal::ActionKindMismatch:
+                named += ": " + action;
+                break;
+            case operator_runtime::ObservationRefusal::Unminted:
+            case operator_runtime::ObservationRefusal::AlreadyConsumed:
+            case operator_runtime::ObservationRefusal::Stale:
+            case operator_runtime::ObservationRefusal::ForeignTarget:
+            case operator_runtime::ObservationRefusal::ForeignRegistration:
+            case operator_runtime::ObservationRefusal::ForeignRuntimeArtifact:
+            case operator_runtime::ObservationRefusal::ChangedGeneration:
+            case operator_runtime::ObservationRefusal::DuplicateIdentifier:
+                break;
+            }
             return absentInputResult(
                 operator_runtime::observationRefusalWireName(*refusal),
-                operator_runtime::observationRefusalDiagnostic(*refusal)
+                named
             );
         }
-        UF_TRY_VALUE(resolved, observations.resolve(consumption));
 
-        // The frame this delivery resolves and posts on, under the rule
-        // answerDeliverInputTool states in full: the innermost open one, or one
-        // this call opens and closes because its caller was holding none. The
-        // Host seam below resolves the Binding on the frame it finds and opens
-        // none of its own, so the frame has to exist before it is reached -- and
-        // when the caller IS holding one, the reference being spent names
-        // exactly that frame rather than a second capture of it.
+        UF_TRY_VALUE(presented, observations.presented(arguments));
+        UF_CHECK(presented.has_value());
         auto& context = activeContext();
-        auto const inheritedFrame = context.openObservationFrame();
-        if (!inheritedFrame.has_value())
-        {
-            UF_TRY(context.openCycle());
-        }
-        auto const closeOwnFrame = scopeExit(
-            [&context, owned = !inheritedFrame.has_value()]() noexcept
+        UF_TRY(openScreenshot(presented->spec().screenshotSha256));
+        auto const closeFrame = scopeExit(
+            [&context]() noexcept
             {
-                if (owned)
-                {
-                    static_cast<void>(context.sweepOpenCycle());
-                }
+                static_cast<void>(context.sweepOpenCycle());
             }
         );
+        UF_TRY_VALUE(resolved, observations.resolve(consumption));
+
+        auto const intent =
+            operator_runtime::OperatorTaskHost::ToolCallInputIntent{
+                .uiTarget     = resolved.uiTarget(),
+                .binding      = resolved.binding(),
+                .action       = resolved.action(),
+                .expectedKind = resolved.actionKind(),
+            };
+
+        if (kind == FrameworkInputKind::Hold)
+        {
+            auto const* const p_return = arguments.value().find("return_screen");
+            auto const returnScreen = p_return == nullptr
+                ? std::string_view{"none"}
+                : p_return->string();
+            UF_TRY_VALUE(
+                started,
+                operatorHost.engageToolCallHold(
+                    call,
+                    controlLease(),
+                    generation,
+                    intent,
+                    context
+                )
+            );
+            if (auto* const p_terminal =
+                    std::get_if<task::HostDeliveryReport>(&started))
+            {
+                return operator_runtime::toolCallCompletionFor(*p_terminal);
+            }
+
+            auto hold = std::optional{
+                std::get<operator_runtime::OperatorTaskHost::ToolCallHold>(
+                    std::move(started)
+                )
+            };
+            auto fallbackRelease = scopeExit(
+                [this, &hold, &context]() noexcept
+                {
+                    if (hold.has_value())
+                    {
+                        static_cast<void>(operatorHost.finishToolCallHold(
+                            std::move(*hold),
+                            context
+                        ));
+                        hold.reset();
+                    }
+                }
+            );
+
+            context.settle(hold->duration());
+            if (context.cancellationRequested())
+            {
+                return fail(
+                    AutomationErrorKind::Cancelled,
+                    "framework.ui.hold was cancelled during its declared dwell"
+                );
+            }
+
+            auto screen = std::optional<json::Value>{};
+            auto screenResult = [&]() -> Status
+            {
+                if (returnScreen == "none")
+                {
+                    return ok();
+                }
+                UF_TRY(context.openCycle());
+                auto const closeScreen = scopeExit(
+                    [&context]() noexcept
+                    {
+                        static_cast<void>(context.sweepOpenCycle());
+                    }
+                );
+                UF_TRY_VALUE(receipt, captureOpenCycle());
+                if (returnScreen == "capture")
+                {
+                    screen = evidenceReceiptValue(receipt);
+                    return ok();
+                }
+
+                UF_TRY_VALUE(
+                    observation,
+                    operatorHost.host().resolveOpenObservationFrame(
+                        generation,
+                        context
+                    )
+                );
+                UF_TRY_VALUE(
+                    snapshot,
+                    operatorHost.coordinator().createSnapshot(
+                        controlLease(),
+                        deployment().generation,
+                        deployment().toolCatalogSchemaOwner,
+                        deployment().observedInstanceIdentitySchemas,
+                        observation
+                    )
+                );
+                UF_TRY_VALUE(
+                    observed,
+                    observedToolResult(
+                        ProductObservation{
+                            .snapshot = std::move(snapshot),
+                            .ui       = std::move(observation),
+                        },
+                        receipt.contentHash
+                    )
+                );
+                screen = observed.payload().value();
+                return ok();
+            }();
+
+            auto report = operatorHost.finishToolCallHold(
+                std::move(*hold),
+                context
+            );
+            hold.reset();
+            fallbackRelease.release();
+            if (!screenResult)
+            {
+                auto error = std::move(screenResult).error();
+                if (report.outcome() != task::DeliveryOutcome::Delivered)
+                {
+                    error.addContext(std::string{report.reason()});
+                }
+                return std::unexpected{std::move(error)};
+            }
+            UF_TRY_VALUE(base, operator_runtime::toolCallCompletionFor(report));
+            if (report.outcome() != task::DeliveryOutcome::Delivered)
+            {
+                return base;
+            }
+
+            auto result = std::vector<json::Member>{
+                {"action", json::Value::ofString(std::string{expectedKind})},
+                {"delivered", json::Value::ofBoolean(true)},
+                {"held", json::Value::ofBoolean(false)},
+                {"verdict", json::Value::ofString("delivered")},
+            };
+            if (screen)
+            {
+                result.emplace_back("screen", std::move(*screen));
+            }
+            UF_TRY_VALUE(
+                payload,
+                operator_runtime::CanonicalJson::parseExact(
+                    json::canonicalBytes(json::Value::ofObject(std::move(result)))
+                )
+            );
+            return operator_runtime::ToolCallCompletion::confirmed(
+                std::move(payload),
+                base.evidence()
+            );
+        }
 
         // The Host delivery seam. Nothing about what to deliver is stated
         // here: the target and the action are the ones the authority resolved,
@@ -1927,10 +2351,7 @@ namespace uf::service
             call,
             controlLease(),
             generation,
-            operator_runtime::OperatorTaskHost::ToolCallInputIntent{
-                .uiTarget = resolved.localSemanticTarget(),
-                .uiAction = resolved.uiAction(),
-            },
+            intent,
             context
         );
 
@@ -1959,8 +2380,9 @@ namespace uf::service
         return operator_runtime::toolCallCompletionFor(*delivered);
     }
 
-    auto ProductLifecycle::Impl::answerDeliverInputTool(
-        operator_runtime::ToolCallPositionIdentity const& call
+    auto ProductLifecycle::Impl::answerRawInputTool(
+        operator_runtime::ToolCallPositionIdentity const& call,
+        FrameworkInputKind kind
     ) -> Result<operator_runtime::ToolCallCompletion>
     {
         UF_TRY_VALUE(
@@ -1968,14 +2390,11 @@ namespace uf::service
             operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
         );
         auto const& value = arguments.value();
-        UF_TRY_VALUE(action, requiredStringArgument(value, "action"));
+        auto const action  = inputKindWireName(kind);
 
-        // Every member below was already judged by the Framework Tool Catalog's
-        // tagged contract: the tag is one of six, the arm's own members are all
-        // present, a pixel is a non-negative integer inside uint32, and a key
-        // is a non-empty string. What is left to this layer is what the catalog
-        // cannot see -- this run's declared target surface, this run's cycle,
-        // and the delivery layers' own ceilings.
+        // Every member below was already judged by this Tool's own flat
+        // contract. What remains is what the catalog cannot see: the retained
+        // screenshot, target surface and delivery-layer ceilings.
         auto const integerMember = [&value](std::string_view member) -> int64
         {
             auto const* const p_member = value.find(member);
@@ -2023,9 +2442,8 @@ namespace uf::service
             );
         };
 
-        // The one or two points this arm aims at, in the order the verb takes
-        // them. An arm that aims at nothing leaves this empty, which is the
-        // whole of what `key` and `scroll` have to say about position.
+        // The one or two points this Tool aims at, in verb order. Key and
+        // scroll name no point and leave this empty.
         auto aimed = std::vector<PixelPoint>{};
         if (value.find("x") != nullptr)
         {
@@ -2061,74 +2479,16 @@ namespace uf::service
             key = *created;
         }
 
-        auto const holding = action == "hold";
+        auto const holding = kind == FrameworkInputKind::Hold;
         auto&      context = activeContext();
 
-        // A HOLD HANDS THE LIFT OVER BEFORE IT PRESSES ANYTHING.
-        //
-        // An engaged hold returns with the button down, so its own structured
-        // body scope owns the lift. Pressing first and asking afterwards would deliver an
-        // unasked-for press-and-release -- a click to the target -- every time
-        // the answer was no. Asking first costs nothing: a run that engages
-        // nothing closes a release that finds nothing engaged and answers ok.
-        //
-        if (holding)
-        {
-            auto attached = dispatcher().attachToolBodyScope(
-                call.identity(),
-                // The release borrows the context, and the backing owner is the
-                // admitted request this call runs inside: runAdmitted holds the
-                // TaskContext for the whole dispatch, the run this is handed to
-                // is erased before that dispatch returns, and the Tool Runtime
-                // is single-threaded by contract. Nothing here outlives that.
-                [p_context = &context]() -> Status
-                {
-                    if (!p_context->inputEngaged())
-                    {
-                        return ok();
-                    }
-                    return p_context->disengageInput().transform([](uint64) {});
-                }
-            );
-            if (!attached)
-            {
-                return absentInputResult(
-                    k_refusedInputVerdict,
-                    attached.error().message()
-                );
-            }
-        }
-
-        // THE FRAME THIS ACT LANDS ON IS THE INNERMOST OPEN ONE.
-        //
-        // A verb inside an observe's body posts into the frame that body is
-        // holding and NEVER captures a second one over it: the point it aims at
-        // was measured on that frame, so posting into another capture of a
-        // screen that moved between them silently changes what the act means.
-        // It is also the one sequence a Project could write that would reach the
-        // Host's one-cycle invariant, which from now on only a framework bug may
-        // reach.
-        //
-        // A call outside every frame IS its own frame: it opens the one it acts
-        // in and closes it inside this same call -- word for word what an
-        // observe with no body does, and the same degenerate case rather than a
-        // second rule
-        // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
-        auto const inheritedFrame = context.openObservationFrame();
-        if (!inheritedFrame.has_value())
-        {
-            UF_TRY(context.openCycle());
-        }
-        // A frame this call opened is a frame this call closes, on every exit
-        // path -- including the ones below where the act fails and the frame was
-        // never spent.
+        // Reconstruct exactly the retained screenshot the caller named. This
+        // is not a capture and consults no open caller frame.
+        UF_TRY(openScreenshot(call));
         auto const closeOwnFrame = scopeExit(
-            [&context, owned = !inheritedFrame.has_value()]() noexcept
+            [&context]() noexcept
             {
-                if (owned)
-                {
-                    static_cast<void>(context.sweepOpenCycle());
-                }
+                static_cast<void>(context.sweepOpenCycle());
             }
         );
         auto const acting = context.openObservationFrame();
@@ -2137,6 +2497,146 @@ namespace uf::service
 
         // From here the cycle is spent, so nothing below can be reported as
         // proven absence.
+
+        if (holding)
+        {
+            auto const durationMillis = static_cast<uint64>(
+                integerMember("duration_ms")
+            );
+            auto const* const p_return = value.find("return_screen");
+            auto const returnScreen = p_return == nullptr
+                ? std::string_view{"none"}
+                : p_return->string();
+
+            // Armed before engage: engageHold may press successfully and then
+            // fail while recording that press. Every return and exception path
+            // still reaches the one unconditional lift.
+            auto fallbackRelease = scopeExit(
+                [&context]() noexcept
+                {
+                    if (context.inputEngaged())
+                    {
+                        static_cast<void>(context.disengageInput());
+                    }
+                }
+            );
+            auto engaged = context.cycleEngageHold(
+                ticket,
+                aimed.front(),
+                std::chrono::milliseconds{durationMillis}
+            );
+            if (!engaged)
+            {
+                auto error = std::move(engaged).error();
+                if (context.inputEngaged())
+                {
+                    auto released = context.disengageInput();
+                    fallbackRelease.release();
+                    if (!released)
+                    {
+                        error.addContext(
+                            "releasing the refused hold also failed: "
+                                + std::string{released.error().message()}
+                        );
+                    }
+                }
+                return std::unexpected{std::move(error)};
+            }
+
+            auto answered = [&]() -> Result<operator_runtime::ToolCallCompletion>
+            {
+                context.settle(std::chrono::milliseconds{durationMillis});
+                if (context.cancellationRequested())
+                {
+                    return fail(
+                        AutomationErrorKind::Cancelled,
+                        "framework.input.hold was cancelled during its declared dwell"
+                    );
+                }
+
+                auto screen = std::optional<json::Value>{};
+                if (returnScreen != "none")
+                {
+                    UF_TRY(context.openCycle());
+                    auto const closeScreen = scopeExit(
+                        [&context]() noexcept
+                        {
+                            static_cast<void>(context.sweepOpenCycle());
+                        }
+                    );
+                    UF_TRY_VALUE(receipt, captureOpenCycle());
+                    if (returnScreen == "capture")
+                    {
+                        screen = evidenceReceiptValue(receipt);
+                    }
+                    else
+                    {
+                        UF_TRY_VALUE(
+                            observation,
+                            operatorHost.host().resolveOpenObservationFrame(
+                                generation,
+                                context
+                            )
+                        );
+                        UF_TRY_VALUE(
+                            snapshot,
+                            operatorHost.coordinator().createSnapshot(
+                                controlLease(),
+                                deployment().generation,
+                                deployment().toolCatalogSchemaOwner,
+                                deployment().observedInstanceIdentitySchemas,
+                                observation
+                            )
+                        );
+                        UF_TRY_VALUE(
+                            observed,
+                            observedToolResult(
+                                ProductObservation{
+                                    .snapshot = std::move(snapshot),
+                                    .ui       = std::move(observation),
+                                },
+                                receipt.contentHash
+                            )
+                        );
+                        screen = observed.payload().value();
+                    }
+                }
+
+                auto result = std::vector<json::Member>{
+                    {"action", json::Value::ofString(std::string{action})},
+                    {"controlled_target_id",
+                     json::Value::ofString(controller().controlledTargetId())},
+                    {"delivered", json::Value::ofBoolean(true)},
+                    {"duration_ms",
+                     json::Value::ofNumber(static_cast<double>(durationMillis))},
+                    {"held", json::Value::ofBoolean(false)},
+                };
+                if (screen)
+                {
+                    result.emplace_back("screen", std::move(*screen));
+                }
+                return confirmedToolResult(
+                    json::Value::ofObject(std::move(result))
+                );
+            }();
+
+            auto released = context.disengageInput();
+            fallbackRelease.release();
+            if (!answered)
+            {
+                auto error = std::move(answered).error();
+                if (!released)
+                {
+                    error.addContext(
+                        "releasing the hold after its screen operation also failed: "
+                            + std::string{released.error().message()}
+                    );
+                }
+                return std::unexpected{std::move(error)};
+            }
+            UF_TRY(std::move(released));
+            return *std::move(answered);
+        }
 
         auto delivered = [&]() -> Status
         {
@@ -2169,11 +2669,7 @@ namespace uf::service
                 );
             }
 
-            // The press. Its lift already belongs to the Tool call above, so
-            // this returns with the button down and the run is what puts it
-            // back up -- on every exit path, including this one failing.
-            UF_CHECK(holding);
-            return context.cycleEngageHold(ticket, aimed.front());
+            UF_UNREACHABLE_MSG("A non-hold input Tool has no delivery verb");
         }();
 
         if (!delivered)
@@ -2182,16 +2678,15 @@ namespace uf::service
                 payload,
                 operator_runtime::CanonicalJson::parseExact(
                     json::canonicalBytes(json::Value::ofObject({
-                        {"action", json::Value::ofString(action)},
-                        {"delivered", json::Value::ofBoolean(false)},
-                        {"reason",
-                         json::Value::ofString(
-                             std::string{delivered.error().message()}
-                         )},
-                        {"verdict",
+                        {"code",
                          json::Value::ofString(
                              std::string{k_unknownInputTransportVerdict}
                          )},
+                        {"message",
+                         json::Value::ofString(
+                             std::string{delivered.error().message()}
+                         )},
+                        {"retryable", json::Value::ofBoolean(false)},
                     }))
                 )
             );
@@ -2214,26 +2709,30 @@ namespace uf::service
         }
 
         return confirmedToolResult(json::Value::ofObject({
-            {"action", json::Value::ofString(action)},
+            {"action", json::Value::ofString(std::string{action})},
             {"controlled_target_id",
              json::Value::ofString(controller().controlledTargetId())},
             {"delivered", json::Value::ofBoolean(true)},
-            // A hold returns with the button still DOWN, and the Tool call this
-            // one was issued from is what lifts it. Every other verb is over
-            // when it answers.
-            {"held", json::Value::ofBoolean(holding)},
+            {"held", json::Value::ofBoolean(false)},
         }));
     }
 
     auto ProductLifecycle::Impl::answerFrameworkTool(
-        operator_runtime::ToolCallPositionIdentity const& call,
-        ToolBodyContext* p_bodyContext
+        operator_runtime::ToolCallPositionIdentity const& call
     ) -> Result<operator_runtime::ToolCallCompletion>
     {
         auto const& toolName = call.toolName();
+        if (toolName == k_captureTool)
+        {
+            return answerCaptureTool(call);
+        }
         if (toolName == k_observeTool)
         {
-            return answerObserveTool(call, p_bodyContext);
+            return answerObserveTool(call);
+        }
+        if (toolName == k_cropTool)
+        {
+            return answerCropTool(call);
         }
         if (toolName == k_statusTool)
         {
@@ -2251,117 +2750,27 @@ namespace uf::service
         {
             return answerCensusGridTool(call);
         }
-        if (toolName == k_projectReadTool)
+        if (toolName == k_projectReadTextTool)
         {
-            return answerProjectReadTool(call);
+            return answerProjectReadTextTool(call);
         }
-        if (toolName == k_projectWriteTool)
+        if (toolName == k_projectWriteFileTool)
         {
-            return answerProjectWriteTool(call);
+            return answerProjectWriteFileTool(call);
         }
-        if (toolName == k_semanticInputTool)
+        if (toolName == k_projectWriteTextTool)
         {
-            return answerSemanticInputTool(call);
+            return answerProjectWriteTextTool(call);
         }
-        if (toolName == k_deliverInputTool)
+        auto const raw = std::ranges::find(k_rawInputTools, toolName, &FrameworkInputTool::name);
+        if (raw != k_rawInputTools.end())
         {
-            UF_TRY_VALUE(
-                arguments,
-                operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
-            );
-            UF_TRY_VALUE(
-                action,
-                requiredStringArgument(arguments.value(), "action")
-            );
-            if (action != "hold")
-            {
-                if (p_bodyContext != nullptr && p_bodyContext->body)
-                {
-                    return fail(
-                        AutomationErrorKind::ActionRejected,
-                        "framework.input.deliver#" + action
-                            + " does not declare a body"
-                    );
-                }
-                return answerDeliverInputTool(call);
-            }
-
-            constexpr auto k_emptyHold = std::string_view{
-                "a hold body is empty; press and release is the `click` arm."
-            };
-            if (p_bodyContext == nullptr || !p_bodyContext->body)
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    std::string{k_emptyHold}
-                );
-            }
-
-            auto answered = std::optional<
-                Result<operator_runtime::ToolCallCompletion>
-            >{};
-            auto scope = operator_runtime::ToolBodyRun{
-                [this, &call, &answered,
-                 inner = std::move(p_bodyContext->body)](
-                    ContentHash const& owningCall
-                ) mutable -> Status
-                {
-                    answered.emplace(answerDeliverInputTool(call));
-                    if (!answered->has_value())
-                    {
-                        return std::unexpected{
-                            std::move(*answered).error()
-                        };
-                    }
-                    if (
-                        (**answered).kind()
-                            != operator_runtime::ToolCallCompletionKind::Confirmed
-                    )
-                    {
-                        return ok();
-                    }
-
-                    return inner(owningCall);
-                }
-            };
-            auto nonemptyWhenEngaged = operator_runtime::ToolBodyPostcondition{
-                [&answered, empty = std::string{k_emptyHold}](
-                    uint64 issuedChildren
-                ) mutable -> Status
-                {
-                    if (
-                        answered.has_value() && answered->has_value()
-                        && (**answered).kind()
-                            == operator_runtime::ToolCallCompletionKind::Confirmed
-                        && issuedChildren == 0U
-                    )
-                    {
-                        return fail(
-                            AutomationErrorKind::ActionRejected,
-                            std::move(empty)
-                        );
-                    }
-                    return ok();
-                }
-            };
-            auto ran = p_bodyContext->pRequest != nullptr
-                ? dispatcher().runToolBody(
-                      generationHandle(),
-                      p_bodyContext->pRequest->controller,
-                      p_bodyContext->pRequest->lease,
-                      p_bodyContext->pRequest->root,
-                      call,
-                      std::move(scope),
-                      std::move(nonemptyWhenEngaged)
-                  )
-                : dispatcher().runChildToolBody(
-                      call,
-                      std::move(scope),
-                      std::move(nonemptyWhenEngaged)
-                  );
-            UF_TRY(std::move(ran));
-            UF_CHECK(answered.has_value() && answered->has_value());
-            return *std::move(answered);
+            return answerRawInputTool(call, raw->kind);
+        }
+        auto const semantic = std::ranges::find(k_uiInputTools, toolName, &FrameworkInputTool::name);
+        if (semantic != k_uiInputTools.end())
+        {
+            return answerUiInputTool(call, semantic->kind);
         }
         if (toolName == k_waitTool)
         {
@@ -2425,47 +2834,10 @@ namespace uf::service
 
     auto ProductLifecycle::Impl::runAdmitted(
         operator_runtime::ToolAdmissionRequest const& request,
-        task::TaskContext& context,
-        operator_runtime::ToolBodyRun body
+        task::TaskContext& context
     ) -> Result<operator_runtime::ToolCallReplay>
     {
         auto const active = ActiveContext{*this, context};
-
-        if (body)
-        {
-            auto selectedArmStorage = std::string{};
-            auto selectedArm        = std::optional<std::string_view>{};
-            if (!request.call.descriptor().body.taggedBy.empty())
-            {
-                UF_TRY_VALUE(
-                    arguments,
-                    operator_runtime::CanonicalJson::parseExact(
-                        request.call.canonicalArgs()
-                    )
-                );
-                auto const* const p_tag = arguments.value().find(
-                    request.call.descriptor().body.taggedBy
-                );
-                UF_CHECK(p_tag != nullptr);
-                selectedArmStorage = p_tag->string();
-                selectedArm        = selectedArmStorage;
-            }
-            UF_TRY_VALUE(
-                takesBody,
-                operator_runtime::toolTakesBody(
-                    request.call.descriptor().body,
-                    selectedArm
-                )
-            );
-            if (!takesBody)
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "Tool " + request.call.toolName()
-                        + " does not declare a body for this call"
-                );
-            }
-        }
 
         // Which code answers a call is decided by the name's owner and by
         // nothing else. A Tool this generation bound runs on its own scoped
@@ -2484,13 +2856,6 @@ namespace uf::service
                     .has_value()
             )
             {
-                if (body)
-                {
-                    return fail(
-                        AutomationErrorKind::ActionRejected,
-                        "a bound Project Tool does not declare framework scope semantics"
-                    );
-                }
                 return dispatcher().dispatch(
                     generationHandle(),
                     request,
@@ -2502,16 +2867,11 @@ namespace uf::service
                 operatorHost.coordinator(),
             };
             auto* const p_self = this;
-            auto bodyContext = ToolBodyContext{
-                .pRequest = &request,
-                .body     = body,
-            };
-            auto* const p_bodyContext = &bodyContext;
-            auto provider = [p_self, p_bodyContext](
+            auto provider = [p_self](
                                 operator_runtime::ToolCallPositionIdentity const&
                                     admittedCall
                             ) -> Result<operator_runtime::ToolCallCompletion>
-            { return p_self->answerFrameworkTool(admittedCall, p_bodyContext); };
+            { return p_self->answerFrameworkTool(admittedCall); };
             return executor.invoke(request, provider);
         }();
 
@@ -2524,10 +2884,30 @@ namespace uf::service
     ) -> Result<operator_runtime::ToolCallReplay>
     {
         UF_TRY_VALUE(admission, m_impl->admitRootCall(request));
-        return m_impl->runAdmitted(
-            admission,
-            context,
-            std::move(request.body)
+        return m_impl->runAdmitted(admission, context);
+    }
+
+    auto ProductLifecycle::readScreenshot(ContentHash const& hash)
+        -> Result<std::vector<std::byte>>
+    {
+        UF_TRY_VALUE(
+            receipt,
+            m_impl->operatorHost.coordinator().evidenceArtifactReceipt(hash)
+        );
+        if (!receipt)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                std::format(
+                    "screenshot_sha256 {} is missing or expired: no committed "
+                    "screenshot receipt names a retained evidence blob",
+                    hash.hex()
+                )
+            );
+        }
+        return m_impl->operatorHost.coordinator().readEvidenceArtifact(
+            hash,
+            image::k_maximumPngFileBytes
         );
     }
 
@@ -2599,8 +2979,7 @@ namespace uf::service
     auto ProductLifecycle::Impl::issueInteractiveCall(
         task::TaskContext& context,
         std::string_view toolName,
-        json::Value const& arguments,
-        script::ToolCallBody body
+        json::Value const& arguments
     ) -> Result<json::Value>
     {
         UF_TRY_VALUE(
@@ -2610,102 +2989,27 @@ namespace uf::service
             )
         );
 
-        if (body)
-        {
-            body = script::ToolCallBody{
-                [this, inner = std::move(body)](
-                    ContentHash const& owningCall
-                ) mutable -> Status
-                {
-                    auto const outerCall = std::exchange(
-                        interactiveBodyCall,
-                        std::optional{owningCall}
-                    );
-                    auto const outerChildren = std::exchange(
-                        interactiveBodyChildren,
-                        uint64{0}
-                    );
-                    auto const restore = scopeExit(
-                        [this, outerCall, outerChildren]() noexcept
-                        {
-                            interactiveBodyCall     = outerCall;
-                            interactiveBodyChildren = outerChildren;
-                        }
-                    );
-                    return inner(owningCall);
-                }
-            };
-        }
-
-        // INSIDE AN OBSERVATION'S BODY. The call is a child of that observation
-        // and goes through the dispatcher's shared host adapter, which mints the
-        // delegation grant from the observation's still-dispatching row, judges
-        // the child against what that observation declared it may delegate, and
-        // records the call under it.
-        if (interactiveBodyCall.has_value())
-        {
-            ++interactiveBodyChildren;
-            return dispatcher().toolRuntimeDispatch()(
-                toolName,
-                arguments,
-                script::ToolCallCoordinate{
-                    .parentPosition = *interactiveBodyCall,
-                    .childIndex     = interactiveBodyChildren,
-                },
-                context.cancellation(),
-                std::move(body)
-            );
-        }
-
         // AT THE TOP OF THE RUN. One request envelope, admitted by the same
         // translation every other top-of-run call goes through.
         ++interactiveRequests;
         auto call = ToolRootCall{
-            .requestKey = std::string{k_interactiveRequestKeyPrefix}
-                + std::to_string(interactiveRequests),
+            .requestKey = std::string{k_interactiveRequestKeyPrefix} + sessionId
+                + '-' + std::to_string(interactiveRequests),
             .exactRootRequestPreimageJcs = std::string{
                 k_interactiveRootPreimageJcs
             },
             .executionIdentity = executionIdentity(),
             .toolName          = std::string{toolName},
             .exactArgumentsJcs = std::string{canonicalArguments.bytes()},
-            .body              = std::move(body),
         };
         UF_TRY_VALUE(admission, admitRootCall(call));
         auto const callIdentity = admission.call.identity();
         UF_TRY_VALUE(
             replay,
-            runAdmitted(admission, context, std::move(call.body))
+            runAdmitted(admission, context)
         );
 
-        // The same answer shape a scoped run's Tool call gets, because it is
-        // the same thing: the position the call occupied, its recorded
-        // classification, and the Tool's own result and evidence when the
-        // outcome carries them.
-        auto members = std::vector<json::Member>{};
-        members.emplace_back(
-            "call_identity",
-            json::Value::ofString(callIdentity.hex())
-        );
-        if (replay.evidence)
-        {
-            members.emplace_back("evidence", replay.evidence->value());
-        }
-        if (replay.payload)
-        {
-            members.emplace_back("result", replay.payload->value());
-        }
-        members.emplace_back(
-            "state",
-            json::Value::ofString(
-                std::string{operator_runtime::toolCallStateWireName(replay.state)}
-            )
-        );
-        members.emplace_back(
-            "tool",
-            json::Value::ofString(std::string{toolName})
-        );
-        return json::Value::ofObject(std::move(members));
+        return operator_runtime::toolCallAnswer(callIdentity, replay);
     }
 
     auto ProductLifecycle::invokeAgentTool(
@@ -2722,7 +3026,7 @@ namespace uf::service
                   .catalog       = m_impl->catalog(),
         };
         UF_TRY_VALUE(admission, m_impl->agentAdapter.translate(run, use));
-        return m_impl->runAdmitted(admission, context, {});
+        return m_impl->runAdmitted(admission, context);
     }
 
     auto ProductLifecycle::invokeHumanTool(
@@ -2739,7 +3043,7 @@ namespace uf::service
                   .catalog       = m_impl->catalog(),
         };
         UF_TRY_VALUE(admission, m_impl->humanAdapter.translate(run, command));
-        return m_impl->runAdmitted(admission, context, {});
+        return m_impl->runAdmitted(admission, context);
     }
 
     auto ProductLifecycle::startProjectAutomation(
@@ -2763,7 +3067,7 @@ namespace uf::service
                 start
             )
         );
-        return m_impl->runAdmitted(admission, context, {});
+        return m_impl->runAdmitted(admission, context);
     }
     auto ProductLifecycle::wait(
         operator_runtime::SubscriptionCursor after,
@@ -2777,14 +3081,29 @@ namespace uf::service
         );
     }
 
-    auto reclaimRuntimeArtifacts(std::filesystem::path const& runtimeDirectory)
-        -> Result<operator_runtime::ReclaimedRuntimeArtifacts>
+    auto reclaimOperatorStores(
+        std::filesystem::path const& runtimeDirectory,
+        uint64 evidenceRetentionMillis
+    ) -> Result<ReclaimedOperatorStores>
     {
         UF_TRY_VALUE(
             coordinator,
             operator_runtime::OperatorCoordinator::open(runtimeDirectory)
         );
-        return coordinator.reclaimUnreferencedRuntimeArtifacts();
+        UF_TRY_VALUE(
+            reclaimedRuntime,
+            coordinator.reclaimUnreferencedRuntimeArtifacts()
+        );
+        UF_TRY_VALUE(
+            reclaimedEvidence,
+            coordinator.reclaimUnreferencedEvidenceArtifacts(
+                evidenceRetentionMillis
+            )
+        );
+        return ReclaimedOperatorStores{
+            .runtime  = reclaimedRuntime,
+            .evidence = reclaimedEvidence,
+        };
     }
 
     auto upgradeRuntimeArtifactAndPinSession(RuntimeUpgradeStart const& upgrade)
@@ -2835,8 +3154,7 @@ namespace uf::service
                     .entryModule = selected.toolClosure.entryModule,
                     .modules     = selected.toolClosure.modules,
                 },
-                selected.projectResources,
-                quiescentToolRuntime()
+                selected.projectResources
             )
         );
 

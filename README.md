@@ -30,10 +30,10 @@ They are not three code paths. Each has a *translator* —
 `AgentToolAdapter`, `HumanToolAdapter`, `ProjectAutomationAdapter` in
 `modules/operator/source/operator/tool-actor-adapters.hpp` — and each translator
 builds one `ToolAdmissionRequest`, the only value `OperatorCoordinator::admitToolCall`
-accepts. One Tool calling another is the fourth producer of the same value. An
-adapter can construct nothing that is executable: the call coordinate is minted
-privately by the issuing seam and the delegation grant by the Operator. So a new
-caller cannot acquire a second execution path — the worst mistake it can make is
+accepts. A Project Tool handler is a leaf and is refused if it attempts to issue
+another Tool call. An adapter can construct nothing that is executable: the call
+coordinate is minted privately by the issuing seam. So a new caller cannot
+acquire a second execution path — the worst mistake it can make is
 translating its own transport badly, which is one class of bug rather than a
 whole second authority evaluation.
 
@@ -147,24 +147,21 @@ It is Luau with `for`, `if` and locals:
 
 ```lua
 for _attempt = 1, input.attempts do
-    local handle = results.unwrap_or(screen.observation(screen.observe()), nil)
-    local reading = results.unwrap_or(
-        tools.result(tools.call("e2.automation.recognise", {
-            targets = screen.targets(handle),
-        })), nil)
-    if reading.state == "ready" then break end
+    local capture = screen.capture()
+    if not capture.ok then return capture end
+    local captured = capture.result
+    local handle = results.unwrap_or(
+        screen.observation(screen.observe(captured.screenshot_sha256)), nil)
+    local action = screen.ui_actions(handle)[1]
+    if action == nil then break end
 
-    local step = results.unwrap_or(
-        tools.result(tools.call("e2.automation.choose", {
-            actions = screen.actions(handle),
-            state   = reading.state,
-        })), nil)
-    local posted = tools.call("framework.input.semantic_target", {
+    tools.call("framework.ui." .. action.kind, {
         observation_reference = screen.use(handle),
-        semantic_target       = step.target,
-        ui_action             = step.action,
+        ui_target = action.ui_target,
+        binding   = action.binding,
+        action    = action.action,
     })
-    workflow.wait(step.wait_ms)
+    workflow.wait(0)
 end
 ```
 

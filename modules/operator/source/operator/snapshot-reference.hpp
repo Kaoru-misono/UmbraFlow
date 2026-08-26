@@ -57,26 +57,11 @@ namespace uf::operator_runtime
 
         ChangedGeneration,
 
-        // The consuming call is not issued from the position the observation
-        // was issued from: another root, another parent, or no parent where the
-        // observation had one. Per R4 a call arriving under a different parent
-        // is a coordinate mismatch, and this is that mismatch seen from the
-        // observation side.
-        MissingParent,
-
-        // The observation declares the named snapshot-local semantic target
-        // more than once, so no single target can be resolved from it.
-        DuplicateLocal,
-
-        // The observation never declared the named snapshot-local semantic
-        // target at all.
-        UnknownLocalTarget,
-
-        // The observation's evidence does not support the requested UI action.
-        // A refusal here delivers nothing and therefore spends nothing, which
-        // is what keeps a rejected action from publishing stronger observation
-        // or durable facts than its evidence proved.
-        ActionRefused,
+        DuplicateIdentifier,
+        UnknownUiTarget,
+        UnknownBinding,
+        UnknownAction,
+        ActionKindMismatch,
     };
 
     [[nodiscard]]
@@ -90,10 +75,15 @@ namespace uf::operator_runtime
     auto observationRefusalDiagnostic(ObservationRefusal refusal) noexcept
         -> std::string_view;
 
-    // What `framework.screen.observe` binds one observation to. Section 6 of
-    // the cycle SPI plan names six bindings, and all six are here because a
-    // reference missing any one of them is a reference some later call can
-    // present against a world it never observed.
+    struct ObservedUiAction final
+    {
+        std::string uiTarget{};
+        std::string binding{};
+        std::string action{};
+        std::string kind{};
+    };
+
+    // What `framework.screen.observe` binds one observation to.
     //
     // No in-class initializers for the hashes: ContentHash has no default
     // state, and per the observed-instance minting ruling a scope that cannot
@@ -112,15 +102,9 @@ namespace uf::operator_runtime
         // identity and is deliberately not restated by a consuming call: a
         // consumer that could name the frame could name a frame it never saw.
         ContentHash frameIdentityHash;
+        ContentHash screenshotSha256;
 
         uint64 hostGeneration{};
-
-        // The issuing coordinate a consuming call must stand at. The parent is
-        // optional because a root-context call has none, and the difference
-        // between "no parent" and "some parent" is itself part of the
-        // comparison.
-        ContentHash                rootIdentity;
-        std::optional<ContentHash> issuingParentIdentity{};
 
         // Expiry and budget state. The consumption budget is exactly one and is
         // deliberately not a counter here: single use is enforced by the
@@ -128,14 +112,7 @@ namespace uf::operator_runtime
         // read from and disagree.
         uint64 expiresAtUnixMillis{};
 
-        // The snapshot-local semantic targets Project interpretation may name
-        // against this observation. A repeated entry is accepted here and
-        // refused at resolution, because the whole matrix is answered at the
-        // one boundary a consumer actually crosses.
-        std::vector<std::string> localSemanticTargets{};
-
-        // The UI actions this observation's evidence supports.
-        std::vector<std::string> authorizedUiActions{};
+        std::vector<ObservedUiAction> uiActions{};
     };
 
     // What one consuming call presents. It carries the reference bytes rather
@@ -154,11 +131,10 @@ namespace uf::operator_runtime
         ContentHash projectRegistrationHash;
         uint64      hostGeneration{};
 
-        ContentHash                rootIdentity;
-        std::optional<ContentHash> issuingParentIdentity{};
-
-        std::string localSemanticTarget{};
-        std::string uiAction{};
+        std::string uiTarget{};
+        std::string binding{};
+        std::string action{};
+        std::string expectedActionKind{};
 
         uint64 presentedAtUnixMillis{};
     };
@@ -215,34 +191,47 @@ namespace uf::operator_runtime
 
         ContentHash m_referenceIdentity;
         ContentHash m_frameIdentityHash;
+        ContentHash m_screenshotSha256;
         std::string m_controlledTargetId;
-        std::string m_localSemanticTarget;
-        std::string m_uiAction;
+        std::string m_uiTarget;
+        std::string m_binding;
+        std::string m_action;
+        std::string m_actionKind;
         uint64      m_hostGeneration;
 
         ResolvedSnapshotObservation(
             ContentHash referenceIdentity,
             ContentHash frameIdentityHash,
+            ContentHash screenshotSha256,
             std::string controlledTargetId,
-            std::string localSemanticTarget,
-            std::string uiAction,
+            std::string uiTarget,
+            std::string binding,
+            std::string action,
+            std::string actionKind,
             uint64 hostGeneration
         );
 
     public:
         [[nodiscard]] auto referenceIdentity() const -> ContentHash;
         [[nodiscard]] auto frameIdentityHash() const -> ContentHash;
+        [[nodiscard]] auto screenshotSha256() const -> ContentHash;
 
         [[nodiscard]]
         auto controlledTargetId() const noexcept UF_LIFETIME_BOUND
             -> std::string const&;
 
         [[nodiscard]]
-        auto localSemanticTarget() const noexcept UF_LIFETIME_BOUND
+        auto uiTarget() const noexcept UF_LIFETIME_BOUND
             -> std::string const&;
 
         [[nodiscard]]
-        auto uiAction() const noexcept UF_LIFETIME_BOUND -> std::string const&;
+        auto binding() const noexcept UF_LIFETIME_BOUND -> std::string const&;
+
+        [[nodiscard]]
+        auto action() const noexcept UF_LIFETIME_BOUND -> std::string const&;
+
+        [[nodiscard]]
+        auto actionKind() const noexcept UF_LIFETIME_BOUND -> std::string const&;
 
         [[nodiscard]] auto hostGeneration() const noexcept -> uint64;
     };

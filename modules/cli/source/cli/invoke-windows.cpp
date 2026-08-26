@@ -23,7 +23,7 @@ namespace uf::cli
         {
             return fail(
                 AutomationErrorKind::UnsupportedCapability,
-                "the OCR model directory built no engine, so no Reader this "
+                "the OCR model directory built no engine, so no Readout this "
                 "project's model declares could run"
             );
         }

@@ -557,30 +557,6 @@ namespace uf::operator_runtime::test_support
         return routineToolEffect(project, project.toolName("command-1"));
     }
 
-    // The Tool Runtime seam this fixture's tool closure is compiled against. It
-    // refuses every call: a scoped program is required to hold a seam -- one
-    // without it is a pure program wearing the wrong type -- and a registration
-    // loaded so that an instance can be provisioned from its fold holds no
-    // lease, controller or observation authority for a call to be admitted
-    // under. It is one value and never a branch on anything.
-    [[nodiscard]]
-    inline auto refusingToolRuntime() -> script::ToolRuntimeDispatch
-    {
-        return [](
-                   std::string_view,
-                   json::Value const&,
-                   script::ToolCallCoordinate const&,
-                   std::stop_token,
-                   script::ToolCallBody
-               ) -> Result<json::Value>
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "this fixture registration dispatches no Tool call"
-            );
-        };
-    }
-
     // The loaded generation this fixture's registration was compiled into.
     [[nodiscard]]
     inline auto loadGeneration(
@@ -597,8 +573,7 @@ namespace uf::operator_runtime::test_support
                     toolClosureSource(project.registration.pluginId())
                 ),
             },
-            {},
-            refusingToolRuntime()
+            {}
         );
         {
             auto const why = result.has_value()
@@ -809,7 +784,7 @@ namespace uf::operator_runtime::test_support
     [[nodiscard]]
     inline auto umbraflowRuntimeModel() -> std::string
     {
-        return R"toml(schema_version = 3
+        return R"toml(schema_version = 4
 base_resolution = [3, 1]
 base_dpi = [96, 96]
 
@@ -851,7 +826,6 @@ actions = [{ id = "fixture.press", kind = "click", proof_locator = "fixture.mark
 
 [[surface]]
 id = "fixture.surface"
-kind = "scene"
 covers = []
 identity = ["fixture.surface.anchor"]
 )toml";
@@ -876,7 +850,6 @@ actions = []
 
 [[surface]]
 id = "fixture.panel"
-kind = "scene"
 covers = []
 identity = ["fixture.panel.anchor"]
 )toml";

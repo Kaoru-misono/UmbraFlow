@@ -646,10 +646,23 @@ namespace uf::cli
                 );
                 REQUIRE(schemaHash.has_value());
                 auto const effects = std::vector<std::string>{
-                    std::string{"framework.input.deliver"},
+                    std::string{"framework.input.click"},
+                    std::string{"framework.input.drag"},
+                    std::string{"framework.input.hold"},
+                    std::string{"framework.input.key"},
+                    std::string{"framework.input.move"},
+                    std::string{"framework.input.scroll"},
+                    std::string{"framework.ui.click"},
+                    std::string{"framework.ui.hold"},
+                    std::string{"framework.ui.move"},
                 };
                 auto const granted = std::vector<std::string>{
-                    std::string{"framework.input.deliver"},
+                    std::string{"framework.input.click"},
+                    std::string{"framework.input.drag"},
+                    std::string{"framework.input.hold"},
+                    std::string{"framework.input.key"},
+                    std::string{"framework.input.move"},
+                    std::string{"framework.input.scroll"},
                 };
                 auto const policy =
                     operator_runtime::conformance::policyArtifactBytes(
@@ -756,33 +769,46 @@ namespace uf::cli
             std::string                     payload{};
         };
 
-        // The `verdict` member every native-input outcome records. Named rather
-        // than matched inside prose so a case that expects one refusal cannot
-        // pass on another.
         [[nodiscard]]
-        auto inputVerdict(std::string_view payload) -> std::string
+        auto screenshotArguments(std::string_view receiptPayload) -> std::string
         {
-            auto const parsed = json::parse(payload);
-            REQUIRE_MESSAGE(parsed.has_value(), payload);
-            auto const* const p_verdict = parsed->find("verdict");
-            REQUIRE_MESSAGE(p_verdict != nullptr, payload);
-            auto const* const p_delivered = parsed->find("delivered");
-            REQUIRE_MESSAGE(p_delivered != nullptr, payload);
-            CHECK_FALSE(p_delivered->boolean());
-            return std::string{p_verdict->string()};
+            auto const parsed = json::parse(receiptPayload);
+            REQUIRE_MESSAGE(parsed.has_value(), receiptPayload);
+            auto const* const p_hash = parsed->find("screenshot_sha256");
+            REQUIRE_MESSAGE(p_hash != nullptr, receiptPayload);
+            REQUIRE(p_hash->kind() == json::ValueKind::String);
+            return R"({"screenshot_sha256":")"
+                + std::string{p_hash->string()} + R"("})";
         }
 
-        // The other half of a refusal payload: what it says went wrong. A
-        // verdict names the KIND of refusal and the reason names the thing --
-        // the surface an aim was outside of, the key name that is not one.
+        // The error code every failed native-input answer records. Named rather
+        // than matched inside prose so a case that expects one refusal cannot
+        // pass on another. Provider failures use the same exact error object the
+        // synchronous caller receives.
         [[nodiscard]]
-        auto inputReason(std::string_view payload) -> std::string
+        auto inputErrorCode(std::string_view payload) -> std::string
         {
             auto const parsed = json::parse(payload);
             REQUIRE_MESSAGE(parsed.has_value(), payload);
-            auto const* const p_reason = parsed->find("reason");
-            REQUIRE_MESSAGE(p_reason != nullptr, payload);
-            return std::string{p_reason->string()};
+            auto const* const p_code = parsed->find("code");
+            REQUIRE_MESSAGE(p_code != nullptr, payload);
+            auto const* const p_retryable = parsed->find("retryable");
+            REQUIRE_MESSAGE(p_retryable != nullptr, payload);
+            CHECK_FALSE(p_retryable->boolean());
+            return std::string{p_code->string()};
+        }
+
+        // The other half of a refusal payload: what it says went wrong. A code
+        // names the KIND of refusal and the message names the thing --
+        // the surface an aim was outside of, the key name that is not one.
+        [[nodiscard]]
+        auto inputErrorMessage(std::string_view payload) -> std::string
+        {
+            auto const parsed = json::parse(payload);
+            REQUIRE_MESSAGE(parsed.has_value(), payload);
+            auto const* const p_message = parsed->find("message");
+            REQUIRE_MESSAGE(p_message != nullptr, payload);
+            return std::string{p_message->string()};
         }
     }
 
@@ -910,11 +936,23 @@ namespace uf::cli
                         return std::string{replay->payload->bytes()};
                     };
 
-                    // Braced initialization, so the five calls are issued in
-                    // the declaration order their ordinals follow.
+                    auto const captured = issued(
+                        "framework.screen.capture",
+                        "{}"
+                    );
+                    auto const screenshot = screenshotArguments(captured);
+
+                    // Braced initialization, so the calls are issued in the
+                    // declaration order their ordinals follow.
                     payloads = FrameworkToolPayloads{
-                        .firstObserve  = issued("framework.screen.observe", "{}"),
-                        .secondObserve = issued("framework.screen.observe", "{}"),
+                        .firstObserve = issued(
+                            "framework.screen.observe",
+                            screenshot
+                        ),
+                        .secondObserve = issued(
+                            "framework.screen.observe",
+                            screenshot
+                        ),
                         .waited        = issued(
                             "framework.workflow.wait",
                             R"({"duration_ms":0})"
@@ -950,23 +988,20 @@ namespace uf::cli
         // The observation authority section 6 requires travels in the Tool
         // result as an OBJECT, so a script can hold it, return it and record it
         // with no host object crossing the boundary. Every binding a later
-        // native input is judged on is in it, and the two that name this run's
-        // coordinate are what refuse a reference presented under another root.
+        // native input is judged on is in it.
         auto const* const p_reference =
             parsedPayload->find("observation_reference");
         REQUIRE(p_reference != nullptr);
         CHECK(p_reference->kind() == json::ValueKind::Object);
         for (auto const* const binding : {
-                 "authorized_ui_actions",
                  "controlled_target_id",
                  "expires_at_unix_ms",
                  "frame_identity_hash",
                  "host_generation",
-                 "issuing_parent_identity",
-                 "local_semantic_targets",
                  "project_registration_hash",
-                 "root_identity",
                  "runtime_artifact_root_hash",
+                 "screenshot_sha256",
+                 "ui_actions",
              })
         {
             CHECK_MESSAGE(p_reference->find(binding) != nullptr, binding);
@@ -1021,9 +1056,104 @@ namespace uf::cli
         CHECK(*delivered == 0U);
     }
 
-    TEST_CASE(
-        "production Framework input Tools spend one observation authority and refuse every other presentation"
-    )
+    TEST_CASE("each raw input Tool rejects an unretained screenshot by name")
+    {
+        auto const missingHash = std::string(64U, 'f');
+        auto const calls = std::vector{
+            std::pair{
+                std::string{"framework.input.click"},
+                R"({"screenshot_sha256":")" + missingHash
+                    + R"(","x":1,"y":0})"
+            },
+            std::pair{
+                std::string{"framework.input.drag"},
+                R"({"screenshot_sha256":")" + missingHash
+                    + R"(","to_x":2,"to_y":0,"travel_ms":0,"x":1,"y":0})"
+            },
+            std::pair{
+                std::string{"framework.input.hold"},
+                R"({"duration_ms":0,"screenshot_sha256":")" + missingHash
+                    + R"(","x":1,"y":0})"
+            },
+            std::pair{
+                std::string{"framework.input.key"},
+                R"({"key":"ESC","screenshot_sha256":")" + missingHash
+                    + R"("})"
+            },
+            std::pair{
+                std::string{"framework.input.move"},
+                R"({"screenshot_sha256":")" + missingHash
+                    + R"(","x":1,"y":0})"
+            },
+            std::pair{
+                std::string{"framework.input.scroll"},
+                R"({"notches":1,"screenshot_sha256":")" + missingHash
+                    + R"("})"
+            },
+        };
+
+        for (auto const& [tool, exactArguments] : calls)
+        {
+            auto const world = RecordedWorld{};
+            world.authorizeMutation();
+            auto const delivered = std::make_shared<uint32>();
+            auto const scope = operator_runtime::ObservedInstanceWorldScope::run(
+                "recorded-tool-target",
+                1
+            );
+            REQUIRE(scope.has_value());
+
+            runProductLifecycle(
+                world.args("missing-screenshot.jsonl"),
+                world.sources(delivered, std::make_unique<PresentReader>()),
+                "missing-screenshot-adapter",
+                {std::string{
+                    operator_runtime::conformance::k_operateCapability
+                }},
+                *scope,
+                [&](service::ProductLifecycle& lifecycle, task::TaskContext& context)
+                {
+                    auto const refused = lifecycle.invokeTool(
+                        service::ToolRootCall{
+                            .requestKey = "missing-screenshot",
+                            .exactRootRequestPreimageJcs =
+                                R"({"objective":"refuse an unretained screenshot"})",
+                            .executionIdentity = operator_runtime::ToolExecutionIdentity{
+                                .runIdentity = frameworkToolIdentity("framework-input-run"),
+                                .frameworkReleaseIdentity = frameworkToolIdentity(
+                                    "framework-release"
+                                ),
+                                .toolRuntimeProtocolIdentity = frameworkToolIdentity(
+                                    "tool-runtime-protocol"
+                                ),
+                                .environmentIdentity = frameworkToolIdentity(
+                                    "native-adapter-environment"
+                                ),
+                            },
+                            .toolName          = tool,
+                            .exactArgumentsJcs = exactArguments,
+                        },
+                        context
+                    );
+                    auto const refusedWhy = refused.has_value()
+                        ? std::string{}
+                        : refused.error().message();
+                    INFO("tool: ", tool);
+                    REQUIRE_MESSAGE(refused.has_value(), refusedWhy);
+                    REQUIRE(refused->payload.has_value());
+                    auto const refusal = std::string{refused->payload->bytes()};
+                    INFO("refusal payload: ", refusal);
+                    auto const refusedUnretainedScreenshot =
+                        refusal.contains(missingHash)
+                        && refusal.contains("retained evidence blob")
+                        && *delivered == 0U;
+                    CHECK_MESSAGE(refusedUnretainedScreenshot, tool);
+                }
+            );
+        }
+    }
+
+    TEST_CASE("semantic input spends one observation")
     {
         auto const world = RecordedWorld{};
         world.authorizeMutation();
@@ -1079,6 +1209,8 @@ namespace uf::cli
                     auto const replayWhy = replay.has_value()
                         ? std::string{}
                         : replay.error().message();
+                    INFO("tool: ", toolName);
+                    INFO("arguments: ", exactArgumentsJcs);
                     REQUIRE_MESSAGE(replay.has_value(), replayWhy);
                     REQUIRE(replay->payload.has_value());
                     return FrameworkToolOutcome{
@@ -1087,40 +1219,33 @@ namespace uf::cli
                     };
                 };
 
-                // What the Framework Tool Catalog refuses before a durable
-                // coordinate exists at all. The contract is a tagged union over
-                // a CLOSED enumeration, so a verb outside the six and an arm
-                // short one of its own required members are both refusable BY
-                // NAME -- which is the whole reason the free-string action died
-                // (docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md).
-                auto refused = [&](std::string_view exactArgumentsJcs)
-                {
-                    auto const outcome = lifecycle.invokeTool(
-                        service::ToolRootCall{
-                            .requestKey = "input-root",
-                            .exactRootRequestPreimageJcs =
-                                R"({"objective":"deliver one input"})",
-                            .executionIdentity = executionIdentity,
-                            .toolName          = "framework.input.deliver",
-                            .exactArgumentsJcs =
-                                std::string{exactArgumentsJcs},
-                        },
-                        context
-                    );
-                    REQUIRE_FALSE(outcome.has_value());
-                    return std::string{outcome.error().message()};
-                };
+                auto const oldDeliver = lifecycle.invokeTool(
+                    service::ToolRootCall{
+                        .requestKey = "input-root",
+                        .exactRootRequestPreimageJcs =
+                            R"({"objective":"deliver one input"})",
+                        .executionIdentity = executionIdentity,
+                        .toolName          = "framework.input.deliver",
+                        .exactArgumentsJcs = R"({"action":"click","x":1,"y":0})",
+                    },
+                    context
+                );
+                REQUIRE_FALSE(oldDeliver.has_value());
 
-                CHECK(
-                    refused(R"({"action":"tap","x":1,"y":0})")
-                    == "framework.input.deliver action 'tap' is outside the "
-                       "closed set click, drag, hold, key, move, scroll"
+                auto const captured = issued(
+                    "input-root",
+                    "framework.screen.capture",
+                    "{}"
                 );
-                CHECK(
-                    refused(R"({"action":"drag","travel_ms":10,"x":1,"y":0})")
-                    == "framework.input.deliver action 'drag' requires exactly "
-                       "action, to_x, to_y, travel_ms, x, y"
-                );
+                auto const screenshot = screenshotArguments(captured.payload);
+                auto pointArguments = [&screenshot](uint32 x, uint32 y)
+                {
+                    auto arguments = screenshot;
+                    arguments.pop_back();
+                    arguments += R"(,"x":)" + std::to_string(x)
+                        + R"(,"y":)" + std::to_string(y) + "}";
+                    return arguments;
+                };
 
                 // The scope of an input injection is the target surface this
                 // registration declared and no wider. The recorded world is 3x1
@@ -1128,16 +1253,16 @@ namespace uf::cli
                 // captured or posted -- proven absence, naming the surface.
                 auto const offSurface = issued(
                     "input-root",
-                    "framework.input.deliver",
-                    R"({"action":"click","x":3,"y":0})"
+                    "framework.input.click",
+                    pointArguments(3U, 0U)
                 );
                 CHECK(
                     offSurface.state
                     == operator_runtime::ToolCallState::ProvenAbsent
                 );
-                CHECK(inputVerdict(offSurface.payload) == "input_refused");
+                CHECK(inputErrorCode(offSurface.payload) == "input_refused");
                 CHECK(
-                    inputReason(offSurface.payload).find("3x1 target surface")
+                    inputErrorMessage(offSurface.payload).find("3x1 target surface")
                     != std::string::npos
                 );
 
@@ -1148,8 +1273,8 @@ namespace uf::cli
                 // it.
                 auto const machineAimed = issued(
                     "input-root",
-                    "framework.input.deliver",
-                    R"({"action":"click","x":1,"y":0})"
+                    "framework.input.click",
+                    pointArguments(1U, 0U)
                 );
                 CHECK(
                     machineAimed.state
@@ -1169,7 +1294,7 @@ namespace uf::cli
                 auto const observed = issued(
                     "input-root",
                     "framework.screen.observe",
-                    "{}"
+                    screenshot
                 );
                 CHECK(
                     observed.state == operator_runtime::ToolCallState::Confirmed
@@ -1182,13 +1307,15 @@ namespace uf::cli
                 auto const reference = json::canonicalBytes(*p_reference);
 
                 auto presented = [&reference](
-                                     std::string_view semanticTarget,
-                                     std::string_view uiAction
+                                     std::string_view uiTarget,
+                                     std::string_view binding,
+                                     std::string_view action
                                  )
                 {
-                    return R"({"observation_reference":)" + reference
-                        + R"(,"semantic_target":")" + std::string{semanticTarget}
-                        + R"(","ui_action":")" + std::string{uiAction} + R"("})";
+                    return R"({"action":")" + std::string{action}
+                        + R"(","binding":")" + std::string{binding}
+                        + R"(","observation_reference":)" + reference
+                        + R"(,"ui_target":")" + std::string{uiTarget} + R"("})";
                 };
 
                 // Two refusals on the observation's own bounds, both before any
@@ -1197,35 +1324,51 @@ namespace uf::cli
                 // still be available to the call below that is entitled to it.
                 auto const unknownTarget = issued(
                     "input-root",
-                    "framework.input.semantic_target",
-                    presented("fixture.absent", "fixture.press")
+                    "framework.ui.click",
+                    presented(
+                        "fixture.absent",
+                        "fixture.target.primary",
+                        "fixture.press"
+                    )
                 );
                 CHECK(
                     unknownTarget.state
                     == operator_runtime::ToolCallState::ProvenAbsent
                 );
                 CHECK(
-                    inputVerdict(unknownTarget.payload) == "unknown_local_target"
-                );
-
-                auto const refusedAction = issued(
-                    "input-root",
-                    "framework.input.semantic_target",
-                    presented("fixture.target", "fixture.absent")
+                    inputErrorCode(unknownTarget.payload) == "unknown_ui_target"
                 );
                 CHECK(
-                    inputVerdict(refusedAction.payload) == "action_refused"
+                    inputErrorMessage(unknownTarget.payload).contains("fixture.absent")
                 );
 
-                // Another root request is another issuing coordinate, and the
-                // reference names the one it was minted at. This is the same
-                // reference and the same arguments; only the position moved.
-                auto const elsewhere = issued(
-                    "other-input-root",
-                    "framework.input.semantic_target",
-                    presented("fixture.target", "fixture.press")
+                auto const unknownBinding = issued(
+                    "input-root",
+                    "framework.ui.click",
+                    presented(
+                        "fixture.target",
+                        "fixture.missing",
+                        "fixture.press"
+                    )
                 );
-                CHECK(inputVerdict(elsewhere.payload) == "missing_parent");
+                CHECK(
+                    inputErrorCode(unknownBinding.payload) == "unknown_binding"
+                );
+                CHECK(
+                    inputErrorMessage(unknownBinding.payload).contains("fixture.missing")
+                );
+
+                auto const wrongKind = issued(
+                    "input-root",
+                    "framework.ui.move",
+                    presented(
+                        "fixture.target",
+                        "fixture.target.primary",
+                        "fixture.press"
+                    )
+                );
+                CHECK(inputErrorCode(wrongKind.payload) == "action_kind_mismatch");
+                CHECK(inputErrorMessage(wrongKind.payload).contains("fixture.press"));
 
                 // The one call that is entitled to it. It resolves against the
                 // same snapshot, registration, RuntimeArtifact, Host generation
@@ -1233,8 +1376,12 @@ namespace uf::cli
                 // spends the authority.
                 auto const delivering = issued(
                     "input-root",
-                    "framework.input.semantic_target",
-                    presented("fixture.target", "fixture.press")
+                    "framework.ui.click",
+                    presented(
+                        "fixture.target",
+                        "fixture.target.primary",
+                        "fixture.press"
+                    )
                 );
 
                 // It posts. The Host captures its own frame, resolves
@@ -1262,51 +1409,21 @@ namespace uf::cli
                 // At most one native input consumes one observation authority.
                 auto const repeated = issued(
                     "input-root",
-                    "framework.input.semantic_target",
-                    presented("fixture.target", "fixture.press")
+                    "framework.ui.click",
+                    presented(
+                        "fixture.target",
+                        "fixture.target.primary",
+                        "fixture.press"
+                    )
                 );
-                CHECK(inputVerdict(repeated.payload) == "already_consumed");
-
-                // A second authority, for the one refusal that lives past the
-                // observation's own bounds. The target below is declared, so
-                // the authority admits it and is spent; what refuses it is the
-                // resolver, which finds no Binding carrying this action on the
-                // frame the Host captured. Nothing was posted -- the refusal is
-                // ahead of the engine call -- so it is recorded as absence and
-                // not as uncertainty, which would have frozen the target over
-                // an input that never left the Framework.
-                auto const reobserved = issued(
-                    "input-root",
-                    "framework.screen.observe",
-                    "{}"
-                );
-                auto const reobservedPayload = json::parse(reobserved.payload);
-                REQUIRE(reobservedPayload.has_value());
-                auto const* const p_second =
-                    reobservedPayload->find("observation_reference");
-                REQUIRE(p_second != nullptr);
-                auto const secondReference = json::canonicalBytes(*p_second);
-                auto const unresolvable = issued(
-                    "input-root",
-                    "framework.input.semantic_target",
-                    R"({"observation_reference":)" + secondReference
-                        + R"(,"semantic_target":"fixture.marker")"
-                          R"(,"ui_action":"fixture.press"})"
-                );
-                CHECK(
-                    unresolvable.state
-                    == operator_runtime::ToolCallState::ProvenAbsent
-                );
-                CHECK(
-                    inputVerdict(unresolvable.payload) == "host_delivery_refused"
-                );
+                CHECK(inputErrorCode(repeated.payload) == "already_consumed");
 
                 // Bytes this Framework never minted are refused at the seam,
                 // before a durable coordinate exists for them: recognition is
                 // byte equality against the recorded wire form and nothing
                 // else, so an edited reference is not a reference.
                 auto const forged = std::string{
-                    R"({"schema":"framework.observation_reference/1"})"
+                    R"({"schema":"framework.observation_reference/2"})"
                 };
                 REQUIRE(forged != reference);
                 auto const unminted = lifecycle.invokeTool(
@@ -1315,11 +1432,10 @@ namespace uf::cli
                         .exactRootRequestPreimageJcs =
                             R"({"objective":"deliver one input"})",
                         .executionIdentity = executionIdentity,
-                        .toolName          = "framework.input.semantic_target",
+                        .toolName          = "framework.ui.click",
                         .exactArgumentsJcs =
-                            R"({"observation_reference":)" + forged
-                            + R"(,"semantic_target":"fixture.target")"
-                              R"(,"ui_action":"fixture.press"})",
+                            R"({"action":"fixture.press","binding":"fixture.target.primary","observation_reference":)"
+                            + forged + R"(,"ui_target":"fixture.target"})",
                     },
                     context
                 );
@@ -1329,35 +1445,23 @@ namespace uf::cli
                     unminted.error().message()
                 );
 
-                // A hold without its required body is the forbidden second
-                // spelling of press-and-release. It is refused by the exact
-                // sentence naming the `key` arm, before anything reaches the
-                // sink.
-                auto const orphanHold = issued(
+                auto holdArguments = pointArguments(1U, 0U);
+                holdArguments.insert(1U, R"("duration_ms":0,)"
+                );
+                auto const held = issued(
                     "input-root",
-                    "framework.input.deliver",
-                    R"({"action":"hold","x":1,"y":0})"
+                    "framework.input.hold",
+                    holdArguments
                 );
                 CHECK(
-                    orphanHold.state
-                    == operator_runtime::ToolCallState::Possible
-                );
-                CHECK(
-                    orphanHold.payload.find(
-                        "a hold body is empty; press and release is the `click` arm."
-                    )
-                    != std::string::npos
+                    held.state == operator_runtime::ToolCallState::Confirmed
                 );
             }
         );
 
-        // Exactly two inputs reached the sink, and no more: the machine-aimed
-        // click on the declared surface, and the one presented call entitled to
-        // the authority it named. Every other row above claims proven absence,
-        // and this is the sink saying the same thing about all of them -- the
-        // aim that was outside the target surface and the bodyless hold both
-        // leave the sink untouched.
-        CHECK(*delivered == 2U);
+        // The raw click, semantic click and raw hold are the only three inputs
+        // that reached the sink.
+        CHECK(*delivered == 3U);
     }
 
     TEST_CASE("observe restarts through Coordinator and remains repeatable")
@@ -1504,7 +1608,7 @@ namespace uf::cli
             .ocrModels    = observeArgs.ocrModels,
             .requestKey   = "root-agent-1",
             .request      = AgentToolRequest{
-                .toolName             = "framework.screen.observe",
+                .toolName             = "framework.screen.capture",
                 .objectiveDocument    = objective,
                 .argumentsDocument    = arguments,
                 .agentProfileDocument = profile,

@@ -86,13 +86,13 @@ namespace uf::task
         // it would put the number of preceding resolutions inside every decision
         // basis and make two identical readings of one world disagree.
         //
-        // A reading is `{ ui_target, reader, kind }` plus `lines` when it read
-        // and `reason` when it was unknown. Each line carries its normalised
-        // `text` and frame-pixel `rect`; an absent reading carries neither.
-        // One entry per Reader every reporting Binding named keeps "nothing is
-        // written here" distinct from "this frame was unreadable". The trusted
-        // Reader applies the confidence floor before this boundary, so the score
-        // does not travel. The rect does travel because it remains an action
+        // A reading is `{ id, kind }` plus `lines` when it read and `reason`
+        // when it was unknown, where `id` is the Readout that declared it. Each
+        // line carries its normalised `text` and frame-pixel `rect`; an absent
+        // reading carries neither. One entry per Readout on every Surface of
+        // the resolved stack keeps "nothing is written here" distinct from
+        // "this frame was unreadable". The trusted parse applies the declared
+        // confidence floor before this boundary, so the score does not travel. The rect does travel because it remains an action
         // input and is therefore part of the hashed decision basis.
         [[nodiscard]]
         auto canonicalJcs() const noexcept UF_LIFETIME_BOUND

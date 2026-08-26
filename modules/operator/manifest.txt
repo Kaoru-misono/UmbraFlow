@@ -13,9 +13,9 @@ unity_build = false
 # further down. json declares `public = core` only, so the edge closes no cycle.
 #
 # script is public because this module's own headers name its types now:
-# project-tool-program.hpp takes a script::ToolRuntimeDispatch and a
-# script::PureDataProgram::Resource, and project-tool-dispatch.hpp hands one run
-# a script::ScopedRunRequest. It compiled while it was private only through the
+# project-tool-program.hpp takes a script::PureDataProgram::Resource, and
+# project-tool-dispatch.hpp hands one leaf run a script::ScopedRunRequest. It
+# compiled while it was private only through the
 # transitive `public = task` -> `public = script` edge, which made a real part of
 # this module's public surface a fact about task's dependency list.
 [dependencies]

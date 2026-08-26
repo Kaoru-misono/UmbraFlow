@@ -81,7 +81,39 @@ namespace uf::cli
 
         constexpr auto k_openProjectFlag = std::string_view{"--project"};
 
-        constexpr auto k_reclaimRuntimeFlag = std::string_view{"--runtime"};
+        enum class ReclaimFlag : uint8
+        {
+            Runtime,
+            EvidenceRetentionMillis,
+        };
+
+        struct ReclaimFlagSpec final
+        {
+            std::string_view name{};
+            ReclaimFlag      flag{ReclaimFlag::Runtime};
+        };
+
+        constexpr auto k_reclaimFlags = std::array{
+            ReclaimFlagSpec{"--runtime", ReclaimFlag::Runtime},
+            ReclaimFlagSpec{
+                "--evidence-retention-ms",
+                ReclaimFlag::EvidenceRetentionMillis,
+            },
+        };
+
+        [[nodiscard]]
+        auto findReclaimFlag(
+            std::string_view name
+        ) noexcept -> std::optional<ReclaimFlag>
+        {
+            auto const found = std::ranges::find(
+                k_reclaimFlags,
+                name,
+                &ReclaimFlagSpec::name
+            );
+            if (found == k_reclaimFlags.end()) return std::nullopt;
+            return found->flag;
+        }
 
         enum class UpgradeFlag : uint8
         {
@@ -799,13 +831,15 @@ namespace uf::cli
         std::span<std::string const> raw
     ) -> Result<ReclaimArgs>
     {
-        auto runtime = std::optional<std::filesystem::path>{};
+        auto runtime                 = std::optional<std::filesystem::path>{};
+        auto evidenceRetentionMillis = std::optional<uint64>{};
 
         auto index = std::size_t{0};
         while (index < raw.size())
         {
             auto const& name = raw[index];
-            if (name != k_reclaimRuntimeFlag)
+            auto const flag = findReclaimFlag(name);
+            if (!flag)
             {
                 return invalid(std::format("unknown argument \"{}\"", name));
             }
@@ -813,15 +847,35 @@ namespace uf::cli
             {
                 return invalid(std::format("missing value for {}", name));
             }
-            runtime = std::filesystem::path{raw[index + 1U]};
+            auto const& value = raw[index + 1U];
+            switch (*flag)
+            {
+            case ReclaimFlag::Runtime:
+                runtime = std::filesystem::path{value};
+                break;
+            case ReclaimFlag::EvidenceRetentionMillis:
+                UF_TRY_VALUE(
+                    parsed,
+                    parseUnsigned(value, name)
+                );
+                evidenceRetentionMillis = parsed;
+                break;
+            }
             index += 2U;
         }
 
         UF_TRY_VALUE(
             requiredRuntime,
-            requirePath(std::move(runtime), k_reclaimRuntimeFlag)
+            requirePath(std::move(runtime), "--runtime")
         );
-        return ReclaimArgs{.runtime = std::move(requiredRuntime)};
+        if (!evidenceRetentionMillis.has_value())
+        {
+            return invalid("missing required --evidence-retention-ms");
+        }
+        return ReclaimArgs{
+            .runtime                 = std::move(requiredRuntime),
+            .evidenceRetentionMillis = *evidenceRetentionMillis,
+        };
     }
 
     auto parseUpgradeArguments(
@@ -1519,8 +1573,8 @@ namespace uf::cli
             "than bootstrapped.\n"
             "\n"
             "The printed document carries the resolution kind, the ordered\n"
-            "surface stack, and one entry per Reader every reporting Binding\n"
-            "named -- each with its ui_target, its reader, and either the text\n"
+            "surface stack, and one entry per Readout on every Surface of\n"
+            "that stack -- each named by its readout id, with either the text\n"
             "it read or the reason it could not. Those bytes are exactly what\n"
             "a project's plugin would be handed as ui_snapshot.\n"
             "\n"
@@ -1657,12 +1711,14 @@ namespace uf::cli
     {
         return
             "Usage:\n"
-            "  umbra-flow reclaim --runtime DIR\n"
+            "  umbra-flow reclaim --runtime DIR --evidence-retention-ms MS\n"
             "\n"
             "Removes every RuntimeArtifact directory the Operator root at\n"
             "--runtime no longer references, and every staging tree an\n"
-            "interrupted publication left behind. It prints how many of each it\n"
-            "removed.\n"
+            "interrupted publication left behind. It separately sweeps evidence\n"
+            "blobs no receipt inside the operator-selected retention ceiling\n"
+            "references, plus interrupted evidence staging entries. It prints\n"
+            "how many of each it removed.\n"
             "\n"
             "An artifact directory is unreferenced when no installed generation\n"
             "and no active pin names it. A failed publication is the ordinary\n"
@@ -1677,6 +1733,8 @@ namespace uf::cli
             "\n"
             "Required:\n"
             "  --runtime DIR                Operator production root to sweep\n"
+            "  --evidence-retention-ms MS   Operator-selected maximum age of a\n"
+            "                               retained screenshot receipt\n"
             "\n"
             "Exits non-zero when the root cannot be opened or the sweep cannot\n"
             "finish. Reclaiming nothing is a success, and reports zero.\n";

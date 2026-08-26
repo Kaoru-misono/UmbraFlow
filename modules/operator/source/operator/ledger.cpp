@@ -1,4 +1,6 @@
 #include "ledger.hpp"
+
+#include "evidence-store.hpp"
 #include "runtime-installation.hpp"
 #include "tool-admission-request.hpp"
 
@@ -13,11 +15,13 @@
 #include <json/value.hpp>
 
 #include <task/platform/confined-file.hpp>
+#include <task/runtime-model-file.hpp>
 
 #include <sqlite3.h>
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <filesystem>
 #include <format>
@@ -392,6 +396,213 @@ namespace uf::operator_runtime
             return ContentHash::parse(std::format("sha256:{}", columnHex));
         }
 
+        [[nodiscard]]
+        auto parseReceiptCounter(
+            json::Value const& receipt,
+            std::string_view memberName
+        ) -> Result<uint64>
+        {
+            auto const* const p_value = receipt.find(memberName);
+            if (
+                p_value == nullptr
+                || p_value->kind() != json::ValueKind::String
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "Stored evidence receipt member '" + std::string{memberName}
+                        + "' is not a decimal string"
+                );
+            }
+            auto const text         = p_value->string();
+            auto parsed             = uint64{};
+            auto const* const begin = std::to_address(text.begin());
+            auto const* const end   = std::to_address(text.end());
+            auto const converted    = std::from_chars(begin, end, parsed);
+            if (
+                converted.ec != std::errc{}
+                || converted.ptr != end
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "Stored evidence receipt member '" + std::string{memberName}
+                        + "' is not an exact uint64"
+                );
+            }
+            return parsed;
+        }
+
+        [[nodiscard]]
+        auto parseReceiptDimension(
+            json::Value const& receipt,
+            std::string_view memberName
+        ) -> Result<uint32>
+        {
+            auto const* const p_value = receipt.find(memberName);
+            if (
+                p_value == nullptr
+                || !p_value->isInteger()
+                || p_value->number() <= 0.0
+                || p_value->number()
+                    > static_cast<double>(std::numeric_limits<uint32>::max())
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "Stored evidence receipt member '" + std::string{memberName}
+                        + "' is not a positive uint32"
+                );
+            }
+            return static_cast<uint32>(p_value->number());
+        }
+
+        [[nodiscard]]
+        auto parseEvidenceReceipt(json::Value const& value)
+            -> Result<EvidenceArtifactReceipt>
+        {
+            if (value.kind() != json::ValueKind::Object)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "Stored evidence receipt is not an object"
+                );
+            }
+            auto const* const p_hash = value.find(k_screenshotSha256Member);
+            auto const* const p_media = value.find("media_type");
+            auto const* const p_frame = value.find("frame_identity");
+            if (
+                p_hash == nullptr
+                || p_hash->kind() != json::ValueKind::String
+                || p_media == nullptr
+                || p_media->kind() != json::ValueKind::String
+                || p_media->string().empty()
+                || p_frame == nullptr
+                || p_frame->kind() != json::ValueKind::Object
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "Stored evidence receipt is missing its screenshot hash, media type or frame identity"
+                );
+            }
+            UF_TRY_VALUE(
+                contentHash,
+                ContentHash::parse(std::format("sha256:{}", p_hash->string()))
+            );
+            UF_TRY_VALUE(byteCount, parseReceiptCounter(value, "byte_count"));
+            UF_TRY_VALUE(createdAt, parseReceiptCounter(value, "created_at_unix_ms"));
+            UF_TRY_VALUE(width, parseReceiptDimension(value, "width"));
+            UF_TRY_VALUE(height, parseReceiptDimension(value, "height"));
+            UF_TRY_VALUE(
+                captureSession,
+                parseReceiptCounter(*p_frame, "capture_session_id")
+            );
+            UF_TRY_VALUE(
+                targetGeneration,
+                parseReceiptCounter(*p_frame, "target_generation")
+            );
+            UF_TRY_VALUE(frameId, parseReceiptCounter(*p_frame, "frame_id"));
+
+            auto rectangle = std::optional<PixelRect>{};
+            auto const* const p_rectangle = value.find("rectangle");
+            if (p_rectangle != nullptr)
+            {
+                if (p_rectangle->kind() != json::ValueKind::Object)
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "Stored evidence receipt rectangle is not an object"
+                    );
+                }
+                UF_TRY_VALUE(x, parseReceiptCounter(*p_rectangle, "x"));
+                UF_TRY_VALUE(y, parseReceiptCounter(*p_rectangle, "y"));
+                UF_TRY_VALUE(rectWidth, parseReceiptCounter(*p_rectangle, "width"));
+                UF_TRY_VALUE(rectHeight, parseReceiptCounter(*p_rectangle, "height"));
+                if (
+                    x > std::numeric_limits<uint32>::max()
+                    || y > std::numeric_limits<uint32>::max()
+                    || rectWidth > std::numeric_limits<uint32>::max()
+                    || rectHeight > std::numeric_limits<uint32>::max()
+                )
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "Stored evidence receipt rectangle exceeds uint32 geometry"
+                    );
+                }
+                UF_TRY_VALUE(
+                    parsedRectangle,
+                    PixelRect::create(
+                        static_cast<uint32>(x),
+                        static_cast<uint32>(y),
+                        static_cast<uint32>(rectWidth),
+                        static_cast<uint32>(rectHeight)
+                    )
+                );
+                rectangle.emplace(parsedRectangle);
+            }
+            return EvidenceArtifactReceipt{
+                .contentHash = contentHash,
+                .byteCount   = byteCount,
+                .mediaType           = std::string{p_media->string()},
+                .width  = width,
+                .height = height,
+                .frameIdentity       = FrameIdentity{
+                    CaptureSessionId{captureSession},
+                    TargetGeneration::fromValue(targetGeneration),
+                    FrameId{frameId},
+                },
+                .rectangle           = rectangle,
+                .createdAtUnixMillis = createdAt,
+            };
+        }
+
+        [[nodiscard]]
+        auto evidenceReceipts(sqlite3* database)
+            -> Result<std::vector<EvidenceArtifactReceipt>>
+        {
+            UF_TRY_VALUE(
+                query,
+                prepare(
+                    database,
+                    "SELECT history.outcome_payload, history.outcome_payload_hash "
+                    "FROM tool_call_history history "
+                    "JOIN tool_call_positions position "
+                    "ON position.call_identity=history.call_identity "
+                    "WHERE history.state='confirmed' AND position.tool_name IN "
+                    "('framework.screen.capture','framework.screen.crop') "
+                    "ORDER BY position.rowid"
+                )
+            );
+            auto receipts = std::vector<EvidenceArtifactReceipt>{};
+            auto step     = sqlite3_step(query.get());
+            while (step == SQLITE_ROW)
+            {
+                auto const payloadBytes = columnText(query.get(), 0);
+                auto const payloadHash  = columnText(query.get(), 1);
+                UF_TRY_VALUE(payload, CanonicalJson::parseExact(payloadBytes));
+                if (payload.contentHash().hex() != payloadHash)
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "Stored evidence receipt payload failed its ledger hash"
+                    );
+                }
+                UF_TRY_VALUE(receipt, parseEvidenceReceipt(payload.value()));
+                receipts.emplace_back(std::move(receipt));
+                step = sqlite3_step(query.get());
+            }
+            if (step != SQLITE_DONE)
+            {
+                return databaseFailure(
+                    database,
+                    "could not scan committed evidence receipts"
+                );
+            }
+            return receipts;
+        }
+
         // No in-class default for the catalog hash: ContentHash has no empty
         // state, and every provider variant supplies one.
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
@@ -471,12 +682,6 @@ namespace uf::operator_runtime
             }
             return "(" + filter + ")";
         }
-
-        // The maximum depth of one Tool call tree. Section 3.3 makes nested
-        // calls depth-bounded, and the bound lives here once: a second bound
-        // stated per descriptor would be two authorities over one number, and
-        // only one of them would be inside tool_catalog_hash.
-        constexpr auto k_maximumToolCallDepth = uint32{4};
 
         // The stored attributes at one call coordinate, in the order every
         // reader selects them. Per R4 the ordinal coordinate is the whole
@@ -757,7 +962,7 @@ namespace uf::operator_runtime
             );
         }
 
-        // The coordinate lookup itself: root, parent position and child index,
+        // The coordinate lookup itself: root, parent position and call sequence,
         // and nothing else. Folding tool name or arguments into this key is
         // what R4 forbids, because a changed argument would then miss the
         // lookup, be indistinguishable from a first new call, and execute.
@@ -781,203 +986,6 @@ namespace uf::operator_runtime
             ));
             UF_TRY(bindInteger(database, query.get(), 3, call.sequence()));
             return query;
-        }
-
-        struct ToolCallAncestor final
-        {
-            std::string                callIdentity{};
-            std::string                providerKind{};
-            std::optional<std::string> projectRegistrationHash{};
-            std::string                toolName{};
-        };
-
-        // One call's parent chain, nearest ancestor first and the root call
-        // last. It is one recursive read rather than a stored depth column:
-        // depth and lineage are already facts about these rows, and a column
-        // would be a second copy of them that could disagree.
-        [[nodiscard]]
-        auto readToolCallAncestors(
-            sqlite3* database,
-            std::string_view rootIdentity,
-            std::string_view parentCallIdentity
-        ) -> Result<std::vector<ToolCallAncestor>>
-        {
-            UF_TRY_VALUE(
-                query,
-                prepare(
-                    database,
-                    "WITH RECURSIVE chain(call_identity, parent_call_identity, "
-                    "provider_kind, project_registration_hash, tool_name, depth) AS ("
-                    "SELECT call_identity, parent_call_identity, provider_kind, "
-                    "project_registration_hash, tool_name, 1 FROM tool_call_positions "
-                    "WHERE root_identity=?1 AND call_identity=?2 "
-                    "UNION ALL "
-                    "SELECT ancestor.call_identity, ancestor.parent_call_identity, "
-                    "ancestor.provider_kind, ancestor.project_registration_hash, "
-                    "ancestor.tool_name, chain.depth+1 FROM tool_call_positions ancestor "
-                    "JOIN chain ON ancestor.call_identity=chain.parent_call_identity "
-                    "WHERE ancestor.root_identity=?1) "
-                    "SELECT call_identity, provider_kind, project_registration_hash, "
-                    "tool_name FROM chain ORDER BY depth"
-                )
-            );
-            UF_TRY(bindText(database, query.get(), 1, rootIdentity));
-            UF_TRY(bindText(database, query.get(), 2, parentCallIdentity));
-            auto ancestors = std::vector<ToolCallAncestor>{};
-            auto step      = sqlite3_step(query.get());
-            while (step == SQLITE_ROW)
-            {
-                ancestors.emplace_back(ToolCallAncestor{
-                    .callIdentity            = columnText(query.get(), 0),
-                    .providerKind            = columnText(query.get(), 1),
-                    .projectRegistrationHash = optionalColumnText(query.get(), 2),
-                    .toolName                = columnText(query.get(), 3),
-                });
-                step = sqlite3_step(query.get());
-            }
-            if (step != SQLITE_DONE)
-            {
-                return databaseFailure(
-                    database,
-                    "could not read the Tool call parent chain"
-                );
-            }
-            return ancestors;
-        }
-
-        struct AdmittedEnvelopeEffect final
-        {
-            std::string namespacedType{};
-            std::string scopeKind{};
-            std::string scopeKey{};
-            Risk        risk{Risk::Critical};
-        };
-
-        // The effect envelope Operator compiled for the root call of one tree,
-        // read back from the admission attempt that is currently active for it.
-        // A child is admitted only from within this, which is what "a Project
-        // descriptor can request that envelope but cannot grant or widen it"
-        // means at the row level.
-        //
-        // An empty result is "the root admitted no effect at all", which is the
-        // honest answer for a read-only root and is what makes a mutating child
-        // under one fail rather than inherit an envelope nobody compiled.
-        [[nodiscard]]
-        auto readAdmittedRootEffects(
-            sqlite3* database,
-            std::string_view rootCallIdentity
-        ) -> Result<std::vector<AdmittedEnvelopeEffect>>
-        {
-            UF_TRY_VALUE(
-                query,
-                prepare(
-                    database,
-                    "SELECT attempt.effect_envelope FROM tool_call_history history "
-                    "JOIN tool_admission_attempts attempt "
-                    "ON attempt.call_identity=history.call_identity "
-                    "AND attempt.attempt_number=history.active_admission_attempt "
-                    "WHERE history.call_identity=?1"
-                )
-            );
-            UF_TRY(bindText(database, query.get(), 1, rootCallIdentity));
-            auto const step = sqlite3_step(query.get());
-            if (step == SQLITE_DONE)
-            {
-                return std::vector<AdmittedEnvelopeEffect>{};
-            }
-            if (step != SQLITE_ROW)
-            {
-                return databaseFailure(
-                    database,
-                    "could not read the admitted root effect envelope"
-                );
-            }
-            auto const envelope = optionalColumnText(query.get(), 0);
-            if (!envelope)
-            {
-                return std::vector<AdmittedEnvelopeEffect>{};
-            }
-            UF_TRY_VALUE(document, CanonicalJson::parseExact(*envelope));
-            if (document.value().kind() != json::ValueKind::Array)
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "Stored admitted effect envelope is not an array"
-                );
-            }
-            auto effects = std::vector<AdmittedEnvelopeEffect>{};
-            for (auto const& item : document.value().items())
-            {
-                auto const* const p_type  = item.find("namespaced_type");
-                auto const* const p_kind  = item.find("scope_kind");
-                auto const* const p_key   = item.find("scope_key");
-                auto const* const p_risk  = item.find("risk");
-                if (
-                    p_type == nullptr
-                    || p_kind == nullptr
-                    || p_key == nullptr
-                    || p_risk == nullptr
-                )
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "Stored admitted effect envelope entry is incomplete"
-                    );
-                }
-                auto const risk = parseRisk(p_risk->string());
-                if (!risk)
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "Stored admitted effect envelope names an unknown risk"
-                    );
-                }
-                effects.emplace_back(AdmittedEnvelopeEffect{
-                    .namespacedType = std::string{p_type->string()},
-                    .scopeKind      = std::string{p_kind->string()},
-                    .scopeKey       = std::string{p_key->string()},
-                    .risk           = *risk,
-                });
-            }
-            return effects;
-        }
-
-        [[nodiscard]]
-        auto childEffectWithinRootEnvelope(
-            std::span<AdmittedEnvelopeEffect const> rootEffects,
-            ProposedEffect const& effect
-        ) -> Status
-        {
-            auto const admitted = std::ranges::find_if(
-                rootEffects,
-                [&effect](AdmittedEnvelopeEffect const& candidate)
-                {
-                    return candidate.namespacedType == effect.namespacedType
-                        && candidate.scopeKind == effect.scopeKind
-                        && candidate.scopeKey == effect.scopeKey;
-                }
-            );
-            if (admitted == rootEffects.end())
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "Child Tool effect " + effect.namespacedType + " on "
-                        + effect.scopeKey
-                        + " is outside the admitted root effect envelope"
-                );
-            }
-            if (effect.risk > admitted->risk)
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "Child Tool effect " + effect.namespacedType + " at "
-                        + std::string{riskWireName(effect.risk)}
-                        + " risk is above the "
-                        + std::string{riskWireName(admitted->risk)}
-                        + " the admitted root effect envelope allows"
-                );
-            }
-            return ok();
         }
 
         [[nodiscard]]
@@ -1310,7 +1318,7 @@ namespace uf::operator_runtime
         // "Delete-on-open has a deadline" section owns
         // the exact-pair migration policy.
         constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
-            "sha256:045925eefabef97b964f6a21db0da81cdc6a2c293c21e7f495011fe3d1b9277f"
+            "sha256:181f202e9d7516dff603a006dfabf4fef372a0413710e2bb23ad9cb75dc1bc12"
         };
 
         // A transition row records the applied exact pair; neither the row nor
@@ -1320,6 +1328,19 @@ namespace uf::operator_runtime
             "source_identity TEXT NOT NULL,"
             "target_identity TEXT NOT NULL,"
             "PRIMARY KEY(source_identity, target_identity)"
+            ") STRICT"
+        };
+
+        // Which genesis RuntimeArtifact this root's layout named before the
+        // framework constant moved, and which one it names now. Written and
+        // never read by production code, on exactly the terms
+        // schema_identity_transitions is: the audit of a materialisation that
+        // was rewritten, not an input to one.
+        constexpr auto k_genesisTransitionsDdl = std::string_view{
+            "CREATE TABLE genesis_transitions("
+            "source_artifact_root_hash TEXT NOT NULL,"
+            "target_artifact_root_hash TEXT NOT NULL,"
+            "PRIMARY KEY(source_artifact_root_hash, target_artifact_root_hash)"
             ") STRICT"
         };
 
@@ -1558,7 +1579,6 @@ namespace uf::operator_runtime
             "approval_expires_at_unix_millis INTEGER "
             "CHECK(approval_expires_at_unix_millis IS NULL OR "
             "approval_expires_at_unix_millis > 0),"
-            "delegation_grant_id TEXT REFERENCES tool_delegation_grants(grant_id),"
             "CHECK((effect_envelope IS NULL AND effect_envelope_hash IS NULL "
             "AND required_approvals IS NULL AND approval_tokens IS NULL "
             "AND approval_expires_at_unix_millis IS NULL) OR "
@@ -1567,41 +1587,6 @@ namespace uf::operator_runtime
             "AND effect_envelope_hash NOT GLOB '*[^0-9a-f]*' "
             "AND required_approvals IS NOT NULL AND approval_tokens IS NOT NULL)),"
             "PRIMARY KEY(call_identity, attempt_number)"
-            ") STRICT"
-        };
-
-        // One live handler invocation's authority to issue child calls. The
-        // grant id is derived from the parent call and its admission attempt,
-        // so re-entering the same dispatching handler rejoins one row rather
-        // than minting a second authority for one execution.
-        //
-        // The parent's registered child-effect declaration is recorded here as
-        // columns rather than as an opaque document: every member is a value
-        // this schema already has a vocabulary for, and a blob would need a
-        // renderer and a reader where a column needs neither.
-        constexpr auto k_toolDelegationGrantsDdl = std::string_view{
-            "CREATE TABLE tool_delegation_grants("
-            "grant_id TEXT PRIMARY KEY CHECK(length(grant_id)=64 AND "
-            "grant_id NOT GLOB '*[^0-9a-f]*'),"
-            "root_identity TEXT NOT NULL REFERENCES tool_runs(root_identity),"
-            "parent_call_identity TEXT NOT NULL REFERENCES "
-            "tool_call_history(call_identity),"
-            "parent_attempt_number INTEGER NOT NULL "
-            "CHECK(parent_attempt_number > 0),"
-            "parent_tool_name TEXT NOT NULL CHECK("
-            "length(CAST(parent_tool_name AS BLOB)) BETWEEN 1 AND 256),"
-            "execution_principal_id TEXT NOT NULL,"
-            "execution_principal_kind TEXT NOT NULL CHECK(execution_principal_kind "
-            "IN ('script','agent','human')),"
-            "child_tool_names TEXT NOT NULL,"
-            "maximum_child_surface TEXT NOT NULL CHECK(maximum_child_surface IN "
-            "('semantic','privileged')),"
-            "maximum_child_mutability TEXT NOT NULL CHECK(maximum_child_mutability "
-            "IN ('read_only','mutating')),"
-            "maximum_child_risk TEXT NOT NULL CHECK(maximum_child_risk IN "
-            "('read_only','low','medium','high','critical')),"
-            "maximum_child_calls INTEGER NOT NULL CHECK(maximum_child_calls > 0),"
-            "UNIQUE(parent_call_identity, parent_attempt_number)"
             ") STRICT"
         };
 
@@ -2042,6 +2027,15 @@ namespace uf::operator_runtime
             return expectDone(database, insert.get());
         }
 
+        // The audit table for a genesis materialisation that moved. It is the
+        // newest step, so it runs last in every registered chain below and a
+        // fresh database creates it beside the rest of the layout.
+        [[nodiscard]]
+        auto addGenesisTransitions(sqlite3* database) -> Status
+        {
+            return execute(database, k_genesisTransitionsDdl);
+        }
+
         [[nodiscard]]
         auto addReleaseUpgradeEvidenceTables(sqlite3* database) -> Status
         {
@@ -2054,7 +2048,6 @@ namespace uf::operator_runtime
         {
             UF_TRY(execute(database, k_toolCallHistoryDdl));
             UF_TRY(execute(database, k_toolRunsDdl));
-            UF_TRY(execute(database, k_toolDelegationGrantsDdl));
             UF_TRY(execute(database, k_toolAdmissionAttemptsDdl));
             return execute(database, k_toolApprovalsDdl);
         }
@@ -2243,49 +2236,73 @@ namespace uf::operator_runtime
             return execute(database, "DROP TABLE prior_tool_call_positions");
         }
 
+        // The Z6 leaf cut. Old exact-pair migrations may arrive before or
+        // after nested-call storage existed, so the column probe decides
+        // whether an admission-table rebuild is required. Either way the
+        // obsolete grant table is absent when this returns.
         [[nodiscard]]
-        auto addNestedToolCallSchema(sqlite3* database) -> Status
+        auto removeNestedToolCallSchema(sqlite3* database) -> Status
         {
-            UF_TRY(rebuildToolCallPositions(database, "NULL"));
-            return execute(database, k_toolDelegationGrantsDdl);
-        }
-
-        // delegation_grant_id is NULL exactly for a parentless call, and every
-        // call any earlier generation recorded was parentless: child calls were
-        // refused outright before this generation, so the backfill is the only
-        // value those rows can carry rather than a sentinel standing in for an
-        // unknown one.
-        [[nodiscard]]
-        auto addToolAdmissionDelegationColumn(sqlite3* database) -> Status
-        {
-            UF_TRY(execute(database, "PRAGMA defer_foreign_keys=ON"));
-            UF_TRY(execute(
-                database,
-                "ALTER TABLE tool_admission_attempts RENAME TO "
-                "prior_tool_admission_attempts"
-            ));
-            UF_TRY(execute(database, k_toolAdmissionAttemptsDdl));
-            UF_TRY(execute(
-                database,
-                "INSERT INTO tool_admission_attempts(call_identity, attempt_number, "
-                "root_identity, origin_principal_id, origin_principal_kind, "
-                "execution_principal_id, execution_principal_kind, session_id, "
-                "session_epoch, controlled_target_id, project_registration_hash, "
-                "policy_hash, capability_profile_hash, lease_id, lease_revision, "
-                "fencing_token, budget_snapshot, budget_snapshot_hash, "
-                "effect_envelope, effect_envelope_hash, required_approvals, "
-                "approval_tokens, approval_expires_at_unix_millis, "
-                "delegation_grant_id) SELECT call_identity, attempt_number, "
-                "root_identity, origin_principal_id, origin_principal_kind, "
-                "execution_principal_id, execution_principal_kind, session_id, "
-                "session_epoch, controlled_target_id, project_registration_hash, "
-                "policy_hash, capability_profile_hash, lease_id, lease_revision, "
-                "fencing_token, budget_snapshot, budget_snapshot_hash, "
-                "effect_envelope, effect_envelope_hash, required_approvals, "
-                "approval_tokens, approval_expires_at_unix_millis, NULL "
-                "FROM prior_tool_admission_attempts"
-            ));
-            return execute(database, "DROP TABLE prior_tool_admission_attempts");
+            UF_TRY_VALUE(
+                columns,
+                prepare(database, "PRAGMA table_info(tool_admission_attempts)")
+            );
+            auto carriesDelegation = false;
+            for (;;)
+            {
+                auto const step = sqlite3_step(columns.get());
+                if (step == SQLITE_DONE)
+                {
+                    break;
+                }
+                if (step != SQLITE_ROW)
+                {
+                    return databaseFailure(
+                        database,
+                        "could not inspect Tool admission columns"
+                    );
+                }
+                carriesDelegation = carriesDelegation
+                    || columnText(columns.get(), 1) == "delegation_grant_id";
+            }
+            if (carriesDelegation)
+            {
+                UF_TRY(execute(database, "PRAGMA defer_foreign_keys=ON"));
+                UF_TRY(execute(
+                    database,
+                    "ALTER TABLE tool_admission_attempts RENAME TO "
+                    "prior_tool_admission_attempts"
+                ));
+                UF_TRY(execute(database, k_toolAdmissionAttemptsDdl));
+                UF_TRY(execute(
+                    database,
+                    "INSERT INTO tool_admission_attempts(call_identity, "
+                    "attempt_number, root_identity, origin_principal_id, "
+                    "origin_principal_kind, execution_principal_id, "
+                    "execution_principal_kind, session_id, session_epoch, "
+                    "controlled_target_id, project_registration_hash, "
+                    "policy_hash, capability_profile_hash, lease_id, "
+                    "lease_revision, fencing_token, budget_snapshot, "
+                    "budget_snapshot_hash, effect_envelope, "
+                    "effect_envelope_hash, required_approvals, approval_tokens, "
+                    "approval_expires_at_unix_millis) SELECT call_identity, "
+                    "attempt_number, root_identity, origin_principal_id, "
+                    "origin_principal_kind, execution_principal_id, "
+                    "execution_principal_kind, session_id, session_epoch, "
+                    "controlled_target_id, project_registration_hash, "
+                    "policy_hash, capability_profile_hash, lease_id, "
+                    "lease_revision, fencing_token, budget_snapshot, "
+                    "budget_snapshot_hash, effect_envelope, "
+                    "effect_envelope_hash, required_approvals, approval_tokens, "
+                    "approval_expires_at_unix_millis FROM "
+                    "prior_tool_admission_attempts"
+                ));
+                UF_TRY(execute(
+                    database,
+                    "DROP TABLE prior_tool_admission_attempts"
+                ));
+            }
+            return execute(database, "DROP TABLE IF EXISTS tool_delegation_grants");
         }
 
         // project_state_schema_hash was a second copy of a member the same
@@ -2836,6 +2853,8 @@ namespace uf::operator_runtime
         {
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(admitTheGenesisGeneration(database));
+            UF_TRY(removeNestedToolCallSchema(database));
+            UF_TRY(addGenesisTransitions(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2850,6 +2869,8 @@ namespace uf::operator_runtime
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(dropProjectStateInterpretation(database));
             UF_TRY(admitTheGenesisGeneration(database));
+            UF_TRY(removeNestedToolCallSchema(database));
+            UF_TRY(addGenesisTransitions(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2872,6 +2893,8 @@ namespace uf::operator_runtime
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
             UF_TRY(admitTheGenesisGeneration(database));
+            UF_TRY(removeNestedToolCallSchema(database));
+            UF_TRY(addGenesisTransitions(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2906,6 +2929,8 @@ namespace uf::operator_runtime
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
             UF_TRY(admitTheGenesisGeneration(database));
+            UF_TRY(removeNestedToolCallSchema(database));
+            UF_TRY(addGenesisTransitions(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
 
             // No migration commits under an identity other than the exact
@@ -2933,6 +2958,8 @@ namespace uf::operator_runtime
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
             UF_TRY(admitTheGenesisGeneration(database));
+            UF_TRY(removeNestedToolCallSchema(database));
+            UF_TRY(addGenesisTransitions(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2956,6 +2983,8 @@ namespace uf::operator_runtime
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
             UF_TRY(admitTheGenesisGeneration(database));
+            UF_TRY(removeNestedToolCallSchema(database));
+            UF_TRY(addGenesisTransitions(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2977,6 +3006,8 @@ namespace uf::operator_runtime
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
             UF_TRY(admitTheGenesisGeneration(database));
+            UF_TRY(removeNestedToolCallSchema(database));
+            UF_TRY(addGenesisTransitions(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -2997,6 +3028,8 @@ namespace uf::operator_runtime
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
             UF_TRY(admitTheGenesisGeneration(database));
+            UF_TRY(removeNestedToolCallSchema(database));
+            UF_TRY(addGenesisTransitions(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -3016,6 +3049,8 @@ namespace uf::operator_runtime
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
             UF_TRY(admitTheGenesisGeneration(database));
+            UF_TRY(removeNestedToolCallSchema(database));
+            UF_TRY(addGenesisTransitions(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -3036,6 +3071,8 @@ namespace uf::operator_runtime
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
             UF_TRY(admitTheGenesisGeneration(database));
+            UF_TRY(removeNestedToolCallSchema(database));
+            UF_TRY(addGenesisTransitions(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -3049,7 +3086,7 @@ namespace uf::operator_runtime
         {
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(execute(database, "PRAGMA defer_foreign_keys=ON"));
-            UF_TRY(addNestedToolCallSchema(database));
+            UF_TRY(rebuildToolCallPositions(database, "NULL"));
             UF_TRY(execute(
                 database,
                 "ALTER TABLE tool_admission_attempts RENAME TO "
@@ -3080,6 +3117,8 @@ namespace uf::operator_runtime
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
             UF_TRY(admitTheGenesisGeneration(database));
+            UF_TRY(removeNestedToolCallSchema(database));
+            UF_TRY(addGenesisTransitions(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -3119,7 +3158,7 @@ namespace uf::operator_runtime
                     );
                 }
             }
-            UF_TRY(addNestedToolCallSchema(database));
+            UF_TRY(rebuildToolCallPositions(database, "NULL"));
             UF_TRY(execute(
                 database,
                 "ALTER TABLE tool_admission_attempts RENAME TO "
@@ -3153,6 +3192,22 @@ namespace uf::operator_runtime
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
             UF_TRY(admitTheGenesisGeneration(database));
+            UF_TRY(removeNestedToolCallSchema(database));
+            UF_TRY(addGenesisTransitions(database));
+            UF_TRY(recordSchemaIdentityTransition(database, migration));
+            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
+            return transaction.commit();
+        }
+
+        [[nodiscard]]
+        auto migrateProjectToolLeaves(
+            sqlite3* database,
+            SchemaMigration const& migration
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY(removeNestedToolCallSchema(database));
+            UF_TRY(addGenesisTransitions(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -3165,14 +3220,15 @@ namespace uf::operator_runtime
         ) -> Status
         {
             UF_TRY_VALUE(transaction, Transaction::begin(database));
-            UF_TRY(addNestedToolCallSchema(database));
-            UF_TRY(addToolAdmissionDelegationColumn(database));
+            UF_TRY(rebuildToolCallPositions(database, "NULL"));
             UF_TRY(dropOperationDispatchTables(database));
             UF_TRY(addToolRunTerminationState(database));
             UF_TRY(dropRejectedToolCallState(database));
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
             UF_TRY(admitTheGenesisGeneration(database));
+            UF_TRY(removeNestedToolCallSchema(database));
+            UF_TRY(addGenesisTransitions(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -3202,6 +3258,8 @@ namespace uf::operator_runtime
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
             UF_TRY(admitTheGenesisGeneration(database));
+            UF_TRY(removeNestedToolCallSchema(database));
+            UF_TRY(addGenesisTransitions(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -3224,6 +3282,8 @@ namespace uf::operator_runtime
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
             UF_TRY(admitTheGenesisGeneration(database));
+            UF_TRY(removeNestedToolCallSchema(database));
+            UF_TRY(addGenesisTransitions(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -3246,6 +3306,8 @@ namespace uf::operator_runtime
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
             UF_TRY(admitTheGenesisGeneration(database));
+            UF_TRY(removeNestedToolCallSchema(database));
+            UF_TRY(addGenesisTransitions(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -3265,6 +3327,26 @@ namespace uf::operator_runtime
             UF_TRY(dropOperationSurface(database));
             UF_TRY(dropProjectStateInterpretation(database));
             UF_TRY(admitTheGenesisGeneration(database));
+            UF_TRY(removeNestedToolCallSchema(database));
+            UF_TRY(addGenesisTransitions(database));
+            UF_TRY(recordSchemaIdentityTransition(database, migration));
+            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
+            return transaction.commit();
+        }
+
+        // The generation that gave a root somewhere to record a genesis
+        // materialisation that moved, and the one whose source identity is the
+        // schema the immediately prior generation created. It carries no step
+        // of its own beyond the new table, because nothing else about the
+        // schema moved with it.
+        [[nodiscard]]
+        auto migrateGenesisTransitions(
+            sqlite3* database,
+            SchemaMigration const& migration
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY(addGenesisTransitions(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -3276,6 +3358,18 @@ namespace uf::operator_runtime
         // a guard nothing can reach is the mirror of a guard production does
         // not reach.
         constexpr auto k_schemaMigrations = std::array{
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:f6a8064ca9b4d6fb0cfdce68e3d99f8e3cfd9e507183366f0d313458146afe77",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = migrateGenesisTransitions,
+            },
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:045925eefabef97b964f6a21db0da81cdc6a2c293c21e7f495011fe3d1b9277f",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = migrateProjectToolLeaves,
+            },
             SchemaMigration{
                 .sourceIdentity =
                     "sha256:9cd2477518ee53c63c0412fe95202cde66011d3226f3243b8266119f7dbc4d76",
@@ -3501,10 +3595,8 @@ namespace uf::operator_runtime
         // flight against ANY target would resume under bytes other than the ones
         // it was admitted against.
         //
-        // It excludes no chain either. requireNoActiveToolMutation exempts the
-        // caller's own live chain because a child call belongs to it; a session
-        // pin is not inside any chain, so every active mutation is a barrier
-        // to it.
+        // It excludes no issuing root either. A session pin is not inside a
+        // call, so every active mutation is a barrier to it.
         [[nodiscard]]
         auto requireQuiescentSessionPin(sqlite3* database) -> Status
         {
@@ -4934,6 +5026,7 @@ namespace uf::operator_runtime
             UF_TRY(execute(database, k_sessionPoliciesDdl));
             UF_TRY(execute(database, k_availabilityHeadsDdl));
             UF_TRY(execute(database, k_schemaIdentityTransitionsDdl));
+            UF_TRY(execute(database, k_genesisTransitionsDdl));
             UF_TRY(execute(database, k_releaseCapabilityApprovalsDdl));
             UF_TRY(execute(database, k_runtimeUpgradeFailuresDdl));
             UF_TRY(addToolIdentityPersistence(database));
@@ -5720,6 +5813,94 @@ namespace uf::operator_runtime
             return transaction.commit();
         }
 
+        // A root whose generation 0 names a genesis RuntimeArtifact an earlier
+        // era of this framework wrote. H_genesis is a framework constant, so
+        // moving the constant moves every root's materialisation of it -- the
+        // same way admitTheGenesisGeneration rebuilds stored DDL when the
+        // schema identity moves. The old digest is never loaded, only
+        // recognised, so that it can be migrated away rather than accepted.
+        //
+        // Every row a future pin travels through follows the constant, and
+        // nothing else does. runtime_upgrade_failures and
+        // release_capability_approvals keep their bytes: neither carries a
+        // foreign key, and both record what happened rather than what will be
+        // loaded.
+        [[nodiscard]]
+        auto migrateGenesisArtifactRoot(
+            sqlite3* database,
+            std::string_view supersededRootHash,
+            std::string_view genesisRootHash
+        ) -> Status
+        {
+            // sessions holds a foreign key into runtime_installations on the
+            // exact pair being rewritten here, so the parent cannot move ahead
+            // of the child under a live check. This is the instrument
+            // admitTheGenesisGeneration rebuilds those same two tables under,
+            // and SQLite clears it at the end of the enclosing transaction.
+            UF_TRY(execute(database, "PRAGMA defer_foreign_keys=ON"));
+
+            // Every generation holding it, not only generation 0.
+            // rollbackRuntimeArtifactUpgrade appends the restored hash as a NEW
+            // generation, so a root that rolled back off genesis holds it above
+            // generation 0 as well, possibly as the active pin.
+            UF_TRY_VALUE(
+                installations,
+                prepare(
+                    database,
+                    "UPDATE runtime_installations SET artifact_root_hash=?2 "
+                    "WHERE artifact_root_hash=?1"
+                )
+            );
+            UF_TRY(bindText(database, installations.get(), 1, supersededRootHash));
+            UF_TRY(bindText(database, installations.get(), 2, genesisRootHash));
+            UF_TRY(expectDone(database, installations.get()));
+
+            UF_TRY_VALUE(
+                sessions,
+                prepare(
+                    database,
+                    "UPDATE sessions SET runtime_artifact_root_hash=?2 "
+                    "WHERE runtime_artifact_root_hash=?1"
+                )
+            );
+            UF_TRY(bindText(database, sessions.get(), 1, supersededRootHash));
+            UF_TRY(bindText(database, sessions.get(), 2, genesisRootHash));
+            UF_TRY(expectDone(database, sessions.get()));
+
+            // Without this a root that was never upgraded would open its first
+            // session against an artifact the current trusted parser refuses by
+            // declared format, which is "init then explore" permanently broken
+            // on every root written before the cut.
+            UF_TRY_VALUE(
+                active,
+                prepare(
+                    database,
+                    "UPDATE runtime_state SET active_runtime_artifact_root_hash=?2 "
+                    "WHERE singleton=1 AND active_runtime_artifact_root_hash=?1"
+                )
+            );
+            UF_TRY(bindText(database, active.get(), 1, supersededRootHash));
+            UF_TRY(bindText(database, active.get(), 2, genesisRootHash));
+            UF_TRY(expectDone(database, active.get()));
+
+            // The superseded runtime_artifacts row and its directory are NOT
+            // removed here. Nothing names them now, which is exactly the state
+            // reclaimUnreferencedRuntimeArtifacts already owns; a hand-deletion
+            // beside it would be a second collector for one condition.
+            UF_TRY_VALUE(
+                audit,
+                prepare(
+                    database,
+                    "INSERT INTO genesis_transitions("
+                    "source_artifact_root_hash, target_artifact_root_hash) "
+                    "VALUES(?1, ?2)"
+                )
+            );
+            UF_TRY(bindText(database, audit.get(), 1, supersededRootHash));
+            UF_TRY(bindText(database, audit.get(), 2, genesisRootHash));
+            return expectDone(database, audit.get());
+        }
+
         // The genesis generation, materialized as part of the root's layout.
         //
         // This is the whole of what makes "init then explore --runtime <root>"
@@ -5737,6 +5918,11 @@ namespace uf::operator_runtime
         // The active pin is only claimed when there is none. A root already
         // running an installed generation keeps it: genesis is layout, not a
         // release, and it has never been the thing a root was upgraded to.
+        //
+        // Four dispositions for what generation 0 holds, and no fifth: absent
+        // gets the current digest written; the current digest passes; a digest
+        // named in k_formerGenesisArtifactRootHashes is migrated onto the
+        // current one in this transaction; anything else is refused by name.
         [[nodiscard]]
         auto ensureGenesisGeneration(
             sqlite3* database,
@@ -5750,6 +5936,64 @@ namespace uf::operator_runtime
             auto const hex = genesisRootHash.hex();
             UF_TRY(registerArtifactRoot(database, hex));
             UF_TRY_VALUE(transaction, Transaction::begin(database));
+
+            // What generation 0 already names, if it names anything. It is read
+            // before a byte is written because the answer decides between the
+            // four dispositions, and the statement is scoped so its read is
+            // finished before the writes below.
+            auto recorded = std::optional<std::string>{};
+            {
+                UF_TRY_VALUE(
+                    query,
+                    prepare(
+                        database,
+                        "SELECT artifact_root_hash FROM runtime_installations "
+                        "WHERE installed_generation=0"
+                    )
+                );
+                auto const step = sqlite3_step(query.get());
+                if (step == SQLITE_ROW)
+                {
+                    recorded = columnText(query.get(), 0);
+                }
+                else if (step != SQLITE_DONE)
+                {
+                    return databaseFailure(
+                        database,
+                        "could not read the genesis RuntimeArtifact generation"
+                    );
+                }
+            }
+
+            // Generation 0 names the framework's empty model. Which BYTES that
+            // model has is this binary's constant and has moved before, so a
+            // digest the framework itself wrote in an earlier era is migrated
+            // to the current one rather than read as tampering. A digest the
+            // framework never wrote is refused by name, and that is the whole
+            // of what this refusal now claims.
+            if (recorded.has_value() && *recorded != hex)
+            {
+                auto const superseded = std::ranges::contains(
+                    task::k_formerGenesisArtifactRootHashes,
+                    std::string_view{*recorded}
+                );
+                if (!superseded)
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "Operator root pins generation 0 to RuntimeArtifact "
+                            "root sha256:{}, which is neither the genesis "
+                            "RuntimeArtifact sha256:{} nor a genesis this "
+                            "framework superseded",
+                            *recorded,
+                            hex
+                        )
+                    );
+                }
+                UF_TRY(migrateGenesisArtifactRoot(database, *recorded, hex));
+            }
+
             UF_TRY_VALUE(
                 installation,
                 prepare(
@@ -5770,39 +6014,6 @@ namespace uf::operator_runtime
             );
             UF_TRY(bindText(database, claim.get(), 1, hex));
             UF_TRY(expectDone(database, claim.get()));
-
-            // Generation 0 must name genesis and nothing else. A root whose
-            // generation-0 row already names another hash was written by
-            // something this ledger does not have a reading of, and is refused
-            // by name rather than quietly carried.
-            UF_TRY_VALUE(
-                query,
-                prepare(
-                    database,
-                    "SELECT artifact_root_hash FROM runtime_installations "
-                    "WHERE installed_generation=0"
-                )
-            );
-            if (sqlite3_step(query.get()) != SQLITE_ROW)
-            {
-                return databaseFailure(
-                    database,
-                    "could not read the genesis RuntimeArtifact generation"
-                );
-            }
-            auto const recorded = columnText(query.get(), 0);
-            if (recorded != hex)
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    std::format(
-                        "Operator root pins generation 0 to RuntimeArtifact root "
-                        "sha256:{}, and the genesis RuntimeArtifact is sha256:{}",
-                        recorded,
-                        hex
-                    )
-                );
-            }
             return transaction.commit();
         }
 
@@ -5904,6 +6115,7 @@ namespace uf::operator_runtime
         Database              database;
         std::filesystem::path path;
         std::filesystem::path runtimeArtifactRoot;
+        EvidenceArtifactStore evidenceStore;
         uint64                sessionEpoch{};
     };
 
@@ -5976,6 +6188,7 @@ namespace uf::operator_runtime
             stagingRoot,
             "Production RuntimeArtifact staging root"
         ));
+        UF_TRY_VALUE(evidenceStore, EvidenceArtifactStore::open(runtimeDirectory));
         auto const databaseStatus = std::filesystem::symlink_status(databasePath, error);
         if (!error && std::filesystem::exists(databaseStatus))
         {
@@ -6035,6 +6248,7 @@ namespace uf::operator_runtime
                 .database            = std::move(database),
                 .path                = databasePath,
                 .runtimeArtifactRoot = runtimeArtifactRoot,
+                .evidenceStore       = std::move(evidenceStore),
                 .sessionEpoch        = sessionEpoch,
             }
         )};
@@ -6045,6 +6259,37 @@ namespace uf::operator_runtime
     auto OperatorCoordinator::databasePath() const -> std::filesystem::path
     {
         return m_impl->path;
+    }
+
+    auto OperatorCoordinator::publishEvidenceArtifact(
+        EvidenceArtifactSpec const& spec
+    ) -> Result<EvidenceArtifactReceipt>
+    {
+        return m_impl->evidenceStore.publish(spec);
+    }
+
+    auto OperatorCoordinator::evidenceArtifactReceipt(ContentHash const& hash)
+        -> Result<std::optional<EvidenceArtifactReceipt>>
+    {
+        UF_TRY_VALUE(receipts, evidenceReceipts(m_impl->database.get()));
+        auto const found = std::ranges::find(
+            receipts,
+            hash,
+            &EvidenceArtifactReceipt::contentHash
+        );
+        if (found == receipts.end())
+        {
+            return std::nullopt;
+        }
+        return *found;
+    }
+
+    auto OperatorCoordinator::readEvidenceArtifact(
+        ContentHash const& hash,
+        std::size_t maximumBytes
+    ) -> Result<std::vector<std::byte>>
+    {
+        return m_impl->evidenceStore.read(hash, maximumBytes);
     }
 
     auto OperatorCoordinator::installRuntimeArtifact(
@@ -6426,6 +6671,31 @@ namespace uf::operator_runtime
         };
     }
 
+    auto OperatorCoordinator::reclaimUnreferencedEvidenceArtifacts(
+        uint64 maximumAgeMillis
+    ) -> Result<ReclaimedEvidenceArtifacts>
+    {
+        UF_TRY_VALUE(receipts, evidenceReceipts(m_impl->database.get()));
+        UF_TRY_VALUE(currentUnixMillis, unixTimeMilliseconds());
+
+        auto retained = std::vector<ContentHash>{};
+        retained.reserve(receipts.size());
+        for (auto const& receipt : receipts)
+        {
+            auto const age = currentUnixMillis >= receipt.createdAtUnixMillis
+                ? currentUnixMillis - receipt.createdAtUnixMillis
+                : uint64{0U};
+            if (age <= maximumAgeMillis)
+            {
+                retained.emplace_back(receipt.contentHash);
+            }
+        }
+        std::ranges::sort(retained);
+        auto const uniqueEnd = std::ranges::unique(retained).begin();
+        retained.erase(uniqueEnd, retained.end());
+        return m_impl->evidenceStore.reclaim(retained);
+    }
+
     auto OperatorCoordinator::openInstalledRuntimeArtifact(
         uint64 installedGeneration,
         ContentHash const& artifactRootHash
@@ -6518,22 +6788,19 @@ namespace uf::operator_runtime
     }
 
     // Exactly one shape a restart finds mid-dispatch cannot be accounted for:
-    // the MUTATING LEAF -- a call answered directly by a provider whose
+    // the MUTATING DIRECT LEAF -- a call answered by a Framework provider whose
     // descriptor declares it mutating. That is the one row where the world may
     // or may not have moved and no durable record can say, so it is classified
     // uncertain and never dispatched again; only an invoked reconciliation
     // query can resolve it afterwards.
     //
-    // Everything else survives as dispatching and is re-entered. A composed
-    // call -- one answered by a bound Project entry -- causes every effect it
-    // causes through child calls that already carry their own durable
-    // classification, so re-running it re-derives the same child coordinates,
-    // meets those rows and executes only the first position beyond history;
-    // that is this section's replay contract rather than a redelivery, and it
-    // holds however mutating the call itself is. A read-only leaf declares no
-    // effect for a delivery to be uncertain about, so re-running its provider
-    // delivers nothing twice. Classifying either uncertain would invent a
-    // barrier nothing can resolve.
+    // Everything else survives as dispatching and is re-entered. A Project
+    // handler is a pure leaf: immutable inputs and resources enter its fresh VM,
+    // and no Tool or external-effect capability can escape it. Re-running it is
+    // therefore replay, even when its declaration is mutating. A read-only
+    // Framework leaf declares no effect for a delivery to be uncertain about,
+    // so re-running its provider delivers nothing twice. Classifying either
+    // uncertain would invent a barrier nothing can resolve.
     //
     // The filter is generated from toolCallEffectMayBeUnrecorded, so the rule a
     // restart applies and the rule a re-entry refuses on are one rule.
@@ -8879,8 +9146,7 @@ namespace uf::operator_runtime
         auto const& lease      = request.lease;
         auto const& root       = request.root;
         auto const& call       = request.call;
-        auto const& mutation   = request.mutation;
-        auto const& delegation = request.delegation;
+        auto const& mutation = request.mutation;
 
         auto const requiredMutability = request.requiredMutability();
 
@@ -8891,29 +9157,12 @@ namespace uf::operator_runtime
             ? std::span<ToolApprovalGrant const>{mutation->approvals}
             : std::span<ToolApprovalGrant const>{};
 
-        // A call whose parent coordinate is the root request is one the run's
-        // own context issued and stands on the run's own authority; every
-        // other call is a handler's child and stands on that handler's grant.
-        auto const rootPositioned = request.isRootPositioned();
-        if (rootPositioned == delegation.has_value())
+        if (!request.isRootPositioned())
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                rootPositioned
-                    ? "Tool admission carries a delegation grant for a "
-                      "root-positioned call"
-                    : "Tool admission requires a delegation grant for a child call"
-            );
-        }
-        if (
-            delegation.has_value()
-            && (delegation->rootIdentity() != root.identity()
-                || delegation->parentCallIdentity() != call.parentIdentity())
-        )
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Tool delegation grant names a different parent position"
+                "Tool admission refuses a nested call because Project Tool "
+                "handlers are leaves"
             );
         }
 
@@ -9020,180 +9269,10 @@ namespace uf::operator_runtime
         }
         auto const projectRegistrationHash = columnText(sessionQuery.get(), 2);
 
-        // Section 3.3's child intersection. Everything below is read from the
-        // durable parent chain and the grant row rather than from the caller,
-        // so a handler cannot widen what its own descriptor declared.
         auto liveMutationChain    = std::vector<std::string>{call.identity().hex()};
-        auto childDeclaration     = ChildEffectDeclaration{};
-        auto parentToolName       = std::string{};
-        auto rootCallIdentity     = call.identity().hex();
         auto executionPrincipalId = controller.controllerId();
         auto executionPrincipalKind =
             std::string{controllerKindWireName(controller.kind())};
-        if (delegation.has_value())
-        {
-            UF_TRY_VALUE(
-                ancestors,
-                readToolCallAncestors(
-                    database,
-                    root.identity().hex(),
-                    delegation->parentCallIdentity().hex()
-                )
-            );
-            if (ancestors.empty())
-            {
-                return fail(
-                    AutomationErrorKind::InternalInvariant,
-                    "Tool child call has no durable parent chain"
-                );
-            }
-            auto const depth = static_cast<uint32>(ancestors.size()) + 1U;
-            if (depth > k_maximumToolCallDepth)
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    std::format(
-                        "Tool call tree depth {} exceeds the maximum {}",
-                        depth,
-                        k_maximumToolCallDepth
-                    )
-                );
-            }
-            auto const callProvider = persistedToolProvider(call.provider());
-            auto const callRegistration = callProvider.projectRegistrationHash
-                ? std::optional{callProvider.projectRegistrationHash->hex()}
-                : std::nullopt;
-            auto const reentered = std::ranges::find_if(
-                ancestors,
-                [&call, &callProvider, &callRegistration](
-                    ToolCallAncestor const& ancestor
-                )
-                {
-                    return ancestor.toolName == call.toolName()
-                        && ancestor.providerKind == callProvider.kind
-                        && ancestor.projectRegistrationHash == callRegistration;
-                }
-            );
-            if (reentered != ancestors.end())
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "Tool call would re-enter " + call.toolName()
-                        + ", which is already executing in this call tree"
-                );
-            }
-            for (auto const& ancestor : ancestors)
-            {
-                liveMutationChain.emplace_back(ancestor.callIdentity);
-            }
-            rootCallIdentity = ancestors.back().callIdentity;
-
-            UF_TRY_VALUE(
-                grantQuery,
-                prepare(
-                    database,
-                    "SELECT delegation.parent_tool_name, "
-                    "delegation.execution_principal_id, "
-                    "delegation.execution_principal_kind, "
-                    "delegation.child_tool_names, delegation.maximum_child_surface, "
-                    "delegation.maximum_child_mutability, "
-                    "delegation.maximum_child_risk, delegation.maximum_child_calls, "
-                    "history.state FROM tool_delegation_grants delegation "
-                    "JOIN tool_call_history history "
-                    "ON history.call_identity=delegation.parent_call_identity "
-                    "WHERE delegation.grant_id=?1 AND delegation.root_identity=?2 "
-                    "AND delegation.parent_call_identity=?3 "
-                    "AND delegation.parent_attempt_number=?4"
-                )
-            );
-            UF_TRY(bindText(database, grantQuery.get(), 1, delegation->grantId()));
-            UF_TRY(bindText(database, grantQuery.get(), 2, root.identity().hex()));
-            UF_TRY(bindText(
-                database,
-                grantQuery.get(),
-                3,
-                delegation->parentCallIdentity().hex()
-            ));
-            UF_TRY(bindInteger(
-                database,
-                grantQuery.get(),
-                4,
-                delegation->parentAttemptNumber()
-            ));
-            if (sqlite3_step(grantQuery.get()) != SQLITE_ROW)
-            {
-                // A grant is unforgeable and its row is written in the same
-                // transaction that mints it, so a missing row is durability
-                // damage rather than a caller's mistake.
-                return fail(
-                    AutomationErrorKind::InternalInvariant,
-                    "Tool delegation grant has no durable row"
-                );
-            }
-            UF_TRY_VALUE(
-                parentState,
-                parseToolCallState(columnText(grantQuery.get(), 8))
-            );
-            if (parentState != ToolCallState::Dispatching)
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    std::format(
-                        "Tool child call arrived under a different parent: call {} "
-                        "is {}, not a dispatching handler",
-                        delegation->parentCallIdentity().hex(),
-                        toolCallStateWireName(parentState)
-                    )
-                );
-            }
-            parentToolName         = columnText(grantQuery.get(), 0);
-            executionPrincipalId   = columnText(grantQuery.get(), 1);
-            executionPrincipalKind = columnText(grantQuery.get(), 2);
-            UF_TRY_VALUE(
-                childToolNames,
-                readNameArray(columnText(grantQuery.get(), 3))
-            );
-            auto const maximumSurface = parseToolSurface(
-                columnText(grantQuery.get(), 4)
-            );
-            auto const maximumMutability = parseToolMutability(
-                columnText(grantQuery.get(), 5)
-            );
-            auto const maximumRisk = parseRisk(columnText(grantQuery.get(), 6));
-            if (!maximumSurface || !maximumMutability || !maximumRisk)
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "Stored Tool delegation grant carries an unreadable ceiling"
-                );
-            }
-            childDeclaration = ChildEffectDeclaration{
-                .childToolNames         = std::move(childToolNames),
-                .maximumChildSurface    = *maximumSurface,
-                .maximumChildMutability = *maximumMutability,
-                .maximumChildRisk       = *maximumRisk,
-                .maximumChildCalls      = static_cast<uint32>(
-                    sqlite3_column_int64(grantQuery.get(), 7)
-                ),
-            };
-            UF_TRY(childToolWithinDeclaration(
-                childDeclaration,
-                parentToolName,
-                call.toolName(),
-                call.descriptor()
-            ));
-            if (call.sequence() > childDeclaration.maximumChildCalls)
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    std::format(
-                        "Parent Tool {} may issue at most {} child calls",
-                        parentToolName,
-                        childDeclaration.maximumChildCalls
-                    )
-                );
-            }
-        }
 
         if (requiredMutability == ToolMutability::Mutating)
         {
@@ -9227,12 +9306,6 @@ namespace uf::operator_runtime
                 "Tool admission authority differs from the active session"
             );
         }
-        // Direct visibility and delegated authority are distinct: an actor
-        // admitted to a high-level Project Tool may reach that Tool's declared
-        // low-level child without the child ever becoming directly callable by
-        // that actor. The child's surface is judged against the parent's
-        // child-effect declaration above, and never a second time here.
-        //
         // The two questions a top-level surface raises are asked together
         // because they are one decision about one call. The first is the
         // controller's own profile. The second is the Operator's: a Project
@@ -9241,28 +9314,25 @@ namespace uf::operator_runtime
         // surface at the top of a run needs a grant from the party the
         // machine belongs to. Absent that grant the artifact denies, which
         // is what every other unstated policy question here does.
-        if (!delegation.has_value())
+        if (!toolSurfaceAllowed(controller.profile(), call.descriptor().surface))
         {
-            if (!toolSurfaceAllowed(controller.profile(), call.descriptor().surface))
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "Controller profile does not admit this Tool surface"
-                );
-            }
-            if (
-                call.descriptor().surface == ToolSurface::Privileged
-                && !request.policyAuthority.m_policy.grantsPrivilegedSurface(
-                    call.toolName()
-                )
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Controller profile does not admit this Tool surface"
+            );
+        }
+        if (
+            call.descriptor().surface == ToolSurface::Privileged
+            && !request.policyAuthority.m_policy.grantsPrivilegedSurface(
+                call.toolName()
             )
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "Operator policy grants no Privileged surface to tool "
-                        + call.toolName()
-                );
-            }
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Operator policy grants no Privileged surface to tool "
+                    + call.toolName()
+            );
         }
         UF_TRY_VALUE(
             heldCapabilities,
@@ -9297,25 +9367,6 @@ namespace uf::operator_runtime
             );
             effectEnvelope    = std::move(evaluated.envelope);
             requiredApprovals = std::move(evaluated.requiredApprovals);
-            if (delegation.has_value())
-            {
-                UF_TRY_VALUE(
-                    rootEffects,
-                    readAdmittedRootEffects(database, rootCallIdentity)
-                );
-                // Soundness here requires that a Tool declaring no effects
-                // really does not mutate; the catalog and Tool boundary own
-                // that guarantee, not this loop.
-                for (auto const& effect : effectEnvelope->effects)
-                {
-                    UF_TRY(childEffectWithinDeclaration(
-                        childDeclaration,
-                        parentToolName,
-                        effect
-                    ));
-                    UF_TRY(childEffectWithinRootEnvelope(rootEffects, effect));
-                }
-            }
             for (auto const& approval : approvals)
             {
                 UF_TRY(requireName(approval.token, "Tool approval token"));
@@ -9500,9 +9551,6 @@ namespace uf::operator_runtime
             return databaseFailure(database, "could not read durable Tool run");
         }
 
-        auto const delegationGrantId = delegation.has_value()
-            ? std::optional{delegation->grantId()}
-            : std::nullopt;
         UF_TRY_VALUE(
             historyQuery,
             prepare(
@@ -9560,7 +9608,7 @@ namespace uf::operator_runtime
                     "project_registration_hash, policy_hash, "
                     "capability_profile_hash, lease_id, lease_revision, "
                     "fencing_token, effect_envelope, effect_envelope_hash, "
-                    "required_approvals, approval_tokens, delegation_grant_id "
+                    "required_approvals, approval_tokens "
                     "FROM tool_admission_attempts "
                     "WHERE call_identity=?1 AND attempt_number=?2"
                 )
@@ -9622,8 +9670,7 @@ namespace uf::operator_runtime
                             ? std::optional<std::string>{
                                   canonicalNameArray(approvalTokens),
                               }
-                            : std::nullopt)
-                && optionalColumnText(latestQuery.get(), 15) == delegationGrantId;
+                            : std::nullopt);
             if (exactAttempt)
             {
                 UF_TRY(transaction.commit());
@@ -9785,10 +9832,9 @@ namespace uf::operator_runtime
                 "policy_hash, capability_profile_hash, lease_id, lease_revision, "
                 "fencing_token, budget_snapshot, budget_snapshot_hash, "
                 "effect_envelope, effect_envelope_hash, required_approvals, "
-                "approval_tokens, approval_expires_at_unix_millis, "
-                "delegation_grant_id) "
+                "approval_tokens, approval_expires_at_unix_millis) "
                 "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, "
-                "?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)"
+                "?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)"
             )
         );
         UF_TRY(bindText(database, admissionInsert.get(), 1, call.identity().hex()));
@@ -9802,11 +9848,7 @@ namespace uf::operator_runtime
         ));
         UF_TRY(bindText(database, admissionInsert.get(), 5, kindName));
 
-        // The executing principal is the handler that issued this call, and
-        // the origin above stays the run's actor. Section 3.3 requires the two
-        // to be recorded separately and the handler never to substitute its own
-        // profile for the origin's admitted objective, so they are two values
-        // written to two column pairs rather than one value written twice.
+        // A leaf is executed for the same principal that originated the root.
         UF_TRY(bindText(
             database,
             admissionInsert.get(),
@@ -9901,12 +9943,6 @@ namespace uf::operator_runtime
             23,
             approvalExpiry
         ));
-        UF_TRY(bindOptionalText(
-            database,
-            admissionInsert.get(),
-            24,
-            delegationGrantId
-        ));
         UF_TRY(expectDone(database, admissionInsert.get()));
 
         for (auto const& approval : approvals)
@@ -9962,7 +9998,7 @@ namespace uf::operator_runtime
         }
         if (
             std::holds_alternative<FrameworkToolProvider>(call.provider())
-            && call.toolName() == "framework.screen.observe"
+            && call.toolName() == "framework.screen.capture"
         )
         {
             UF_TRY(chargeAgentBudget(
@@ -10009,199 +10045,6 @@ namespace uf::operator_runtime
             nextAttempt,
             nextRevision,
         };
-    }
-
-    auto OperatorCoordinator::issueToolDelegationGrant(
-        ToolCallPositionIdentity const& parentCall
-    ) -> Result<ToolDelegationGrant>
-    {
-        auto const& declaration = parentCall.descriptor().childEffects;
-        UF_TRY(childEffectDeclarationValid(declaration));
-        if (declaration.childToolNames.empty())
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Tool " + parentCall.toolName()
-                    + " registered no child effect, so it can delegate nothing"
-            );
-        }
-
-        auto* const database = m_impl->database.get();
-        UF_TRY_VALUE(transaction, Transaction::begin(database));
-        UF_TRY_VALUE(
-            historyQuery,
-            prepare(
-                database,
-                "SELECT state, active_admission_attempt "
-                "FROM tool_call_history WHERE call_identity=?1"
-            )
-        );
-        UF_TRY(bindText(
-            database,
-            historyQuery.get(),
-            1,
-            parentCall.identity().hex()
-        ));
-        if (sqlite3_step(historyQuery.get()) != SQLITE_ROW)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Tool delegation requires a durable parent call"
-            );
-        }
-        UF_TRY_VALUE(
-            parentState,
-            parseToolCallState(columnText(historyQuery.get(), 0))
-        );
-        if (parentState != ToolCallState::Dispatching)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                std::format(
-                    "Tool delegation requires a dispatching handler; call {} is {}",
-                    parentCall.identity().hex(),
-                    toolCallStateWireName(parentState)
-                )
-            );
-        }
-        auto const attemptNumber = static_cast<uint64>(
-            sqlite3_column_int64(historyQuery.get(), 1)
-        );
-
-        // The grant id is the content address of the handler execution it
-        // authorises, so re-entering the same dispatching handler rejoins one
-        // row rather than minting a second authority for one execution.
-        auto material = std::string{"umbraflow-internal-tool-delegation-v0"};
-        material += '\0';
-        material += parentCall.rootIdentity().hex();
-        material += '\0';
-        material += parentCall.identity().hex();
-        material += '\0';
-        material += std::to_string(attemptNumber);
-        UF_TRY_VALUE(grantId, sha256(std::as_bytes(std::span{material})));
-
-        // The executing principal of a child call is the parent call whose
-        // handler issued it. It is derived here rather than supplied, because a
-        // caller that could name the executing principal could name the
-        // origin's.
-        auto const executionPrincipalId = parentCall.identity().hex();
-        UF_TRY_VALUE(
-            insert,
-            prepare(
-                database,
-                "INSERT INTO tool_delegation_grants(grant_id, root_identity, "
-                "parent_call_identity, parent_attempt_number, parent_tool_name, "
-                "execution_principal_id, execution_principal_kind, "
-                "child_tool_names, maximum_child_surface, "
-                "maximum_child_mutability, maximum_child_risk, "
-                "maximum_child_calls) VALUES(?1, ?2, ?3, ?4, ?5, ?6, 'script', "
-                "?7, ?8, ?9, ?10, ?11) ON CONFLICT(grant_id) DO NOTHING"
-            )
-        );
-        UF_TRY(bindText(database, insert.get(), 1, grantId.hex()));
-        UF_TRY(bindText(
-            database,
-            insert.get(),
-            2,
-            parentCall.rootIdentity().hex()
-        ));
-        UF_TRY(bindText(database, insert.get(), 3, parentCall.identity().hex()));
-        UF_TRY(bindInteger(database, insert.get(), 4, attemptNumber));
-        UF_TRY(bindText(database, insert.get(), 5, parentCall.toolName()));
-        UF_TRY(bindText(database, insert.get(), 6, executionPrincipalId));
-        UF_TRY(bindText(
-            database,
-            insert.get(),
-            7,
-            canonicalNameArray(declaration.childToolNames)
-        ));
-        UF_TRY(bindText(
-            database,
-            insert.get(),
-            8,
-            toolSurfaceWireName(declaration.maximumChildSurface)
-        ));
-        UF_TRY(bindText(
-            database,
-            insert.get(),
-            9,
-            toolMutabilityWireName(declaration.maximumChildMutability)
-        ));
-        UF_TRY(bindText(
-            database,
-            insert.get(),
-            10,
-            riskWireName(declaration.maximumChildRisk)
-        ));
-        UF_TRY(bindInteger(
-            database,
-            insert.get(),
-            11,
-            declaration.maximumChildCalls
-        ));
-        UF_TRY(expectDone(database, insert.get()));
-        UF_TRY(transaction.commit());
-        return ToolDelegationGrant{
-            grantId.hex(),
-            parentCall.rootIdentity(),
-            parentCall.identity(),
-            attemptNumber,
-            executionPrincipalId,
-        };
-    }
-
-    auto OperatorCoordinator::sealToolCallContext(
-        ToolRootRequestIdentity const& root,
-        ToolCallIssuingContext const& context
-    ) -> Status
-    {
-        if (context.rootIdentity() != root.identity())
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Tool issuing context belongs to a different root request"
-            );
-        }
-        auto* const database = m_impl->database.get();
-        UF_TRY_VALUE(
-            query,
-            prepare(
-                database,
-                "SELECT MIN(call_sequence) FROM tool_call_positions "
-                "WHERE root_identity=?1 AND call_sequence>?2 AND "
-                "parent_call_identity=?3"
-            )
-        );
-        UF_TRY(bindText(database, query.get(), 1, root.identity().hex()));
-        UF_TRY(bindInteger(database, query.get(), 2, context.issuedChildren()));
-        UF_TRY(bindText(
-            database,
-            query.get(),
-            3,
-            context.parent().identity().hex()
-        ));
-        if (sqlite3_step(query.get()) != SQLITE_ROW)
-        {
-            return databaseFailure(
-                database,
-                "could not read the issuing context's recorded calls"
-            );
-        }
-        if (sqlite3_column_type(query.get(), 0) == SQLITE_NULL)
-        {
-            return ok();
-        }
-        auto const unconsumed = static_cast<uint64>(
-            sqlite3_column_int64(query.get(), 0)
-        );
-        auto message = std::format(
-            "Tool issuing context terminated after {} calls, leaving the "
-            "recorded call at ordinal {} unconsumed",
-            context.issuedChildren(),
-            unconsumed
-        );
-        UF_TRY(terminateToolRun(database, root.identity().hex(), message));
-        return fail(AutomationErrorKind::ActionRejected, std::move(message));
     }
 
     auto OperatorCoordinator::issueToolApproval(
@@ -10547,10 +10390,8 @@ namespace uf::operator_runtime
     }
 
     // The session and lease are re-read against the run's ORIGIN principal,
-    // never the executing one. A Tool handler is a principal, not a session:
-    // it holds no binding and no lease of its own, and joining on it would
-    // make every delegated child undispatchable while quietly implying a
-    // handler could hold session authority.
+    // never the executing one. A Project Tool handler is a principal, not a
+    // session: it holds no binding and no lease of its own.
     auto OperatorCoordinator::beginToolCallDispatch(
         ToolCallAdmission const& admission
     ) -> Result<ToolCallDispatch>
@@ -10851,18 +10692,31 @@ namespace uf::operator_runtime
         auto const delivered = outcome == task::DeliveryOutcome::Delivered;
         auto const verdict   = std::string{deliveryOutcomeWireName(outcome)};
 
-        // One payload and one evidence shape for all three, because the
-        // difference between them is the classification and not the vocabulary.
-        // A reader that had to learn three shapes to compare two outcomes could
-        // not compare them.
+        // Confirmed delivery carries the provider result. Every other terminal
+        // delivery carries the published error object; the delivery value is
+        // what distinguishes proven absence from uncertainty.
         UF_TRY_VALUE(
             payload,
             CanonicalJson::parseExact(
-                json::canonicalBytes(json::Value::ofObject({
-                    {"delivered", json::Value::ofBoolean(delivered)},
-                    {"reason", json::Value::ofString(std::string{report.reason()})},
-                    {"verdict", json::Value::ofString(verdict)},
-                }))
+                json::canonicalBytes(
+                    delivered
+                        ? json::Value::ofObject({
+                              {"delivered", json::Value::ofBoolean(true)},
+                              {"reason",
+                               json::Value::ofString(
+                                   std::string{report.reason()}
+                               )},
+                              {"verdict", json::Value::ofString(verdict)},
+                          })
+                        : json::Value::ofObject({
+                              {"code", json::Value::ofString(verdict)},
+                              {"message",
+                               json::Value::ofString(
+                                   std::string{report.reason()}
+                               )},
+                              {"retryable", json::Value::ofBoolean(false)},
+                          })
+                )
             )
         );
         // The counters render as decimal strings: RFC 8785 numbers are
@@ -11741,128 +11595,6 @@ namespace uf::operator_runtime
         };
     }
 
-    auto OperatorCoordinator::restoreProjectObservation(std::string_view storedJcs)
-        -> Result<ProjectObservation>
-    {
-        UF_TRY_VALUE(document, json::parse(storedJcs));
-        if (document.kind() != json::ValueKind::Object)
-        {
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "Stored observation is not an object"
-            );
-        }
-
-        auto const& preconditionValues = member(document, "project_tool_preconditions");
-        if (preconditionValues.kind() != json::ValueKind::Array)
-        {
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "Stored observation tool preconditions are not an array"
-            );
-        }
-        auto preconditions = std::vector<ProjectToolPrecondition>{};
-        preconditions.reserve(preconditionValues.items().size());
-        for (auto const& precondition : preconditionValues.items())
-        {
-            if (precondition.kind() != json::ValueKind::Object)
-            {
-                return fail(
-                    AutomationErrorKind::InternalInvariant,
-                    "Stored observation tool precondition is not an object"
-                );
-            }
-            auto const& name = member(precondition, "name");
-            if (name.kind() != json::ValueKind::String)
-            {
-                return fail(
-                    AutomationErrorKind::InternalInvariant,
-                    "Stored observation tool precondition name is not a string"
-                );
-            }
-            UF_TRY_VALUE(
-                status,
-                parseProjectToolPreconditionStatus(member(precondition, "status"))
-            );
-            preconditions.emplace_back(ProjectToolPrecondition{
-                .name   = std::string{name.string()},
-                .status = status,
-            });
-        }
-
-        auto const& instanceValues = member(document, "observed_instances");
-        if (instanceValues.kind() != json::ValueKind::Array)
-        {
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "Stored observation instances are not an array"
-            );
-        }
-        auto instances = std::vector<ObservedInstance>{};
-        instances.reserve(instanceValues.items().size());
-        for (auto const& instance : instanceValues.items())
-        {
-            if (instance.kind() != json::ValueKind::Object)
-            {
-                return fail(
-                    AutomationErrorKind::InternalInvariant,
-                    "Stored observation instance is not an object"
-                );
-            }
-            auto const& idValue = member(instance, "observed_instance_id");
-            if (idValue.kind() != json::ValueKind::String)
-            {
-                return fail(
-                    AutomationErrorKind::InternalInvariant,
-                    "Stored observation instance id is not a string"
-                );
-            }
-            auto parent = std::optional<ObservedInstanceId>{};
-            auto const* const p_parent = instance.find("parent_observed_instance_id");
-            if (p_parent != nullptr)
-            {
-                if (p_parent->kind() != json::ValueKind::String)
-                {
-                    return fail(
-                        AutomationErrorKind::InternalInvariant,
-                        "Stored observation instance parent id is not a string"
-                    );
-                }
-                parent.emplace(ObservedInstanceId{std::string{p_parent->string()}});
-            }
-            auto const& kindValue = member(instance, "kind");
-            if (kindValue.kind() != json::ValueKind::String)
-            {
-                return fail(
-                    AutomationErrorKind::InternalInvariant,
-                    "Stored observation instance kind is not a string"
-                );
-            }
-            instances.emplace_back(ObservedInstance{
-                .observedInstanceId = ObservedInstanceId{
-                    std::string{idValue.string()}
-                },
-                .parentObservedInstanceId = std::move(parent),
-                .kind                     = std::string{kindValue.string()},
-                .opaqueProjectPayload     = member(instance, "opaque_project_payload"),
-            });
-        }
-
-        // The stored bytes are the final observation's own canonical bytes, so
-        // the restored hash is the sha256 of exactly what is stored.
-        UF_TRY_VALUE(
-            hash,
-            sha256(std::as_bytes(std::span{storedJcs}))
-        );
-        return ProjectObservation{
-            member(document, "canonical_opaque_payload"),
-            std::move(preconditions),
-            std::move(instances),
-            std::string{storedJcs},
-            hash,
-        };
-    }
-
     auto toolRuntimeDurableRecordMaterial() -> std::string
     {
         // Named by their table, so a table renamed moves this material even
@@ -11881,10 +11613,6 @@ namespace uf::operator_runtime
             std::pair{
                 std::string_view{"tool_call_positions"},
                 k_toolCallPositionsDdl,
-            },
-            std::pair{
-                std::string_view{"tool_delegation_grants"},
-                k_toolDelegationGrantsDdl,
             },
             std::pair{
                 std::string_view{"tool_root_requests"},

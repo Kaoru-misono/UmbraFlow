@@ -622,27 +622,26 @@ def tool_call_states(root: Path) -> list[tuple[str, bool]]:
 def tool_answer_envelope(root: Path) -> dict[str, object]:
     """The answer a scoped script receives, read out of the module that checks it."""
     text = read(root, TOOL_RUNTIME_LUAU)
-    frozen = re.search(r"local k_states = table\.freeze\(\{(.*?)\}\)", text, re.DOTALL)
+    frozen = re.search(
+        r"local k_deliveries = table\.freeze\(\{(.*?)\}\)", text, re.DOTALL
+    )
     if frozen is None:
         raise SystemExit(f"{TOOL_RUNTIME_LUAU}: publishes no delivery vocabulary")
-    states = re.findall(r'"([a-z_]+)"', frozen.group(1))
+    deliveries = re.findall(r"^\s*([a-z_]+)\s*=\s*true", frozen.group(1), re.MULTILINE)
+    if not deliveries:
+        raise SystemExit(f"{TOOL_RUNTIME_LUAU}: delivery vocabulary is unreadable")
 
     required = re.findall(r'rawget\(answer,\s*"(\w+)"\)', text)
-    optional = re.findall(r'rawget\(checkedAnswer\(answer\),\s*"(\w+)"\)', text)
     members: list[str] = []
-    for member in required + optional:
+    for member in required:
         if member not in members:
             members.append(member)
     if not members:
         raise SystemExit(f"{TOOL_RUNTIME_LUAU}: reads no answer member")
 
-    # The two members an accessor answers as a @umbraflow/result envelope
-    # rather than a value: absence is a failure of the request, not a value.
-    enveloped = re.findall(r'resultModule\.err\(\s*"([\w.]+)"', text)
     return {
-        "states": states,
+        "deliveries": deliveries,
         "members": members,
-        "absent_result_codes": enveloped,
     }
 
 
@@ -780,8 +779,9 @@ def written_wire_tags(root: Path) -> set[str]:
     """Every wire tag this repository's first-party sources still write.
 
     ``entry/`` counts as well as ``modules/``: a tag only an entry executable
-    spells is still a tag a consumer sees. ``entry/workbench`` is excluded
-    because it is vendored.
+    spells is still a tag a consumer sees. Anything under an ``external/``
+    directory is excluded: a vendored dependency's tags are not this
+    repository's contract.
     """
     tags: set[str] = set()
     patterns = (
@@ -1295,11 +1295,6 @@ def render(root: Path) -> str:
     script_contract = script_runtime_contract(root)
     authorities = deployment_authorities(root)
     tool_maximum = tool_declaration_bound(root)
-    project_tool_body = tool_definition["properties"]["body"].get("const")
-    if project_tool_body is not False:
-        raise SystemExit(
-            f"{PROJECT_DIRECTORY_SCHEMA}: Project Tool body must be pinned false"
-        )
     proposal = json.loads(read(root, OBSERVATION_PROPOSAL_SCHEMA))
     observation = json.loads(read(root, OBSERVATION_SCHEMA))
     authority_tag, authority_members = authority_input_members(root)
@@ -1606,15 +1601,12 @@ def render(root: Path) -> str:
                 ],
             ),
             "",
-            "A Project Tool declares `body: false`: Project entry points take only",
-            "their arguments and cannot receive a caller-supplied body. Framework",
-            "built-ins declare their own body shape separately.",
+            "A Project Tool entry point takes only its declared arguments. Tool",
+            "calls have no caller-supplied body or callback protocol.",
             "",
-            "Each entry carries `argument_schema` as a mandatory member whose value",
-            "is either the string `unchecked` or an inline JSON Schema object. The",
-            "two mean different things: `unchecked` is the project declining",
-            "argument validation, and the framework still records the exact bytes it",
-            "passed, their digest and their coordinates.",
+            "Each entry carries `description` and `argument_schema` as mandatory",
+            "members. `argument_schema` is the Tool's flat inline JSON Schema; there",
+            "is no unchecked spelling, body, or child-effect declaration.",
             "",
             "## 3. CLI surface",
             "",
@@ -1829,11 +1821,12 @@ def render(root: Path) -> str:
         "tool_catalog_hash",
     )
 
-    if envelope["states"] != [name for name, _carries in call_states]:
+    terminal_states = [name for name, carries in call_states if carries]
+    if set(envelope["deliveries"]) != set(terminal_states):
         raise SystemExit(
             f"{TOOL_RUNTIME_LUAU}: the delivery vocabulary a script reads is not "
-            f"the Operator's: script={envelope['states']}, "
-            f"operator={[name for name, _carries in call_states]}"
+            f"the Operator's terminal vocabulary: script={envelope['deliveries']}, "
+            f"operator={terminal_states}"
         )
 
     lines.extend(
@@ -1854,9 +1847,9 @@ def render(root: Path) -> str:
             "target-wide mutation barrier, because neither says what the world did.",
             "",
             f"Read from `k_toolCallStateNames` and `toolCallStateHasOutcome` in",
-            f"`{TOOL_RUNTIME_SOURCE}`. A scoped script reads the same set as",
-            f"`tools.states` from `{TOOL_RUNTIME_LUAU}`, and this generator",
-            "requires the two to be the same list in the same order.",
+            f"`{TOOL_RUNTIME_SOURCE}`. The three nonterminal states remain",
+            "internal. A synchronous caller sees only the terminal half as",
+            f"`delivery`, validated by `checkedAnswer` in `{TOOL_RUNTIME_LUAU}`.",
             "",
         ]
     )
@@ -1889,16 +1882,15 @@ def render(root: Path) -> str:
     lines.extend(
         [
             "",
-            "`result` and `evidence` are absent when the recorded outcome carries",
-            "none, and their accessors answer a `@umbraflow/result` failure rather",
-            "than a value -- "
-            + ", ".join(f"`{code}`" for code in envelope["absent_result_codes"])
-            + ".",
+            "Success carries `ok = true`, `delivery = confirmed`, and `result`.",
+            "A provider that ran and failed carries `ok = false`, its terminal",
+            "`delivery`, and an `error` object with `code`, the provider message",
+            "verbatim, and `retryable`.",
             "",
             "A Tool Runtime *refusal* never reaches this envelope at all: it is",
             "terminal for the run, the VM is destroyed without resuming the script,",
             "and no `pcall` can observe one. A Tool that ran and failed is not a",
-            "refusal -- its classification travels in `state`.",
+            "refusal -- its classification travels in `delivery`.",
             "",
             "### 5.3 Root request idempotency",
             "",

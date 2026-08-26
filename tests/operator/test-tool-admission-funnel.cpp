@@ -14,8 +14,8 @@
 // and one of them records a deliberate decision to leave a value copyable.
 //
 // The runtime half -- that the refusals inside admission are reachable and
-// exercised -- lives in test-ledger.cpp, test-tool-nested-calls.cpp and
-// test-tool-executor.cpp, which drive the same one funnel. The semantic half --
+// exercised -- lives in test-ledger.cpp and test-tool-executor.cpp, which drive
+// the same one funnel. The semantic half --
 // that four producers translate the same input the same way -- is the four-way
 // fixture, and it lands with the second producer.
 
@@ -52,18 +52,6 @@ namespace uf::operator_runtime
             !std::constructible_from<ToolCallDispatch, ContentHash, uint64, uint64>,
             "An adapter must not be able to construct the capability to execute"
         );
-        static_assert(
-            !std::constructible_from<
-                ToolDelegationGrant,
-                std::string,
-                ContentHash,
-                ContentHash,
-                uint64,
-                std::string
-            >,
-            "An adapter must not be able to construct a delegation grant"
-        );
-
         // The coordinate is the oldest member of this family and the pattern
         // the ruling says it is extending: the position factory is private to
         // the issuing context, so there is no door a producer can hand an
@@ -103,17 +91,6 @@ namespace uf::operator_runtime
             "duplicates"
         );
 
-        // Deliberately positive. A delegation grant is evidence re-verified
-        // against the live parent row at every use and re-derivable by anyone
-        // who can already name the parent, so a duplicate confers nothing and
-        // expires exactly when the original does. Pinning that here means a
-        // later change of mind has to be a change to this line and its reason
-        // rather than a silent drift into a third category.
-        static_assert(
-            std::copy_constructible<ToolDelegationGrant>,
-            "A delegation grant is evidence, not a licence to run anything"
-        );
-
         // One funnel. The nine-parameter spelling admitToolCall carried before
         // this ruling, and the four identity values an adapter would most
         // plausibly reach for, are both gone: there is no overload set to pick
@@ -137,21 +114,6 @@ namespace uf::operator_runtime
             >,
             "Admission must not accept the request's members loose"
         );
-        static_assert(
-            !AdmissionAccepts<
-                ControllerBinding,
-                ControlLease,
-                ToolRootRequestIdentity,
-                ToolCallPositionIdentity,
-                ToolMutability,
-                OperatorPolicyAuthority,
-                std::vector<ProposedEffect>,
-                std::vector<ToolApprovalGrant>,
-                ToolDelegationGrant
-            >,
-            "The pre-ruling nine-parameter admission must not exist"
-        );
-
         // The same statement one layer up, because the executor is what a
         // producer actually calls and a loose-parts seam there would put the
         // funnel back where it was.

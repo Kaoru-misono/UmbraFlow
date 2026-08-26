@@ -138,8 +138,7 @@ namespace uf::operator_runtime
         VerifiedProjectGeneration const& generation,
         ProjectToolCatalogSchemaOwner catalog,
         ClosureModules toolClosure,
-        std::vector<ProjectResourceBlob> exactResources,
-        script::ToolRuntimeDispatch dispatchTool
+        std::vector<ProjectResourceBlob> exactResources
     ) -> Result<ProjectGenerationHandle>
     {
         UF_TRY_VALUE(pureEnvironmentHash, currentProjectPluginEnvironmentHash());
@@ -217,8 +216,7 @@ namespace uf::operator_runtime
                 toolEntries,
                 std::move(toolResources),
                 scopedFrameworkModules,
-                std::move(frameworkResources),
-                std::move(dispatchTool)
+                std::move(frameworkResources)
             ),
             "compiling the tool closure of this registration generation"
         );

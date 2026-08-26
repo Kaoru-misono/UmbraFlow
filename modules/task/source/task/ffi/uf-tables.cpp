@@ -91,11 +91,11 @@ namespace uf::task
             std::pair{std::string_view{"move"}, ReceiptActionKind::Move},
         };
 
-        // The layouts a Reader may declare, spelled as the model spells them.
+        // The layouts a read may declare, spelled as the model spells them.
         // A table for k_receiptActionKinds' reason, and the only place the two
         // vocabularies are joined: the enumerator is the Host's, the string is
-        // schema/umbraflow-runtime-v3.schema.json's reader.layout.
-        constexpr auto k_readerLayouts = std::array{
+        // schema/umbraflow-runtime-v4.schema.json's read_layout.
+        constexpr auto k_readLayouts = std::array{
             std::pair{std::string_view{"single_line"}, ocr::TextLayout::SingleLine},
             std::pair{std::string_view{"block"}, ocr::TextLayout::Block},
         };
@@ -194,19 +194,19 @@ namespace uf::task
         }
 
         [[nodiscard]]
-        auto readerLayout(lua_State* state, std::string_view name) -> ocr::TextLayout
+        auto readLayout(lua_State* state, std::string_view name) -> ocr::TextLayout
         {
             auto const found = std::ranges::find(
-                k_readerLayouts,
+                k_readLayouts,
                 name,
                 &std::pair<std::string_view, ocr::TextLayout>::first
             );
-            if (found == k_readerLayouts.end())
+            if (found == k_readLayouts.end())
             {
                 raiseTierB(
                     state,
                     AutomationErrorKind::InvalidResource,
-                    "reader layout has an unsupported value"
+                    "read layout has an unsupported value"
                 );
             }
             return found->second;
@@ -1257,10 +1257,11 @@ namespace uf::task
             return 2;
         }
 
-        // What the Reader's rectangle holds, under the layout the Reader
-        // declared. The layout crosses as the model's own spelling rather than
-        // as a number: the trusted parser owns that vocabulary, and this is the
-        // one place it is joined to the Host's enumerator.
+        // What one declared rectangle holds, under the layout the site that
+        // owns that rectangle declared. The layout crosses as the model's own
+        // spelling rather than as a number: the trusted parser owns that
+        // vocabulary, and this is the one place it is joined to the Host's
+        // enumerator.
         //
         // A read that located nothing is ABSENT rather than a read with no
         // lines, so the resolver never has to tell an empty list from a missing
@@ -1276,9 +1277,9 @@ namespace uf::task
                 k_cycleType,
                 "a Runtime observation cycle"
             );
-            auto const layout = readerLayout(
+            auto const layout = readLayout(
                 state,
-                stringAt(state, 6, "Runtime reader layout")
+                stringAt(state, 6, "Runtime read layout")
             );
             auto reading = runtimeContext.cycleRead(
                 *p_cycle,

@@ -118,16 +118,16 @@ namespace uf::cli
         ObserveSources sources
     ) -> Result<ObservedState>
     {
-        // First, and before the project directory is opened. A Reader the model
-        // declares reaches the resolver as a read that could not run, and the
-        // resolution then reports a reason from a closed vocabulary that names
-        // no flag. Refusing here is the only place the message can name what
-        // the caller left out.
+        // First, and before the project directory is opened. A Readout the
+        // model declares reaches the resolver as a read that could not run, and
+        // the resolution then reports a reason from a closed vocabulary that
+        // names no flag. Refusing here is the only place the message can name
+        // what the caller left out.
         if (!sources.ocrEngine)
         {
             return fail(
                 AutomationErrorKind::UnsupportedCapability,
-                "observe was given no OCR engine, so every Reader this "
+                "observe was given no OCR engine, so every Readout this "
                 "project's model declares would report a failed read rather "
                 "than what is written on the screen; pass --ocr-models"
             );
@@ -235,8 +235,8 @@ namespace uf::cli
         );
 
         // The document last and whole. Its kind, its ordered surface stack, and
-        // one entry per Reader every reporting Binding named are inside it, and
-        // C++ interprets none of them: these are the bytes the resolver
+        // one entry per Readout on every Surface of that stack are inside it,
+        // and C++ interprets none of them: these are the bytes the resolver
         // produced and the bytes a plugin would be handed.
         text += std::format(
             "\nobservation {}\n"

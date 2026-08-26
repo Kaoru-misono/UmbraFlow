@@ -159,7 +159,7 @@ namespace uf::cli
                 return exitCodeForError(reclaimed.error(), false);
             }
 
-            std::cout << formatReclaimedRuntime(*reclaimed);
+            std::cout << formatReclaimedOperatorRoot(*reclaimed);
             return ExitCode::Success;
         }
 

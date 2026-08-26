@@ -34,6 +34,7 @@
 #include <stop_token>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace uf::task
@@ -208,9 +209,9 @@ namespace uf::task
         };
 
         // What one cycleCrop produced: host-owned PNG bytes and their exact
-        // content hash. Tool providers either measure and drop the bytes or write
-        // them through framework.project.write's capture arm; pixels never enter
-        // a canonical Tool result.
+        // content hash. A Tool provider either measures and drops the bytes or
+        // publishes them as a durable evidence artifact whose receipt is the
+        // Tool result.
         struct CroppedBlob final
         {
             std::vector<std::byte> png{};
@@ -234,13 +235,10 @@ namespace uf::task
 
         CycleLedger      m_cycles{};
 
-        // The ticket the open cycle was minted under, kept so a verb that acts
-        // on THE HELD FRAME can name it instead of taking a second capture of a
-        // screen that has moved. It leaves this object only through
-        // openObservationFrame(), which answers nothing unless the ledger still
-        // holds a cycle open -- so a spent or closed cycle can never hand its
-        // ticket out again, and a fresh openCycle() overwrites it before any
-        // reader can see the old one.
+        // The ticket the internal cycle was minted under. Screen providers now
+        // open that cycle from the explicit screenshot digest before reading
+        // this ticket; live capture and input delivery use the same cycle
+        // facility. A spent or closed cycle cannot hand its ticket out again.
         CycleTicket      m_openTicket{};
 
         CycleAnswers     m_answers{};
@@ -338,25 +336,28 @@ namespace uf::task
         // open fails InternalInvariant BEFORE the capture runs, so a framework
         // bug never costs a whole screenshot.
         //
-        // AFTER 2026-08-24 IT IS A FRAMEWORK BUG AND NOT A PROJECT ERROR. Every
-        // verb that acts on a frame binds to the one openObservationFrame()
-        // reports and refuses by name when there is none, so no sequence a
-        // Project can write reaches a second open; see
-        // docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md.
+        // It is an internal single-cycle invariant. Callers either captured the
+        // live target deliberately or reconstructed the explicit evidence blob
+        // before reaching this function's consumers.
         [[nodiscard]]
         auto openCycle() -> Result<CycleTicket>;
 
-        // The ticket naming the observation frame this context holds open, or
-        // nothing when it holds none.
-        //
-        // THIS IS HOW A MEASURING OR ACTING VERB BINDS TO THE HELD FRAME. It
-        // takes no handle from its caller: a handle could be stored, passed on
-        // and spent against a frame that has since closed, while a frame that
-        // can only be named by asking the context cannot outlive the context's
-        // own answer. A caller that finds nothing here must refuse by name
-        // rather than capture a frame of its own, because measuring across
-        // several captures of a moving screen silently changes what these verbs
-        // mean.
+        // Opens the cycle over immutable PNG bytes already held by the
+        // Operator evidence store. It performs no capture: the supplied frame
+        // identity and decoded bytes are assembled into a recorded Frame and
+        // handed to this context's EngineSession.
+        [[nodiscard]]
+        auto openRecordedCycle(
+            std::span<std::byte const> png,
+            FrameIdentity frameIdentity,
+            uint32 expectedWidth,
+            uint32 expectedHeight
+        ) -> Result<CycleTicket>;
+
+        // The ticket naming the internal cycle this context holds open, or
+        // nothing when it holds none. This is not caller-facing selection: a
+        // screen provider has already selected and opened the explicit digest,
+        // and input delivery has already selected its live aim frame.
         [[nodiscard]]
         auto openObservationFrame() const noexcept -> std::optional<CycleTicket>;
 
@@ -478,6 +479,13 @@ namespace uf::task
             PixelRect rect,
             std::optional<ProbeColourKey> key
         ) -> Result<CroppedBlob>;
+
+        // Encodes an unmasked region for the Operator evidence store. Unlike
+        // cycleCrop, this is not an authoring save and writes no project file;
+        // the caller publishes the returned bytes through its Tool boundary.
+        [[nodiscard]]
+        auto cycleEvidencePng(CycleTicket ticket, PixelRect rect)
+            -> Result<CroppedBlob>;
 
         // Tiles `rect` of the frame `ticket`'s cycle retains into cells of
         // `cellWidth` by `cellHeight` and reports, per cell, how many pixels
@@ -603,20 +611,19 @@ namespace uf::task
         // split engage from disengage
         // (docs/decisions/2026-08-24-an-authoring-session-is-a-first-class-tool-session.md).
         //
-        // It takes NO duration, and that absence is the point. A duration this
-        // verb accepted would be a number nothing measures: the press ends when
-        // its owner disengages, and how long that was is measured between the
-        // two and reported by disengageInput. A caller that wants to wait while
-        // the button is down waits -- there is already one spelling of waiting,
-        // and a second inside this verb would be a second answer to how long a
-        // run may spend.
+        // The duration is validated before the cycle is spent. The caller owns
+        // the wait and release, while this layer owns the one hold ceiling.
         //
         // WHOEVER CALLS THIS OWNS THE RELEASE, on every exit path, including
         // the path where this call itself failed: a refused engage is not proof
         // of an unpressed button, because the press lands before the lines that
         // record it. Ask inputEngaged() and call disengageInput().
         [[nodiscard]]
-        auto cycleEngageHold(CycleTicket ticket, PixelPoint point) -> Status;
+        auto cycleEngageHold(
+            CycleTicket ticket,
+            PixelPoint point,
+            MonotonicInstant::Duration duration
+        ) -> Status;
 
         // Whether an engaged hold is outstanding on this context right now. It
         // is what lets an owner's teardown be unconditional without also being
@@ -627,7 +634,7 @@ namespace uf::task
         // milliseconds MEASURED between the engage and this call. Refuses when
         // nothing is engaged, for EngineSession::disengageHold's reason: this
         // is the verb that completes a hold, not a general-purpose sweep.
-        [[nodiscard]] auto disengageInput() -> Result<uint64>;
+        [[nodiscard]] auto disengageInput() -> Result<engine::HoldReceipt>;
 
         // Releases whatever cycle is open and reports whether there was one. NOT
         // a script verb and never installed as a primitive: see
@@ -648,6 +655,14 @@ namespace uf::task
         [[nodiscard]]
         auto openCycleTargetGeneration() const noexcept
             -> std::optional<TargetGeneration>;
+
+        [[nodiscard]]
+        auto openCycleFrameIdentity() const noexcept
+            -> std::optional<FrameIdentity>;
+
+        [[nodiscard]]
+        auto openCycleFrameSize() const noexcept
+            -> std::optional<std::pair<uint32, uint32>>;
 
         // Decodes one template PNG into this generation's template store and
         // returns the ticket naming it. Identical bytes yield the same ticket.

@@ -1,11 +1,11 @@
 --!strict
--- The only RuntimeModel v3 TOML parser and Host artifact binding boundary.
+-- The only RuntimeModel v4 TOML parser and Host artifact binding boundary.
 
 local native = ...
 local model = require("@umbraflow/internal/model")
 
 local project = {}
-project.schema = "umbraflow-runtime/v3"
+project.schema = "umbraflow-runtime/v4"
 project.file_name = "runtime-model.toml"
 
 local hostBindings: { [any]: any } = setmetatable({}, { __mode = "k" }) :: any
@@ -14,9 +14,9 @@ local loadedModel: any = nil
 local sectionLists: { [string]: string } = {
     ui_target = "ui_targets",
     locator = "locators",
-    reader = "readers",
     binding = "bindings",
     collection = "collections",
+    readout = "readouts",
     stitched_map = "stitched_maps",
     surface = "surfaces",
     transition = "transitions",
@@ -25,13 +25,6 @@ local sectionLists: { [string]: string } = {
 local sectionFields: { [string]: { [string]: boolean } } = {
     ui_target = { id = true, kind = true },
     locator = { id = true, kind = true, asset_path = true, threshold = true },
-    reader = {
-        id = true,
-        kind = true,
-        confidence_floor = true,
-        layout = true,
-        normalization = true,
-    },
     binding = {
         id = true,
         surface = true,
@@ -39,7 +32,6 @@ local sectionFields: { [string]: { [string]: boolean } } = {
         placement = true,
         variants = true,
         actions = true,
-        reads = true,
     },
     collection = {
         id = true,
@@ -49,13 +41,21 @@ local sectionFields: { [string]: { [string]: boolean } } = {
         reads = true,
         predicate = true,
     },
+    readout = {
+        id = true,
+        surface = true,
+        rect = true,
+        layout = true,
+        confidence_floor = true,
+        normalization = true,
+    },
     stitched_map = {
         id = true,
         collection = true,
         colour_key = true,
         minimum_ratio = true,
     },
-    surface = { id = true, kind = true, covers = true, identity = true },
+    surface = { id = true, covers = true, identity = true },
     transition = { id = true, from_surfaces = true, trigger = true, to_surfaces = true },
 }
 
@@ -242,16 +242,11 @@ local function parseToml(text: string): any
         return scalar()
     end
 
-    local document: any = {
-        ui_targets = {},
-        locators = {},
-        readers = {},
-        bindings = {},
-        collections = {},
-        stitched_maps = {},
-        surfaces = {},
-        transitions = {},
-    }
+    -- No section list is seeded here. An absent list IS the empty list in the
+    -- compiler this hands its document to, so seeding one would be that rule
+    -- spelled a second time in a second place, and two spellings of one rule
+    -- can come to disagree.
+    local document: any = {}
     local active: any = nil
     local activeSection: string? = nil
 
@@ -265,9 +260,14 @@ local function parseToml(text: string): any
             expect("]]" )
             local listName = sectionLists[name]
             if listName == nil then failure("has unsupported section [[" .. name .. "]]") end
+            local rows = document[listName]
+            if rows == nil then
+                rows = {}
+                document[listName] = rows
+            end
             active = {}
             activeSection = name
-            table.insert(document[listName], active)
+            table.insert(rows, active)
             finishStatement()
             continue
         end

@@ -256,9 +256,7 @@ namespace uf::project
         }
 
         // The one Tool a scaffold declares, inline. Its argument_schema is a
-        // real inline schema rather than `unchecked`, because a starter that
-        // declined the guard would teach the shape by omission; a project that
-        // wants no argument enforcement replaces the object with the string.
+        // real inline schema because every Project Tool publishes one.
         [[nodiscard]]
         auto scaffoldTools(std::string const& pluginId) -> json::Value
         {
@@ -278,33 +276,8 @@ namespace uf::project
                                 },
                             }),
                         },
-                        {"body", json::Value::ofBoolean(false)},
-                        {
-                            // The empty declaration, written out. A scaffold
-                            // tool calls nothing, and this is how a tool says
-                            // so: no names, no calls, and the most restricted
-                            // ceiling of each kind.
-                            "child_effects",
-                            json::Value::ofObject({
-                                {"child_tool_names", json::Value::ofArray({})},
-                                {
-                                    "maximum_child_calls",
-                                    json::Value::ofNumber(0),
-                                },
-                                {
-                                    "maximum_child_mutability",
-                                    json::Value::ofString("read_only"),
-                                },
-                                {
-                                    "maximum_child_risk",
-                                    json::Value::ofString("read_only"),
-                                },
-                                {
-                                    "maximum_child_surface",
-                                    json::Value::ofString("semantic"),
-                                },
-                            }),
-                        },
+                        {"description",
+                         json::Value::ofString("Run the scaffold Tool.")},
                         {
                             "effect_bounds",
                             json::Value::ofArray({}),
@@ -344,31 +317,6 @@ namespace uf::project
                             json::Value::ofArray({}),
                         },
                         {"version", json::Value::ofString("1.0.0")},
-                        {
-                            "workflow_limits",
-                            json::Value::ofObject({
-                                {
-                                    "maximum_dispatches",
-                                    json::Value::ofNumber(1),
-                                },
-                                {
-                                    "maximum_elapsed_ms",
-                                    json::Value::ofNumber(3000),
-                                },
-                                {
-                                    "maximum_observations",
-                                    json::Value::ofNumber(1),
-                                },
-                                {
-                                    "maximum_steps",
-                                    json::Value::ofNumber(1),
-                                },
-                                {
-                                    "maximum_waits",
-                                    json::Value::ofNumber(1),
-                                },
-                            }),
-                        },
             })});
         }
 

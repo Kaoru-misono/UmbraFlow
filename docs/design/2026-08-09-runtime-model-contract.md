@@ -1,7 +1,7 @@
 # Runtime model contract
 
 The normative field authority is
-[`schema/umbraflow-runtime-v3.schema.json`](../../schema/umbraflow-runtime-v3.schema.json).
+[`schema/umbraflow-runtime-v4.schema.json`](../../schema/umbraflow-runtime-v4.schema.json).
 This document explains that schema and the behavior implemented by the trusted
 compiler and resolver. It defines no compatibility spelling for an earlier
 model.
@@ -21,13 +21,18 @@ from one live cycle.
 Every object is closed. Identifiers use the schema's one canonical spelling,
 asset paths live below `assets/`, rectangles are `[x, y, width, height]`, points
 are `[x, y]`, and sizes are `[width, height]`. The model declares
-`schema_version = 3`, `base_resolution`, `base_dpi`, and the collections of
-UiTargets, Locators, Readers, Bindings, optional Collections, Surfaces and
-Transitions.
+`schema_version = 4`, `base_resolution`, `base_dpi`, and the collections of
+UiTargets, Locators, Bindings, Collections, Readouts, Surfaces and Transitions.
+Every one of those collections may be omitted, and an omitted list is the empty
+list: a row with nothing to say under a list member says it by leaving the
+member out, and requiring `= []` would put a field on every row to record its
+own absence. The members that must hold something -- a Binding's `variants`, a
+Surface's `identity`, a Transition's endpoints -- are refused for being empty by
+the rule that wanted them non-empty.
 
 ## Declarations
 
-### UiTarget, Locator and Reader
+### UiTarget and Locator
 
 A `UiTarget` is semantic identity only: `{ id, kind }`, where `kind` is
 `control` or `region`. It has no placement and grants no action.
@@ -35,15 +40,27 @@ A `UiTarget` is semantic identity only: `{ id, kind }`, where `kind` is
 A `Locator` is a named template detector with `{ id, kind = "template",
 asset_path, threshold }`. The threshold is in `[0, 1]`.
 
-A text `Reader` declares `{ id, kind = "text", confidence_floor, layout,
-normalization }`. `layout` is required and is either:
+### How a rectangle is read
 
-- `single_line`: read the declared rectangle as exactly one line, without line
-  detection;
-- `block`: locate and read every detected line in the rectangle.
+There is no free-floating Reader record. Every site that reads a rectangle
+states, on itself, the three things that describe that read:
 
-There is no inferred or default layout. `normalization` is `raw`, `trim`, or
-`collapse_whitespace`.
+- `layout`, either `single_line` (read the rectangle as exactly one line,
+  without line detection) or `block` (locate and read every detected line in
+  it). There is no inferred or default layout: under `single_line` a rectangle
+  that in fact holds several lines comes back as one run of nonsense rather
+  than failing, so only whoever drew the rectangle can answer it.
+- `confidence_floor`, in `[0, 1]`. It judges the whole set of lines: one line
+  below it makes the reading `low_confidence` rather than making that line
+  disappear.
+- `normalization`, one of `raw`, `trim`, or `collapse_whitespace`.
+
+Three sites read: a `Readout`, a `Collection`'s per-item read, and a
+`Collection`'s detection. Detection states only its floor -- its layout is
+`block` by construction, because a read whose job is to find out how many lines
+a region holds cannot be told there is one, and its normalization would
+describe text nothing consumes, since detection produces line RECTANGLES and
+every text a Collection reports comes from a per-item read.
 
 ### Predicates and detectors
 
@@ -52,26 +69,27 @@ has the three lists `all`, `any`, and `none`; at least `all` or `any` is
 non-empty. These three lists belong to a Binding variant's detector. They are
 not a Surface identity language.
 
-`text_equals` remains a Collection filter only. It can select among members
-whose existence and rectangles a block Reader has already detected, but it
+`text_equals` remains a Collection filter only. It names one of that
+Collection's own reads by that read's id, and can select among members whose
+existence and rectangles the Collection's detection has already established. It
 cannot establish a Binding or Surface identity.
 
 #### Text evidence does not establish surface identity
 
-The rejected alternative was a predicate meaning "this Reader found text here",
+The rejected alternative was a predicate meaning "a read found text here",
 motivated by variable event-card titles. Detected Collections already
 answer that question: line detection establishes the members and their
 rectangles, then an optional text predicate filters those already-existing
 members. Text is evidence about a Surface, never the identity of one.
 
-Runtime v3 makes that ruling mechanical. `detector.all`, `detector.any`, and
+The parser makes that ruling mechanical. `detector.all`, `detector.any`, and
 `detector.none` refer directly to `locator_predicate`; a Binding detector that
 spells `text_equals` is rejected, while the same predicate remains valid under
 a Collection. The former OCR identity fixture was not retained as an exception.
-The Reader boundary keeps three outcomes after the Surface resolves from locator
-evidence: `absent`, `read` carrying the original text, and `unknown` carrying
-`low_confidence`. The schema, parser, fixtures, examples and annotation compiler
-have one spelling; there is no Runtime v2 reader or OCR-identity exception.
+The reading boundary keeps three outcomes after the Surface resolves from
+locator evidence: `absent`, `read` carrying the original text, and `unknown`
+carrying `low_confidence`. The schema, parser, fixtures, examples and annotation
+compiler have one spelling; there is no OCR-identity exception.
 
 ### Binding
 
@@ -83,8 +101,7 @@ Binding {
   id, surface, ui_target,
   placement = { kind = "fixed", rect, action_point? },
   variants = [ { name, detector }, ... ],
-  actions = [ ... ],
-  reads? = [ reader_id, ... ]
+  actions? = [ ... ]
 }
 ```
 
@@ -99,15 +116,37 @@ placement's `action_point`; it cannot carry an item-relative offset. A key
 action carries its key and cannot use an action point. A placement has an
 `action_point` exactly when a click needs one.
 
-`reads`, when present, names reporting Readers. Those reads do not decide the
-Binding's detector. Most Bindings report nothing and omit or leave this list
-empty.
+A Binding does not read. It measures: its rectangle holds the ink a variant's
+detector matched, and a Binding is present only with positive measured evidence.
+A fixed rectangle whose TEXT is wanted is a Readout, declared below, which needs
+no template of its own.
+
+### Readout
+
+A `Readout` declares `{ id, surface, rect, layout, confidence_floor,
+normalization }`: one fixed rectangle on one Surface whose text is reported
+whenever that Surface is on the resolved stack.
+
+Its Surface is the whole of its gate, and it carries no detector because it
+cannot: a readout region is where a value the target rewrites every frame is
+printed, so there is no stable ink in it to match and a template drawn over one
+would stop matching the moment the value changed. What proves the rectangle is
+the rectangle is the Surface's own identity Bindings, which were measured
+present to put that Surface on the stack.
+
+A Readout attaches to no UiTarget. A centred message band inside a confirmation
+popup is a thing a project has to read and is not a control anybody acts on.
 
 ### Surface
 
-A `Surface` declares `{ id, kind, covers, identity }`. Its kind is `scene`,
-`overlay`, or `interrupt`; `covers` names the lower Surfaces with which it may
-form a stack.
+A `Surface` declares `{ id, covers?, identity }`. `covers` names the lower
+Surfaces with which it may form a stack, and it is the whole of where a Surface
+sits: covering nothing is the bottom of a stack, covering something is being
+layered over it. There is no `kind` beside it -- a kind and a covers list were
+one fact in two spellings whose agreement had to be enforced in both directions,
+and that spelling also made a full-screen popup, one that dims everything under
+it so nothing underneath still resolves, undeclarable except by calling it a
+scene and lying about what it covers.
 
 `identity` is one non-empty, duplicate-free list of required Binding ids. A
 Surface is present when every listed Binding is present. There is no
@@ -122,17 +161,19 @@ A `Collection` is an ordered variable-cardinality set of items on one Surface:
 Collection {
   id, surface,
   placement = {
-    kind = "detected", search_rect, reader,
+    kind = "detected", search_rect, confidence_floor,
     order = "left_to_right" | "top_to_bottom",
     slots = { origin, pitch, extent, tolerance, maximum_slots }
   },
-  actions = [ ... ],
-  reads = [ { reader, offset = [dx, dy], size = [width, height] }, ... ]
+  actions? = [ ... ],
+  reads? = [ { id, offset = [dx, dy], size = [width, height],
+               layout, confidence_floor, normalization }, ... ],
+  predicate? = { kind = "text_equals", read, value }
 }
 ```
 
-The placement Reader is detector evidence and must have `layout = "block"`.
-Each detected line supplies an item's exact image-space rectangle. `order`
+The placement's detection is the evidence for the items. Each detected line
+supplies an item's exact image-space rectangle. `order`
 sorts those rectangles into stable zero-based indices; overlapping spans on the
 ordering axis are ambiguous rather than inherited from detector enumeration.
 The declared slot layout uses the one-item `origin`, a positive `pitch`, a
@@ -169,7 +210,9 @@ that is a named refusal rather than an unknown fit.
 Collection `reads` are reporting-only. Each read rectangle is derived from one
 measured item origin by adding the signed `offset` and then applying the
 declared absolute `size`; the size is not a delta. A rectangle leaving the
-frame is refused, never clamped.
+frame is refused, never clamped. Each read's `id` is unique inside its
+Collection and is the name its reported reading carries, and a `predicate` can
+name only one of those sibling ids.
 
 Collections own actions. A Collection click carries an origin-relative offset
 and is resolved for one item selected by zero-based index. Binding clicks and
@@ -211,14 +254,21 @@ resolved Binding produces a `receipt_request` bound to that same state,
 Binding, variant, action and evidence ids. A key request also carries the key;
 a click request does not.
 
-Every reported reading is a list of lines under both Reader layouts. Each line
-is `{ rect, text }`: a block read uses the detector's measured image-space
-rectangle, while a single-line read reports one element using the Binding's
-declared rectangle. There is no second scalar single-line shape. A Binding
-reading is `read`, `absent`, or `unknown`; only `read` has `lines`, and only
-`unknown` has an `unknown_reason`. Reported readings omit the confidence score
-after the Reader's floor has judged it, but retain line rectangles because
-geometry participates in the decision basis.
+A resolved state reports one reading per Readout on every Surface of its stack,
+ordered by readout id. Each reading is `{ id, kind }` plus `lines` when it read
+and `reason` when it could not, where `id` is the id of the site that declared
+the read -- the Readout's own, or, inside a Collection item, the per-item read's
+own. There is no `ui_target` member: a UiTarget-shaped name was one a Collection
+had to fill with its own id, which told a consumer a UiTarget that never existed.
+
+Every reported reading is a list of lines under both layouts. Each line is
+`{ rect, text }`: a block read uses the detector's measured image-space
+rectangle, while a single_line read reports one element using the declared
+rectangle. There is no second scalar single-line shape. A reading is `read`,
+`absent`, or `unknown`; only `read` has `lines`, and only `unknown` has an
+`unknown_reason`. Reported readings omit the confidence score after the declared
+floor has judged it, but retain line rectangles because geometry participates in
+the decision basis.
 
 ### Confirmation and recognition
 

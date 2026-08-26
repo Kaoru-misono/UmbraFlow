@@ -281,10 +281,9 @@ namespace uf::operator_runtime::conformance
                 CHECK(start.request.controller.kind() == start.kind);
 
                 // Every one of the three is a call the run's own context
-                // issued, standing on the run's authority rather than on some
-                // handler's delegation.
+                // issued. Project Tool handlers are leaves, so there is no
+                // delegated child-call position to compare against.
                 CHECK(start.request.isRootPositioned());
-                CHECK_FALSE(start.request.delegation.has_value());
 
                 CHECK(start.state == ToolCallState::Confirmed);
                 CHECK(start.answer == first.answer);

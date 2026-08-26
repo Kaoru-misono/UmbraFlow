@@ -8,6 +8,7 @@
 #include <domain/ids.hpp>
 #include <domain/space.hpp>
 
+#include <array>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -40,8 +41,11 @@ namespace uf::task
     // states k_runtimeModelFormat again as model.format, and finalizeRuntimeModel
     // refuses an artifact whose parser answers with a different number, so a
     // drift between the two cannot activate.
+    //
+    // Both numbers are inside H_genesis, so moving either one is a genesis cut:
+    // k_formerGenesisArtifactRootHashes below states what the same change owes.
     inline constexpr auto k_runtimeArtifactFormat = uint64{1U};
-    inline constexpr auto k_runtimeModelFormat    = uint64{3U};
+    inline constexpr auto k_runtimeModelFormat    = uint64{4U};
 
     // Each ceiling multiplies in std::size_t rather than widening a 32-bit
     // product: an unsigned product wraps silently, so a larger factor here would
@@ -261,9 +265,37 @@ namespace uf::task
     // a run, so there is nothing for a record to attest and nothing mutable for
     // it to be wrong about.
     inline constexpr auto k_genesisRuntimeModelToml = std::string_view{
-        "schema_version = 3\n"
+        "schema_version = 4\n"
         "base_resolution = [1, 1]\n"
         "base_dpi = [96, 96]\n"
+    };
+
+    // The genesis artifact root hashes earlier eras of this framework wrote,
+    // and which an Operator root created under one of them still pins at
+    // generation 0.
+    //
+    // Editing the document above, k_runtimeModelFormat or
+    // k_runtimeArtifactFormat moves H_genesis, so any such change must append
+    // the PRE-CHANGE genesisArtifactRootHash() here in the SAME change.
+    // Generation 0 is layout rather than history: a root materialises the
+    // framework's constant, so when the constant moves the root's copy of it is
+    // migrated to follow, and a digest that is neither the current one nor
+    // named here is refused by name. Digests only -- the superseded document's
+    // TEXT is deliberately absent, because the old spelling must not live in
+    // this source and the migration rewrites hashes without reading bytes.
+    //
+    // This list is pruned, not grown forever, on the terms the Operator
+    // ledger's own migration registry states for a registered schema pair: an
+    // entry must have a reproducible fixture that constructs a root pinning it
+    // and proves the migration runs and lands on the current H_genesis. An
+    // entry that cannot be reproduced must be deleted rather than kept, because
+    // a guard nothing can reach is the mirror of a guard production does not
+    // reach.
+    inline constexpr auto k_formerGenesisArtifactRootHashes = std::array{
+        // runtime_model_format 3, superseded by the RuntimeModel format cut.
+        std::string_view{
+            "4b1174c77b10e313df176819057d7bf0e65c4332cd57697dac0f9bad77ff22a9"
+        },
     };
 
     // The exact canonical manifest bytes of the genesis artifact, derived from

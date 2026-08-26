@@ -1,18 +1,24 @@
 --!strict
--- Immutable RuntimeModel v3 compiler.
+-- Immutable RuntimeModel v4 compiler.
 --
 -- UiTarget is semantic identity only. Every pixel coordinate belongs to one
 -- Binding, and that Binding owns every visual variant sharing the coordinate.
 -- A Binding still needs positive measured evidence: placement is never evidence.
+--
+-- Every rectangle in this vocabulary belongs to the thing that declares it, and
+-- so does every statement about how that rectangle is read. There is no
+-- free-floating Reader record: a Readout, a Collection's detection and a
+-- Collection's per-item read each state their own layout, floor and
+-- normalization, because only whoever drew a rectangle knows what is in it.
 
 local model = {}
-model.schema = "umbraflow-runtime/v3"
+model.schema = "umbraflow-runtime/v4"
 -- The RuntimeModel generation this parser reads, handed to the Host at
--- finalize. It is the v3 in model.schema, and the Host refuses an artifact
+-- finalize. It is the v4 in model.schema, and the Host refuses an artifact
 -- that states a different one -- so this and k_runtimeModelFormat in
 -- modules/task/source/task/runtime-model-file.hpp move together or no
 -- artifact activates.
-model.format = 3
+model.format = 4
 
 local runtimeModels: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 local semanticBytes: { [any]: string } = setmetatable({}, { __mode = "k" }) :: any
@@ -43,6 +49,18 @@ local function dense(what: string, value: any): { any }
         end
     end
     return result :: { any }
+end
+
+-- An absent list IS the empty list, everywhere in this vocabulary. A row with
+-- nothing to say under a list member says it by leaving the member out, and
+-- requiring `= []` would put a field on every row to record its own absence.
+-- Members that must hold something -- a Binding's variants, a Surface's
+-- identity, a transition's endpoints -- are refused for being empty a line
+-- later, by the rule that wanted them non-empty rather than by the shape of a
+-- missing table.
+local function list(what: string, value: any): { any }
+    if value == nil then return {} end
+    return dense(what, value)
 end
 
 local function finite(what: string, value: any): number
@@ -87,7 +105,7 @@ end
 local function stringList(what: string, value: any, nonEmpty: boolean?): { string }
     local result: { string } = {}
     local seen: { [string]: boolean } = {}
-    for index, child in dense(what, value) do
+    for index, child in list(what, value) do
         local item = identifier(what .. "[" .. tostring(index) .. "]", child)
         if seen[item] then fail(what, "contains duplicate '" .. item .. "'") end
         seen[item] = true
@@ -150,7 +168,7 @@ end
 
 local function records(what: string, value: any, build: (string, any) -> any): { any }
     local result = {}
-    for index, child in dense(what, value) do
+    for index, child in list(what, value) do
         result[index] = build(what .. "[" .. tostring(index) .. "]", child)
     end
     return table.freeze(result)
@@ -236,38 +254,35 @@ function model.measurement_key(bindingId: any, value: any): string
     return "binding:" .. identifier("binding_id", bindingId) .. ":" .. model.predicate_key(value)
 end
 
--- The key one reported reading is cached and looked up under.  It shares the
--- `binding:` prefix with measurement_key and can never collide with one: a
--- measurement key continues with `locator:`, a reading key with `read:`, and
--- neither is a legal identifier so no id can spell the other.
-function model.reading_key(bindingId: any, readerId: any): string
-    return "binding:"
-        .. identifier("binding_id", bindingId)
-        .. ":read:"
-        .. identifier("reader_id", readerId)
+-- The key one Readout's reading is cached and looked up under. A Readout owns
+-- its rectangle outright, so its own id is the whole of what identifies the
+-- reading; the `readout:` prefix keeps it out of the `binding:` and
+-- `collection:` namespaces without imposing a cross-vocabulary naming rule.
+function model.readout_key(readoutId: any): string
+    return "readout:" .. identifier("readout_id", readoutId)
+end
+
+-- The key a Collection's own detection read is cached under. That read finds
+-- the items and belongs to the Collection rather than to any one of them, so
+-- the Collection's id names it and nothing else has to.
+function model.collection_detection_key(collectionId: any): string
+    return "collection:" .. identifier("collection_id", collectionId) .. ":detect"
 end
 
 -- A collection and a Binding may deliberately share an id: record ids are
--- unique within their own vocabulary. The prefix keeps their Reader answers
--- distinct without imposing a cross-vocabulary naming rule.
-function model.collection_reading_key(collectionId: any, readerId: any): string
-    return "collection:"
-        .. identifier("collection_id", collectionId)
-        .. ":read:"
-        .. identifier("reader_id", readerId)
-end
-
+-- unique within their own vocabulary. The prefix keeps their answers distinct
+-- without imposing a cross-vocabulary naming rule.
 function model.collection_item_reading_key(
     collectionId: any,
     itemIndex: any,
-    readerId: any
+    readId: any
 ): string
     return "collection:"
         .. identifier("collection_id", collectionId)
         .. ":item:"
         .. tostring(integer("item_index", itemIndex))
         .. ":read:"
-        .. identifier("reader_id", readerId)
+        .. identifier("read_id", readId)
 end
 
 local function predicate(what: string, value: any): any
@@ -284,7 +299,7 @@ end
 
 local function predicates(what: string, value: any, seen: { [string]: boolean }): { any }
     local result = {}
-    for index, child in dense(what, value) do
+    for index, child in list(what, value) do
         local item = predicate(what .. "[" .. tostring(index) .. "]", child)
         local key = model.predicate_key(item)
         if seen[key] then fail(what, "repeats predicate '" .. key .. "'") end
@@ -334,37 +349,61 @@ local function locator(what: string, value: any): any
     })
 end
 
--- One Reader, which states how much of the rectangle it is asserting about.
+-- The three things a site states about reading its OWN rectangle. They are
+-- written at each reading site rather than in a record of their own, because
+-- they are properties of one rectangle and a site is the only thing that owns
+-- one.
 --
 -- `layout` has no default and is never inferred.  Under `single_line` the Host
 -- runs no line detection at all, so a rectangle that in fact holds several
 -- lines comes back as one run of nonsense rather than failing; only whoever
 -- drew the rectangle knows which of the two it is, and a default here would
 -- answer that question on their behalf.
-local function reader(what: string, value: any): any
-    local source = object(what, value)
-    only(what, source, {
-        id = true,
-        kind = true,
-        confidence_floor = true,
-        layout = true,
-        normalization = true,
-    })
-    if source.kind ~= "text" then fail(what .. ".kind", "must be text") end
-    return table.freeze({
-        id = identifier(what .. ".id", source.id),
-        kind = "text",
-        confidence_floor = unit(what .. ".confidence_floor", source.confidence_floor),
+local function textRead(what: string, source: { [any]: any }): { [string]: any }
+    return {
         layout = enum(what .. ".layout", source.layout, {
             single_line = true,
             block = true,
         }),
+        confidence_floor = unit(what .. ".confidence_floor", source.confidence_floor),
         normalization = enum(what .. ".normalization", source.normalization, {
             raw = true,
             trim = true,
             collapse_whitespace = true,
         }),
-    })
+    }
+end
+
+-- One fixed rectangle on one Surface whose text is reported whenever that
+-- Surface is on the resolved stack.
+--
+-- It carries no detector and must not: a readout is where a value the target
+-- rewrites every frame is printed, so there is no stable ink in it to measure
+-- and a template drawn over one would stop matching the moment the value
+-- changed. Its Surface being resolved is the whole of its gate, and that
+-- Surface's own identity Bindings are what proved this rectangle is this
+-- rectangle.
+local function readoutBuilder(bounds: { number }): (string, any) -> any
+    return function(what: string, value: any): any
+        local source = object(what, value)
+        only(what, source, {
+            id = true,
+            surface = true,
+            rect = true,
+            layout = true,
+            confidence_floor = true,
+            normalization = true,
+        })
+        local declared = textRead(what, source)
+        return table.freeze({
+            id = identifier(what .. ".id", source.id),
+            surface = identifier(what .. ".surface", source.surface),
+            rect = rect(what .. ".rect", source.rect, bounds),
+            layout = declared.layout,
+            confidence_floor = declared.confidence_floor,
+            normalization = declared.normalization,
+        })
+    end
 end
 
 local function placementBuilder(bounds: { number }): (string, any) -> any
@@ -503,11 +542,11 @@ local function collectionPredicate(what: string, value: any): any
     if source.kind ~= "text_equals" then
         fail(what .. ".kind", "must be text_equals")
     end
-    only(what, source, { kind = true, reader = true, value = true })
+    only(what, source, { kind = true, read = true, value = true })
     if type(source.value) ~= "string" then fail(what .. ".value", "must be a string") end
     return table.freeze({
         kind = "text_equals",
-        reader = identifier(what .. ".reader", source.reader),
+        read = identifier(what .. ".read", source.read),
         value = source.value,
     })
 end
@@ -527,7 +566,7 @@ local function collectionBuilder(bounds: { number }): (string, any) -> any
         only(what .. ".placement", placement, {
             kind = true,
             search_rect = true,
-            reader = true,
+            confidence_floor = true,
             order = true,
             slots = true,
         })
@@ -566,6 +605,14 @@ local function collectionBuilder(bounds: { number }): (string, any) -> any
             placement.search_rect,
             bounds
         )
+        -- Detection states a floor and nothing else about how it reads. Its
+        -- layout is block by construction -- a read that has to find out how
+        -- many lines the region holds cannot be told there is one -- and its
+        -- normalization would describe text no consumer of a detection ever
+        -- sees: the items are the line RECTANGLES, and every text this
+        -- Collection reports comes from a per-item read below.
+        local detectionFloor =
+            unit(what .. ".placement.confidence_floor", placement.confidence_floor)
         local order = enum(what .. ".placement.order", placement.order, {
             left_to_right = true,
             top_to_bottom = true,
@@ -578,37 +625,51 @@ local function collectionBuilder(bounds: { number }): (string, any) -> any
         end
         local actions = records(what .. ".actions", source.actions, actionBuilder(true))
         mapById(what .. ".actions", actions)
+        -- One read per item, placed against that item's measured origin. Its
+        -- id is what the reported reading is named by, so it is unique inside
+        -- the Collection and is the only thing a predicate can point at.
         local reads = {}
-        local seenReaders: { [string]: boolean } = {}
-        for index, valueRead in dense(what .. ".reads", source.reads) do
-            local read = object(what .. ".reads[" .. tostring(index) .. "]", valueRead)
+        local seenReads: { [string]: boolean } = {}
+        for index, valueRead in list(what .. ".reads", source.reads) do
             local readWhat = what .. ".reads[" .. tostring(index) .. "]"
-            only(readWhat, read, { reader = true, offset = true, size = true })
-            local readerId = identifier(readWhat .. ".reader", read.reader)
-            if seenReaders[readerId] then
-                fail(what .. ".reads", "repeats Reader '" .. readerId .. "'")
+            local read = object(readWhat, valueRead)
+            only(readWhat, read, {
+                id = true,
+                offset = true,
+                size = true,
+                layout = true,
+                confidence_floor = true,
+                normalization = true,
+            })
+            local readId = identifier(readWhat .. ".id", read.id)
+            if seenReads[readId] then
+                fail(what .. ".reads", "repeats read '" .. readId .. "'")
             end
-            seenReaders[readerId] = true
+            seenReads[readId] = true
             local values = dense(readWhat .. ".offset", read.offset)
             if #values ~= 2 then
                 fail(readWhat .. ".offset", "must contain exactly two integers")
             end
+            local declared = textRead(readWhat, read)
             reads[index] = table.freeze({
-                reader = readerId,
+                id = readId,
                 offset = table.freeze({
                     integer(readWhat .. ".offset[1]", values[1]),
                     integer(readWhat .. ".offset[2]", values[2]),
                 }),
                 size = size(readWhat .. ".size", read.size),
+                layout = declared.layout,
+                confidence_floor = declared.confidence_floor,
+                normalization = declared.normalization,
             })
         end
-        return table.freeze({
+        local built = table.freeze({
             id = identifier(what .. ".id", source.id),
             surface = identifier(what .. ".surface", source.surface),
             placement = table.freeze({
                 kind = "detected",
                 search_rect = searchRect,
-                reader = identifier(what .. ".placement.reader", placement.reader),
+                confidence_floor = detectionFloor,
                 order = order,
                 slots = table.freeze({
                     origin = slotOrigin,
@@ -624,6 +685,10 @@ local function collectionBuilder(bounds: { number }): (string, any) -> any
                 then nil
                 else collectionPredicate(what .. ".predicate", source.predicate),
         })
+        if built.predicate ~= nil and not seenReads[built.predicate.read] then
+            fail(what .. ".predicate", "must name a read declared in collection.reads")
+        end
+        return built
     end
 end
 
@@ -647,7 +712,6 @@ local function bindingBuilder(bounds: { number }): (string, any) -> any
             placement = true,
             variants = true,
             actions = true,
-            reads = true,
         })
         local variants = records(what .. ".variants", source.variants, bindingVariant)
         if #variants == 0 then fail(what .. ".variants", "must not be empty") end
@@ -703,13 +767,11 @@ local function bindingBuilder(bounds: { number }): (string, any) -> any
                 end
             end
         end
-        -- Absent reads is the empty list and not a second shape: a Binding that
-        -- reports nothing has nothing to say here, and requiring every Binding
-        -- to write `reads = []` would put a field on every row to record its
-        -- own absence.
-        local reads = if source.reads == nil
-            then table.freeze({})
-            else stringList(what .. ".reads", source.reads)
+        -- A Binding does not read. It measures: its rectangle holds the ink a
+        -- variant's detector matched, and asking it to also report the text in
+        -- that same rectangle needed positive evidence a readout region cannot
+        -- carry. A fixed rectangle whose text is wanted is a Readout, whose
+        -- gate is its Surface and which needs no template of its own.
         return table.freeze({
             id = identifier(what .. ".id", source.id),
             surface = identifier(what .. ".surface", source.surface),
@@ -717,22 +779,23 @@ local function bindingBuilder(bounds: { number }): (string, any) -> any
             placement = placement,
             variants = variants,
             actions = actions,
-            reads = reads,
         })
     end
 end
 
+-- One Surface, and `covers` is the whole of where it sits. A Surface that
+-- covers nothing is the bottom of a stack; a Surface that covers something is
+-- layered over it. There is no `kind` beside that, because a kind and a covers
+-- list were one fact in two spellings and the parser had to two-way-enforce
+-- their agreement -- which also made a full-screen popup, one that dims
+-- everything under it so nothing underneath still resolves, undeclarable
+-- except by calling it a scene and lying about what it covers.
 local function surface(what: string, value: any): any
     local source = object(what, value)
-    only(what, source, { id = true, kind = true, covers = true, identity = true })
-    local kind = enum(what .. ".kind", source.kind, { scene = true, overlay = true, interrupt = true })
-    local covers = stringList(what .. ".covers", source.covers)
-    if kind == "scene" and #covers ~= 0 then fail(what .. ".covers", "must be empty for a scene") end
-    if kind ~= "scene" and #covers == 0 then fail(what .. ".covers", "must name a lower Surface") end
+    only(what, source, { id = true, covers = true, identity = true })
     return table.freeze({
         id = identifier(what .. ".id", source.id),
-        kind = kind,
-        covers = covers,
+        covers = stringList(what .. ".covers", source.covers),
         identity = identity(what .. ".identity", source.identity),
     })
 end
@@ -805,7 +868,7 @@ local function detectorRefs(what: string, value: any, locators: { [string]: any 
 end
 
 function model.surface_covers(runtimeModel: any, upperId: string, lowerId: string): boolean
-    if not runtimeModels[runtimeModel] then fail("surface_covers", "needs RuntimeModel v3") end
+    if not runtimeModels[runtimeModel] then fail("surface_covers", "needs RuntimeModel v4") end
     local visited: { [string]: boolean } = {}
     local function visit(id: string): boolean
         if id == lowerId then return true end
@@ -828,10 +891,13 @@ function model.valid_surface_stack(runtimeModel: any, value: any): boolean
         local current = runtimeModel.surface_by_id[id]
         if current == nil or seen[id] then return false end
         seen[id] = true
+        -- The bottom of a stack is the Surface that covers nothing, and every
+        -- Surface above one directly covers the Surface below it. Covering is
+        -- the whole of the relation: a Surface that covers something cannot be
+        -- the bottom, so nothing further has to be asserted about the rest.
         if index == 1 then
-            if current.kind ~= "scene" then return false end
+            if #current.covers ~= 0 then return false end
         else
-            if current.kind == "scene" then return false end
             local directlyCovers = false
             for _, covered in current.covers do
                 if covered == value[index - 1] then directlyCovers = true end
@@ -850,33 +916,34 @@ function model.compile(value: any): any
         base_dpi = true,
         ui_targets = true,
         locators = true,
-        readers = true,
         bindings = true,
         collections = true,
+        readouts = true,
         stitched_maps = true,
         surfaces = true,
         transitions = true,
     })
-    if source.schema_version ~= 3 then fail("RuntimeModel.schema_version", "must be 3") end
+    if source.schema_version ~= 4 then fail("RuntimeModel.schema_version", "must be 4") end
 
     local baseResolution = size("RuntimeModel.base_resolution", source.base_resolution)
     local baseDpi = size("RuntimeModel.base_dpi", source.base_dpi)
     local uiTargets = records("RuntimeModel.ui_targets", source.ui_targets, uiTarget)
     local locators = records("RuntimeModel.locators", source.locators, locator)
-    local readers = records("RuntimeModel.readers", source.readers, reader)
     local bindings = records("RuntimeModel.bindings", source.bindings, bindingBuilder(baseResolution))
     local collections = records(
         "RuntimeModel.collections",
         source.collections,
         collectionBuilder(baseResolution)
     )
+    local readouts = records(
+        "RuntimeModel.readouts",
+        source.readouts,
+        readoutBuilder(baseResolution)
+    )
     local surfaces = records("RuntimeModel.surfaces", source.surfaces, surface)
     local transitions = records("RuntimeModel.transitions", source.transitions, transition)
-    local stitchedMaps = records(
-        "RuntimeModel.stitched_maps",
-        if source.stitched_maps == nil then {} else source.stitched_maps,
-        stitchedMap
-    )
+    local stitchedMaps =
+        records("RuntimeModel.stitched_maps", source.stitched_maps, stitchedMap)
     -- No lower bound on ui_targets, bindings or surfaces. The model that
     -- declares nothing is the genesis model a project starts from, and it
     -- compiles to a RuntimeModel that can do nothing -- coherent, and whether
@@ -884,9 +951,9 @@ function model.compile(value: any): any
 
     local targetById = mapById("RuntimeModel.ui_targets", uiTargets)
     local locatorById = mapById("RuntimeModel.locators", locators)
-    local readerById = mapById("RuntimeModel.readers", readers)
     local bindingById = mapById("RuntimeModel.bindings", bindings)
     local collectionById = mapById("RuntimeModel.collections", collections)
+    local readoutById = mapById("RuntimeModel.readouts", readouts)
     local surfaceById = mapById("RuntimeModel.surfaces", surfaces)
     local transitionById = mapById("RuntimeModel.transitions", transitions)
     local stitchedMapById = mapById("RuntimeModel.stitched_maps", stitchedMaps)
@@ -946,9 +1013,6 @@ function model.compile(value: any): any
                 locatorById
             )
         end
-        for _, readerId in valueBinding.reads do
-            requireRef("binding '" .. valueBinding.id .. "' reads", readerById, readerId)
-        end
         if #valueBinding.actions > 0 and target.kind ~= "control" then
             fail("binding '" .. valueBinding.id .. "'", "cannot grant actions to a region UiTarget")
         end
@@ -985,39 +1049,6 @@ function model.compile(value: any): any
             surfaceById,
             valueCollection.surface
         )
-        local valueReader = requireRef(
-            "collection '" .. valueCollection.id .. "' placement",
-            readerById,
-            valueCollection.placement.reader
-        )
-        if valueReader.layout ~= "block" then
-            fail(
-                "collection '" .. valueCollection.id .. "' placement.reader",
-                "must name a block Reader"
-            )
-        end
-        for _, valueRead in valueCollection.reads do
-            requireRef("collection '" .. valueCollection.id .. "' reads", readerById, valueRead.reader)
-        end
-        if valueCollection.predicate ~= nil then
-            requireRef(
-                "collection '" .. valueCollection.id .. "' predicate",
-                readerById,
-                valueCollection.predicate.reader
-            )
-            local predicateReaderDeclared = false
-            for _, valueRead in valueCollection.reads do
-                if valueRead.reader == valueCollection.predicate.reader then
-                    predicateReaderDeclared = true
-                end
-            end
-            if not predicateReaderDeclared then
-                fail(
-                    "collection '" .. valueCollection.id .. "' predicate",
-                    "must name a Reader declared in collection.reads"
-                )
-            end
-        end
         for _, valueAction in valueCollection.actions do
             requireRef("action '" .. valueAction.id .. "'", locatorById, valueAction.proof_locator)
         end
@@ -1029,6 +1060,23 @@ function model.compile(value: any): any
         table.insert(rows, valueCollection)
     end
     for id, rows in collectionsBySurface do collectionsBySurface[id] = table.freeze(rows) end
+
+    -- Every Readout on one Surface, in declaration order. It is built here
+    -- rather than searched for later because the reading half asks exactly one
+    -- question of the model -- what does this resolved stack report? -- and a
+    -- scan per Surface per cycle would answer it by walking every Readout the
+    -- project ever declared.
+    local readoutsBySurface: { [string]: { any } } = {}
+    for _, valueReadout in readouts do
+        requireRef("readout '" .. valueReadout.id .. "'", surfaceById, valueReadout.surface)
+        local rows = readoutsBySurface[valueReadout.surface]
+        if rows == nil then
+            rows = {}
+            readoutsBySurface[valueReadout.surface] = rows
+        end
+        table.insert(rows, valueReadout)
+    end
+    for id, rows in readoutsBySurface do readoutsBySurface[id] = table.freeze(rows) end
 
     for _, valueMap in stitchedMaps do
         requireRef("stitched_map '" .. valueMap.id .. "'", collectionById, valueMap.collection)
@@ -1060,14 +1108,14 @@ function model.compile(value: any): any
     for _, valueSurface in surfaces do visitSurface(valueSurface.id) end
 
     local semanticModel = table.freeze({
-        schema_version = 3,
+        schema_version = 4,
         base_resolution = baseResolution,
         base_dpi = baseDpi,
         ui_targets = uiTargets,
         locators = locators,
-        readers = readers,
         bindings = bindings,
         collections = collections,
+        readouts = readouts,
         surfaces = surfaces,
         transitions = transitions,
         stitched_maps = stitchedMaps,
@@ -1078,9 +1126,9 @@ function model.compile(value: any): any
         base_dpi = semanticModel.base_dpi,
         ui_targets = semanticModel.ui_targets,
         locators = semanticModel.locators,
-        readers = semanticModel.readers,
         bindings = semanticModel.bindings,
         collections = semanticModel.collections,
+        readouts = semanticModel.readouts,
         surfaces = semanticModel.surfaces,
         transitions = semanticModel.transitions,
         stitched_maps = semanticModel.stitched_maps,
@@ -1091,29 +1139,24 @@ function model.compile(value: any): any
         declared_key_names = sortedUnique(keyNames),
         ui_target_by_id = targetById,
         locator_by_id = locatorById,
-        reader_by_id = readerById,
         binding_by_id = bindingById,
         collection_by_id = collectionById,
+        readout_by_id = readoutById,
         surface_by_id = surfaceById,
         transition_by_id = transitionById,
         stitched_map_by_id = stitchedMapById,
         bindings_by_surface = table.freeze(bindingsBySurface),
         collections_by_surface = table.freeze(collectionsBySurface),
+        readouts_by_surface = table.freeze(readoutsBySurface),
     })
     runtimeModels[runtimeModel] = true
     semanticBytes[runtimeModel] = canonical(semanticModel)
 
-    -- A model that declares Surfaces declares at least one scene, because a
-    -- stack of overlays over no scene resolves to nothing. A model that
-    -- declares no Surface at all has no stack to resolve, so there is nothing
-    -- here for it to violate.
-    local sceneCount = 0
-    for _, valueSurface in surfaces do
-        if valueSurface.kind == "scene" then sceneCount += 1 end
-    end
-    if #surfaces > 0 and sceneCount == 0 then
-        fail("RuntimeModel.surfaces", "needs at least one scene")
-    end
+    -- There is deliberately no "declares at least one bottom Surface" check
+    -- here. `covers` is now the whole of where a Surface sits, the cover graph
+    -- above is acyclic by the time this line runs, and a finite acyclic graph
+    -- has a sink -- so a model with Surfaces and no bottom is unrepresentable
+    -- and a check for it could never fire (docs/pitfalls/checks-that-cannot-fail.md).
 
     for _, valueTransition in transitions do
         if not model.valid_surface_stack(runtimeModel, valueTransition.from_surfaces) then
@@ -1151,7 +1194,7 @@ end
 
 function model.canonical_bytes(value: any): string
     local bytes = semanticBytes[value]
-    if bytes == nil then fail("canonical_bytes", "needs RuntimeModel v3") end
+    if bytes == nil then fail("canonical_bytes", "needs RuntimeModel v4") end
     return bytes
 end
 

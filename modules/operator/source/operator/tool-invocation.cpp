@@ -1,5 +1,6 @@
 #include "tool-invocation.hpp"
 
+#include "evidence-store.hpp"
 #include "snapshot-reference.hpp"
 
 #include <json/value.hpp>
@@ -26,35 +27,41 @@ namespace uf::operator_runtime
         constexpr auto k_auditTool = std::string_view{
             "framework.audit.record"
         };
-        // One input Tool, and its name is the act every one of its six arms
-        // performs. `framework.input.coordinate` is gone rather than aliased:
-        // two of the six -- `key` and `scroll` -- name no coordinate at all, so
-        // the old name was false about a third of its own contract. Ruled in
-        // docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md.
-        constexpr auto k_deliverInputTool = std::string_view{
-            "framework.input.deliver"
+        constexpr auto k_inputClickTool = std::string_view{
+            "framework.input.click"
         };
-        constexpr auto k_semanticInputTool = std::string_view{
-            "framework.input.semantic_target"
+        constexpr auto k_inputDragTool = std::string_view{
+            "framework.input.drag"
         };
+        constexpr auto k_inputHoldTool = std::string_view{
+            "framework.input.hold"
+        };
+        constexpr auto k_inputKeyTool = std::string_view{
+            "framework.input.key"
+        };
+        constexpr auto k_inputMoveTool = std::string_view{
+            "framework.input.move"
+        };
+        constexpr auto k_inputScrollTool = std::string_view{
+            "framework.input.scroll"
+        };
+        constexpr auto k_uiClickTool = std::string_view{"framework.ui.click"};
+        constexpr auto k_uiDragTool = std::string_view{"framework.ui.drag"};
+        constexpr auto k_uiHoldTool = std::string_view{"framework.ui.hold"};
+        constexpr auto k_uiKeyTool = std::string_view{"framework.ui.key"};
+        constexpr auto k_uiMoveTool = std::string_view{"framework.ui.move"};
+        constexpr auto k_uiScrollTool = std::string_view{"framework.ui.scroll"};
         constexpr auto k_observeTool = std::string_view{
             "framework.screen.observe"
         };
-        // The three measuring Tools an observation's body issues. Each one names
-        // a rectangle of THE FRAME THE ENCLOSING OBSERVE IS HOLDING and takes no
-        // frame handle at all: a handle could be stored and a frame may not, so
-        // they bind by call position to the innermost open frame and are refused
-        // by name outside one
-        // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
-        //
-        // There is no `framework.screen.crop`. A crop's answer is the frame's
-        // PIXELS, and a Tool result is canonical JSON inside a durable row, so a
-        // cropping Tool would put a frame's pixels inside a hashed record --
-        // which is the `framework.screen.capture` Tool this design deleted,
-        // under another name. Keeping a piece of the screen is an AUTHORING
-        // WRITE and is spelled as one, on framework.project.write's capture arm.
+        constexpr auto k_captureTool = std::string_view{
+            "framework.screen.capture"
+        };
         constexpr auto k_censusGridTool = std::string_view{
             "framework.screen.census_grid"
+        };
+        constexpr auto k_cropTool = std::string_view{
+            "framework.screen.crop"
         };
         constexpr auto k_probeTool = std::string_view{
             "framework.screen.probe"
@@ -62,11 +69,14 @@ namespace uf::operator_runtime
         constexpr auto k_readLinesTool = std::string_view{
             "framework.screen.read_lines"
         };
-        constexpr auto k_projectReadTool = std::string_view{
-            "framework.project.read"
+        constexpr auto k_projectReadTextTool = std::string_view{
+            "framework.project.read_text"
         };
-        constexpr auto k_projectWriteTool = std::string_view{
-            "framework.project.write"
+        constexpr auto k_projectWriteFileTool = std::string_view{
+            "framework.project.write_file"
+        };
+        constexpr auto k_projectWriteTextTool = std::string_view{
+            "framework.project.write_text"
         };
         constexpr auto k_statusTool = std::string_view{
             "framework.workflow.status"
@@ -80,11 +90,6 @@ namespace uf::operator_runtime
         // spelled here, and their bytes reach tool_catalog_hash through the
         // descriptor material, so widening either moves the catalog identity.
         //
-        // The type IS the delivering Tool's name, and deliberately so: one act
-        // gets one spelling. Both input Tools declare it, because both deliver
-        // the same input to the same target and differ only in what they aim
-        // by -- which is what ToolSurface already says about them.
-        constexpr auto k_inputEffectType = k_deliverInputTool;
         constexpr auto k_inputEffectScope = std::string_view{
             "controlled_target"
         };
@@ -98,35 +103,21 @@ namespace uf::operator_runtime
         // (docs/decisions/2026-08-24-policy-is-the-axis-and-observation-holds-a-frame.md
         // V4).
         //
-        // The type IS the writing Tool's name, for the input line's reason: one
-        // act gets one spelling.
-        constexpr auto k_authoringEffectType = k_projectWriteTool;
         constexpr auto k_authoringEffectScope = std::string_view{
             "project_authoring_store"
         };
 
         constexpr auto k_frameworkToolVersion = std::string_view{"1"};
 
-        // An observe's ceiling now covers ITS BODY as well as its own capture.
-        // The frame is the scope of the call that opened it, so every child
-        // measurement runs inside this call and is timed against this number; a
-        // ceiling sized for a bare capture would refuse a body that measured
-        // three rectangles. CALIBRATION: sixty seconds is well above what a
-        // bounded body of measurements takes and well below any run budget.
         constexpr auto k_maximumObserveMillis = uint64{60'000U};
-
-        // How many measuring calls one observation's body may issue. It is the
-        // Framework's own declaration, sized so that a body may sweep a screen
-        // rectangle by rectangle without the ceiling being the thing that
-        // decides how finely.
-        constexpr auto k_maximumObserveChildCalls = uint32{64U};
-
+        constexpr auto k_maximumCaptureMillis = uint64{10'000U};
         constexpr auto k_maximumMeasureMillis = uint64{10'000U};
         constexpr auto k_maximumProjectMillis = uint64{10'000U};
         constexpr auto k_maximumWaitMillis = uint64{60'000U};
         constexpr auto k_maximumAuditMillis = uint64{1'000U};
         constexpr auto k_maximumStatusMillis = uint64{1'000U};
         constexpr auto k_maximumInputMillis = uint64{15'000U};
+        constexpr auto k_maximumHoldMillis = uint64{75'000U};
 
         // The wall clock framework.workflow.wait is judged against, and the one
         // Framework Tool whose timeout ceiling cannot be its workflow ceiling.
@@ -282,7 +273,6 @@ namespace uf::operator_runtime
         // question, and only one of the two would be inside tool_catalog_hash.
         enum class ArgumentMemberKind : uint8
         {
-            Tag,
             KeyName,
             SurfacePixel,
             Milliseconds,
@@ -292,69 +282,91 @@ namespace uf::operator_runtime
             Flag,
             Name,
             Text,
+            Sha256,
+            JsonObject,
         };
 
         struct ArgumentMember final
         {
             std::string_view   name{};
-            ArgumentMemberKind kind{ArgumentMemberKind::Tag};
+            ArgumentMemberKind kind{ArgumentMemberKind::Name};
         };
 
         // Every member any Framework Tool's contract may carry, spelled once. A
         // member name means the same thing in every contract that carries it,
         // so the kind is a property of the name rather than of the pair.
         constexpr auto k_argumentMembers = std::array{
-            ArgumentMember{"action", ArgumentMemberKind::Tag},
+            ArgumentMember{"action", ArgumentMemberKind::Name},
+            ArgumentMember{"binding", ArgumentMemberKind::Name},
             ArgumentMember{"cell_height", ArgumentMemberKind::SurfacePixel},
             ArgumentMember{"cell_width", ArgumentMemberKind::SurfacePixel},
             ArgumentMember{"colour_blue", ArgumentMemberKind::ColourChannel},
             ArgumentMember{"colour_green", ArgumentMemberKind::ColourChannel},
             ArgumentMember{"colour_red", ArgumentMemberKind::ColourChannel},
             ArgumentMember{"content", ArgumentMemberKind::Text},
+            ArgumentMember{"duration_ms", ArgumentMemberKind::Milliseconds},
+            ArgumentMember{k_fileSha256Member, ArgumentMemberKind::Sha256},
             ArgumentMember{"height", ArgumentMemberKind::SurfacePixel},
             ArgumentMember{"key", ArgumentMemberKind::KeyName},
             ArgumentMember{"notches", ArgumentMemberKind::SignedCount},
             ArgumentMember{"path", ArgumentMemberKind::Name},
             ArgumentMember{"removes", ArgumentMemberKind::Flag},
+            ArgumentMember{
+                k_observationReferenceArgument,
+                ArgumentMemberKind::JsonObject,
+            },
+            ArgumentMember{"return_screen", ArgumentMemberKind::Name},
+            ArgumentMember{
+                k_screenshotSha256Member,
+                ArgumentMemberKind::Sha256,
+            },
             ArgumentMember{"to_x", ArgumentMemberKind::SurfacePixel},
             ArgumentMember{"to_y", ArgumentMemberKind::SurfacePixel},
             ArgumentMember{"tolerance", ArgumentMemberKind::Count},
             ArgumentMember{"travel_ms", ArgumentMemberKind::Milliseconds},
+            ArgumentMember{"ui_target", ArgumentMemberKind::Name},
             ArgumentMember{"width", ArgumentMemberKind::SurfacePixel},
             ArgumentMember{"x", ArgumentMemberKind::SurfacePixel},
             ArgumentMember{"y", ArgumentMemberKind::SurfacePixel},
         };
 
-        constexpr auto k_clickArmMembers = std::array{
-            std::string_view{"action"},
+        constexpr auto k_inputClickMembers = std::array{
+            k_screenshotSha256Member,
             std::string_view{"x"},
             std::string_view{"y"},
         };
-        constexpr auto k_dragArmMembers = std::array{
-            std::string_view{"action"},
+        constexpr auto k_inputDragMembers = std::array{
+            k_screenshotSha256Member,
             std::string_view{"to_x"},
             std::string_view{"to_y"},
             std::string_view{"travel_ms"},
             std::string_view{"x"},
             std::string_view{"y"},
         };
-        constexpr auto k_holdArmMembers = std::array{
-            std::string_view{"action"},
+        constexpr auto k_inputHoldMembers = std::array{
+            std::string_view{"duration_ms"},
+            k_screenshotSha256Member,
             std::string_view{"x"},
             std::string_view{"y"},
         };
-        constexpr auto k_keyArmMembers = std::array{
-            std::string_view{"action"},
+        constexpr auto k_inputKeyMembers = std::array{
             std::string_view{"key"},
+            k_screenshotSha256Member,
         };
-        constexpr auto k_moveArmMembers = std::array{
-            std::string_view{"action"},
+        constexpr auto k_inputMoveMembers = std::array{
+            k_screenshotSha256Member,
             std::string_view{"x"},
             std::string_view{"y"},
         };
-        constexpr auto k_scrollArmMembers = std::array{
-            std::string_view{"action"},
+        constexpr auto k_inputScrollMembers = std::array{
             std::string_view{"notches"},
+            k_screenshotSha256Member,
+        };
+        constexpr auto k_uiActionMembers = std::array{
+            std::string_view{"action"},
+            std::string_view{"binding"},
+            k_observationReferenceArgument,
+            std::string_view{"ui_target"},
         };
 
         // The exact member list one measuring or authoring Tool requires. Every
@@ -363,8 +375,12 @@ namespace uf::operator_runtime
         //
         // Declared in UTF-8 order of the member names, so the rendered contract
         // material is already sorted.
-        constexpr auto k_rectangleMembers = std::array{
+        constexpr auto k_screenshotMembers = std::array{
+            k_screenshotSha256Member,
+        };
+        constexpr auto k_screenshotRectangleMembers = std::array{
             std::string_view{"height"},
+            k_screenshotSha256Member,
             std::string_view{"width"},
             std::string_view{"x"},
             std::string_view{"y"},
@@ -375,6 +391,7 @@ namespace uf::operator_runtime
             std::string_view{"colour_red"},
             std::string_view{"height"},
             std::string_view{"removes"},
+            k_screenshotSha256Member,
             std::string_view{"tolerance"},
             std::string_view{"width"},
             std::string_view{"x"},
@@ -388,110 +405,23 @@ namespace uf::operator_runtime
             std::string_view{"colour_red"},
             std::string_view{"height"},
             std::string_view{"removes"},
+            k_screenshotSha256Member,
             std::string_view{"tolerance"},
             std::string_view{"width"},
             std::string_view{"x"},
             std::string_view{"y"},
         };
-        constexpr auto k_projectReadMembers = std::array{
+        constexpr auto k_projectReadTextMembers = std::array{
             std::string_view{"path"},
         };
-
-        // framework.project.write's two arms. One act -- a change to the
-        // project's own authoring store -- with two sources for what is
-        // written: text the chunk is holding, and the pixels of the frame this
-        // call captures. A second write Tool would be a second spelling of one
-        // act, and a `capture` that ANSWERED with the pixels would be the
-        // deleted screen-capture Tool.
-        constexpr auto k_captureWriteMembers = std::array{
-            std::string_view{"action"},
-            std::string_view{"height"},
+        constexpr auto k_projectWriteFileMembers = std::array{
+            k_fileSha256Member,
             std::string_view{"path"},
-            std::string_view{"width"},
-            std::string_view{"x"},
-            std::string_view{"y"},
         };
-        constexpr auto k_textWriteMembers = std::array{
-            std::string_view{"action"},
+        constexpr auto k_projectWriteTextMembers = std::array{
             std::string_view{"content"},
             std::string_view{"path"},
         };
-
-        struct InputArm final
-        {
-            std::string_view                  action{};
-            std::span<std::string_view const> members{};
-        };
-
-        // The CLOSED enumeration of input verbs, and the tagged union over it.
-        // `action` decides the arm and the arm decides the members, all of
-        // which are REQUIRED: this is a sum type, not an object whose absent
-        // members mean an older behaviour.
-        //
-        // `x` and `y` live in the four arms that aim and in no other. A `key`
-        // or a `scroll` names no position -- a wheel lands on whatever the
-        // target already believes is hovered -- so making them carry
-        // coordinates would be an accident dressed as a method.
-        //
-        // Declared in UTF-8 order of the action names, so the rendered contract
-        // material is already sorted and has one spelling rather than one per
-        // declaration order.
-        constexpr auto k_inputArms = std::array{
-            InputArm{"click", k_clickArmMembers},
-            InputArm{"drag", k_dragArmMembers},
-            InputArm{"hold", k_holdArmMembers},
-            InputArm{"key", k_keyArmMembers},
-            InputArm{"move", k_moveArmMembers},
-            InputArm{"scroll", k_scrollArmMembers},
-        };
-
-        auto inputBodyDeclaration() -> ToolBodyDeclaration
-        {
-            return ToolBodyDeclaration{
-                .takesBody = false,
-                .taggedBy  = "action",
-                .arms      = {
-                    ToolBodyArm{.name = "click", .takesBody = false},
-                    ToolBodyArm{.name = "drag", .takesBody = false},
-                    ToolBodyArm{.name = "hold", .takesBody = true},
-                    ToolBodyArm{.name = "key", .takesBody = false},
-                    ToolBodyArm{.name = "move", .takesBody = false},
-                    ToolBodyArm{.name = "scroll", .takesBody = false},
-                },
-            };
-        }
-
-        constexpr auto k_projectWriteArms = std::array{
-            InputArm{"capture", k_captureWriteMembers},
-            InputArm{"text", k_textWriteMembers},
-        };
-
-        auto projectWriteBodyDeclaration() -> ToolBodyDeclaration
-        {
-            return ToolBodyDeclaration{
-                .takesBody = false,
-                .taggedBy  = "action",
-                .arms      = {
-                    ToolBodyArm{.name = "capture", .takesBody = false},
-                    ToolBodyArm{.name = "text", .takesBody = false},
-                },
-            };
-        }
-
-        [[nodiscard]]
-        auto armActionNames(std::span<InputArm const> arms) -> std::string
-        {
-            auto names = std::string{};
-            for (auto const& arm : arms)
-            {
-                if (!names.empty())
-                {
-                    names += ", ";
-                }
-                names += arm.action;
-            }
-            return names;
-        }
 
         [[nodiscard]]
         auto memberList(std::span<std::string_view const> members) -> std::string
@@ -506,18 +436,6 @@ namespace uf::operator_runtime
                 rendered += member;
             }
             return rendered;
-        }
-
-        [[nodiscard]]
-        auto armFor(std::span<InputArm const> arms, std::string_view action)
-            -> InputArm const*
-        {
-            auto const found = std::ranges::find(
-                arms,
-                action,
-                &InputArm::action
-            );
-            return found == arms.end() ? nullptr : &*found;
         }
 
         [[nodiscard]]
@@ -543,13 +461,28 @@ namespace uf::operator_runtime
         {
             switch (kind)
             {
-            case ArgumentMemberKind::Tag:
             case ArgumentMemberKind::KeyName:
             case ArgumentMemberKind::Name:
                 return value.kind() == json::ValueKind::String
                     && !value.string().empty();
             case ArgumentMemberKind::Text:
                 return value.kind() == json::ValueKind::String;
+            case ArgumentMemberKind::JsonObject:
+                return value.kind() == json::ValueKind::Object;
+            case ArgumentMemberKind::Sha256:
+                return value.kind() == json::ValueKind::String
+                    && value.string().size() == 64U
+                    && std::ranges::all_of(
+                        value.string(),
+                        [](char character)
+                        {
+                            return (
+                                character >= '0' && character <= '9'
+                            ) || (
+                                character >= 'a' && character <= 'f'
+                            );
+                        }
+                    );
             case ArgumentMemberKind::SurfacePixel:
                 return value.isInteger()
                     && value.number() >= 0.0
@@ -611,71 +544,6 @@ namespace uf::operator_runtime
             return ok();
         }
 
-        // The tagged union, judged tag first, for whichever Tool declares one.
-        // Every refusal names what was wrong: an action outside the enumeration
-        // is named against the whole closed set, and an arm short a member is
-        // named against the exact member list its own tag requires.
-        [[nodiscard]]
-        auto requireTaggedArm(
-            CanonicalJson const& arguments,
-            std::string_view toolName,
-            std::span<InputArm const> arms
-        ) -> Status
-        {
-            auto const& value = arguments.value();
-            if (value.kind() != json::ValueKind::Object)
-            {
-                return invalidFrameworkArguments(
-                    std::string{toolName} + " arguments must be an object"
-                );
-            }
-            auto const* const p_action = value.find("action");
-            if (
-                p_action == nullptr
-                || p_action->kind() != json::ValueKind::String
-            )
-            {
-                return invalidFrameworkArguments(
-                    std::string{toolName} + " requires an action naming one of "
-                    + armActionNames(arms)
-                );
-            }
-            auto const* const p_arm = armFor(arms, p_action->string());
-            if (p_arm == nullptr)
-            {
-                return invalidFrameworkArguments(
-                    std::string{toolName} + " action '"
-                    + std::string{p_action->string()}
-                    + "' is outside the closed set " + armActionNames(arms)
-                );
-            }
-            if (value.members().size() != p_arm->members.size())
-            {
-                return invalidFrameworkArguments(
-                    std::string{toolName} + " action '"
-                    + std::string{p_arm->action} + "' requires exactly "
-                    + memberList(p_arm->members)
-                );
-            }
-            for (auto const& member : p_arm->members)
-            {
-                auto const* const p_value = value.find(member);
-                if (
-                    p_value == nullptr
-                    || !argumentMemberValid(argumentMemberKind(member), *p_value)
-                )
-                {
-                    return invalidFrameworkArguments(
-                        std::string{toolName} + " action '"
-                        + std::string{p_arm->action} + "' requires exactly "
-                        + memberList(p_arm->members) + ", and '"
-                        + std::string{member} + "' is missing or malformed"
-                    );
-                }
-            }
-            return ok();
-        }
-
         // The payload shape a Framework input effect carries. It is rendered
         // here rather than read from a file so that the Framework owns its own
         // effect schema exactly the way it owns its argument contracts, and so
@@ -705,7 +573,8 @@ namespace uf::operator_runtime
             return sha256(std::as_bytes(std::span{bytes}));
         }
 
-        // The bound BOTH Framework input Tools declare, and there is one of it.
+        // The bound each Framework input Tool declares. The effect type is the
+        // Tool name itself, so a grant for move cannot admit click or key.
         //
         // ONE EFFECT LINE FOR INPUT INJECTION: the effect is a change to the
         // external world, its scope is the target surface the registration
@@ -725,12 +594,13 @@ namespace uf::operator_runtime
         // the target surface this registration declares is refused before
         // anything is captured or posted, naming the surface it was outside of.
         [[nodiscard]]
-        auto inputEffectBounds() -> Result<std::vector<EffectBound>>
+        auto inputEffectBounds(std::string_view toolName)
+            -> Result<std::vector<EffectBound>>
         {
             UF_TRY_VALUE(payloadSchemaHash, inputEffectPayloadSchemaHash());
             auto bounds = std::vector<EffectBound>{};
             bounds.emplace_back(EffectBound{
-                .namespacedType    = std::string{k_inputEffectType},
+                .namespacedType    = std::string{toolName},
                 .scopeKind         = std::string{k_inputEffectScope},
                 .payloadSchemaHash = payloadSchemaHash,
                 .maximumRisk       = Risk::Critical,
@@ -738,27 +608,6 @@ namespace uf::operator_runtime
             return bounds;
         }
 
-        // AN OBSERVATION HOLDS ITS FRAME, and this declaration is what lets it
-        // have a body at all
-        // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
-        // A grant is minted from a parent whose child_tool_names are non-empty
-        // and whose row is still dispatching, so a body's measurements are
-        // recorded as this call's children only because the three names below
-        // are inside tool_catalog_hash.
-        //
-        // THE CEILINGS ARE READ-ONLY, and that is not a placeholder. A mutating
-        // child under this parent could never be admitted whatever this said:
-        // admission also matches a child's effect against the ADMITTED ROOT
-        // EFFECT ENVELOPE, an observe declares no effect bound so its envelope
-        // is empty, and giving it one would make it a mutating call that a
-        // deny-all artifact refuses -- which would take read-only screen
-        // observation away from the very session that has no policy yet. So the
-        // held child measurements are read-only, exactly as V4 rules them, and
-        // an input or an authoring write is issued at the top of the run
-        // instead.
-        //
-        // Declared in UTF-8 order of the names, so the rendered declaration is
-        // already sorted.
         [[nodiscard]]
         auto observeDescriptor() -> Result<ToolDescriptor>
         {
@@ -767,25 +616,6 @@ namespace uf::operator_runtime
                 .requiredCapabilities = {},
                 .effectBounds         = {},
                 .uiActionBounds       = {},
-                .childEffects         = ChildEffectDeclaration{
-                    .childToolNames = {
-                        std::string{k_censusGridTool},
-                        std::string{k_probeTool},
-                        std::string{k_readLinesTool},
-                    },
-                    .maximumChildSurface    = ToolSurface::Privileged,
-                    .maximumChildMutability = ToolMutability::ReadOnly,
-                    .maximumChildRisk       = Risk::ReadOnly,
-                    .maximumChildCalls      = k_maximumObserveChildCalls,
-                },
-                .body = ToolBodyDeclaration{.takesBody = true},
-                .limits = WorkflowLimits{
-                    .maximumSteps         = 1U,
-                    .maximumDispatches    = 0U,
-                    .maximumObservations  = 1U,
-                    .maximumWaits         = 0U,
-                    .maximumElapsedMillis = k_maximumObserveMillis,
-                },
                 .timeout = TimeoutPolicy{
                     .maximumElapsedMillis = k_maximumObserveMillis,
                     .onTimeout            = TimeoutAction::Stop,
@@ -796,14 +626,30 @@ namespace uf::operator_runtime
             };
         }
 
-        // The three measuring Tools. Each is PRIVILEGED because its arguments
+        [[nodiscard]]
+        auto captureDescriptor() -> Result<ToolDescriptor>
+        {
+            return ToolDescriptor{
+                .toolVersion          = std::string{k_frameworkToolVersion},
+                .requiredCapabilities = {},
+                .effectBounds         = {},
+                .uiActionBounds       = {},
+                .timeout = TimeoutPolicy{
+                    .maximumElapsedMillis = k_maximumCaptureMillis,
+                    .onTimeout            = TimeoutAction::Stop,
+                },
+                .mutability  = ToolMutability::ReadOnly,
+                .surface     = ToolSurface::Semantic,
+                .idempotency = ToolIdempotency::ReadSafe,
+            };
+        }
+
+        // The measuring and crop Tools. Each is PRIVILEGED because its arguments
         // and its answer are the machine's vocabulary -- a rectangle of pixels,
         // a colour channel -- and never the project's; that label is what an
-        // Operator's privileged_surface_tools list judges at the top of a run,
-        // and it is deliberately not judged for a child, whose surface is
-        // bounded by its parent's declaration instead. So an observe's body
-        // measures under deny-all, and a top-level measurement needs the
-        // Operator's grant AND still finds no open frame.
+        // Operator's privileged_surface_tools list judges at admission. Every
+        // one names its immutable screenshot explicitly, so no call position or
+        // live frame scope participates in resolution.
         //
         // ReadOnly with no effect bound: a measurement changes nothing outside
         // the Operator, so it proposes no mutation and no policy is consulted.
@@ -815,13 +661,6 @@ namespace uf::operator_runtime
                 .requiredCapabilities = {},
                 .effectBounds         = {},
                 .uiActionBounds       = {},
-                .limits               = WorkflowLimits{
-                    .maximumSteps         = 1U,
-                    .maximumDispatches    = 0U,
-                    .maximumObservations  = 0U,
-                    .maximumWaits         = 0U,
-                    .maximumElapsedMillis = k_maximumMeasureMillis,
-                },
                 .timeout = TimeoutPolicy{
                     .maximumElapsedMillis = k_maximumMeasureMillis,
                     .onTimeout            = TimeoutAction::Stop,
@@ -838,20 +677,13 @@ namespace uf::operator_runtime
         // deny-all may read back what it wrote. What it may not do is write --
         // that is the Tool below, and it is where the grant is required.
         [[nodiscard]]
-        auto projectReadDescriptor() -> Result<ToolDescriptor>
+        auto projectReadTextDescriptor() -> Result<ToolDescriptor>
         {
             return ToolDescriptor{
                 .toolVersion          = std::string{k_frameworkToolVersion},
                 .requiredCapabilities = {},
                 .effectBounds         = {},
                 .uiActionBounds       = {},
-                .limits               = WorkflowLimits{
-                    .maximumSteps         = 1U,
-                    .maximumDispatches    = 0U,
-                    .maximumObservations  = 0U,
-                    .maximumWaits         = 0U,
-                    .maximumElapsedMillis = k_maximumProjectMillis,
-                },
                 .timeout = TimeoutPolicy{
                     .maximumElapsedMillis = k_maximumProjectMillis,
                     .onTimeout            = TimeoutAction::Stop,
@@ -878,7 +710,8 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
-        auto authoringEffectBounds() -> Result<std::vector<EffectBound>>
+        auto authoringEffectBounds(std::string_view toolName)
+            -> Result<std::vector<EffectBound>>
         {
             auto const bytes = json::canonicalBytes(
                 authoringEffectPayloadMaterial()
@@ -889,7 +722,7 @@ namespace uf::operator_runtime
             );
             auto bounds = std::vector<EffectBound>{};
             bounds.emplace_back(EffectBound{
-                .namespacedType    = std::string{k_authoringEffectType},
+                .namespacedType    = std::string{toolName},
                 .scopeKind         = std::string{k_authoringEffectScope},
                 .payloadSchemaHash = payloadSchemaHash,
                 // Medium rather than the input line's Critical, and the
@@ -903,41 +736,47 @@ namespace uf::operator_runtime
             return bounds;
         }
 
-        // Writing the project's own authoring store, from text or from the
-        // pixels of a frame this call captures.
-        //
-        // PRIVILEGED, because its capture arm names a rectangle of the screen,
-        // and a Tool is judged by the more restricted of the vocabularies it
-        // speaks. Mutating, so the Operator's policy decides its effect. Under
-        // deny-all both refusals fire and both name what was missing.
         [[nodiscard]]
-        auto projectWriteDescriptor() -> Result<ToolDescriptor>
+        auto projectWriteDescriptor(
+            std::string_view toolName,
+            ToolSurface surface
+        ) -> Result<ToolDescriptor>
         {
-            UF_TRY_VALUE(bounds, authoringEffectBounds());
+            UF_TRY_VALUE(bounds, authoringEffectBounds(toolName));
             return ToolDescriptor{
                 .toolVersion          = std::string{k_frameworkToolVersion},
                 .requiredCapabilities = {},
                 .effectBounds         = std::move(bounds),
                 .uiActionBounds       = {},
-                .body                 = projectWriteBodyDeclaration(),
-                .limits               = WorkflowLimits{
-                    .maximumSteps         = 1U,
-                    .maximumDispatches    = 0U,
-                    .maximumObservations  = 0U,
-                    .maximumWaits         = 0U,
-                    .maximumElapsedMillis = k_maximumProjectMillis,
-                },
                 .timeout = TimeoutPolicy{
                     .maximumElapsedMillis = k_maximumProjectMillis,
                     .onTimeout            = TimeoutAction::Stop,
                 },
                 .mutability = ToolMutability::Mutating,
-                .surface    = ToolSurface::Privileged,
+                .surface    = surface,
                 // A second write of the same bytes to the same path leaves the
                 // store where the first left it, which is what delivery-safe
                 // means: redelivering costs nothing beyond the write.
                 .idempotency = ToolIdempotency::DeliverySafe,
             };
+        }
+
+        [[nodiscard]]
+        auto projectWriteFileDescriptor() -> Result<ToolDescriptor>
+        {
+            return projectWriteDescriptor(
+                k_projectWriteFileTool,
+                ToolSurface::Privileged
+            );
+        }
+
+        [[nodiscard]]
+        auto projectWriteTextDescriptor() -> Result<ToolDescriptor>
+        {
+            return projectWriteDescriptor(
+                k_projectWriteTextTool,
+                ToolSurface::Semantic
+            );
         }
 
         // Run and call-tree status. It observes no frame and spends no
@@ -950,13 +789,6 @@ namespace uf::operator_runtime
                 .requiredCapabilities = {},
                 .effectBounds         = {},
                 .uiActionBounds       = {},
-                .limits               = WorkflowLimits{
-                    .maximumSteps         = 1U,
-                    .maximumDispatches    = 0U,
-                    .maximumObservations  = 0U,
-                    .maximumWaits         = 0U,
-                    .maximumElapsedMillis = k_maximumStatusMillis,
-                },
                 .timeout = TimeoutPolicy{
                     .maximumElapsedMillis = k_maximumStatusMillis,
                     .onTimeout            = TimeoutAction::Stop,
@@ -987,13 +819,6 @@ namespace uf::operator_runtime
                 .requiredCapabilities = {},
                 .effectBounds         = {},
                 .uiActionBounds       = {},
-                .limits               = WorkflowLimits{
-                    .maximumSteps         = 1U,
-                    .maximumDispatches    = 0U,
-                    .maximumObservations  = 0U,
-                    .maximumWaits         = 0U,
-                    .maximumElapsedMillis = k_maximumAuditMillis,
-                },
                 .timeout = TimeoutPolicy{
                     .maximumElapsedMillis = k_maximumAuditMillis,
                     .onTimeout            = TimeoutAction::Stop,
@@ -1004,85 +829,59 @@ namespace uf::operator_runtime
             };
         }
 
-        // Native input against a snapshot-scoped semantic target. Semantic
-        // surface deliberately: this is the input an ordinary online actor is
-        // meant to reach, and the target it names was resolved by Framework
-        // against an observation Framework minted.
-        //
-        // NonIdempotent because the question the field answers is what
-        // REDELIVERING one call would cost, and a second delivered click is a
-        // second click. Single use of the observation authority is a separate
-        // and stronger guarantee, and neither substitutes for the other.
+        // One verb per Tool. Raw input is privileged machine vocabulary;
+        // semantic input is observation-bound project vocabulary. Hold alone
+        // admits one internal screen return after its declared dwell.
         [[nodiscard]]
-        auto semanticInputDescriptor() -> Result<ToolDescriptor>
+        auto inputDescriptor(
+            std::string_view toolName,
+            ToolSurface surface,
+            bool hold
+        ) -> Result<ToolDescriptor>
         {
-            UF_TRY_VALUE(bounds, inputEffectBounds());
+            UF_TRY_VALUE(bounds, inputEffectBounds(toolName));
+            auto const maximumElapsedMillis = hold
+                ? k_maximumHoldMillis
+                : k_maximumInputMillis;
             return ToolDescriptor{
                 .toolVersion          = std::string{k_frameworkToolVersion},
                 .requiredCapabilities = {},
                 .effectBounds         = std::move(bounds),
-                .uiActionBounds       = {std::string{k_semanticInputTool}},
-                .limits               = WorkflowLimits{
-                    .maximumSteps         = 1U,
-                    .maximumDispatches    = 1U,
-                    .maximumObservations  = 0U,
-                    .maximumWaits         = 0U,
-                    .maximumElapsedMillis = k_maximumInputMillis,
-                },
+                .uiActionBounds       = {std::string{toolName}},
                 .timeout = TimeoutPolicy{
-                    .maximumElapsedMillis = k_maximumInputMillis,
+                    .maximumElapsedMillis = maximumElapsedMillis,
                     .onTimeout            = TimeoutAction::Reobserve,
                 },
                 .mutability  = ToolMutability::Mutating,
-                .surface     = ToolSurface::Semantic,
+                .surface     = surface,
                 .idempotency = ToolIdempotency::NonIdempotent,
             };
         }
 
-        // The whole input vocabulary in machine terms: six verbs, one tagged
-        // contract, and a point measured against the target surface this
-        // registration declared rather than a target the model declared.
-        // Section 3.2 keeps low-level input a Privileged surface, so being a
-        // Framework Tool does not make it generally available -- an Operator
-        // that has not listed it under privileged_surface_tools cannot reach it
-        // at the top of a run at all, and that grant is the "distinct
-        // privileged authority stating plainly that nothing measured it" this
-        // Tool's placeholder verdict was waiting for.
-        [[nodiscard]]
-        auto deliverInputDescriptor() -> Result<ToolDescriptor>
-        {
-            UF_TRY_VALUE(bounds, inputEffectBounds());
-            return ToolDescriptor{
-                .toolVersion          = std::string{k_frameworkToolVersion},
-                .requiredCapabilities = {},
-                .effectBounds         = std::move(bounds),
-                .uiActionBounds       = {std::string{k_deliverInputTool}},
-                .childEffects         = ChildEffectDeclaration{
-                    .childToolNames = {
-                        std::string{k_observeTool},
-                    },
-                    .maximumChildSurface    = ToolSurface::Semantic,
-                    .maximumChildMutability = ToolMutability::ReadOnly,
-                    .maximumChildRisk       = Risk::ReadOnly,
-                    .maximumChildCalls      = k_maximumObserveChildCalls,
-                },
-                .body = inputBodyDeclaration(),
-                .limits               = WorkflowLimits{
-                    .maximumSteps         = 1U,
-                    .maximumDispatches    = 1U,
-                    .maximumObservations  = 0U,
-                    .maximumWaits         = 0U,
-                    .maximumElapsedMillis = k_maximumInputMillis,
-                },
-                .timeout = TimeoutPolicy{
-                    .maximumElapsedMillis = k_maximumInputMillis,
-                    .onTimeout            = TimeoutAction::Reobserve,
-                },
-                .mutability  = ToolMutability::Mutating,
-                .surface     = ToolSurface::Privileged,
-                .idempotency = ToolIdempotency::NonIdempotent,
-            };
-        }
+        [[nodiscard]] auto inputClickDescriptor() -> Result<ToolDescriptor>
+        { return inputDescriptor(k_inputClickTool, ToolSurface::Privileged, false); }
+        [[nodiscard]] auto inputDragDescriptor() -> Result<ToolDescriptor>
+        { return inputDescriptor(k_inputDragTool, ToolSurface::Privileged, false); }
+        [[nodiscard]] auto inputHoldDescriptor() -> Result<ToolDescriptor>
+        { return inputDescriptor(k_inputHoldTool, ToolSurface::Privileged, true); }
+        [[nodiscard]] auto inputKeyDescriptor() -> Result<ToolDescriptor>
+        { return inputDescriptor(k_inputKeyTool, ToolSurface::Privileged, false); }
+        [[nodiscard]] auto inputMoveDescriptor() -> Result<ToolDescriptor>
+        { return inputDescriptor(k_inputMoveTool, ToolSurface::Privileged, false); }
+        [[nodiscard]] auto inputScrollDescriptor() -> Result<ToolDescriptor>
+        { return inputDescriptor(k_inputScrollTool, ToolSurface::Privileged, false); }
+        [[nodiscard]] auto uiClickDescriptor() -> Result<ToolDescriptor>
+        { return inputDescriptor(k_uiClickTool, ToolSurface::Semantic, false); }
+        [[nodiscard]] auto uiDragDescriptor() -> Result<ToolDescriptor>
+        { return inputDescriptor(k_uiDragTool, ToolSurface::Semantic, false); }
+        [[nodiscard]] auto uiHoldDescriptor() -> Result<ToolDescriptor>
+        { return inputDescriptor(k_uiHoldTool, ToolSurface::Semantic, true); }
+        [[nodiscard]] auto uiKeyDescriptor() -> Result<ToolDescriptor>
+        { return inputDescriptor(k_uiKeyTool, ToolSurface::Semantic, false); }
+        [[nodiscard]] auto uiMoveDescriptor() -> Result<ToolDescriptor>
+        { return inputDescriptor(k_uiMoveTool, ToolSurface::Semantic, false); }
+        [[nodiscard]] auto uiScrollDescriptor() -> Result<ToolDescriptor>
+        { return inputDescriptor(k_uiScrollTool, ToolSurface::Semantic, false); }
 
         [[nodiscard]]
         auto waitDescriptor() -> Result<ToolDescriptor>
@@ -1092,13 +891,6 @@ namespace uf::operator_runtime
                 .requiredCapabilities = {},
                 .effectBounds         = {},
                 .uiActionBounds       = {},
-                .limits               = WorkflowLimits{
-                    .maximumSteps         = 1U,
-                    .maximumDispatches    = 0U,
-                    .maximumObservations  = 0U,
-                    .maximumWaits         = 1U,
-                    .maximumElapsedMillis = k_maximumWaitMillis,
-                },
                 .timeout = TimeoutPolicy{
                     .maximumElapsedMillis = k_waitTimeoutMillis,
                     .onTimeout            = TimeoutAction::Stop,
@@ -1134,7 +926,27 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto validateObserveArguments(CanonicalJson const& arguments) -> Status
         {
-            return requireNoArguments(arguments, k_observeTool);
+            return requireExactMembers(
+                arguments,
+                k_observeTool,
+                k_screenshotMembers
+            );
+        }
+
+        [[nodiscard]]
+        auto validateCaptureArguments(CanonicalJson const& arguments) -> Status
+        {
+            return requireNoArguments(arguments, k_captureTool);
+        }
+
+        [[nodiscard]]
+        auto validateCropArguments(CanonicalJson const& arguments) -> Status
+        {
+            return requireExactMembers(
+                arguments,
+                k_cropTool,
+                k_screenshotRectangleMembers
+            );
         }
 
         [[nodiscard]]
@@ -1167,52 +979,123 @@ namespace uf::operator_runtime
             return ok();
         }
 
-        // observation_reference is an OBJECT and never a string carrying JSON.
-        // Per R3 a handle stays plain JSON data, so the reference travels as
-        // the value it is; re-rendering that member canonically reproduces the
-        // exact bytes the Framework minted, which is what the resolution
-        // boundary recognises it by.
         [[nodiscard]]
-        auto validateSemanticInputArguments(CanonicalJson const& arguments)
-            -> Status
+        auto requireMembersWithOptionalReturn(
+            CanonicalJson const& arguments,
+            std::string_view toolName,
+            std::span<std::string_view const> required
+        ) -> Status
         {
             auto const& value = arguments.value();
-            auto const* const p_reference = value.find(
-                k_observationReferenceArgument
-            );
-            auto const* const p_target = value.find("semantic_target");
-            auto const* const p_action = value.find("ui_action");
+            auto const* const p_return = value.find("return_screen");
+            auto const validReturn = p_return == nullptr
+                || (
+                    p_return->kind() == json::ValueKind::String
+                    && (
+                        p_return->string() == "none"
+                        || p_return->string() == "capture"
+                        || p_return->string() == "observe"
+                    )
+                );
             if (
                 value.kind() != json::ValueKind::Object
-                || value.members().size() != 3U
-                || p_reference == nullptr
-                || p_reference->kind() != json::ValueKind::Object
-                || p_target == nullptr
-                || p_target->kind() != json::ValueKind::String
-                || p_target->string().empty()
-                || p_action == nullptr
-                || p_action->kind() != json::ValueKind::String
-                || p_action->string().empty()
+                || value.members().size()
+                    != required.size() + (p_return == nullptr ? 0U : 1U)
+                || !validReturn
             )
             {
                 return invalidFrameworkArguments(
-                    "framework.input.semantic_target requires an object "
-                    "observation_reference and a non-empty semantic_target "
-                    "and ui_action"
+                    std::string{toolName} + " requires exactly "
+                    + memberList(required)
+                    + " and optional return_screen in none, capture, observe"
                 );
+            }
+            for (auto const& member : required)
+            {
+                auto const* const p_value = value.find(member);
+                if (
+                    p_value == nullptr
+                    || !argumentMemberValid(argumentMemberKind(member), *p_value)
+                )
+                {
+                    return invalidFrameworkArguments(
+                        std::string{toolName} + " requires exactly "
+                        + memberList(required) + ", and '"
+                        + std::string{member} + "' is missing or malformed"
+                    );
+                }
             }
             return ok();
         }
 
-        // The tagged union, judged tag first. A verb this Tool cannot validate
-        // would be an unbound call it could not refuse by name, which is the
-        // hole the free string left.
         [[nodiscard]]
-        auto validateDeliverInputArguments(CanonicalJson const& arguments)
-            -> Status
+        auto validateInputClickArguments(CanonicalJson const& arguments) -> Status
+        { return requireExactMembers(arguments, k_inputClickTool, k_inputClickMembers); }
+        [[nodiscard]]
+        auto validateInputDragArguments(CanonicalJson const& arguments) -> Status
+        { return requireExactMembers(arguments, k_inputDragTool, k_inputDragMembers); }
+        [[nodiscard]]
+        auto validateInputHoldArguments(CanonicalJson const& arguments) -> Status
         {
-            return requireTaggedArm(arguments, k_deliverInputTool, k_inputArms);
+            return requireMembersWithOptionalReturn(
+                arguments,
+                k_inputHoldTool,
+                k_inputHoldMembers
+            );
         }
+        [[nodiscard]]
+        auto validateInputKeyArguments(CanonicalJson const& arguments) -> Status
+        { return requireExactMembers(arguments, k_inputKeyTool, k_inputKeyMembers); }
+        [[nodiscard]]
+        auto validateInputMoveArguments(CanonicalJson const& arguments) -> Status
+        { return requireExactMembers(arguments, k_inputMoveTool, k_inputMoveMembers); }
+        [[nodiscard]]
+        auto validateInputScrollArguments(CanonicalJson const& arguments) -> Status
+        {
+            return requireExactMembers(
+                arguments,
+                k_inputScrollTool,
+                k_inputScrollMembers
+            );
+        }
+
+        // observation_reference is an object, never a string containing JSON.
+        // The other three members are identifiers minted into the named
+        // observation; the provider performs that authority join.
+        [[nodiscard]]
+        auto validateUiArguments(
+            CanonicalJson const& arguments,
+            std::string_view toolName,
+            bool hold
+        ) -> Status
+        {
+            return hold
+                ? requireMembersWithOptionalReturn(
+                      arguments,
+                      toolName,
+                      k_uiActionMembers
+                  )
+                : requireExactMembers(arguments, toolName, k_uiActionMembers);
+        }
+
+        [[nodiscard]] auto validateUiClickArguments(CanonicalJson const& arguments)
+            -> Status
+        { return validateUiArguments(arguments, k_uiClickTool, false); }
+        [[nodiscard]] auto validateUiDragArguments(CanonicalJson const& arguments)
+            -> Status
+        { return validateUiArguments(arguments, k_uiDragTool, false); }
+        [[nodiscard]] auto validateUiHoldArguments(CanonicalJson const& arguments)
+            -> Status
+        { return validateUiArguments(arguments, k_uiHoldTool, true); }
+        [[nodiscard]] auto validateUiKeyArguments(CanonicalJson const& arguments)
+            -> Status
+        { return validateUiArguments(arguments, k_uiKeyTool, false); }
+        [[nodiscard]] auto validateUiMoveArguments(CanonicalJson const& arguments)
+            -> Status
+        { return validateUiArguments(arguments, k_uiMoveTool, false); }
+        [[nodiscard]] auto validateUiScrollArguments(CanonicalJson const& arguments)
+            -> Status
+        { return validateUiArguments(arguments, k_uiScrollTool, false); }
 
         [[nodiscard]]
         auto validateReadLinesArguments(CanonicalJson const& arguments) -> Status
@@ -1220,7 +1103,7 @@ namespace uf::operator_runtime
             return requireExactMembers(
                 arguments,
                 k_readLinesTool,
-                k_rectangleMembers
+                k_screenshotRectangleMembers
             );
         }
 
@@ -1242,24 +1125,35 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
-        auto validateProjectReadArguments(CanonicalJson const& arguments)
+        auto validateProjectReadTextArguments(CanonicalJson const& arguments)
             -> Status
         {
             return requireExactMembers(
                 arguments,
-                k_projectReadTool,
-                k_projectReadMembers
+                k_projectReadTextTool,
+                k_projectReadTextMembers
             );
         }
 
         [[nodiscard]]
-        auto validateProjectWriteArguments(CanonicalJson const& arguments)
+        auto validateProjectWriteFileArguments(CanonicalJson const& arguments)
             -> Status
         {
-            return requireTaggedArm(
+            return requireExactMembers(
                 arguments,
-                k_projectWriteTool,
-                k_projectWriteArms
+                k_projectWriteFileTool,
+                k_projectWriteFileMembers
+            );
+        }
+
+        [[nodiscard]]
+        auto validateProjectWriteTextArguments(CanonicalJson const& arguments)
+            -> Status
+        {
+            return requireExactMembers(
+                arguments,
+                k_projectWriteTextTool,
+                k_projectWriteTextMembers
             );
         }
 
@@ -1314,102 +1208,386 @@ namespace uf::operator_runtime
             });
         }
 
-        [[nodiscard]]
-        auto semanticInputArgumentMaterial() -> json::Value
+        struct ScreenMemberDescription final
         {
-            return requiredMembersMaterial({
-                json::Value::ofString(
-                    std::string{k_observationReferenceArgument}
-                ),
-                json::Value::ofString("semantic_target"),
-                json::Value::ofString("ui_action"),
+            std::string_view member{};
+            std::string_view description{};
+        };
+
+        constexpr auto k_screenMemberDescriptions = std::array{
+            ScreenMemberDescription{"cell_height", "Grid-cell height in screenshot pixels."},
+            ScreenMemberDescription{"cell_width", "Grid-cell width in screenshot pixels."},
+            ScreenMemberDescription{"colour_blue", "Blue channel of the probe colour in [0, 255]."},
+            ScreenMemberDescription{"colour_green", "Green channel of the probe colour in [0, 255]."},
+            ScreenMemberDescription{"colour_red", "Red channel of the probe colour in [0, 255]."},
+            ScreenMemberDescription{"height", "Rectangle height in screenshot pixels."},
+            ScreenMemberDescription{"removes", "Whether matching pixels are removed rather than selected."},
+            ScreenMemberDescription{k_screenshotSha256Member, "Lowercase sha256 digest of the immutable screenshot artifact to read."},
+            ScreenMemberDescription{"tolerance", "Inclusive channel tolerance for colour selection."},
+            ScreenMemberDescription{"width", "Rectangle width in screenshot pixels."},
+            ScreenMemberDescription{"x", "Left edge of the rectangle in screenshot pixels."},
+            ScreenMemberDescription{"y", "Top edge of the rectangle in screenshot pixels."},
+        };
+
+        [[nodiscard]]
+        auto screenMemberDescription(std::string_view member) -> std::string_view
+        {
+            auto const found = std::ranges::find(
+                k_screenMemberDescriptions,
+                member,
+                &ScreenMemberDescription::member
+            );
+            if (found != k_screenMemberDescriptions.end()) return found->description;
+            UF_UNREACHABLE_MSG("Unknown screen argument member description");
+        }
+
+        [[nodiscard]]
+        auto screenMemberSchema(std::string_view member) -> json::Value
+        {
+            auto members = std::vector<json::Member>{
+                {"description", json::Value::ofString(
+                    std::string{screenMemberDescription(member)}
+                )},
+            };
+            auto const kind = argumentMemberKind(member);
+            switch (kind)
+            {
+            case ArgumentMemberKind::Sha256:
+                members.emplace_back(
+                    "pattern",
+                    json::Value::ofString("^[0-9a-f]{64}$")
+                );
+                members.emplace_back("type", json::Value::ofString("string"));
+                break;
+            case ArgumentMemberKind::SurfacePixel:
+            case ArgumentMemberKind::Count:
+            case ArgumentMemberKind::ColourChannel:
+                members.emplace_back("minimum", json::Value::ofNumber(0.0));
+                if (kind == ArgumentMemberKind::ColourChannel)
+                {
+                    members.emplace_back("maximum", json::Value::ofNumber(255.0));
+                }
+                if (kind == ArgumentMemberKind::SurfacePixel)
+                {
+                    members.emplace_back(
+                        "maximum",
+                        json::Value::ofNumber(4294967295.0)
+                    );
+                }
+                members.emplace_back("type", json::Value::ofString("integer"));
+                break;
+            case ArgumentMemberKind::Flag:
+                members.emplace_back("type", json::Value::ofString("boolean"));
+                break;
+            case ArgumentMemberKind::KeyName:
+            case ArgumentMemberKind::Milliseconds:
+            case ArgumentMemberKind::SignedCount:
+            case ArgumentMemberKind::Name:
+            case ArgumentMemberKind::Text:
+            case ArgumentMemberKind::JsonObject:
+                UF_UNREACHABLE_MSG("Unsupported screen argument member schema");
+            }
+            return json::Value::ofObject(std::move(members));
+        }
+
+        [[nodiscard]]
+        auto screenArgumentMaterial(std::span<std::string_view const> members)
+            -> json::Value
+        {
+            auto required   = std::vector<json::Value>{};
+            auto properties = std::vector<json::Member>{};
+            required.reserve(members.size());
+            properties.reserve(members.size());
+            for (auto const member : members)
+            {
+                required.emplace_back(json::Value::ofString(std::string{member}));
+                properties.emplace_back(
+                    std::string{member},
+                    screenMemberSchema(member)
+                );
+            }
+            return json::Value::ofObject({
+                {"additional_properties", json::Value::ofBoolean(false)},
+                {"properties", json::Value::ofObject(std::move(properties))},
+                {"required", json::Value::ofArray(std::move(required))},
+                {"type", json::Value::ofString("object")},
             });
         }
 
-        // One closed object contract as catalog material: the exact member list
-        // is inside tool_catalog_hash, so widening one moves the recorded
-        // identity of every call.
-        [[nodiscard]]
-        auto exactMembersMaterial(std::span<std::string_view const> members)
-            -> json::Value
+        struct InputMemberDescription final
         {
-            auto required = std::vector<json::Value>{};
-            required.reserve(members.size());
-            for (auto const& member : members)
+            std::string_view member{};
+            std::string_view description{};
+        };
+
+        constexpr auto k_inputMemberDescriptions = std::array{
+            InputMemberDescription{"action", "Action identifier returned by the named observation."},
+            InputMemberDescription{"binding", "Resolved Binding identifier returned by the named observation."},
+            InputMemberDescription{"duration_ms", "Declared dwell in milliseconds before the held input is released."},
+            InputMemberDescription{"key", "Canonical key name to press."},
+            InputMemberDescription{"notches", "Signed wheel-detent count."},
+            InputMemberDescription{k_observationReferenceArgument, "Observation reference returned by framework.screen.observe."},
+            InputMemberDescription{"return_screen", "Screen result while held: none, capture, or observe."},
+            InputMemberDescription{k_screenshotSha256Member, "Lowercase sha256 digest of the retained screenshot the action is bound to."},
+            InputMemberDescription{"to_x", "Drag destination x coordinate in screenshot pixels."},
+            InputMemberDescription{"to_y", "Drag destination y coordinate in screenshot pixels."},
+            InputMemberDescription{"travel_ms", "Declared drag travel time in milliseconds."},
+            InputMemberDescription{"ui_target", "UiTarget identifier returned by the named observation."},
+            InputMemberDescription{"x", "Action x coordinate in screenshot pixels."},
+            InputMemberDescription{"y", "Action y coordinate in screenshot pixels."},
+        };
+
+        [[nodiscard]]
+        auto inputMemberDescription(std::string_view member) -> std::string_view
+        {
+            auto const found = std::ranges::find(
+                k_inputMemberDescriptions,
+                member,
+                &InputMemberDescription::member
+            );
+            if (found != k_inputMemberDescriptions.end()) return found->description;
+            UF_UNREACHABLE_MSG("Unknown input argument member description");
+        }
+
+        [[nodiscard]]
+        auto inputMemberSchema(std::string_view member) -> json::Value
+        {
+            auto fields = std::vector<json::Member>{
+                {"description", json::Value::ofString(
+                    std::string{inputMemberDescription(member)}
+                )},
+            };
+            auto const kind = argumentMemberKind(member);
+            switch (kind)
+            {
+            case ArgumentMemberKind::KeyName:
+            case ArgumentMemberKind::Name:
+                fields.emplace_back("min_length", json::Value::ofNumber(1.0));
+                fields.emplace_back("type", json::Value::ofString("string"));
+                break;
+            case ArgumentMemberKind::Sha256:
+                fields.emplace_back(
+                    "pattern",
+                    json::Value::ofString("^[0-9a-f]{64}$")
+                );
+                fields.emplace_back("type", json::Value::ofString("string"));
+                break;
+            case ArgumentMemberKind::SurfacePixel:
+                fields.emplace_back("maximum", json::Value::ofNumber(4294967295.0));
+                fields.emplace_back("minimum", json::Value::ofNumber(0.0));
+                fields.emplace_back("type", json::Value::ofString("integer"));
+                break;
+            case ArgumentMemberKind::Milliseconds:
+                fields.emplace_back("minimum", json::Value::ofNumber(0.0));
+                fields.emplace_back("type", json::Value::ofString("integer"));
+                break;
+            case ArgumentMemberKind::SignedCount:
+                fields.emplace_back("type", json::Value::ofString("integer"));
+                break;
+            case ArgumentMemberKind::JsonObject:
+                fields.emplace_back("type", json::Value::ofString("object"));
+                break;
+            case ArgumentMemberKind::ColourChannel:
+            case ArgumentMemberKind::Count:
+            case ArgumentMemberKind::Flag:
+            case ArgumentMemberKind::Text:
+                UF_UNREACHABLE_MSG("Unsupported input argument member schema");
+            }
+            return json::Value::ofObject(std::move(fields));
+        }
+
+        [[nodiscard]]
+        auto inputArgumentMaterial(
+            std::span<std::string_view const> requiredMembers,
+            bool returnScreen
+        ) -> json::Value
+        {
+            auto required   = std::vector<json::Value>{};
+            auto properties = std::vector<json::Member>{};
+            required.reserve(requiredMembers.size());
+            properties.reserve(requiredMembers.size() + (returnScreen ? 1U : 0U));
+            for (auto const member : requiredMembers)
             {
                 required.emplace_back(json::Value::ofString(std::string{member}));
+                properties.emplace_back(
+                    std::string{member},
+                    inputMemberSchema(member)
+                );
             }
-            return requiredMembersMaterial(std::move(required));
-        }
-
-        [[nodiscard]]
-        auto readLinesArgumentMaterial() -> json::Value
-        {
-            return exactMembersMaterial(k_rectangleMembers);
-        }
-
-        [[nodiscard]]
-        auto probeArgumentMaterial() -> json::Value
-        {
-            return exactMembersMaterial(k_probeMembers);
-        }
-
-        [[nodiscard]]
-        auto censusGridArgumentMaterial() -> json::Value
-        {
-            return exactMembersMaterial(k_censusGridMembers);
-        }
-
-        [[nodiscard]]
-        auto projectReadArgumentMaterial() -> json::Value
-        {
-            return exactMembersMaterial(k_projectReadMembers);
-        }
-
-        // The tagged union as catalog material. The tag and every arm's exact
-        // member list are inside tool_catalog_hash, so widening one arm or
-        // adding a seventh verb moves the recorded identity of every call --
-        // which is the whole reason the enumeration is closed.
-        [[nodiscard]]
-        auto taggedArmMaterial(std::span<InputArm const> armList) -> json::Value
-        {
-            auto arms = std::vector<json::Member>{};
-            arms.reserve(armList.size());
-            for (auto const& arm : armList)
+            if (returnScreen)
             {
-                auto required = std::vector<json::Value>{};
-                required.reserve(arm.members.size());
-                for (auto const& member : arm.members)
-                {
-                    required.emplace_back(
-                        json::Value::ofString(std::string{member})
-                    );
-                }
-                arms.emplace_back(
-                    std::string{arm.action},
+                properties.emplace_back(
+                    "return_screen",
                     json::Value::ofObject({
-                        {"required", json::Value::ofArray(std::move(required))},
+                        {"default", json::Value::ofString("none")},
+                        {"description", json::Value::ofString(
+                            std::string{inputMemberDescription("return_screen")}
+                        )},
+                        {"enum", json::Value::ofArray({
+                            json::Value::ofString("none"),
+                            json::Value::ofString("capture"),
+                            json::Value::ofString("observe"),
+                        })},
+                        {"type", json::Value::ofString("string")},
                     })
                 );
             }
             return json::Value::ofObject({
                 {"additional_properties", json::Value::ofBoolean(false)},
-                {"arms", json::Value::ofObject(std::move(arms))},
-                {"tag", json::Value::ofString("action")},
+                {"properties", json::Value::ofObject(std::move(properties))},
+                {"required", json::Value::ofArray(std::move(required))},
+                {"type", json::Value::ofString("object")},
+            });
+        }
+
+        [[nodiscard]] auto inputClickArgumentMaterial() -> json::Value
+        { return inputArgumentMaterial(k_inputClickMembers, false); }
+        [[nodiscard]] auto inputDragArgumentMaterial() -> json::Value
+        { return inputArgumentMaterial(k_inputDragMembers, false); }
+        [[nodiscard]] auto inputHoldArgumentMaterial() -> json::Value
+        { return inputArgumentMaterial(k_inputHoldMembers, true); }
+        [[nodiscard]] auto inputKeyArgumentMaterial() -> json::Value
+        { return inputArgumentMaterial(k_inputKeyMembers, false); }
+        [[nodiscard]] auto inputMoveArgumentMaterial() -> json::Value
+        { return inputArgumentMaterial(k_inputMoveMembers, false); }
+        [[nodiscard]] auto inputScrollArgumentMaterial() -> json::Value
+        { return inputArgumentMaterial(k_inputScrollMembers, false); }
+        [[nodiscard]] auto uiArgumentMaterial() -> json::Value
+        { return inputArgumentMaterial(k_uiActionMembers, false); }
+        [[nodiscard]] auto uiHoldArgumentMaterial() -> json::Value
+        { return inputArgumentMaterial(k_uiActionMembers, true); }
+
+        [[nodiscard]]
+        auto readLinesArgumentMaterial() -> json::Value
+        {
+            return screenArgumentMaterial(k_screenshotRectangleMembers);
+        }
+
+        [[nodiscard]]
+        auto probeArgumentMaterial() -> json::Value
+        {
+            return screenArgumentMaterial(k_probeMembers);
+        }
+
+        [[nodiscard]]
+        auto censusGridArgumentMaterial() -> json::Value
+        {
+            return screenArgumentMaterial(k_censusGridMembers);
+        }
+
+        [[nodiscard]]
+        auto observeArgumentMaterial() -> json::Value
+        {
+            return screenArgumentMaterial(k_screenshotMembers);
+        }
+
+        [[nodiscard]]
+        auto cropArgumentMaterial() -> json::Value
+        {
+            return screenArgumentMaterial(k_screenshotRectangleMembers);
+        }
+
+        struct ProjectMemberDescription final
+        {
+            std::string_view member{};
+            std::string_view description{};
+        };
+
+        constexpr auto k_projectMemberDescriptions = std::array{
+            ProjectMemberDescription{
+                "content",
+                "UTF-8 text to write into the project authoring store.",
+            },
+            ProjectMemberDescription{
+                k_fileSha256Member,
+                "Lowercase sha256 digest of the retained evidence artifact to copy.",
+            },
+            ProjectMemberDescription{
+                "path",
+                "Project-relative path inside the project authoring store.",
+            },
+        };
+
+        [[nodiscard]]
+        auto projectMemberDescription(std::string_view member) -> std::string_view
+        {
+            auto const found = std::ranges::find(
+                k_projectMemberDescriptions,
+                member,
+                &ProjectMemberDescription::member
+            );
+            if (found != k_projectMemberDescriptions.end()) return found->description;
+            UF_UNREACHABLE_MSG("Unknown project argument member description");
+        }
+
+        [[nodiscard]]
+        auto projectMemberSchema(std::string_view member) -> json::Value
+        {
+            auto fields = std::vector<json::Member>{
+                {"description", json::Value::ofString(
+                    std::string{projectMemberDescription(member)}
+                )},
+                {"type", json::Value::ofString("string")},
+            };
+            auto const kind = argumentMemberKind(member);
+            if (kind == ArgumentMemberKind::Name)
+            {
+                fields.emplace_back("min_length", json::Value::ofNumber(1.0));
+            }
+            else if (kind == ArgumentMemberKind::Sha256)
+            {
+                fields.emplace_back(
+                    "pattern",
+                    json::Value::ofString("^[0-9a-f]{64}$")
+                );
+            }
+            else
+            {
+                UF_CHECK(kind == ArgumentMemberKind::Text);
+            }
+            return json::Value::ofObject(std::move(fields));
+        }
+
+        [[nodiscard]]
+        auto projectArgumentMaterial(std::span<std::string_view const> members)
+            -> json::Value
+        {
+            auto required   = std::vector<json::Value>{};
+            auto properties = std::vector<json::Member>{};
+            required.reserve(members.size());
+            properties.reserve(members.size());
+            for (auto const member : members)
+            {
+                required.emplace_back(json::Value::ofString(std::string{member}));
+                properties.emplace_back(
+                    std::string{member},
+                    projectMemberSchema(member)
+                );
+            }
+            return json::Value::ofObject({
+                {"additional_properties", json::Value::ofBoolean(false)},
+                {"properties", json::Value::ofObject(std::move(properties))},
+                {"required", json::Value::ofArray(std::move(required))},
                 {"type", json::Value::ofString("object")},
             });
         }
 
         [[nodiscard]]
-        auto deliverInputArgumentMaterial() -> json::Value
+        auto projectReadTextArgumentMaterial() -> json::Value
         {
-            return taggedArmMaterial(k_inputArms);
+            return projectArgumentMaterial(k_projectReadTextMembers);
         }
 
         [[nodiscard]]
-        auto projectWriteArgumentMaterial() -> json::Value
+        auto projectWriteFileArgumentMaterial() -> json::Value
         {
-            return taggedArmMaterial(k_projectWriteArms);
+            return projectArgumentMaterial(k_projectWriteFileMembers);
+        }
+
+        [[nodiscard]]
+        auto projectWriteTextArgumentMaterial() -> json::Value
+        {
+            return projectArgumentMaterial(k_projectWriteTextMembers);
         }
 
         [[nodiscard]]
@@ -1440,28 +1618,64 @@ namespace uf::operator_runtime
                 &auditArgumentMaterial,
             },
             FrameworkToolDefinition{
-                k_deliverInputTool,
-                &deliverInputDescriptor,
-                &validateDeliverInputArguments,
-                &deliverInputArgumentMaterial,
+                k_inputClickTool,
+                &inputClickDescriptor,
+                &validateInputClickArguments,
+                &inputClickArgumentMaterial,
             },
             FrameworkToolDefinition{
-                k_semanticInputTool,
-                &semanticInputDescriptor,
-                &validateSemanticInputArguments,
-                &semanticInputArgumentMaterial,
+                k_inputDragTool,
+                &inputDragDescriptor,
+                &validateInputDragArguments,
+                &inputDragArgumentMaterial,
             },
             FrameworkToolDefinition{
-                k_projectReadTool,
-                &projectReadDescriptor,
-                &validateProjectReadArguments,
-                &projectReadArgumentMaterial,
+                k_inputHoldTool,
+                &inputHoldDescriptor,
+                &validateInputHoldArguments,
+                &inputHoldArgumentMaterial,
             },
             FrameworkToolDefinition{
-                k_projectWriteTool,
-                &projectWriteDescriptor,
-                &validateProjectWriteArguments,
-                &projectWriteArgumentMaterial,
+                k_inputKeyTool,
+                &inputKeyDescriptor,
+                &validateInputKeyArguments,
+                &inputKeyArgumentMaterial,
+            },
+            FrameworkToolDefinition{
+                k_inputMoveTool,
+                &inputMoveDescriptor,
+                &validateInputMoveArguments,
+                &inputMoveArgumentMaterial,
+            },
+            FrameworkToolDefinition{
+                k_inputScrollTool,
+                &inputScrollDescriptor,
+                &validateInputScrollArguments,
+                &inputScrollArgumentMaterial,
+            },
+            FrameworkToolDefinition{
+                k_projectReadTextTool,
+                &projectReadTextDescriptor,
+                &validateProjectReadTextArguments,
+                &projectReadTextArgumentMaterial,
+            },
+            FrameworkToolDefinition{
+                k_projectWriteFileTool,
+                &projectWriteFileDescriptor,
+                &validateProjectWriteFileArguments,
+                &projectWriteFileArgumentMaterial,
+            },
+            FrameworkToolDefinition{
+                k_projectWriteTextTool,
+                &projectWriteTextDescriptor,
+                &validateProjectWriteTextArguments,
+                &projectWriteTextArgumentMaterial,
+            },
+            FrameworkToolDefinition{
+                k_captureTool,
+                &captureDescriptor,
+                &validateCaptureArguments,
+                &noArgumentsMaterial,
             },
             FrameworkToolDefinition{
                 k_censusGridTool,
@@ -1470,10 +1684,16 @@ namespace uf::operator_runtime
                 &censusGridArgumentMaterial,
             },
             FrameworkToolDefinition{
+                k_cropTool,
+                &measuringDescriptor,
+                &validateCropArguments,
+                &cropArgumentMaterial,
+            },
+            FrameworkToolDefinition{
                 k_observeTool,
                 &observeDescriptor,
                 &validateObserveArguments,
-                &noArgumentsMaterial,
+                &observeArgumentMaterial,
             },
             FrameworkToolDefinition{
                 k_probeTool,
@@ -1486,6 +1706,42 @@ namespace uf::operator_runtime
                 &measuringDescriptor,
                 &validateReadLinesArguments,
                 &readLinesArgumentMaterial,
+            },
+            FrameworkToolDefinition{
+                k_uiClickTool,
+                &uiClickDescriptor,
+                &validateUiClickArguments,
+                &uiArgumentMaterial,
+            },
+            FrameworkToolDefinition{
+                k_uiDragTool,
+                &uiDragDescriptor,
+                &validateUiDragArguments,
+                &uiArgumentMaterial,
+            },
+            FrameworkToolDefinition{
+                k_uiHoldTool,
+                &uiHoldDescriptor,
+                &validateUiHoldArguments,
+                &uiHoldArgumentMaterial,
+            },
+            FrameworkToolDefinition{
+                k_uiKeyTool,
+                &uiKeyDescriptor,
+                &validateUiKeyArguments,
+                &uiArgumentMaterial,
+            },
+            FrameworkToolDefinition{
+                k_uiMoveTool,
+                &uiMoveDescriptor,
+                &validateUiMoveArguments,
+                &uiArgumentMaterial,
+            },
+            FrameworkToolDefinition{
+                k_uiScrollTool,
+                &uiScrollDescriptor,
+                &validateUiScrollArguments,
+                &uiArgumentMaterial,
             },
             FrameworkToolDefinition{
                 k_statusTool,
@@ -1548,121 +1804,6 @@ namespace uf::operator_runtime
             return json::Value::ofArray(std::move(rendered));
         }
 
-        // A declaration is catalog material like every other bound: its bytes
-        // reach tool_catalog_hash through the descriptor, so widening what a
-        // Tool may delegate moves the catalog identity.
-        [[nodiscard]]
-        auto childEffectsMaterial(ChildEffectDeclaration const& declaration)
-            -> json::Value
-        {
-            return json::Value::ofObject({
-                {"child_tool_names", stringArray(declaration.childToolNames)},
-                {"maximum_child_calls",
-                 json::Value::ofNumber(
-                     static_cast<double>(declaration.maximumChildCalls)
-                 )},
-                {"maximum_child_mutability",
-                 json::Value::ofString(
-                     std::string{
-                         toolMutabilityWireName(
-                             declaration.maximumChildMutability
-                         )
-                     }
-                 )},
-                {"maximum_child_risk",
-                 json::Value::ofString(
-                     std::string{riskWireName(declaration.maximumChildRisk)}
-                 )},
-                {"maximum_child_surface",
-                 json::Value::ofString(
-                     std::string{
-                         toolSurfaceWireName(declaration.maximumChildSurface)
-                     }
-                 )},
-            });
-        }
-
-        [[nodiscard]]
-        auto bodyMaterial(ToolBodyDeclaration const& declaration) -> json::Value
-        {
-            if (declaration.taggedBy.empty())
-            {
-                return json::Value::ofBoolean(declaration.takesBody);
-            }
-            auto arms = std::vector<json::Member>{};
-            arms.reserve(declaration.arms.size());
-            for (auto const& arm : declaration.arms)
-            {
-                arms.emplace_back(
-                    arm.name,
-                    json::Value::ofBoolean(arm.takesBody)
-                );
-            }
-            return json::Value::ofObject({
-                {"arms", json::Value::ofObject(std::move(arms))},
-                {"tag", json::Value::ofString(declaration.taggedBy)},
-            });
-        }
-
-        [[nodiscard]]
-        auto bodyMatchesArgumentContract(
-            ToolBodyDeclaration const& declaration,
-            json::Value const& argumentContract
-        ) -> Status
-        {
-            auto const* const p_tag  = argumentContract.find("tag");
-            auto const* const p_arms = argumentContract.find("arms");
-            auto const tagged = p_tag != nullptr || p_arms != nullptr;
-            if (!tagged)
-            {
-                if (!declaration.taggedBy.empty())
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "an untagged argument contract has a per-arm body declaration"
-                    );
-                }
-                return ok();
-            }
-            if (
-                p_tag == nullptr || p_arms == nullptr
-                || p_tag->kind() != json::ValueKind::String
-                || p_arms->kind() != json::ValueKind::Object
-                || declaration.taggedBy != p_tag->string()
-            )
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "a tagged argument contract and its body declaration name different tags"
-                );
-            }
-
-            auto contractArms = std::vector<std::string>{};
-            contractArms.reserve(p_arms->members().size());
-            for (auto const& [name, ignored] : p_arms->members())
-            {
-                static_cast<void>(ignored);
-                contractArms.emplace_back(name);
-            }
-            auto bodyArms = std::vector<std::string>{};
-            bodyArms.reserve(declaration.arms.size());
-            std::ranges::transform(
-                declaration.arms,
-                std::back_inserter(bodyArms),
-                &ToolBodyArm::name
-            );
-            std::ranges::sort(contractArms);
-            std::ranges::sort(bodyArms);
-            if (contractArms != bodyArms)
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "a tagged Tool body declaration must state every argument arm exactly once"
-                );
-            }
-            return ok();
-        }
-
         [[nodiscard]]
         auto descriptorMaterial(
             FrameworkToolDefinition const& definition,
@@ -1670,9 +1811,10 @@ namespace uf::operator_runtime
         ) -> json::Value
         {
             return json::Value::ofObject({
-                {"argument_contract", definition.argumentMaterial()},
-                {"body", bodyMaterial(descriptor.body)},
-                {"child_effects", childEffectsMaterial(descriptor.childEffects)},
+                {"description",
+                 json::Value::ofString(
+                     "Call the " + std::string{definition.name} + " Tool."
+                 )},
                 {"effect_bounds",
                  effectBoundsMaterial(descriptor.effectBounds)},
                 {"idempotency",
@@ -1688,6 +1830,7 @@ namespace uf::operator_runtime
                      }
                  )},
                 {"name", json::Value::ofString(std::string{definition.name})},
+                {"input_schema", definition.argumentMaterial()},
                 {"required_capabilities",
                  stringArray(descriptor.requiredCapabilities)},
                 {"surface",
@@ -1714,39 +1857,6 @@ namespace uf::operator_runtime
                 {"tool_version",
                  json::Value::ofString(descriptor.toolVersion)},
                 {"ui_action_bounds", stringArray(descriptor.uiActionBounds)},
-                {"workflow_limits",
-                 json::Value::ofObject({
-                     {"maximum_dispatches",
-                      json::Value::ofNumber(
-                          static_cast<double>(
-                              descriptor.limits.maximumDispatches
-                          )
-                      )},
-                     {"maximum_elapsed_ms",
-                      json::Value::ofNumber(
-                          static_cast<double>(
-                              descriptor.limits.maximumElapsedMillis
-                          )
-                      )},
-                     {"maximum_observations",
-                      json::Value::ofNumber(
-                          static_cast<double>(
-                              descriptor.limits.maximumObservations
-                          )
-                      )},
-                     {"maximum_steps",
-                      json::Value::ofNumber(
-                          static_cast<double>(
-                              descriptor.limits.maximumSteps
-                          )
-                      )},
-                     {"maximum_waits",
-                      json::Value::ofNumber(
-                          static_cast<double>(
-                              descriptor.limits.maximumWaits
-                          )
-                      )},
-                 })},
             });
         }
 
@@ -2148,11 +2258,6 @@ namespace uf::operator_runtime
         return m_descriptor;
     }
 
-    auto ToolCallPositionIdentity::asParent() const -> ToolCallParent
-    {
-        return ToolCallParent{m_rootIdentity, m_identity};
-    }
-
     ToolCallIssuingContext::ToolCallIssuingContext(
         ContentHash rootIdentity,
         ToolCallParent parent,
@@ -2176,27 +2281,16 @@ namespace uf::operator_runtime
         };
     }
 
-    auto ToolCallIssuingContext::forHandler(
-        ToolCallPositionIdentity const& handlerCall
-    ) -> ToolCallIssuingContext
-    {
-        return ToolCallIssuingContext{
-            handlerCall.rootIdentity(),
-            handlerCall.asParent(),
-            handlerCall.executionIdentity(),
-        };
-    }
-
     auto ToolCallIssuingContext::issueNext(
         ValidatedToolInvocation const& invocation,
         std::optional<ContentHash> observationReference
     ) -> Result<ToolCallPositionIdentity>
     {
-        if (m_issuedChildren == std::numeric_limits<uint32>::max())
+        if (m_issuedCalls == std::numeric_limits<uint32>::max())
         {
             return fail(
                 AutomationErrorKind::InternalInvariant,
-                "Tool call child index is exhausted for this issuing context"
+                "Tool call index is exhausted for this issuing context"
             );
         }
         UF_TRY_VALUE(
@@ -2204,13 +2298,13 @@ namespace uf::operator_runtime
             ToolCallPositionIdentity::create(
                 m_rootIdentity,
                 m_parent,
-                m_issuedChildren + 1U,
+                m_issuedCalls + 1U,
                 m_executionIdentity,
                 invocation,
                 std::move(observationReference)
             )
         );
-        ++m_issuedChildren;
+        ++m_issuedCalls;
         return position;
     }
 
@@ -2238,11 +2332,6 @@ namespace uf::operator_runtime
         -> ToolCallParent const&
     {
         return m_parent;
-    }
-
-    auto ToolCallIssuingContext::issuedChildren() const noexcept -> uint32
-    {
-        return m_issuedChildren;
     }
 
     auto toolSurfaceAllowed(
@@ -2318,14 +2407,13 @@ namespace uf::operator_runtime
                     "Tool Catalog descriptor must carry a tool version"
                 );
             }
-            UF_TRY_CONTEXT(
-                childEffectDeclarationValid(entry.descriptor.childEffects),
-                "reading the child_effects of " + entry.name
-            );
-            UF_TRY_CONTEXT(
-                toolBodyDeclarationValid(entry.descriptor.body),
-                "reading the body declaration of " + entry.name
-            );
+            if (entry.description.empty())
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "Tool Catalog descriptor must carry a description"
+                );
+            }
         }
         std::ranges::sort(tools, {}, &ToolCatalogEntry::name);
         auto const repeated = std::ranges::adjacent_find(
@@ -2369,6 +2457,12 @@ namespace uf::operator_runtime
             names.emplace_back(tool.name);
         }
         return names;
+    }
+
+    auto ProjectToolCatalogSchemaOwner::entries() const
+        -> std::vector<ToolCatalogEntry>
+    {
+        return m_tools;
     }
 
     auto ProjectToolCatalogSchemaOwner::validate(
@@ -2535,27 +2629,12 @@ namespace uf::operator_runtime
                 definition.descriptor(),
                 "building a Framework Tool Catalog descriptor"
             );
-            UF_TRY_CONTEXT(
-                childEffectDeclarationValid(descriptor.childEffects),
-                "building the child_effects of " + std::string{definition.name}
-            );
-            UF_TRY_CONTEXT(
-                toolBodyDeclarationValid(descriptor.body),
-                "building the body declaration of "
-                    + std::string{definition.name}
-            );
-            UF_TRY_CONTEXT(
-                bodyMatchesArgumentContract(
-                    descriptor.body,
-                    definition.argumentMaterial()
-                ),
-                "matching the body declaration to the argument contract of "
-                    + std::string{definition.name}
-            );
             material.emplace_back(descriptorMaterial(definition, descriptor));
             tools.emplace_back(ToolCatalogEntry{
-                .name       = std::string{definition.name},
-                .descriptor = std::move(descriptor),
+                .name        = std::string{definition.name},
+                .description = "Call the " + std::string{definition.name} + " Tool.",
+                .inputSchema = definition.argumentMaterial(),
+                .descriptor  = std::move(descriptor),
             });
         }
         auto canonicalJcs = json::canonicalBytes(json::Value::ofObject({
@@ -2596,6 +2675,12 @@ namespace uf::operator_runtime
             names.emplace_back(tool.name);
         }
         return names;
+    }
+
+    auto FrameworkToolCatalogOwner::entries() const
+        -> std::vector<ToolCatalogEntry>
+    {
+        return m_tools;
     }
 
     auto FrameworkToolCatalogOwner::validate(
@@ -2673,7 +2758,12 @@ namespace uf::operator_runtime
         );
 
         UF_TRY_VALUE(catalog, FrameworkToolCatalogOwner::create());
-        UF_TRY_VALUE(arguments, CanonicalJson::parseExact("{}"));
+        UF_TRY_VALUE(
+            arguments,
+            CanonicalJson::parseExact(
+                R"({"screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000"})"
+            )
+        );
         UF_TRY_VALUE(
             invocation,
             catalog.validate(std::string{k_observeTool}, std::move(arguments))

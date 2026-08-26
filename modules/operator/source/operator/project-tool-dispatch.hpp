@@ -1,90 +1,22 @@
 #pragma once
 
-#include "effective-plan.hpp"
 #include "ledger.hpp"
 #include "project-generation.hpp"
-#include "snapshot-reference.hpp"
 #include "tool-admission-request.hpp"
 #include "tool-executor.hpp"
-#include "tool-invocation.hpp"
 #include "tool-runtime.hpp"
-
-#include <script/scoped-tool-program.hpp>
 
 #include <core/error/result.hpp>
 
-#include <functional>
 #include <memory>
-#include <optional>
 #include <stop_token>
 
 namespace uf::operator_runtime
 {
-    // The close of the resource one Tool body keeps open. The Tool supplies
-    // the meaning -- lifting an input or releasing an observation frame -- and
-    // this framework-owned body scope supplies the one close-on-every-exit
-    // mechanism shared by both.
-    using ToolBodyScopeClose = std::move_only_function<Status()>;
-
-    // The structured body run while that resource is open. The dispatcher
-    // reaches no VM; it owns only the issuing context that records calls made
-    // by this closure as children of the body-taking Tool call.
-    using ToolBodyRun = script::ToolCallBody;
-
-    // A Tool-specific condition judged after the common scope has closed, with
-    // the number of child calls the common issuing context recorded. Empty when
-    // the Tool declares no such condition.
-    using ToolBodyPostcondition =
-        std::move_only_function<Status(uint64 issuedChildren)>;
-
-    using ToolBodyProvider = std::move_only_function<
-        Result<ToolCallCompletion>(
-            ToolCallPositionIdentity const& call,
-            ToolBodyRun body
-        )
-    >;
-
-    // The dispatch executor: everything between an admitted call and the
-    // terminal durable row that answers it.
-    //
-    // It is the shared bottom of every caller path. An Agent, a human, a CLI
-    // adapter, an automation script's root start and one Tool calling another
-    // all differ in who mints the call's coordinate and what feeds the
-    // authority intersection; they do not differ in what happens once a call
-    // exists. That is here, once: the durable row is read, a terminal one is
-    // returned without running anything, and a call that must execute gets an
-    // issuing context keyed on its own position, the bound entry run with its
-    // canonical arguments, and the outcome written.
-    //
-    // Its four re-entry behaviours all fall out of that single reading rather
-    // than from a case analysis:
-    //
-    // - a terminal parent returns its recorded result, so the handler never
-    //   runs and its whole sub-tree is coordinate space nothing observes;
-    // - an admitted parent whose dispatch never began dispatches for the first
-    //   time against an empty history;
-    // - a parent left dispatching by a dead incarnation re-enters, and its
-    //   handler re-executes from the top -- children 1..j meet their recorded
-    //   rows and execute nothing, and child j+1 is the first position beyond
-    //   history;
-    // - a zombie predecessor is excluded by the lease and the fence, which the
-    //   re-entry re-reads, and by the history revision the re-entry moves.
-    //
-    // On EVERY entry the issuing context is fresh and numbers from 1. Resuming
-    // a counter past recorded history would hand a re-executed early call a
-    // fresh ordinal beyond history and execute an already-terminal effect a
-    // second time, which is the exact failure replay exists to prevent. So
-    // there is no persisted next-ordinal anywhere: the ordinals are re-derived
-    // by re-executing, and a handler that re-derives a different call is caught
-    // by the field-by-field attribute comparison at the coordinate it landed
-    // on.
-    //
-    // Production-reachable: service::ProductLifecycle builds exactly one per
-    // run, over the session's own coordinator, observation authority and plan
-    // authority, and installs its own Framework providers into it. The
-    // Framework Tools a scoped run reaches are still answered by the provider
-    // its caller installs rather than by a registry this module owns, which is
-    // what keeps the dispatcher free of any knowledge of who is answering.
+    // Runs one admitted Project Tool leaf handler. A terminal row replays
+    // without invoking the handler; every nonterminal entry starts the pure
+    // handler again from its immutable input. The handler's Tool primitive is
+    // a terminal named refusal, so there is no child-call admission path.
     class ProjectToolDispatcher final
     {
         class State;
@@ -94,37 +26,9 @@ namespace uf::operator_runtime
         explicit ProjectToolDispatcher(std::shared_ptr<State> p_state) noexcept;
 
     public:
-        // `coordinator` and `observations` are borrows that must outlive this
-        // dispatcher and every program compiled with the host adapter it hands
-        // out, because that adapter reaches both on every child call.
-        // `frameworkTools` answers the Framework Tools a scoped run reaches. In
-        // production it is ProductLifecycle's own provider surface, bound to
-        // the same run these three borrows name.
-        //
-        // `observations` must be the SAME authority the Framework observation
-        // and input providers mint into and spend from. It is what turns the
-        // reference bytes a script holds as data back into the authority a
-        // mutating input consumes; a second authority beside the providers'
-        // would recognise nothing they minted.
-        //
-        // `policyAuthority` is the verified authority of the session this
-        // dispatcher serves, taken by value because it is one. A dispatcher
-        // cannot widen anything by holding one: admission refuses an authority
-        // whose registration or policy hash differs from the live session's,
-        // and what it is used for is evaluating policy over effects the
-        // catalog declared rather than granting any.
-        //
-        // Single-threaded by contract. One scoped run is synchronous on the
-        // thread that dispatched it, and the adapter is only ever re-entered from
-        // inside that same call, so the live-run table is mutated by one thread
-        // and never observed by another.
         [[nodiscard]]
-        static auto create(
-            OperatorCoordinator& coordinator,
-            SnapshotObservationAuthority& observations,
-            OperatorPolicyAuthority policyAuthority,
-            ToolBodyProvider frameworkTools
-        ) -> Result<ProjectToolDispatcher>;
+        static auto create(OperatorCoordinator& coordinator)
+            -> Result<ProjectToolDispatcher>;
 
         ProjectToolDispatcher(ProjectToolDispatcher const&) noexcept = default;
         ProjectToolDispatcher(ProjectToolDispatcher&&) noexcept      = default;
@@ -134,107 +38,6 @@ namespace uf::operator_runtime
             -> ProjectToolDispatcher& = default;
         ~ProjectToolDispatcher() = default;
 
-        // The coordinate-bearing host adapter every scoped program this
-        // dispatcher drives is compiled with. It is not another VM protocol:
-        // script sees only script::ToolRuntimeInvoke. The adapter is bound once
-        // at compile time and therefore carries ZERO
-        // run state: one program serves every run of its registration, so the
-        // adapter resolves WHICH run a call belongs to from the coordinate's
-        // durable parent position and from nothing else. That is what makes a
-        // single compilation per registration sound.
-        //
-        // The callable owns everything it reaches, so it is safe to store for
-        // as long as the program lives.
-        [[nodiscard]] auto toolRuntimeDispatch() const -> script::ToolRuntimeDispatch;
-
-        // Hands the body run anchored on `holdingCall` the one close operation
-        // its Tool opened. Observe and hold both use this function; only their
-        // close callables differ.
-        //
-        // The structure this rests on is the LEDGER'S CALL TREE and not the
-        // native call stack: `holdingCall` is a durable position and every call
-        // made before close is recorded beneath it. A refused close is reported
-        // rather than swallowed. Refused when no run is anchored at that
-        // position or the run already owns a close.
-        [[nodiscard]]
-        auto attachToolBodyScope(
-            ContentHash const& holdingCall,
-            ToolBodyScopeClose close
-        ) -> Status;
-
-        // Opens the observation frame the Tool call at `frameCall` owns.
-        //
-        // AN OBSERVATION FRAME IS THE SCOPE OF THE CALL THAT OPENED IT
-        // (docs/decisions/2026-08-24-an-observation-frame-is-the-scope-of-its-call.md).
-        // The frame is anchored on the observe call's OWN durable position,
-        // which is why root and nested observations are one shape.
-        //
-        // AT MOST ONE FRAME IS OPEN AT A TIME, and a second is REFUSED BY NAME
-        // rather than superseding the first. Supersession would dress the
-        // single-slot implementation up as a method and let a distant call
-        // decide whether a local measurement succeeds; the refusal instead names
-        // the holding call, the limit, and what exceeded it. It is also what
-        // keeps the Host's own one-cycle invariant a framework bug rather than
-        // something a Project can write.
-        [[nodiscard]]
-        auto engageObservationFrame(
-            ContentHash const& frameCall,
-            ToolBodyScopeClose close
-        ) -> Status;
-
-        // The durable position of the Tool call whose observation frame is
-        // open, or nothing when none is. Measuring Tools bind to this position.
-        [[nodiscard]]
-        auto heldObservationFrame() const -> std::optional<ContentHash>;
-
-        // Runs one Tool body with an issuing context anchored on
-        // `call`, so every Tool call the body makes is numbered as that call's
-        // child and recorded under it.
-        //
-        // It is the same anchoring a bound Project handler gets, and
-        // deliberately the same code path: a body and a handler differ in what
-        // executes -- a Luau closure inside an already-running VM against a
-        // fresh scoped run -- and not at all in what a call issued inside them
-        // is. `call` must be the call whose durable row is DISPATCHING right
-        // now, which is what lets a grant be minted from it; a body-taking
-        // provider is inside its own dispatch when it calls this.
-        //
-        // The borrows live for the extent of the body and nothing is
-        // retained past it.
-        [[nodiscard]]
-        auto runToolBody(
-            ProjectGenerationHandle const& program,
-            ControllerBinding const& controller,
-            ControlLease const& lease,
-            ToolRootRequestIdentity const& root,
-            ToolCallPositionIdentity const& call,
-            ToolBodyRun body,
-            ToolBodyPostcondition postcondition = {}
-        ) -> Status;
-
-        // The same body scope for a child of the live run named by the call's
-        // durable parent. It derives controller, lease, root and program from
-        // that parent rather than accepting a second spelling of them.
-        [[nodiscard]]
-        auto runChildToolBody(
-            ToolCallPositionIdentity const& call,
-            ToolBodyRun body,
-            ToolBodyPostcondition postcondition = {}
-        ) -> Status;
-
-        // Dispatch one call of one Tool this program binds.
-        //
-        // The request is the same value every other producer builds, and it is
-        // borrowed for the duration of the call, which strictly outlives the
-        // run it starts. A call the run's own context issued carries no
-        // delegation grant and a handler's child carries the grant that
-        // handler is running under; admission is what judges which of the two
-        // this is.
-        //
-        // A run started here may issue mutating children. Its proposed effects
-        // come from the child descriptor's own bounds and this dispatcher's
-        // controlled target -- see proposedToolMutation -- so the script that
-        // named the Tool states none of them.
         [[nodiscard]]
         auto dispatch(
             ProjectGenerationHandle const& program,

@@ -170,4 +170,36 @@ namespace uf::task
         // Host-private storage and is meaningful only as an identity.
         [[nodiscard]] auto receiptId() const noexcept -> uint64;
     };
+
+    // A semantic hold whose Host Receipt has been consumed and whose button is
+    // down. Only TaskHost can construct it; finishing it is what turns the
+    // engine's eventual release receipt into the ordinary terminal delivery
+    // report the Operator records.
+    class HostHoldEngagement final
+    {
+        friend class TaskHost;
+
+        DispatchAuthority          m_authority;
+        uint64                     m_receiptId;
+        MonotonicInstant::Duration m_duration;
+
+        HostHoldEngagement(
+            DispatchAuthority authority,
+            uint64 receiptId,
+            MonotonicInstant::Duration duration
+        ) noexcept;
+
+    public:
+        HostHoldEngagement(HostHoldEngagement const&) = delete;
+        HostHoldEngagement(HostHoldEngagement&&) noexcept = default;
+        auto operator=(HostHoldEngagement const&) -> HostHoldEngagement& = delete;
+        auto operator=(HostHoldEngagement&&) noexcept
+            -> HostHoldEngagement& = default;
+        ~HostHoldEngagement() = default;
+
+        [[nodiscard]] auto duration() const noexcept
+            -> MonotonicInstant::Duration;
+    };
+
+    using HostHoldStart = std::variant<HostHoldEngagement, HostDeliveryReport>;
 }
