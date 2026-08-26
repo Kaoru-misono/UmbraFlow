@@ -60,6 +60,7 @@ namespace uf::json
             AllOf,
             AnyOf,
             Const,
+            Default,
             Description,
             Else,
             Enum,
@@ -130,6 +131,14 @@ namespace uf::json
             KeywordSpec{"allOf", Keyword::AllOf, Shape::SchemaList},
             KeywordSpec{"anyOf", Keyword::AnyOf, Shape::SchemaList},
             KeywordSpec{"const", Keyword::Const, Shape::AnyValue},
+            // An annotation and nothing more. 2020-12 gives `default` no
+            // assertion behaviour: it states the value an omitted property is
+            // understood to carry, which is information a caller needs and this
+            // evaluator must not turn into a check. It is implemented here so
+            // that a schema declaring one is not refused for carrying a keyword
+            // this evaluator would ignore -- the refusal exists to catch a
+            // constraint that would go unapplied, and there is no constraint.
+            KeywordSpec{"default", Keyword::Default, Shape::AnyValue},
             KeywordSpec{"description", Keyword::Description, Shape::StringValue},
             KeywordSpec{"else", Keyword::Else, Shape::SubSchema},
             KeywordSpec{"enum", Keyword::Enum, Shape::AnyArray},
@@ -1276,6 +1285,7 @@ namespace uf::json
             // same documents today. Turning it on is a decision for both
             // spellings at once, never for one.
             case Keyword::Comment:
+            case Keyword::Default:
             case Keyword::Dialect:
             case Keyword::Description:
             case Keyword::Format:

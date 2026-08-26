@@ -5,6 +5,9 @@
 #include "project-plugin.hpp"
 #include "tool-descriptor.hpp"
 
+#include <json/schema.hpp>
+#include <json/value.hpp>
+
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
@@ -385,11 +388,31 @@ namespace uf::operator_runtime
     ) -> std::optional<std::string>;
 
     // One tool the catalog declares, under the name it declares it by.
+    //
+    // name, description, inputSchema and outputSchema are the DISCOVERY half:
+    // what a caller who has never seen this repository reads to decide that
+    // this is the Tool it wants, to fill in its arguments, and to know what the
+    // answer will carry so the next call can be written against it. The
+    // descriptor beside them is the ENFORCEMENT half, which no caller is shown.
     struct ToolCatalogEntry final
     {
-        std::string    name{};
-        std::string    description{};
-        json::Value    inputSchema{};
+        std::string name{};
+        std::string description{};
+        json::Value inputSchema{};
+
+        // The result payload's shape, as JSON Schema Draft 2020-12. Every
+        // Framework Tool states one -- the Framework declares its own Tools and
+        // has no excuse for a result nobody wrote down. A Project Tool may
+        // leave it null, and a null one means "this project did not write its
+        // result down" rather than "the result is empty": requiring it would
+        // add a mandatory document to what a new Project must author before it
+        // can run, and the onboarding burden is a design constraint here.
+        //
+        // It describes the `result` member of the answer, never the answer
+        // envelope around it. The envelope is one shape for every Tool and is
+        // published once, at the catalog.
+        json::Value    outputSchema{};
+
         ToolDescriptor descriptor{};
     };
 
@@ -550,18 +573,32 @@ namespace uf::operator_runtime
 
     // Framework owns this catalog and derives its identity from exact material
     // rendered from its built-in definitions. Callers can select a name and
-    // canonical arguments, but cannot inject a descriptor, validator, digest,
+    // canonical arguments, but cannot inject a descriptor, schema, digest,
     // or namespace entry.
     class FrameworkToolCatalogOwner final
     {
-        ContentHash                   m_toolCatalogHash;
-        std::string                   m_canonicalJcs;
-        std::vector<ToolCatalogEntry> m_tools;
+    public:
+        // One Tool's published argument schema, compiled. It is built once,
+        // when the catalog is built, so a Framework schema this evaluator
+        // cannot apply is a refusal at startup rather than a constraint that
+        // was quietly never checked.
+        struct CompiledArgumentSchema final
+        {
+            std::string  name{};
+            json::Schema schema;
+        };
+
+    private:
+        ContentHash                         m_toolCatalogHash;
+        std::string                         m_canonicalJcs;
+        std::vector<ToolCatalogEntry>       m_tools;
+        std::vector<CompiledArgumentSchema> m_argumentSchemas;
 
         FrameworkToolCatalogOwner(
             ContentHash toolCatalogHash,
             std::string canonicalJcs,
-            std::vector<ToolCatalogEntry> tools
+            std::vector<ToolCatalogEntry> tools,
+            std::vector<CompiledArgumentSchema> argumentSchemas
         );
 
     public:

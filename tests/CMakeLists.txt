@@ -737,7 +737,7 @@ if(TARGET ${PROJECT_NAME}_operator)
     # beside it.
     uf_shard_doctest_gates(
         TARGET test-operator
-        TOTAL_CASES 145
+        TOTAL_CASES 146
         SHARDS 6
     )
 

@@ -2,6 +2,7 @@
 #include <operator/tool-admission-request.hpp>
 #include <operator/tool-invocation.hpp>
 
+#include <json/schema.hpp>
 #include <json/value.hpp>
 
 #include <domain/content-hash.hpp>
@@ -9,8 +10,10 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -707,12 +710,168 @@ namespace uf::operator_runtime
         // hash compared against itself pins nothing.
         CHECK(
             catalog->toolCatalogHash().hex()
-            == "620c25591a727c03fb905dce2384943514d6d0942a3e9cb8620d0a8f03c20d4d"
+            == "b4767fb49926ba7f10e9d76a13d3469662ffb5f27f3be167f52630ecacfb0a64"
         );
 
         auto material = CanonicalJson::parseExact(catalog->canonicalJcs());
         REQUIRE(material.has_value());
         CHECK(material->contentHash() == catalog->toolCatalogHash());
+    }
+
+    // What a model that has never seen this repository is handed when it is
+    // offered these Tools. Every clause below is something such a caller has to
+    // be able to read for itself -- a description that says more than the name,
+    // a schema an ordinary Draft 2020-12 reader can apply, a result shape it
+    // can write its next call against -- and each one was false of this catalog
+    // until the dialect and the placeholders went.
+    TEST_CASE("Every Framework Tool publishes a contract a stranger can read")
+    {
+        auto catalog = FrameworkToolCatalogOwner::create();
+        REQUIRE(catalog.has_value());
+        auto const entries = catalog->entries();
+        REQUIRE_FALSE(entries.empty());
+
+        for (auto const& entry : entries)
+        {
+            CAPTURE(entry.name);
+
+            // A description generated from the name carries exactly what the
+            // name carried. This is the shape the placeholder had.
+            CHECK_MESSAGE(
+                entry.description
+                    != "Call the " + entry.name + " Tool.",
+                "a Tool description must be written, not derived from the name"
+            );
+            CHECK(entry.description.size() > entry.name.size());
+
+            auto const inputBytes = json::canonicalBytes(entry.inputSchema);
+            auto const standardKeywordsOnly =
+                !inputBytes.contains("additional_properties")
+                && !inputBytes.contains("min_length")
+                && !inputBytes.contains("maximum_duration_ms");
+            CHECK_MESSAGE(
+                standardKeywordsOnly,
+                "an argument schema must use Draft 2020-12 keywords and no "
+                "private spelling of one"
+            );
+
+            // The evaluator a Project's own argument_schema is compiled
+            // through. A Framework schema it cannot apply is a contract only
+            // this repository could check.
+            auto const input = json::Schema::compile(json::Schema::Document{
+                .label      = entry.name,
+                .exactBytes = inputBytes,
+            });
+            CHECK_MESSAGE(
+                input.has_value(),
+                "a Framework argument schema must compile as JSON Schema"
+            );
+
+            // Every member the contract requires is declared, with its own
+            // description, where a caller filling the call in will look.
+            auto const* const p_properties = entry.inputSchema.find(
+                "properties"
+            );
+            if (auto const* const p_required = entry.inputSchema.find("required"))
+            {
+                REQUIRE(p_properties != nullptr);
+                for (auto const& member : p_required->items())
+                {
+                    CAPTURE(member.string());
+                    auto const* const p_declared = p_properties->find(
+                        member.string()
+                    );
+                    REQUIRE_MESSAGE(
+                        p_declared != nullptr,
+                        "a required member must be declared in properties"
+                    );
+                    auto const* const p_description = p_declared->find(
+                        "description"
+                    );
+                    auto const described = p_description != nullptr
+                        && !p_description->string().empty();
+                    CHECK_MESSAGE(
+                        described,
+                        "every declared member must carry its own description"
+                    );
+                    CHECK(p_declared->find("type") != nullptr);
+                }
+            }
+
+            // A result nobody wrote down cannot be chained.
+            REQUIRE_MESSAGE(
+                entry.outputSchema.kind() == json::ValueKind::Object,
+                "every Framework Tool must declare its result shape"
+            );
+            auto const output = json::Schema::compile(json::Schema::Document{
+                .label      = entry.name,
+                .exactBytes = json::canonicalBytes(entry.outputSchema),
+            });
+            CHECK_MESSAGE(
+                output.has_value(),
+                "a Framework result schema must compile as JSON Schema"
+            );
+        }
+
+        auto const named = [&entries](std::string_view name)
+            -> ToolCatalogEntry const&
+        {
+            auto const found = std::ranges::find(
+                entries,
+                name,
+                &ToolCatalogEntry::name
+            );
+            REQUIRE(found != entries.end());
+            return *found;
+        };
+
+        // THE WAIT CEILING IS IN ONE PLACE, AND IT IS THE STANDARD ONE. It
+        // used to sit under an invented top-level keyword that no schema
+        // evaluator and no model reading the catalog could find.
+        auto const& wait = named("framework.workflow.wait");
+        auto const* const p_waitProperties = wait.inputSchema.find("properties");
+        REQUIRE(p_waitProperties != nullptr);
+        auto const* const p_duration = p_waitProperties->find("duration_ms");
+        REQUIRE(p_duration != nullptr);
+        auto const* const p_ceiling = p_duration->find("maximum");
+        REQUIRE_MESSAGE(
+            p_ceiling != nullptr,
+            "the wait ceiling must live in properties.duration_ms.maximum"
+        );
+        CHECK(p_ceiling->number() == 60'000.0);
+
+        // The chain the whole surface exists for, read out of the published
+        // bytes rather than out of prose: capture answers with the digest
+        // observe requires.
+        auto const& capture = named("framework.screen.capture");
+        auto const* const p_captureResult = capture.outputSchema.find(
+            "properties"
+        );
+        REQUIRE(p_captureResult != nullptr);
+        CHECK_MESSAGE(
+            p_captureResult->find(k_screenshotSha256Member) != nullptr,
+            "capture must publish the digest every screen Tool takes"
+        );
+        auto const& observe = named("framework.screen.observe");
+        auto const* const p_observeRequired = observe.inputSchema.find(
+            "required"
+        );
+        REQUIRE(p_observeRequired != nullptr);
+        CHECK(
+            std::ranges::any_of(
+                p_observeRequired->items(),
+                [](json::Value const& member)
+                {
+                    return member.string() == k_screenshotSha256Member;
+                }
+            )
+        );
+
+        // And the envelope around every result is stated once, by the catalog,
+        // rather than twenty-four times inside the result shapes.
+        auto const material = json::parse(catalog->canonicalJcs());
+        REQUIRE(material.has_value());
+        CHECK(material->find("answer_envelope") != nullptr);
     }
 
     TEST_CASE("Framework Tool arguments are exact and bounded")

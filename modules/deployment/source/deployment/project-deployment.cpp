@@ -173,9 +173,17 @@ namespace uf::deployment
         //
         struct ToolEntry final
         {
-            std::string                      name{};
-            std::string                      description{};
-            json::Value                      inputSchema{};
+            std::string name{};
+            std::string description{};
+            json::Value inputSchema{};
+
+            // Null when this project did not write its result down. That is
+            // a statement rather than a gap the framework fills in: a Project
+            // Tool's result shape is optional because a dozen mandatory
+            // documents before a project can run is a cost this repository
+            // refuses to charge, while a Framework Tool always states one.
+            json::Value                      outputSchema{};
+
             json::Schema                     argumentSchema;
             operator_runtime::ToolDescriptor descriptor{};
         };
@@ -467,10 +475,35 @@ namespace uf::deployment
                 readArgumentSchema(name, member(tool, "argument_schema"))
             );
 
+            // output_schema is the one Tool member a Project may leave out.
+            // Where it is written it is compiled like any other, so a result
+            // shape this evaluator could not apply is refused where the Tool
+            // is declared rather than believed and never checked.
+            auto outputSchema = json::Value{};
+            if (auto const* const p_output = tool.find("output_schema"))
+            {
+                UF_TRY_VALUE(
+                    compiled,
+                    compile(
+                        std::format("result schema of {}", name),
+                        json::canonicalBytes(*p_output)
+                    )
+                );
+                // Compiled and then dropped: nothing judges a Project's result
+                // against its declaration, because a Project Tool's handler is
+                // the Project's own code and the framework does not audit what
+                // a project returns to itself. What the compile buys is that a
+                // published result shape is a schema a reader can actually
+                // apply, refused where it is written rather than believed.
+                static_cast<void>(compiled);
+                outputSchema = *p_output;
+            }
+
             state->tools.emplace_back(ToolEntry{
                 .name           = name,
                 .description    = std::string{member(tool, "description").string()},
                 .inputSchema    = member(tool, "argument_schema"),
+                .outputSchema   = std::move(outputSchema),
                 .argumentSchema = std::move(argumentSchema),
                 .descriptor     = operator_runtime::ToolDescriptor{
                         .toolVersion = std::string{member(tool, "version").string()},
@@ -547,10 +580,11 @@ namespace uf::deployment
             for (auto const& tool : p_state->tools)
             {
                 entries.emplace_back(operator_runtime::ToolCatalogEntry{
-                    .name        = tool.name,
-                    .description = tool.description,
-                    .inputSchema = tool.inputSchema,
-                    .descriptor  = tool.descriptor,
+                    .name         = tool.name,
+                    .description  = tool.description,
+                    .inputSchema  = tool.inputSchema,
+                    .outputSchema = tool.outputSchema,
+                    .descriptor   = tool.descriptor,
                 });
             }
             return entries;

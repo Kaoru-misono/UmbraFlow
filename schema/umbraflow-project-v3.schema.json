@@ -242,6 +242,10 @@
       "$comment": "The Tool's flat input schema, stated inline and enforced by the framework. Reuse inside one schema is JSON Schema's own $defs; there is no cross-Tool indirection, and two Tools repeating a definition is the accepted price of having one spelling.",
       "type": "object"
     },
+    "ResultSchema": {
+      "$comment": "The shape of the result a confirmed call of this Tool answers with, stated inline as JSON Schema. It describes the result member of the answer and never the envelope around it: ok, call_identity, delivery and error are one shape for every Tool and are published once, by the catalog. Optional, and an absent one means this project did not write its result down.",
+      "type": "object"
+    },
     "Risk": {
       "enum": ["read_only", "low", "medium", "high", "critical"]
     },
@@ -284,7 +288,7 @@
       }
     },
     "Tool": {
-      "$comment": "One complete Tool declaration. Every member is mandatory: a Tool the framework admits is one whose whole contract was stated, and an optional member would be an absence the framework filled in on the Project's behalf.",
+      "$comment": "One complete Tool declaration. Every member below is mandatory except output_schema: a Tool the framework admits is one whose whole contract was stated, and an absent mandatory member would be a gap the framework filled in on the Project's behalf. output_schema is the one exception, and it is not such a gap -- an absent one says this project did not write its result down, which is a statement about the project and not a default the framework chose. It is optional because what a new Project must author before it can run is a cost this repository refuses to charge twice; a Framework Tool always states one.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -332,7 +336,8 @@
           "items": {"$ref": "#/$defs/EffectBound"}
         },
         "timeout_policy": {"$ref": "#/$defs/TimeoutPolicy"},
-        "argument_schema": {"$ref": "#/$defs/ArgumentSchema"}
+        "argument_schema": {"$ref": "#/$defs/ArgumentSchema"},
+        "output_schema": {"$ref": "#/$defs/ResultSchema"}
       }
     },
     "ResourceKind": {"enum": ["bytes", "json", "utf8"]},

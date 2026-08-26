@@ -3,6 +3,7 @@
 #include "evidence-store.hpp"
 #include "snapshot-reference.hpp"
 
+#include <json/schema.hpp>
 #include <json/value.hpp>
 
 #include <core/error/contracts.hpp>
@@ -233,8 +234,7 @@ namespace uf::operator_runtime
             return material;
         }
 
-        using FrameworkArgumentValidator = Status (*)(CanonicalJson const&);
-        using FrameworkArgumentMaterial = json::Value (*)();
+        using FrameworkSchemaMaterial = json::Value (*)();
 
         // Result rather than a plain descriptor: a mutating Framework Tool
         // declares an effect bound, and an effect bound names the sha256 of a
@@ -242,21 +242,50 @@ namespace uf::operator_runtime
         // could not say so would have to invent a hash.
         using FrameworkDescriptorFactory = Result<ToolDescriptor> (*)();
 
+        // One Framework Tool's whole published declaration.
+        //
+        // There is no hand-written argument validator beside the schema. The
+        // schema IS the argument contract and json::Schema is what judges a
+        // call against it -- the same evaluator a Project's inline
+        // argument_schema is compiled through -- so one dialect answers for
+        // both catalogs and there is no second spelling of the same rule that
+        // could drift from the published one.
         struct FrameworkToolDefinition final
         {
-            std::string_view          name{};
+            std::string_view           name{};
+
+            // What a model that has never seen this repository needs in order
+            // to call the Tool and to CHAIN it: what the call does, what a
+            // confirmed result carries, which member came from which other
+            // Tool, and any reference semantics it has to respect. It is
+            // written per Tool and never generated from the name -- a
+            // description derived from the name carries no information the name
+            // did not already carry.
+            std::string_view           description{};
+
             FrameworkDescriptorFactory descriptor{};
-            FrameworkArgumentValidator validateArguments{};
-            FrameworkArgumentMaterial argumentMaterial{};
+            FrameworkSchemaMaterial    argumentMaterial{};
+            FrameworkSchemaMaterial    outputMaterial{};
         };
 
+        // A schema refusal, in the vocabulary every other Tool refusal speaks.
+        // json::ErrorKind separates "this evaluator cannot apply the schema"
+        // from "this document fails it", which is a real distinction for a
+        // Project's own declaration; here it is not, because the schema is the
+        // Framework's own and compiled at startup, so the only refusal a caller
+        // can provoke is about its arguments.
         [[nodiscard]]
-        auto invalidFrameworkArguments(std::string message)
-            -> std::unexpected<Error>
+        auto adoptSchemaRefusal(Status outcome, std::string_view toolName)
+            -> Status
         {
+            if (outcome.has_value())
+            {
+                return ok();
+            }
             return fail(
                 AutomationErrorKind::InvalidResource,
-                std::move(message)
+                std::string{toolName} + " arguments: "
+                    + std::string{outcome.error().message()}
             );
         }
 
@@ -281,6 +310,7 @@ namespace uf::operator_runtime
             Count,
             Flag,
             Name,
+            ScreenReturn,
             Text,
             Sha256,
             JsonObject,
@@ -290,44 +320,179 @@ namespace uf::operator_runtime
         {
             std::string_view   name{};
             ArgumentMemberKind kind{ArgumentMemberKind::Name};
+
+            // The member's own description, published inside its `properties`
+            // entry. It is written once per member name rather than once per
+            // Tool, because a member name means the same thing in every
+            // contract that carries it; where one Tool needs a bound of its own
+            // -- the wait ceiling is the only one -- that Tool states its
+            // property itself.
+            std::string_view   description{};
         };
 
-        // Every member any Framework Tool's contract may carry, spelled once. A
-        // member name means the same thing in every contract that carries it,
-        // so the kind is a property of the name rather than of the pair.
+        // Every member any Framework Tool's contract may carry, spelled once,
+        // in UTF-8 order of the names.
         constexpr auto k_argumentMembers = std::array{
-            ArgumentMember{"action", ArgumentMemberKind::Name},
-            ArgumentMember{"binding", ArgumentMemberKind::Name},
-            ArgumentMember{"cell_height", ArgumentMemberKind::SurfacePixel},
-            ArgumentMember{"cell_width", ArgumentMemberKind::SurfacePixel},
-            ArgumentMember{"colour_blue", ArgumentMemberKind::ColourChannel},
-            ArgumentMember{"colour_green", ArgumentMemberKind::ColourChannel},
-            ArgumentMember{"colour_red", ArgumentMemberKind::ColourChannel},
-            ArgumentMember{"content", ArgumentMemberKind::Text},
-            ArgumentMember{"duration_ms", ArgumentMemberKind::Milliseconds},
-            ArgumentMember{k_fileSha256Member, ArgumentMemberKind::Sha256},
-            ArgumentMember{"height", ArgumentMemberKind::SurfacePixel},
-            ArgumentMember{"key", ArgumentMemberKind::KeyName},
-            ArgumentMember{"notches", ArgumentMemberKind::SignedCount},
-            ArgumentMember{"path", ArgumentMemberKind::Name},
-            ArgumentMember{"removes", ArgumentMemberKind::Flag},
+            ArgumentMember{
+                "action",
+                ArgumentMemberKind::Name,
+                "Action identifier the named observation resolved for this "
+                "ui_target and binding.",
+            },
+            ArgumentMember{
+                "binding",
+                ArgumentMemberKind::Name,
+                "Binding identifier the named observation resolved on this "
+                "frame.",
+            },
+            ArgumentMember{
+                "cell_height",
+                ArgumentMemberKind::SurfacePixel,
+                "Height of one census cell, in screenshot pixels.",
+            },
+            ArgumentMember{
+                "cell_width",
+                ArgumentMemberKind::SurfacePixel,
+                "Width of one census cell, in screenshot pixels.",
+            },
+            ArgumentMember{
+                "colour_blue",
+                ArgumentMemberKind::ColourChannel,
+                "Blue channel of the colour to match, 0 to 255.",
+            },
+            ArgumentMember{
+                "colour_green",
+                ArgumentMemberKind::ColourChannel,
+                "Green channel of the colour to match, 0 to 255.",
+            },
+            ArgumentMember{
+                "colour_red",
+                ArgumentMemberKind::ColourChannel,
+                "Red channel of the colour to match, 0 to 255.",
+            },
+            ArgumentMember{
+                "content",
+                ArgumentMemberKind::Text,
+                "UTF-8 text to write into the project authoring store.",
+            },
+            ArgumentMember{
+                "duration_ms",
+                ArgumentMemberKind::Milliseconds,
+                "How long the input stays engaged, in whole milliseconds, "
+                "before it is released.",
+            },
+            ArgumentMember{
+                k_fileSha256Member,
+                ArgumentMemberKind::Sha256,
+                "Lowercase sha256 digest of a retained evidence artifact, as "
+                "returned in the screenshot_sha256 member of "
+                "framework.screen.capture or framework.screen.crop.",
+            },
+            ArgumentMember{
+                "height",
+                ArgumentMemberKind::SurfacePixel,
+                "Height of the rectangle, in screenshot pixels.",
+            },
+            ArgumentMember{
+                "key",
+                ArgumentMemberKind::KeyName,
+                "Canonical name of the key to press, for example escape, "
+                "enter, f1 or a.",
+            },
+            ArgumentMember{
+                "notches",
+                ArgumentMemberKind::SignedCount,
+                "Signed wheel-detent count. The sign is the direction: "
+                "positive scrolls one way and negative the other.",
+            },
             ArgumentMember{
                 k_observationReferenceArgument,
                 ArgumentMemberKind::JsonObject,
+                "The observation handle framework.screen.observe returned in "
+                "its observation_reference member, passed back unchanged. It "
+                "is SINGLE USE and it expires: this call spends it, and a "
+                "further action needs a further observe.",
             },
-            ArgumentMember{"return_screen", ArgumentMemberKind::Name},
+            ArgumentMember{
+                "path",
+                ArgumentMemberKind::Name,
+                "Project-relative path inside this project's own authoring "
+                "store.",
+            },
+            ArgumentMember{
+                "record",
+                ArgumentMemberKind::JsonObject,
+                "The object to record. Its exact canonical bytes are the whole "
+                "of what this call recorded.",
+            },
+            ArgumentMember{
+                "removes",
+                ArgumentMemberKind::Flag,
+                "Select the pixels that do NOT lie within tolerance of the "
+                "colour, rather than those that do.",
+            },
+            ArgumentMember{
+                "return_screen",
+                ArgumentMemberKind::ScreenReturn,
+                "What to answer with about the screen while the input is still "
+                "engaged: none for nothing, capture for a screenshot receipt, "
+                "observe for a fully resolved observation.",
+            },
             ArgumentMember{
                 k_screenshotSha256Member,
                 ArgumentMemberKind::Sha256,
+                "Lowercase sha256 digest of a retained screenshot artifact, as "
+                "returned in the screenshot_sha256 member of "
+                "framework.screen.capture or framework.screen.crop. A digest "
+                "whose artifact has expired or been reclaimed is refused by "
+                "name.",
             },
-            ArgumentMember{"to_x", ArgumentMemberKind::SurfacePixel},
-            ArgumentMember{"to_y", ArgumentMemberKind::SurfacePixel},
-            ArgumentMember{"tolerance", ArgumentMemberKind::Count},
-            ArgumentMember{"travel_ms", ArgumentMemberKind::Milliseconds},
-            ArgumentMember{"ui_target", ArgumentMemberKind::Name},
-            ArgumentMember{"width", ArgumentMemberKind::SurfacePixel},
-            ArgumentMember{"x", ArgumentMemberKind::SurfacePixel},
-            ArgumentMember{"y", ArgumentMemberKind::SurfacePixel},
+            ArgumentMember{
+                "to_x",
+                ArgumentMemberKind::SurfacePixel,
+                "X coordinate the drag travels to, in screenshot pixels from "
+                "the screenshot's left edge.",
+            },
+            ArgumentMember{
+                "to_y",
+                ArgumentMemberKind::SurfacePixel,
+                "Y coordinate the drag travels to, in screenshot pixels from "
+                "the screenshot's top edge.",
+            },
+            ArgumentMember{
+                "tolerance",
+                ArgumentMemberKind::Count,
+                "Inclusive per-channel tolerance for the colour match.",
+            },
+            ArgumentMember{
+                "travel_ms",
+                ArgumentMemberKind::Milliseconds,
+                "How long the drag takes to travel from its start to its "
+                "destination, in whole milliseconds.",
+            },
+            ArgumentMember{
+                "ui_target",
+                ArgumentMemberKind::Name,
+                "UiTarget identifier the named observation resolved on this "
+                "frame.",
+            },
+            ArgumentMember{
+                "width",
+                ArgumentMemberKind::SurfacePixel,
+                "Width of the rectangle, in screenshot pixels.",
+            },
+            ArgumentMember{
+                "x",
+                ArgumentMemberKind::SurfacePixel,
+                "X coordinate in screenshot pixels, from the screenshot's left "
+                "edge.",
+            },
+            ArgumentMember{
+                "y",
+                ArgumentMemberKind::SurfacePixel,
+                "Y coordinate in screenshot pixels, from the screenshot's top "
+                "edge.",
+            },
         };
 
         constexpr auto k_inputClickMembers = std::array{
@@ -424,22 +589,7 @@ namespace uf::operator_runtime
         };
 
         [[nodiscard]]
-        auto memberList(std::span<std::string_view const> members) -> std::string
-        {
-            auto rendered = std::string{};
-            for (auto const& member : members)
-            {
-                if (!rendered.empty())
-                {
-                    rendered += ", ";
-                }
-                rendered += member;
-            }
-            return rendered;
-        }
-
-        [[nodiscard]]
-        auto argumentMemberKind(std::string_view member) -> ArgumentMemberKind
+        auto argumentMember(std::string_view member) -> ArgumentMember const&
         {
             auto const found = std::ranges::find(
                 k_argumentMembers,
@@ -450,98 +600,147 @@ namespace uf::operator_runtime
             // naming anything else would not compile past the table it was
             // written beside.
             UF_CHECK(found != k_argumentMembers.end());
-            return found->kind;
+            return *found;
         }
 
+        // One member's published shape, in JSON Schema Draft 2020-12 keywords
+        // and no others. There is deliberately no private spelling here --
+        // `additionalProperties`, not `additional_properties`; `minLength`, not
+        // `min_length` -- because a caller reads this with an ordinary schema
+        // reader or not at all, and a dialect only this repository understands
+        // is a contract only this repository can check.
         [[nodiscard]]
-        auto argumentMemberValid(
-            ArgumentMemberKind kind,
-            json::Value const& value
-        ) -> bool
+        auto memberSchema(ArgumentMember const& member) -> json::Value
         {
-            switch (kind)
+            auto fields = std::vector<json::Member>{
+                {"description",
+                 json::Value::ofString(std::string{member.description})},
+            };
+            switch (member.kind)
             {
             case ArgumentMemberKind::KeyName:
             case ArgumentMemberKind::Name:
-                return value.kind() == json::ValueKind::String
-                    && !value.string().empty();
+                fields.emplace_back("minLength", json::Value::ofNumber(1.0));
+                fields.emplace_back("type", json::Value::ofString("string"));
+                break;
             case ArgumentMemberKind::Text:
-                return value.kind() == json::ValueKind::String;
-            case ArgumentMemberKind::JsonObject:
-                return value.kind() == json::ValueKind::Object;
+                fields.emplace_back("type", json::Value::ofString("string"));
+                break;
+            case ArgumentMemberKind::ScreenReturn:
+                fields.emplace_back(
+                    "default",
+                    json::Value::ofString("none")
+                );
+                fields.emplace_back(
+                    "enum",
+                    json::Value::ofArray({
+                        json::Value::ofString("none"),
+                        json::Value::ofString("capture"),
+                        json::Value::ofString("observe"),
+                    })
+                );
+                fields.emplace_back("type", json::Value::ofString("string"));
+                break;
             case ArgumentMemberKind::Sha256:
-                return value.kind() == json::ValueKind::String
-                    && value.string().size() == 64U
-                    && std::ranges::all_of(
-                        value.string(),
-                        [](char character)
-                        {
-                            return (
-                                character >= '0' && character <= '9'
-                            ) || (
-                                character >= 'a' && character <= 'f'
-                            );
-                        }
-                    );
+                fields.emplace_back(
+                    "pattern",
+                    json::Value::ofString("^[0-9a-f]{64}$")
+                );
+                fields.emplace_back("type", json::Value::ofString("string"));
+                break;
             case ArgumentMemberKind::SurfacePixel:
-                return value.isInteger()
-                    && value.number() >= 0.0
-                    && value.number()
-                        <= static_cast<double>(
-                            std::numeric_limits<uint32>::max()
-                        );
+                fields.emplace_back(
+                    "maximum",
+                    json::Value::ofNumber(
+                        static_cast<double>(std::numeric_limits<uint32>::max())
+                    )
+                );
+                fields.emplace_back("minimum", json::Value::ofNumber(0.0));
+                fields.emplace_back("type", json::Value::ofString("integer"));
+                break;
             case ArgumentMemberKind::Milliseconds:
             case ArgumentMemberKind::Count:
-                return value.isInteger() && value.number() >= 0.0;
+                fields.emplace_back("minimum", json::Value::ofNumber(0.0));
+                fields.emplace_back("type", json::Value::ofString("integer"));
+                break;
             case ArgumentMemberKind::SignedCount:
-                return value.isInteger();
+                fields.emplace_back("type", json::Value::ofString("integer"));
+                break;
             case ArgumentMemberKind::ColourChannel:
-                return value.isInteger()
-                    && value.number() >= 0.0
-                    && value.number() <= 255.0;
+                fields.emplace_back("maximum", json::Value::ofNumber(255.0));
+                fields.emplace_back("minimum", json::Value::ofNumber(0.0));
+                fields.emplace_back("type", json::Value::ofString("integer"));
+                break;
             case ArgumentMemberKind::Flag:
-                return value.kind() == json::ValueKind::Boolean;
+                fields.emplace_back("type", json::Value::ofString("boolean"));
+                break;
+            case ArgumentMemberKind::JsonObject:
+                fields.emplace_back("type", json::Value::ofString("object"));
+                break;
             }
-            UF_UNREACHABLE_MSG("Unknown Framework argument member kind");
+            return json::Value::ofObject(std::move(fields));
         }
 
-        // One closed object contract: exactly these members, each valid for the
-        // kind its name carries. Every measuring and authoring contract is this
-        // shape, so it is judged once here rather than once per Tool.
+        // A Framework Tool's whole argument contract: a closed object, the
+        // members it requires, the members it admits, and one `properties`
+        // entry per member carrying that member's type, its bounds and its own
+        // description.
+        //
+        // The object is closed because a Framework argument contract is a
+        // closed object: a member nobody declared is a malformed call rather
+        // than one this Tool ignores.
         [[nodiscard]]
-        auto requireExactMembers(
-            CanonicalJson const& arguments,
-            std::string_view toolName,
-            std::span<std::string_view const> members
-        ) -> Status
+        auto argumentMaterial(
+            std::span<std::string_view const> required,
+            std::span<std::string_view const> optional = {}
+        ) -> json::Value
         {
-            auto const& value = arguments.value();
-            if (
-                value.kind() != json::ValueKind::Object
-                || value.members().size() != members.size()
-            )
+            auto properties  = std::vector<json::Member>{};
+            auto requiredIds = std::vector<json::Value>{};
+            properties.reserve(required.size() + optional.size());
+            requiredIds.reserve(required.size());
+            for (auto const member : required)
             {
-                return invalidFrameworkArguments(
-                    std::string{toolName} + " requires exactly "
-                    + memberList(members)
+                requiredIds.emplace_back(
+                    json::Value::ofString(std::string{member})
+                );
+                properties.emplace_back(
+                    std::string{member},
+                    memberSchema(argumentMember(member))
                 );
             }
-            for (auto const& member : members)
+            for (auto const member : optional)
             {
-                auto const* const p_value = value.find(member);
-                if (
-                    p_value == nullptr
-                    || !argumentMemberValid(argumentMemberKind(member), *p_value)
-                )
-                {
-                    return invalidFrameworkArguments(
-                        std::string{toolName} + " requires exactly "
-                        + memberList(members) + ", and '" + std::string{member}
-                        + "' is missing or malformed"
-                    );
-                }
+                properties.emplace_back(
+                    std::string{member},
+                    memberSchema(argumentMember(member))
+                );
             }
-            return ok();
+
+            auto material = std::vector<json::Member>{
+                {"additionalProperties", json::Value::ofBoolean(false)},
+                {"type", json::Value::ofString("object")},
+            };
+            // A Tool that takes no arguments states neither keyword. An empty
+            // `properties` and an empty `required` say nothing that
+            // `additionalProperties: false` on an object has not already said,
+            // and a reader would have to decide which of the three it was
+            // meant to believe.
+            if (!properties.empty())
+            {
+                material.emplace_back(
+                    "properties",
+                    json::Value::ofObject(std::move(properties))
+                );
+            }
+            if (!requiredIds.empty())
+            {
+                material.emplace_back(
+                    "required",
+                    json::Value::ofArray(std::move(requiredIds))
+                );
+            }
+            return json::Value::ofObject(std::move(material));
         }
 
         // The payload shape a Framework input effect carries. It is rendered
@@ -552,8 +751,13 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto inputEffectPayloadMaterial() -> json::Value
         {
+            // These bytes are the PREIMAGE of an effect bound's
+            // payload_schema_hash, not a schema anything compiles. They still
+            // spell their keywords the standard way, because a reader meeting
+            // two spellings of one keyword in one file cannot tell which is the
+            // real one.
             return json::Value::ofObject({
-                {"additional_properties", json::Value::ofBoolean(false)},
+                {"additionalProperties", json::Value::ofBoolean(false)},
                 {"required",
                  json::Value::ofArray({
                      json::Value::ofString("controlled_target_id"),
@@ -697,8 +901,9 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto authoringEffectPayloadMaterial() -> json::Value
         {
+            // Preimage bytes, for the reason inputEffectPayloadMaterial states.
             return json::Value::ofObject({
-                {"additional_properties", json::Value::ofBoolean(false)},
+                {"additionalProperties", json::Value::ofBoolean(false)},
                 {"required",
                  json::Value::ofArray({
                      json::Value::ofString("controlled_target_id"),
@@ -901,707 +1106,856 @@ namespace uf::operator_runtime
             };
         }
 
-        // Three Framework Tools take no arguments at all. The tool name is a
-        // parameter so that each still refuses in its own words, while the one
-        // rule they share is stated once.
-        [[nodiscard]]
-        auto requireNoArguments(
-            CanonicalJson const& arguments,
-            std::string_view toolName
-        ) -> Status
-        {
-            auto const& value = arguments.value();
-            if (
-                value.kind() != json::ValueKind::Object
-                || !value.members().empty()
-            )
-            {
-                return invalidFrameworkArguments(
-                    std::string{toolName} + " arguments must be exactly {}"
-                );
-            }
-            return ok();
-        }
-
-        [[nodiscard]]
-        auto validateObserveArguments(CanonicalJson const& arguments) -> Status
-        {
-            return requireExactMembers(
-                arguments,
-                k_observeTool,
-                k_screenshotMembers
-            );
-        }
-
-        [[nodiscard]]
-        auto validateCaptureArguments(CanonicalJson const& arguments) -> Status
-        {
-            return requireNoArguments(arguments, k_captureTool);
-        }
-
-        [[nodiscard]]
-        auto validateCropArguments(CanonicalJson const& arguments) -> Status
-        {
-            return requireExactMembers(
-                arguments,
-                k_cropTool,
-                k_screenshotRectangleMembers
-            );
-        }
-
-        [[nodiscard]]
-        auto validateStatusArguments(CanonicalJson const& arguments) -> Status
-        {
-            return requireNoArguments(arguments, k_statusTool);
-        }
-
-        // The record is the whole of the call's durable outcome, so it is the
-        // whole of the call's arguments. There is deliberately no attribution
-        // member: per R5 the root and position are supplied by the seam, and a
-        // caller that could state them could attribute its record to another
-        // call's position.
-        [[nodiscard]]
-        auto validateAuditArguments(CanonicalJson const& arguments) -> Status
-        {
-            auto const& value = arguments.value();
-            auto const* const p_record = value.find("record");
-            if (
-                value.kind() != json::ValueKind::Object
-                || value.members().size() != 1U
-                || p_record == nullptr
-                || p_record->kind() != json::ValueKind::Object
-            )
-            {
-                return invalidFrameworkArguments(
-                    "framework.audit.record requires only an object record"
-                );
-            }
-            return ok();
-        }
-
-        [[nodiscard]]
-        auto requireMembersWithOptionalReturn(
-            CanonicalJson const& arguments,
-            std::string_view toolName,
-            std::span<std::string_view const> required
-        ) -> Status
-        {
-            auto const& value = arguments.value();
-            auto const* const p_return = value.find("return_screen");
-            auto const validReturn = p_return == nullptr
-                || (
-                    p_return->kind() == json::ValueKind::String
-                    && (
-                        p_return->string() == "none"
-                        || p_return->string() == "capture"
-                        || p_return->string() == "observe"
-                    )
-                );
-            if (
-                value.kind() != json::ValueKind::Object
-                || value.members().size()
-                    != required.size() + (p_return == nullptr ? 0U : 1U)
-                || !validReturn
-            )
-            {
-                return invalidFrameworkArguments(
-                    std::string{toolName} + " requires exactly "
-                    + memberList(required)
-                    + " and optional return_screen in none, capture, observe"
-                );
-            }
-            for (auto const& member : required)
-            {
-                auto const* const p_value = value.find(member);
-                if (
-                    p_value == nullptr
-                    || !argumentMemberValid(argumentMemberKind(member), *p_value)
-                )
-                {
-                    return invalidFrameworkArguments(
-                        std::string{toolName} + " requires exactly "
-                        + memberList(required) + ", and '"
-                        + std::string{member} + "' is missing or malformed"
-                    );
-                }
-            }
-            return ok();
-        }
-
-        [[nodiscard]]
-        auto validateInputClickArguments(CanonicalJson const& arguments) -> Status
-        { return requireExactMembers(arguments, k_inputClickTool, k_inputClickMembers); }
-        [[nodiscard]]
-        auto validateInputDragArguments(CanonicalJson const& arguments) -> Status
-        { return requireExactMembers(arguments, k_inputDragTool, k_inputDragMembers); }
-        [[nodiscard]]
-        auto validateInputHoldArguments(CanonicalJson const& arguments) -> Status
-        {
-            return requireMembersWithOptionalReturn(
-                arguments,
-                k_inputHoldTool,
-                k_inputHoldMembers
-            );
-        }
-        [[nodiscard]]
-        auto validateInputKeyArguments(CanonicalJson const& arguments) -> Status
-        { return requireExactMembers(arguments, k_inputKeyTool, k_inputKeyMembers); }
-        [[nodiscard]]
-        auto validateInputMoveArguments(CanonicalJson const& arguments) -> Status
-        { return requireExactMembers(arguments, k_inputMoveTool, k_inputMoveMembers); }
-        [[nodiscard]]
-        auto validateInputScrollArguments(CanonicalJson const& arguments) -> Status
-        {
-            return requireExactMembers(
-                arguments,
-                k_inputScrollTool,
-                k_inputScrollMembers
-            );
-        }
-
-        // observation_reference is an object, never a string containing JSON.
-        // The other three members are identifiers minted into the named
-        // observation; the provider performs that authority join.
-        [[nodiscard]]
-        auto validateUiArguments(
-            CanonicalJson const& arguments,
-            std::string_view toolName,
-            bool hold
-        ) -> Status
-        {
-            return hold
-                ? requireMembersWithOptionalReturn(
-                      arguments,
-                      toolName,
-                      k_uiActionMembers
-                  )
-                : requireExactMembers(arguments, toolName, k_uiActionMembers);
-        }
-
-        [[nodiscard]] auto validateUiClickArguments(CanonicalJson const& arguments)
-            -> Status
-        { return validateUiArguments(arguments, k_uiClickTool, false); }
-        [[nodiscard]] auto validateUiDragArguments(CanonicalJson const& arguments)
-            -> Status
-        { return validateUiArguments(arguments, k_uiDragTool, false); }
-        [[nodiscard]] auto validateUiHoldArguments(CanonicalJson const& arguments)
-            -> Status
-        { return validateUiArguments(arguments, k_uiHoldTool, true); }
-        [[nodiscard]] auto validateUiKeyArguments(CanonicalJson const& arguments)
-            -> Status
-        { return validateUiArguments(arguments, k_uiKeyTool, false); }
-        [[nodiscard]] auto validateUiMoveArguments(CanonicalJson const& arguments)
-            -> Status
-        { return validateUiArguments(arguments, k_uiMoveTool, false); }
-        [[nodiscard]] auto validateUiScrollArguments(CanonicalJson const& arguments)
-            -> Status
-        { return validateUiArguments(arguments, k_uiScrollTool, false); }
-
-        [[nodiscard]]
-        auto validateReadLinesArguments(CanonicalJson const& arguments) -> Status
-        {
-            return requireExactMembers(
-                arguments,
-                k_readLinesTool,
-                k_screenshotRectangleMembers
-            );
-        }
-
-        [[nodiscard]]
-        auto validateProbeArguments(CanonicalJson const& arguments) -> Status
-        {
-            return requireExactMembers(arguments, k_probeTool, k_probeMembers);
-        }
-
-        [[nodiscard]]
-        auto validateCensusGridArguments(CanonicalJson const& arguments)
-            -> Status
-        {
-            return requireExactMembers(
-                arguments,
-                k_censusGridTool,
-                k_censusGridMembers
-            );
-        }
-
-        [[nodiscard]]
-        auto validateProjectReadTextArguments(CanonicalJson const& arguments)
-            -> Status
-        {
-            return requireExactMembers(
-                arguments,
-                k_projectReadTextTool,
-                k_projectReadTextMembers
-            );
-        }
-
-        [[nodiscard]]
-        auto validateProjectWriteFileArguments(CanonicalJson const& arguments)
-            -> Status
-        {
-            return requireExactMembers(
-                arguments,
-                k_projectWriteFileTool,
-                k_projectWriteFileMembers
-            );
-        }
-
-        [[nodiscard]]
-        auto validateProjectWriteTextArguments(CanonicalJson const& arguments)
-            -> Status
-        {
-            return requireExactMembers(
-                arguments,
-                k_projectWriteTextTool,
-                k_projectWriteTextMembers
-            );
-        }
-
-        [[nodiscard]]
-        auto validateWaitArguments(CanonicalJson const& arguments) -> Status
-        {
-            auto const& value = arguments.value();
-            auto const* const p_duration = value.find("duration_ms");
-            if (
-                value.kind() != json::ValueKind::Object
-                || value.members().size() != 1U
-                || p_duration == nullptr
-                || !p_duration->isInteger()
-                || p_duration->number() < 0.0
-                || p_duration->number()
-                    > static_cast<double>(k_maximumWaitMillis)
-            )
-            {
-                return invalidFrameworkArguments(
-                    "framework.workflow.wait requires only integer duration_ms "
-                    "in [0, 60000]"
-                );
-            }
-            return ok();
-        }
-
-        [[nodiscard]]
-        auto noArgumentsMaterial() -> json::Value
-        {
-            return json::Value::ofObject({
-                {"additional_properties", json::Value::ofBoolean(false)},
-                {"type", json::Value::ofString("object")},
-            });
-        }
-
-        [[nodiscard]]
-        auto requiredMembersMaterial(std::vector<json::Value> required)
-            -> json::Value
-        {
-            return json::Value::ofObject({
-                {"additional_properties", json::Value::ofBoolean(false)},
-                {"required", json::Value::ofArray(std::move(required))},
-                {"type", json::Value::ofString("object")},
-            });
-        }
-
-        [[nodiscard]]
-        auto auditArgumentMaterial() -> json::Value
-        {
-            return requiredMembersMaterial({
-                json::Value::ofString("record"),
-            });
-        }
-
-        struct ScreenMemberDescription final
-        {
-            std::string_view member{};
-            std::string_view description{};
+        // The two Tools that take nothing, and the two member lists the shared
+        // builder needs that no other contract states.
+        constexpr auto k_noMembers = std::array<std::string_view, 0U>{};
+        constexpr auto k_auditMembers = std::array{
+            std::string_view{"record"},
+        };
+        constexpr auto k_returnScreenMembers = std::array{
+            std::string_view{"return_screen"},
         };
 
-        constexpr auto k_screenMemberDescriptions = std::array{
-            ScreenMemberDescription{"cell_height", "Grid-cell height in screenshot pixels."},
-            ScreenMemberDescription{"cell_width", "Grid-cell width in screenshot pixels."},
-            ScreenMemberDescription{"colour_blue", "Blue channel of the probe colour in [0, 255]."},
-            ScreenMemberDescription{"colour_green", "Green channel of the probe colour in [0, 255]."},
-            ScreenMemberDescription{"colour_red", "Red channel of the probe colour in [0, 255]."},
-            ScreenMemberDescription{"height", "Rectangle height in screenshot pixels."},
-            ScreenMemberDescription{"removes", "Whether matching pixels are removed rather than selected."},
-            ScreenMemberDescription{k_screenshotSha256Member, "Lowercase sha256 digest of the immutable screenshot artifact to read."},
-            ScreenMemberDescription{"tolerance", "Inclusive channel tolerance for colour selection."},
-            ScreenMemberDescription{"width", "Rectangle width in screenshot pixels."},
-            ScreenMemberDescription{"x", "Left edge of the rectangle in screenshot pixels."},
-            ScreenMemberDescription{"y", "Top edge of the rectangle in screenshot pixels."},
-        };
-
-        [[nodiscard]]
-        auto screenMemberDescription(std::string_view member) -> std::string_view
-        {
-            auto const found = std::ranges::find(
-                k_screenMemberDescriptions,
-                member,
-                &ScreenMemberDescription::member
-            );
-            if (found != k_screenMemberDescriptions.end()) return found->description;
-            UF_UNREACHABLE_MSG("Unknown screen argument member description");
-        }
-
-        [[nodiscard]]
-        auto screenMemberSchema(std::string_view member) -> json::Value
-        {
-            auto members = std::vector<json::Member>{
-                {"description", json::Value::ofString(
-                    std::string{screenMemberDescription(member)}
-                )},
-            };
-            auto const kind = argumentMemberKind(member);
-            switch (kind)
-            {
-            case ArgumentMemberKind::Sha256:
-                members.emplace_back(
-                    "pattern",
-                    json::Value::ofString("^[0-9a-f]{64}$")
-                );
-                members.emplace_back("type", json::Value::ofString("string"));
-                break;
-            case ArgumentMemberKind::SurfacePixel:
-            case ArgumentMemberKind::Count:
-            case ArgumentMemberKind::ColourChannel:
-                members.emplace_back("minimum", json::Value::ofNumber(0.0));
-                if (kind == ArgumentMemberKind::ColourChannel)
-                {
-                    members.emplace_back("maximum", json::Value::ofNumber(255.0));
-                }
-                if (kind == ArgumentMemberKind::SurfacePixel)
-                {
-                    members.emplace_back(
-                        "maximum",
-                        json::Value::ofNumber(4294967295.0)
-                    );
-                }
-                members.emplace_back("type", json::Value::ofString("integer"));
-                break;
-            case ArgumentMemberKind::Flag:
-                members.emplace_back("type", json::Value::ofString("boolean"));
-                break;
-            case ArgumentMemberKind::KeyName:
-            case ArgumentMemberKind::Milliseconds:
-            case ArgumentMemberKind::SignedCount:
-            case ArgumentMemberKind::Name:
-            case ArgumentMemberKind::Text:
-            case ArgumentMemberKind::JsonObject:
-                UF_UNREACHABLE_MSG("Unsupported screen argument member schema");
-            }
-            return json::Value::ofObject(std::move(members));
-        }
-
-        [[nodiscard]]
-        auto screenArgumentMaterial(std::span<std::string_view const> members)
-            -> json::Value
-        {
-            auto required   = std::vector<json::Value>{};
-            auto properties = std::vector<json::Member>{};
-            required.reserve(members.size());
-            properties.reserve(members.size());
-            for (auto const member : members)
-            {
-                required.emplace_back(json::Value::ofString(std::string{member}));
-                properties.emplace_back(
-                    std::string{member},
-                    screenMemberSchema(member)
-                );
-            }
-            return json::Value::ofObject({
-                {"additional_properties", json::Value::ofBoolean(false)},
-                {"properties", json::Value::ofObject(std::move(properties))},
-                {"required", json::Value::ofArray(std::move(required))},
-                {"type", json::Value::ofString("object")},
-            });
-        }
-
-        struct InputMemberDescription final
-        {
-            std::string_view member{};
-            std::string_view description{};
-        };
-
-        constexpr auto k_inputMemberDescriptions = std::array{
-            InputMemberDescription{"action", "Action identifier returned by the named observation."},
-            InputMemberDescription{"binding", "Resolved Binding identifier returned by the named observation."},
-            InputMemberDescription{"duration_ms", "Declared dwell in milliseconds before the held input is released."},
-            InputMemberDescription{"key", "Canonical key name to press."},
-            InputMemberDescription{"notches", "Signed wheel-detent count."},
-            InputMemberDescription{k_observationReferenceArgument, "Observation reference returned by framework.screen.observe."},
-            InputMemberDescription{"return_screen", "Screen result while held: none, capture, or observe."},
-            InputMemberDescription{k_screenshotSha256Member, "Lowercase sha256 digest of the retained screenshot the action is bound to."},
-            InputMemberDescription{"to_x", "Drag destination x coordinate in screenshot pixels."},
-            InputMemberDescription{"to_y", "Drag destination y coordinate in screenshot pixels."},
-            InputMemberDescription{"travel_ms", "Declared drag travel time in milliseconds."},
-            InputMemberDescription{"ui_target", "UiTarget identifier returned by the named observation."},
-            InputMemberDescription{"x", "Action x coordinate in screenshot pixels."},
-            InputMemberDescription{"y", "Action y coordinate in screenshot pixels."},
-        };
-
-        [[nodiscard]]
-        auto inputMemberDescription(std::string_view member) -> std::string_view
-        {
-            auto const found = std::ranges::find(
-                k_inputMemberDescriptions,
-                member,
-                &InputMemberDescription::member
-            );
-            if (found != k_inputMemberDescriptions.end()) return found->description;
-            UF_UNREACHABLE_MSG("Unknown input argument member description");
-        }
-
-        [[nodiscard]]
-        auto inputMemberSchema(std::string_view member) -> json::Value
-        {
-            auto fields = std::vector<json::Member>{
-                {"description", json::Value::ofString(
-                    std::string{inputMemberDescription(member)}
-                )},
-            };
-            auto const kind = argumentMemberKind(member);
-            switch (kind)
-            {
-            case ArgumentMemberKind::KeyName:
-            case ArgumentMemberKind::Name:
-                fields.emplace_back("min_length", json::Value::ofNumber(1.0));
-                fields.emplace_back("type", json::Value::ofString("string"));
-                break;
-            case ArgumentMemberKind::Sha256:
-                fields.emplace_back(
-                    "pattern",
-                    json::Value::ofString("^[0-9a-f]{64}$")
-                );
-                fields.emplace_back("type", json::Value::ofString("string"));
-                break;
-            case ArgumentMemberKind::SurfacePixel:
-                fields.emplace_back("maximum", json::Value::ofNumber(4294967295.0));
-                fields.emplace_back("minimum", json::Value::ofNumber(0.0));
-                fields.emplace_back("type", json::Value::ofString("integer"));
-                break;
-            case ArgumentMemberKind::Milliseconds:
-                fields.emplace_back("minimum", json::Value::ofNumber(0.0));
-                fields.emplace_back("type", json::Value::ofString("integer"));
-                break;
-            case ArgumentMemberKind::SignedCount:
-                fields.emplace_back("type", json::Value::ofString("integer"));
-                break;
-            case ArgumentMemberKind::JsonObject:
-                fields.emplace_back("type", json::Value::ofString("object"));
-                break;
-            case ArgumentMemberKind::ColourChannel:
-            case ArgumentMemberKind::Count:
-            case ArgumentMemberKind::Flag:
-            case ArgumentMemberKind::Text:
-                UF_UNREACHABLE_MSG("Unsupported input argument member schema");
-            }
-            return json::Value::ofObject(std::move(fields));
-        }
-
-        [[nodiscard]]
-        auto inputArgumentMaterial(
-            std::span<std::string_view const> requiredMembers,
-            bool returnScreen
-        ) -> json::Value
-        {
-            auto required   = std::vector<json::Value>{};
-            auto properties = std::vector<json::Member>{};
-            required.reserve(requiredMembers.size());
-            properties.reserve(requiredMembers.size() + (returnScreen ? 1U : 0U));
-            for (auto const member : requiredMembers)
-            {
-                required.emplace_back(json::Value::ofString(std::string{member}));
-                properties.emplace_back(
-                    std::string{member},
-                    inputMemberSchema(member)
-                );
-            }
-            if (returnScreen)
-            {
-                properties.emplace_back(
-                    "return_screen",
-                    json::Value::ofObject({
-                        {"default", json::Value::ofString("none")},
-                        {"description", json::Value::ofString(
-                            std::string{inputMemberDescription("return_screen")}
-                        )},
-                        {"enum", json::Value::ofArray({
-                            json::Value::ofString("none"),
-                            json::Value::ofString("capture"),
-                            json::Value::ofString("observe"),
-                        })},
-                        {"type", json::Value::ofString("string")},
-                    })
-                );
-            }
-            return json::Value::ofObject({
-                {"additional_properties", json::Value::ofBoolean(false)},
-                {"properties", json::Value::ofObject(std::move(properties))},
-                {"required", json::Value::ofArray(std::move(required))},
-                {"type", json::Value::ofString("object")},
-            });
-        }
-
+        [[nodiscard]] auto auditArgumentMaterial() -> json::Value
+        { return argumentMaterial(k_auditMembers); }
+        [[nodiscard]] auto noArgumentsMaterial() -> json::Value
+        { return argumentMaterial(k_noMembers); }
+        [[nodiscard]] auto observeArgumentMaterial() -> json::Value
+        { return argumentMaterial(k_screenshotMembers); }
+        [[nodiscard]] auto cropArgumentMaterial() -> json::Value
+        { return argumentMaterial(k_screenshotRectangleMembers); }
+        [[nodiscard]] auto readLinesArgumentMaterial() -> json::Value
+        { return argumentMaterial(k_screenshotRectangleMembers); }
+        [[nodiscard]] auto probeArgumentMaterial() -> json::Value
+        { return argumentMaterial(k_probeMembers); }
+        [[nodiscard]] auto censusGridArgumentMaterial() -> json::Value
+        { return argumentMaterial(k_censusGridMembers); }
+        [[nodiscard]] auto projectReadTextArgumentMaterial() -> json::Value
+        { return argumentMaterial(k_projectReadTextMembers); }
+        [[nodiscard]] auto projectWriteFileArgumentMaterial() -> json::Value
+        { return argumentMaterial(k_projectWriteFileMembers); }
+        [[nodiscard]] auto projectWriteTextArgumentMaterial() -> json::Value
+        { return argumentMaterial(k_projectWriteTextMembers); }
         [[nodiscard]] auto inputClickArgumentMaterial() -> json::Value
-        { return inputArgumentMaterial(k_inputClickMembers, false); }
+        { return argumentMaterial(k_inputClickMembers); }
         [[nodiscard]] auto inputDragArgumentMaterial() -> json::Value
-        { return inputArgumentMaterial(k_inputDragMembers, false); }
+        { return argumentMaterial(k_inputDragMembers); }
         [[nodiscard]] auto inputHoldArgumentMaterial() -> json::Value
-        { return inputArgumentMaterial(k_inputHoldMembers, true); }
+        { return argumentMaterial(k_inputHoldMembers, k_returnScreenMembers); }
         [[nodiscard]] auto inputKeyArgumentMaterial() -> json::Value
-        { return inputArgumentMaterial(k_inputKeyMembers, false); }
+        { return argumentMaterial(k_inputKeyMembers); }
         [[nodiscard]] auto inputMoveArgumentMaterial() -> json::Value
-        { return inputArgumentMaterial(k_inputMoveMembers, false); }
+        { return argumentMaterial(k_inputMoveMembers); }
         [[nodiscard]] auto inputScrollArgumentMaterial() -> json::Value
-        { return inputArgumentMaterial(k_inputScrollMembers, false); }
+        { return argumentMaterial(k_inputScrollMembers); }
         [[nodiscard]] auto uiArgumentMaterial() -> json::Value
-        { return inputArgumentMaterial(k_uiActionMembers, false); }
+        { return argumentMaterial(k_uiActionMembers); }
         [[nodiscard]] auto uiHoldArgumentMaterial() -> json::Value
-        { return inputArgumentMaterial(k_uiActionMembers, true); }
+        { return argumentMaterial(k_uiActionMembers, k_returnScreenMembers); }
 
-        [[nodiscard]]
-        auto readLinesArgumentMaterial() -> json::Value
-        {
-            return screenArgumentMaterial(k_screenshotRectangleMembers);
-        }
-
-        [[nodiscard]]
-        auto probeArgumentMaterial() -> json::Value
-        {
-            return screenArgumentMaterial(k_probeMembers);
-        }
-
-        [[nodiscard]]
-        auto censusGridArgumentMaterial() -> json::Value
-        {
-            return screenArgumentMaterial(k_censusGridMembers);
-        }
-
-        [[nodiscard]]
-        auto observeArgumentMaterial() -> json::Value
-        {
-            return screenArgumentMaterial(k_screenshotMembers);
-        }
-
-        [[nodiscard]]
-        auto cropArgumentMaterial() -> json::Value
-        {
-            return screenArgumentMaterial(k_screenshotRectangleMembers);
-        }
-
-        struct ProjectMemberDescription final
-        {
-            std::string_view member{};
-            std::string_view description{};
-        };
-
-        constexpr auto k_projectMemberDescriptions = std::array{
-            ProjectMemberDescription{
-                "content",
-                "UTF-8 text to write into the project authoring store.",
-            },
-            ProjectMemberDescription{
-                k_fileSha256Member,
-                "Lowercase sha256 digest of the retained evidence artifact to copy.",
-            },
-            ProjectMemberDescription{
-                "path",
-                "Project-relative path inside the project authoring store.",
-            },
-        };
-
-        [[nodiscard]]
-        auto projectMemberDescription(std::string_view member) -> std::string_view
-        {
-            auto const found = std::ranges::find(
-                k_projectMemberDescriptions,
-                member,
-                &ProjectMemberDescription::member
-            );
-            if (found != k_projectMemberDescriptions.end()) return found->description;
-            UF_UNREACHABLE_MSG("Unknown project argument member description");
-        }
-
-        [[nodiscard]]
-        auto projectMemberSchema(std::string_view member) -> json::Value
-        {
-            auto fields = std::vector<json::Member>{
-                {"description", json::Value::ofString(
-                    std::string{projectMemberDescription(member)}
-                )},
-                {"type", json::Value::ofString("string")},
-            };
-            auto const kind = argumentMemberKind(member);
-            if (kind == ArgumentMemberKind::Name)
-            {
-                fields.emplace_back("min_length", json::Value::ofNumber(1.0));
-            }
-            else if (kind == ArgumentMemberKind::Sha256)
-            {
-                fields.emplace_back(
-                    "pattern",
-                    json::Value::ofString("^[0-9a-f]{64}$")
-                );
-            }
-            else
-            {
-                UF_CHECK(kind == ArgumentMemberKind::Text);
-            }
-            return json::Value::ofObject(std::move(fields));
-        }
-
-        [[nodiscard]]
-        auto projectArgumentMaterial(std::span<std::string_view const> members)
-            -> json::Value
-        {
-            auto required   = std::vector<json::Value>{};
-            auto properties = std::vector<json::Member>{};
-            required.reserve(members.size());
-            properties.reserve(members.size());
-            for (auto const member : members)
-            {
-                required.emplace_back(json::Value::ofString(std::string{member}));
-                properties.emplace_back(
-                    std::string{member},
-                    projectMemberSchema(member)
-                );
-            }
-            return json::Value::ofObject({
-                {"additional_properties", json::Value::ofBoolean(false)},
-                {"properties", json::Value::ofObject(std::move(properties))},
-                {"required", json::Value::ofArray(std::move(required))},
-                {"type", json::Value::ofString("object")},
-            });
-        }
-
-        [[nodiscard]]
-        auto projectReadTextArgumentMaterial() -> json::Value
-        {
-            return projectArgumentMaterial(k_projectReadTextMembers);
-        }
-
-        [[nodiscard]]
-        auto projectWriteFileArgumentMaterial() -> json::Value
-        {
-            return projectArgumentMaterial(k_projectWriteFileMembers);
-        }
-
-        [[nodiscard]]
-        auto projectWriteTextArgumentMaterial() -> json::Value
-        {
-            return projectArgumentMaterial(k_projectWriteTextMembers);
-        }
-
+        // The one Framework Tool whose argument carries a bound of its own, so
+        // the one whose property is written here rather than derived from the
+        // member table.
+        //
+        // THE CEILING LIVES IN properties.duration_ms.maximum AND NOWHERE
+        // ELSE. It used to sit under an invented top-level keyword, where no
+        // standard validator and no model reading the catalog could find it and
+        // only this repository knew where to look. A caller, an Operator and a
+        // schema evaluator now read the same number out of the same place.
         [[nodiscard]]
         auto waitArgumentMaterial() -> json::Value
         {
             return json::Value::ofObject({
-                {"additional_properties", json::Value::ofBoolean(false)},
-                {"maximum_duration_ms",
-                 json::Value::ofNumber(
-                     static_cast<double>(k_maximumWaitMillis)
-                 )},
+                {"additionalProperties", json::Value::ofBoolean(false)},
+                {"properties",
+                 json::Value::ofObject({
+                     {"duration_ms",
+                      json::Value::ofObject({
+                          {"description",
+                           json::Value::ofString(
+                               "How long to wait, in whole milliseconds. A wait "
+                               "is bounded by construction: this is the "
+                               "longest one this Tool admits, and a larger "
+                               "value is refused rather than clamped."
+                           )},
+                          {"maximum",
+                           json::Value::ofNumber(
+                               static_cast<double>(k_maximumWaitMillis)
+                           )},
+                          {"minimum", json::Value::ofNumber(0.0)},
+                          {"type", json::Value::ofString("integer")},
+                      })},
+                 })},
                 {"required",
                  json::Value::ofArray({
                      json::Value::ofString("duration_ms"),
+                 })},
+                {"type", json::Value::ofString("object")},
+            });
+        }
+
+        // ------------------------------------------------------------------
+        // Result shapes.
+        //
+        // Every Framework Tool declares what a CONFIRMED call answers with, so
+        // that chaining -- capture, feed the digest to a measurement, feed a
+        // reference to an action -- is something a caller reads rather than
+        // something it has to be told. What surrounds the result is the answer
+        // envelope, which is one shape for every Tool and is published once, at
+        // the catalog, rather than repeated twenty-four times here.
+        // ------------------------------------------------------------------
+
+        [[nodiscard]]
+        auto typedResult(std::string_view type, std::string_view description)
+            -> json::Value
+        {
+            return json::Value::ofObject({
+                {"description", json::Value::ofString(std::string{description})},
+                {"type", json::Value::ofString(std::string{type})},
+            });
+        }
+
+        [[nodiscard]]
+        auto digestResult(std::string_view description) -> json::Value
+        {
+            return json::Value::ofObject({
+                {"description", json::Value::ofString(std::string{description})},
+                {"pattern", json::Value::ofString("^[0-9a-f]{64}$")},
+                {"type", json::Value::ofString("string")},
+            });
+        }
+
+        // A counter rendered as a decimal string rather than as a JSON number.
+        // RFC 8785 numbers are IEEE-754 doubles, so a generation or an instant
+        // above 2^53 would round inside a durable Tool result; the producers
+        // render these as strings for exactly that reason, and the published
+        // shape says so rather than leaving a caller to discover it.
+        [[nodiscard]]
+        auto counterResult(std::string_view description) -> json::Value
+        {
+            return json::Value::ofObject({
+                {"description", json::Value::ofString(std::string{description})},
+                {"pattern", json::Value::ofString("^(0|[1-9][0-9]*)$")},
+                {"type", json::Value::ofString("string")},
+            });
+        }
+
+        [[nodiscard]]
+        auto countResult(std::string_view description) -> json::Value
+        {
+            return json::Value::ofObject({
+                {"description", json::Value::ofString(std::string{description})},
+                {"minimum", json::Value::ofNumber(0.0)},
+                {"type", json::Value::ofString("integer")},
+            });
+        }
+
+        [[nodiscard]]
+        auto objectResult(
+            std::vector<json::Member> properties,
+            std::vector<std::string_view> required
+        ) -> json::Value
+        {
+            auto requiredIds = std::vector<json::Value>{};
+            requiredIds.reserve(required.size());
+            for (auto const name : required)
+            {
+                requiredIds.emplace_back(
+                    json::Value::ofString(std::string{name})
+                );
+            }
+            auto material = std::vector<json::Member>{
+                {"additionalProperties", json::Value::ofBoolean(false)},
+                {"properties", json::Value::ofObject(std::move(properties))},
+                {"type", json::Value::ofString("object")},
+            };
+            if (!requiredIds.empty())
+            {
+                material.emplace_back(
+                    "required",
+                    json::Value::ofArray(std::move(requiredIds))
+                );
+            }
+            return json::Value::ofObject(std::move(material));
+        }
+
+        [[nodiscard]]
+        auto auditOutputMaterial() -> json::Value
+        {
+            return objectResult(
+                {
+                    {"record_hash",
+                     digestResult(
+                         "sha256 of the exact canonical bytes of the record "
+                         "that was written."
+                     )},
+                    {"recorded",
+                     typedResult(
+                         "boolean",
+                         "True on a confirmed call: the record is on this "
+                         "run's durable Tool-call history."
+                     )},
+                },
+                {"record_hash", "recorded"}
+            );
+        }
+
+        // The receipt both screenshot-producing Tools answer with. One shape,
+        // because a crop is a screenshot: whatever produced it, the digest it
+        // returns is the digest every Tool that reads a screenshot takes.
+        [[nodiscard]]
+        auto evidenceReceiptOutputMaterial() -> json::Value
+        {
+            return objectResult(
+                {
+                    {"byte_count",
+                     counterResult("Size of the stored artifact, in bytes.")},
+                    {"created_at_unix_ms",
+                     counterResult(
+                         "When the artifact was stored, in Unix milliseconds."
+                     )},
+                    {"frame_identity",
+                     objectResult(
+                         {
+                             {"capture_session_id",
+                              counterResult(
+                                  "The capture session the frame belongs to."
+                              )},
+                             {"frame_id",
+                              counterResult(
+                                  "The frame within that capture session."
+                              )},
+                             {"target_generation",
+                              counterResult(
+                                  "The controlled target's generation when the "
+                                  "frame was taken."
+                              )},
+                         },
+                         {
+                             "capture_session_id",
+                             "frame_id",
+                             "target_generation",
+                         }
+                     )},
+                    {"height",
+                     countResult("Height of the stored image, in pixels.")},
+                    {"media_type",
+                     typedResult(
+                         "string",
+                         "IANA media type of the stored bytes, for example "
+                         "image/png."
+                     )},
+                    {"rectangle",
+                     objectResult(
+                         {
+                             {"height", counterResult("Height of the crop.")},
+                             {"width", counterResult("Width of the crop.")},
+                             {"x",
+                              counterResult(
+                                  "Left edge of the crop in the source "
+                                  "screenshot."
+                              )},
+                             {"y",
+                              counterResult(
+                                  "Top edge of the crop in the source "
+                                  "screenshot."
+                              )},
+                         },
+                         {"height", "width", "x", "y"}
+                     )},
+                    {std::string{k_screenshotSha256Member},
+                     digestResult(
+                         "Content hash of the stored screenshot artifact. This "
+                         "is the value to pass as screenshot_sha256 to "
+                         "framework.screen.observe, to any framework.screen "
+                         "measuring Tool, to any framework.input Tool, and as "
+                         "file_sha256 to framework.project.write_file."
+                     )},
+                    {"width",
+                     countResult("Width of the stored image, in pixels.")},
+                },
+                {
+                    "byte_count",
+                    "created_at_unix_ms",
+                    "frame_identity",
+                    "height",
+                    "media_type",
+                    std::string_view{k_screenshotSha256Member},
+                    "width",
+                }
+            );
+        }
+
+        [[nodiscard]]
+        auto observeOutputMaterial() -> json::Value
+        {
+            return objectResult(
+                {
+                    {"artifact_root_hash",
+                     digestResult(
+                         "Root hash of the RuntimeModel artifact this reading "
+                         "was resolved against."
+                     )},
+                    {"controlled_target_id",
+                     typedResult(
+                         "string",
+                         "The controlled target the frame was read from."
+                     )},
+                    {"decision_basis_hash",
+                     digestResult(
+                         "Hash of the basis this observation's decisions were "
+                         "taken on."
+                     )},
+                    {"host_generation",
+                     counterResult(
+                         "The Host generation the reading was made under."
+                     )},
+                    {"observation_id",
+                     typedResult(
+                         "string",
+                         "Identifier of this observation within the run."
+                     )},
+                    {std::string{k_observationReferenceArgument},
+                     typedResult(
+                         "object",
+                         "The handle to pass back unchanged as "
+                         "observation_reference to any framework.ui Tool. It "
+                         "is SINGLE USE and it expires: the first ui call that "
+                         "presents it spends it, and a second action needs a "
+                         "second observe."
+                     )},
+                    {"project_registration_hash",
+                     digestResult(
+                         "The Project registration this reading was resolved "
+                         "under."
+                     )},
+                    {"snapshot_identity_hash",
+                     digestResult("Identity of the frame that was read.")},
+                    {"snapshot_ref",
+                     typedResult(
+                         "string",
+                         "Opaque reference to the snapshot this reading was "
+                         "taken from."
+                     )},
+                    {"state_resolution",
+                     typedResult(
+                         "object",
+                         "What the installed RuntimeModel resolved on this "
+                         "frame, in the project's own vocabulary: its "
+                         "surfaces, ui_targets, bindings and action "
+                         "identities. Its shape is the project's declaration "
+                         "and the framework does not restate it here."
+                     )},
+                    {"state_resolution_hash",
+                     digestResult(
+                         "Hash of the exact state_resolution bytes above."
+                     )},
+                    {"target_generation",
+                     counterResult(
+                         "The controlled target's generation when the frame "
+                         "was taken."
+                     )},
+                },
+                {
+                    "artifact_root_hash",
+                    "controlled_target_id",
+                    "decision_basis_hash",
+                    "host_generation",
+                    "observation_id",
+                    std::string_view{k_observationReferenceArgument},
+                    "project_registration_hash",
+                    "snapshot_identity_hash",
+                    "snapshot_ref",
+                    "state_resolution",
+                    "state_resolution_hash",
+                    "target_generation",
+                }
+            );
+        }
+
+        [[nodiscard]]
+        auto probeOutputMaterial() -> json::Value
+        {
+            return objectResult(
+                {
+                    {"distinct_colours",
+                     countResult(
+                         "How many distinct colours the rectangle contains."
+                     )},
+                    {"dominant_blue",
+                     countResult("Blue channel of the dominant colour.")},
+                    {"dominant_green",
+                     countResult("Green channel of the dominant colour.")},
+                    {"dominant_pixels",
+                     countResult(
+                         "How many pixels carry the dominant colour."
+                     )},
+                    {"dominant_red",
+                     countResult("Red channel of the dominant colour.")},
+                    {"fully_selected_pixels",
+                     countResult(
+                         "Pixels that matched the colour key outright. Present "
+                         "with ramp_selected_pixels and selected_weight, or "
+                         "not at all."
+                     )},
+                    {"ramp_selected_pixels",
+                     countResult(
+                         "Pixels that matched only partially, along the key's "
+                         "tolerance ramp."
+                     )},
+                    {"rect_pixels",
+                     countResult(
+                         "How many pixels the measured rectangle holds."
+                     )},
+                    {"selected_weight",
+                     countResult(
+                         "Total weight of the selection, counting ramp matches "
+                         "by how far they matched."
+                     )},
+                },
+                {
+                    "distinct_colours",
+                    "dominant_blue",
+                    "dominant_green",
+                    "dominant_pixels",
+                    "dominant_red",
+                    "rect_pixels",
+                }
+            );
+        }
+
+        [[nodiscard]]
+        auto censusGridOutputMaterial() -> json::Value
+        {
+            return objectResult(
+                {
+                    {"cell_height",
+                     countResult("Cell height actually used, in pixels.")},
+                    {"cell_width",
+                     countResult("Cell width actually used, in pixels.")},
+                    {"columns",
+                     countResult("How many cells the grid is wide.")},
+                    {"rows", countResult("How many cells the grid is tall.")},
+                    {"selected_pixels",
+                     json::Value::ofObject({
+                         {"description",
+                          json::Value::ofString(
+                              "One matching-pixel count per cell, in row-major "
+                              "order: the cell at (row, column) is at index "
+                              "row * columns + column."
+                          )},
+                         {"items", countResult("Matching pixels in one cell.")},
+                         {"type", json::Value::ofString("array")},
+                     })},
+                },
+                {
+                    "cell_height",
+                    "cell_width",
+                    "columns",
+                    "rows",
+                    "selected_pixels",
+                }
+            );
+        }
+
+        [[nodiscard]]
+        auto readLinesOutputMaterial() -> json::Value
+        {
+            return objectResult(
+                {
+                    {"lines",
+                     json::Value::ofObject({
+                         {"description",
+                          json::Value::ofString(
+                              "One entry per recognised line of text, in the "
+                              "order the reader produced them."
+                          )},
+                         {"items",
+                          objectResult(
+                              {
+                                  {"confidence",
+                                   json::Value::ofObject({
+                                       {"description",
+                                        json::Value::ofString(
+                                            "How confident the reader is in "
+                                            "this line, from 0 to 1."
+                                        )},
+                                       {"maximum",
+                                        json::Value::ofNumber(1.0)},
+                                       {"minimum",
+                                        json::Value::ofNumber(0.0)},
+                                       {"type",
+                                        json::Value::ofString("number")},
+                                   })},
+                                  {"height",
+                                   countResult(
+                                       "Height of the line's box, in "
+                                       "screenshot pixels."
+                                   )},
+                                  {"text",
+                                   typedResult(
+                                       "string",
+                                       "The text of this line."
+                                   )},
+                                  {"width",
+                                   countResult(
+                                       "Width of the line's box, in screenshot "
+                                       "pixels."
+                                   )},
+                                  {"x",
+                                   countResult(
+                                       "Left edge of the line's box, in "
+                                       "screenshot pixels."
+                                   )},
+                                  {"y",
+                                   countResult(
+                                       "Top edge of the line's box, in "
+                                       "screenshot pixels."
+                                   )},
+                              },
+                              {
+                                  "confidence",
+                                  "height",
+                                  "text",
+                                  "width",
+                                  "x",
+                                  "y",
+                              }
+                          )},
+                         {"type", json::Value::ofString("array")},
+                     })},
+                },
+                {"lines"}
+            );
+        }
+
+        [[nodiscard]]
+        auto projectReadTextOutputMaterial() -> json::Value
+        {
+            return objectResult(
+                {
+                    {"content",
+                     typedResult("string", "The file's UTF-8 text.")},
+                    {"content_hash", digestResult("sha256 of that text.")},
+                    {"path",
+                     typedResult(
+                         "string",
+                         "The project-relative path that was read."
+                     )},
+                },
+                {"content", "content_hash", "path"}
+            );
+        }
+
+        [[nodiscard]]
+        auto projectWriteOutputMaterial() -> json::Value
+        {
+            return objectResult(
+                {
+                    {"content_hash",
+                     digestResult("sha256 of the bytes that were written.")},
+                    {"path",
+                     typedResult(
+                         "string",
+                         "The project-relative path that was written."
+                     )},
+                    {"written_bytes",
+                     countResult("How many bytes were written.")},
+                },
+                {"content_hash", "path", "written_bytes"}
+            );
+        }
+
+        [[nodiscard]]
+        auto statusOutputMaterial() -> json::Value
+        {
+            return objectResult(
+                {
+                    {"access",
+                     json::Value::ofObject({
+                         {"description",
+                          json::Value::ofString(
+                              "Whether this run may still change anything "
+                              "outside the Operator."
+                          )},
+                         {"enum",
+                          json::Value::ofArray({
+                              json::Value::ofString("writable"),
+                              json::Value::ofString("read_only"),
+                          })},
+                         {"type", json::Value::ofString("string")},
+                     })},
+                    {"controlled_target_id",
+                     typedResult(
+                         "string",
+                         "The target this run is driving."
+                     )},
+                    {"installed_generation",
+                     counterResult(
+                         "The installed generation this run is pinned to."
+                     )},
+                    {"session_id",
+                     typedResult("string", "This run's session identifier.")},
+                },
+                {
+                    "access",
+                    "controlled_target_id",
+                    "installed_generation",
+                    "session_id",
+                }
+            );
+        }
+
+        [[nodiscard]]
+        auto waitOutputMaterial() -> json::Value
+        {
+            return objectResult(
+                {
+                    {"completed",
+                     typedResult(
+                         "boolean",
+                         "False when a cooperative stop ended the wait before "
+                         "its full duration. That is a recorded fact about the "
+                         "call, not a failure."
+                     )},
+                    {"duration_ms",
+                     countResult(
+                         "The duration this call was asked to wait, echoed "
+                         "back."
+                     )},
+                },
+                {"completed", "duration_ms"}
+            );
+        }
+
+        // What a screen-returning hold answers with under `screen`. It is one
+        // of two shapes and is stated as such rather than as a third: a hold
+        // that captured answers with a framework.screen.capture receipt, and a
+        // hold that observed answers with a framework.screen.observe result.
+        [[nodiscard]]
+        auto heldScreenResult() -> json::Value
+        {
+            return json::Value::ofObject({
+                {"description",
+                 json::Value::ofString(
+                     "What was on screen while the input was still engaged. It "
+                     "is a framework.screen.capture receipt when return_screen "
+                     "was capture, and a framework.screen.observe result when "
+                     "it was observe. Absent when return_screen was none."
+                 )},
+                {"oneOf",
+                 json::Value::ofArray({
+                     evidenceReceiptOutputMaterial(),
+                     observeOutputMaterial(),
+                 })},
+            });
+        }
+
+        [[nodiscard]]
+        auto deliveredResult() -> json::Value
+        {
+            return typedResult(
+                "boolean",
+                "True on a confirmed call: the input reached the target."
+            );
+        }
+
+        [[nodiscard]]
+        auto heldResult() -> json::Value
+        {
+            return typedResult(
+                "boolean",
+                "Always false. Every held input is released before its call "
+                "returns, so no input outlives the call that delivered it."
+            );
+        }
+
+        [[nodiscard]]
+        auto actionResult() -> json::Value
+        {
+            return typedResult(
+                "string",
+                "The input verb this call delivered."
+            );
+        }
+
+        [[nodiscard]]
+        auto targetResult() -> json::Value
+        {
+            return typedResult(
+                "string",
+                "The controlled target the input reached."
+            );
+        }
+
+        [[nodiscard]]
+        auto rawInputOutputMaterial() -> json::Value
+        {
+            return objectResult(
+                {
+                    {"action", actionResult()},
+                    {"controlled_target_id", targetResult()},
+                    {"delivered", deliveredResult()},
+                    {"held", heldResult()},
+                },
+                {"action", "controlled_target_id", "delivered", "held"}
+            );
+        }
+
+        [[nodiscard]]
+        auto rawHoldOutputMaterial() -> json::Value
+        {
+            return objectResult(
+                {
+                    {"action", actionResult()},
+                    {"controlled_target_id", targetResult()},
+                    {"delivered", deliveredResult()},
+                    {"duration_ms",
+                     countResult(
+                         "The dwell this call was asked for, echoed back."
+                     )},
+                    {"held", heldResult()},
+                    {"screen", heldScreenResult()},
+                },
+                {
+                    "action",
+                    "controlled_target_id",
+                    "delivered",
+                    "duration_ms",
+                    "held",
+                }
+            );
+        }
+
+        [[nodiscard]]
+        auto uiInputOutputMaterial() -> json::Value
+        {
+            return objectResult(
+                {
+                    {"delivered", deliveredResult()},
+                    {"reason",
+                     typedResult(
+                         "string",
+                         "What the Host recorded about the delivery."
+                     )},
+                    {"verdict",
+                     typedResult(
+                         "string",
+                         "The Host's own delivery verdict, `delivered` on a "
+                         "confirmed call."
+                     )},
+                },
+                {"delivered", "reason", "verdict"}
+            );
+        }
+
+        [[nodiscard]]
+        auto uiHoldOutputMaterial() -> json::Value
+        {
+            return objectResult(
+                {
+                    {"action", actionResult()},
+                    {"delivered", deliveredResult()},
+                    {"held", heldResult()},
+                    {"screen", heldScreenResult()},
+                    {"verdict",
+                     typedResult(
+                         "string",
+                         "The Host's own delivery verdict, `delivered` on a "
+                         "confirmed call."
+                     )},
+                },
+                {"action", "delivered", "held", "verdict"}
+            );
+        }
+
+        // The one shape every answer has, published once here rather than
+        // repeated inside twenty-four output schemas. Each Tool's own
+        // output_schema describes the `result` member of this envelope and
+        // nothing around it.
+        [[nodiscard]]
+        auto answerEnvelopeMaterial() -> json::Value
+        {
+            return json::Value::ofObject({
+                {"additionalProperties", json::Value::ofBoolean(false)},
+                {"description",
+                 json::Value::ofString(
+                     "Every Tool call answers with this object. An ok answer "
+                     "carries `result`, whose shape is the called Tool's own "
+                     "output_schema; a failed one carries `error` instead and "
+                     "no result. A failure IS the answer: it is never an "
+                     "exception the caller has to interrogate, and `delivery` "
+                     "says whether an input that failed may nonetheless have "
+                     "landed."
+                 )},
+                {"properties",
+                 json::Value::ofObject({
+                     {"call_identity",
+                      digestResult(
+                          "The durable coordinate this call was recorded at."
+                      )},
+                     {"delivery",
+                      json::Value::ofObject({
+                          {"description",
+                           json::Value::ofString(
+                               "How the call ended. `confirmed` is the only "
+                               "value an ok answer carries. `proven_absent` "
+                               "means nothing reached the world; `possible` "
+                               "means it may have; `terminal_failure` and "
+                               "`terminally_unresolved` are failures that will "
+                               "not resolve by waiting."
+                           )},
+                          {"enum",
+                           json::Value::ofArray({
+                               json::Value::ofString("confirmed"),
+                               json::Value::ofString("proven_absent"),
+                               json::Value::ofString("possible"),
+                               json::Value::ofString("terminal_failure"),
+                               json::Value::ofString("terminally_unresolved"),
+                           })},
+                          {"type", json::Value::ofString("string")},
+                      })},
+                     {"error",
+                      objectResult(
+                          {
+                              {"code",
+                               typedResult(
+                                   "string",
+                                   "Machine-readable classification of the "
+                                   "failure."
+                               )},
+                              {"message",
+                               typedResult(
+                                   "string",
+                                   "What failed, in the terms the caller has "
+                                   "to act on."
+                               )},
+                              {"retryable",
+                               typedResult(
+                                   "boolean",
+                                   "Whether repeating the same call could "
+                                   "succeed."
+                               )},
+                          },
+                          {"code", "message", "retryable"}
+                      )},
+                     {"ok",
+                      typedResult(
+                          "boolean",
+                          "Whether the call did what it was asked to do."
+                      )},
+                     {"result",
+                      typedResult(
+                          "object",
+                          "Present only when ok is true. Its shape is the "
+                          "output_schema of the Tool that was called."
+                      )},
+                 })},
+                {"required",
+                 json::Value::ofArray({
+                     json::Value::ofString("call_identity"),
+                     json::Value::ofString("delivery"),
+                     json::Value::ofString("ok"),
                  })},
                 {"type", json::Value::ofString("object")},
             });
@@ -1613,147 +1967,312 @@ namespace uf::operator_runtime
         constexpr auto k_frameworkTools = std::array{
             FrameworkToolDefinition{
                 k_auditTool,
+                "Write one JSON object into this run's durable Tool-call "
+                "history, so that a later reader can see what the run decided "
+                "and why. The record is the whole of the call's arguments; "
+                "there is deliberately no attribution member, because the run, "
+                "the caller and the call position are supplied by the runtime "
+                "and a caller that could state them could attribute its record "
+                "to another call's position. A confirmed result carries "
+                "record_hash, the sha256 of the exact bytes recorded.",
                 &auditDescriptor,
-                &validateAuditArguments,
                 &auditArgumentMaterial,
+                &auditOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_inputClickTool,
+                "Click the primary button at a raw coordinate of the "
+                "controlled target. x and y are pixels of the retained "
+                "screenshot named by screenshot_sha256, which is what ties the "
+                "aim to a frame that was actually seen. Prefer "
+                "framework.ui.click where the project's RuntimeModel names the "
+                "thing being clicked; this Tool is for coordinates the model "
+                "does not name. A confirmed result carries action, "
+                "controlled_target_id, delivered and held.",
                 &inputClickDescriptor,
-                &validateInputClickArguments,
                 &inputClickArgumentMaterial,
+                &rawInputOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_inputDragTool,
+                "Press at (x, y), travel to (to_x, to_y) over travel_ms, and "
+                "release. All four coordinates are pixels of the retained "
+                "screenshot named by screenshot_sha256. A confirmed result "
+                "carries action, controlled_target_id, delivered and held.",
                 &inputDragDescriptor,
-                &validateInputDragArguments,
                 &inputDragArgumentMaterial,
+                &rawInputOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_inputHoldTool,
+                "Press at (x, y), keep the input engaged for duration_ms, then "
+                "release -- on every exit path, including a failure while "
+                "held. Set return_screen to capture or observe to learn what "
+                "was on screen WHILE STILL PRESSED; the result then carries "
+                "screen, which is a framework.screen.capture receipt or a "
+                "framework.screen.observe result. A confirmed result carries "
+                "action, controlled_target_id, delivered, duration_ms and "
+                "held, which is always false because the press and the release "
+                "are one call's business.",
                 &inputHoldDescriptor,
-                &validateInputHoldArguments,
                 &inputHoldArgumentMaterial,
+                &rawHoldOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_inputKeyTool,
+                "Press and release one key on the controlled target. key is "
+                "the canonical key name; screenshot_sha256 names the retained "
+                "screenshot this keystroke was decided on. A confirmed result "
+                "carries action, controlled_target_id, delivered and held.",
                 &inputKeyDescriptor,
-                &validateInputKeyArguments,
                 &inputKeyArgumentMaterial,
+                &rawInputOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_inputMoveTool,
+                "Move the pointer to a raw coordinate of the controlled "
+                "target, without pressing anything. x and y are pixels of the "
+                "retained screenshot named by screenshot_sha256. A confirmed "
+                "result carries action, controlled_target_id, delivered and "
+                "held.",
                 &inputMoveDescriptor,
-                &validateInputMoveArguments,
                 &inputMoveArgumentMaterial,
+                &rawInputOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_inputScrollTool,
+                "Turn the wheel by notches detents on the controlled target. "
+                "The sign of notches is the direction. screenshot_sha256 names "
+                "the retained screenshot this scroll was decided on. A "
+                "confirmed result carries action, controlled_target_id, "
+                "delivered and held.",
                 &inputScrollDescriptor,
-                &validateInputScrollArguments,
                 &inputScrollArgumentMaterial,
+                &rawInputOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_projectReadTextTool,
+                "Read one UTF-8 text file back out of this project's own "
+                "authoring store. path is project-relative. Read-only, so a "
+                "session that may not write can still read back what an "
+                "earlier one wrote. A confirmed result carries content, its "
+                "content_hash and the path that was read.",
                 &projectReadTextDescriptor,
-                &validateProjectReadTextArguments,
                 &projectReadTextArgumentMaterial,
+                &projectReadTextOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_projectWriteFileTool,
+                "Copy one retained evidence artifact into this project's "
+                "authoring store at path. file_sha256 is the digest "
+                "framework.screen.capture or framework.screen.crop returned in "
+                "its screenshot_sha256 member -- capturing and writing are two "
+                "calls, so a failure between them is visible: the screenshot "
+                "exists and the write did not happen. Writing the same digest "
+                "to the same path twice leaves the store where the first write "
+                "left it. A confirmed result carries content_hash, path and "
+                "written_bytes.",
                 &projectWriteFileDescriptor,
-                &validateProjectWriteFileArguments,
                 &projectWriteFileArgumentMaterial,
+                &projectWriteOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_projectWriteTextTool,
+                "Write UTF-8 text into this project's authoring store at path, "
+                "project-relative. Writing the same content to the same path "
+                "twice leaves the store where the first write left it. A "
+                "confirmed result carries content_hash, path and "
+                "written_bytes.",
                 &projectWriteTextDescriptor,
-                &validateProjectWriteTextArguments,
                 &projectWriteTextArgumentMaterial,
+                &projectWriteOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_captureTool,
+                "Capture the controlled target's screen into an immutable, "
+                "content-addressed screenshot artifact and answer with its "
+                "receipt. Takes no arguments. THIS IS THE START OF EVERY "
+                "SCREEN FLOW: the confirmed result's screenshot_sha256 is what "
+                "framework.screen.observe, every framework.screen measuring "
+                "Tool and every framework.input Tool takes as its explicit "
+                "input, and what framework.project.write_file takes as "
+                "file_sha256. The receipt also carries width, height, "
+                "media_type, byte_count, created_at_unix_ms and the "
+                "frame_identity the pixels came from. The artifact is retained "
+                "by the Operator for a bounded lifetime; a call naming a "
+                "digest that has expired or been reclaimed is refused, by "
+                "name.",
                 &captureDescriptor,
-                &validateCaptureArguments,
                 &noArgumentsMaterial,
+                &evidenceReceiptOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_censusGridTool,
+                "Divide one rectangle of a retained screenshot into cells of "
+                "cell_width by cell_height and count, per cell, the pixels "
+                "within tolerance of the given colour. Set removes to count "
+                "the pixels that do NOT match instead. Use it to find where on "
+                "a screen a colour is concentrated. A confirmed result carries "
+                "rows, columns, the cell_width and cell_height actually used, "
+                "and selected_pixels: one count per cell in row-major order.",
                 &measuringDescriptor,
-                &validateCensusGridArguments,
                 &censusGridArgumentMaterial,
+                &censusGridOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_cropTool,
+                "Cut a rectangle out of a retained screenshot and store it as "
+                "a second immutable screenshot artifact. screenshot_sha256 is "
+                "the digest framework.screen.capture returned. A confirmed "
+                "result is the same receipt shape a capture answers with -- "
+                "its own screenshot_sha256, usable anywhere a screenshot "
+                "digest is -- plus a rectangle recording where in the source "
+                "it came from. Writing the crop into the project is a separate "
+                "framework.project.write_file call over that digest.",
                 &measuringDescriptor,
-                &validateCropArguments,
                 &cropArgumentMaterial,
+                &evidenceReceiptOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_observeTool,
+                "Resolve one retained screenshot into the project's own "
+                "vocabulary: the surfaces, ui_targets, bindings and action "
+                "identities the installed RuntimeModel declares for what is on "
+                "screen. screenshot_sha256 is the digest "
+                "framework.screen.capture returned. A confirmed result carries "
+                "observation_reference -- the handle every framework.ui Tool "
+                "takes, which is SINGLE USE and expires -- together with "
+                "state_resolution, the model's own reading of the frame, and "
+                "the identity hashes it was read under. The flow is capture, "
+                "observe, then act: one ui call spends the reference, and a "
+                "second action needs a second observe.",
                 &observeDescriptor,
-                &validateObserveArguments,
                 &observeArgumentMaterial,
+                &observeOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_probeTool,
+                "Measure one rectangle of a retained screenshot for a colour: "
+                "how many of its pixels lie within tolerance of the given RGB, "
+                "and what the rectangle's dominant colour is. Set removes to "
+                "select the pixels that do NOT match. Nothing is written and "
+                "no pixels are returned. A confirmed result carries "
+                "rect_pixels, distinct_colours, the dominant_* channels and "
+                "dominant_pixels, and -- when the colour key admits a "
+                "tolerance ramp -- fully_selected_pixels, ramp_selected_pixels "
+                "and selected_weight together.",
                 &measuringDescriptor,
-                &validateProbeArguments,
                 &probeArgumentMaterial,
+                &probeOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_readLinesTool,
+                "Read the text inside one rectangle of a retained screenshot "
+                "with OCR. A confirmed result carries lines, one entry per "
+                "recognised line, each with its text, its x, y, width and "
+                "height in screenshot pixels, and a confidence from 0 to 1. "
+                "Nothing is captured and nothing is written: the rectangle is "
+                "measured on the screenshot the caller named.",
                 &measuringDescriptor,
-                &validateReadLinesArguments,
                 &readLinesArgumentMaterial,
+                &readLinesOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_uiClickTool,
+                "Click what one observation resolved, in the project's own "
+                "vocabulary rather than in coordinates. observation_reference "
+                "is the handle framework.screen.observe returned and IS SPENT "
+                "BY THIS CALL; ui_target, binding and action are identifiers "
+                "that observation minted, and a triple it did not carry is "
+                "refused. A confirmed result carries delivered, the Host's "
+                "verdict and the reason it recorded.",
                 &uiClickDescriptor,
-                &validateUiClickArguments,
                 &uiArgumentMaterial,
+                &uiInputOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_uiDragTool,
+                "Drag what one observation resolved, in the project's own "
+                "vocabulary rather than in coordinates. "
+                "observation_reference, ui_target, binding and action all come "
+                "from one framework.screen.observe result, and this call "
+                "spends the reference. A confirmed result carries delivered, "
+                "the Host's verdict and the reason it recorded.",
                 &uiDragDescriptor,
-                &validateUiDragArguments,
                 &uiArgumentMaterial,
+                &uiInputOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_uiHoldTool,
+                "Engage what one observation resolved and hold it, releasing "
+                "on every exit path. Set return_screen to capture or observe "
+                "to learn what was on screen WHILE STILL ENGAGED; the result "
+                "then carries screen. observation_reference is spent by this "
+                "call. A confirmed result carries action, delivered, held -- "
+                "always false, because the release is part of the call -- and "
+                "the Host's verdict.",
                 &uiHoldDescriptor,
-                &validateUiHoldArguments,
                 &uiHoldArgumentMaterial,
+                &uiHoldOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_uiKeyTool,
+                "Send a key action that one observation resolved, in the "
+                "project's own vocabulary rather than as a raw key name. "
+                "observation_reference, ui_target, binding and action all come "
+                "from one framework.screen.observe result, and this call "
+                "spends the reference. A confirmed result carries delivered, "
+                "the Host's verdict and the reason it recorded.",
                 &uiKeyDescriptor,
-                &validateUiKeyArguments,
                 &uiArgumentMaterial,
+                &uiInputOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_uiMoveTool,
+                "Move to what one observation resolved, without pressing "
+                "anything. observation_reference, ui_target, binding and "
+                "action all come from one framework.screen.observe result, and "
+                "this call spends the reference. A confirmed result carries "
+                "delivered, the Host's verdict and the reason it recorded.",
                 &uiMoveDescriptor,
-                &validateUiMoveArguments,
                 &uiArgumentMaterial,
+                &uiInputOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_uiScrollTool,
+                "Scroll what one observation resolved, in the project's own "
+                "vocabulary rather than in wheel detents. "
+                "observation_reference, ui_target, binding and action all come "
+                "from one framework.screen.observe result, and this call "
+                "spends the reference. A confirmed result carries delivered, "
+                "the Host's verdict and the reason it recorded.",
                 &uiScrollDescriptor,
-                &validateUiScrollArguments,
                 &uiArgumentMaterial,
+                &uiInputOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_statusTool,
+                "Report what this run is and what it may still do. Takes no "
+                "arguments, observes no frame and delivers nothing. A "
+                "confirmed result carries session_id, controlled_target_id, "
+                "the installed_generation this run is pinned to, and access, "
+                "which is writable or read_only.",
                 &statusDescriptor,
-                &validateStatusArguments,
                 &noArgumentsMaterial,
+                &statusOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_waitTool,
+                "Wait for duration_ms whole milliseconds before returning. The "
+                "longest wait this Tool admits is stated in "
+                "properties.duration_ms.maximum of its own input schema; a "
+                "larger value is refused rather than clamped. A confirmed "
+                "result carries the duration_ms asked for and completed, which "
+                "is false when a cooperative stop ended the wait early -- a "
+                "recorded fact about the call, not a failure.",
                 &waitDescriptor,
-                &validateWaitArguments,
                 &waitArgumentMaterial,
+                &waitOutputMaterial,
             },
         };
 
@@ -1812,9 +2331,7 @@ namespace uf::operator_runtime
         {
             return json::Value::ofObject({
                 {"description",
-                 json::Value::ofString(
-                     "Call the " + std::string{definition.name} + " Tool."
-                 )},
+                 json::Value::ofString(std::string{definition.description})},
                 {"effect_bounds",
                  effectBoundsMaterial(descriptor.effectBounds)},
                 {"idempotency",
@@ -1831,6 +2348,7 @@ namespace uf::operator_runtime
                  )},
                 {"name", json::Value::ofString(std::string{definition.name})},
                 {"input_schema", definition.argumentMaterial()},
+                {"output_schema", definition.outputMaterial()},
                 {"required_capabilities",
                  stringArray(descriptor.requiredCapabilities)},
                 {"surface",
@@ -2607,11 +3125,13 @@ namespace uf::operator_runtime
     FrameworkToolCatalogOwner::FrameworkToolCatalogOwner(
         ContentHash toolCatalogHash,
         std::string canonicalJcs,
-        std::vector<ToolCatalogEntry> tools
+        std::vector<ToolCatalogEntry> tools,
+        std::vector<CompiledArgumentSchema> argumentSchemas
     )
         : m_toolCatalogHash{toolCatalogHash}
         , m_canonicalJcs{std::move(canonicalJcs)}
         , m_tools{std::move(tools)}
+        , m_argumentSchemas{std::move(argumentSchemas)}
     {
     }
 
@@ -2620,8 +3140,10 @@ namespace uf::operator_runtime
     {
         auto tools    = std::vector<ToolCatalogEntry>{};
         auto material = std::vector<json::Value>{};
+        auto schemas  = std::vector<CompiledArgumentSchema>{};
         tools.reserve(k_frameworkTools.size());
         material.reserve(k_frameworkTools.size());
+        schemas.reserve(k_frameworkTools.size());
         for (auto const& definition : k_frameworkTools)
         {
             UF_TRY_VALUE_CONTEXT(
@@ -2629,15 +3151,40 @@ namespace uf::operator_runtime
                 definition.descriptor(),
                 "building a Framework Tool Catalog descriptor"
             );
+            auto inputSchema = definition.argumentMaterial();
+
+            // The published bytes are what judges a call, not a second reading
+            // of them: the schema is compiled from the exact material that
+            // reaches tool_catalog_hash, so a contract this evaluator cannot
+            // apply is a refusal here, at startup, rather than a constraint
+            // nothing ever checked.
+            UF_TRY_VALUE_CONTEXT(
+                compiled,
+                json::Schema::compile(json::Schema::Document{
+                    .label      = definition.name,
+                    .exactBytes = json::canonicalBytes(inputSchema),
+                }),
+                "compiling a Framework Tool's published argument schema"
+            );
+            schemas.emplace_back(CompiledArgumentSchema{
+                .name   = std::string{definition.name},
+                .schema = std::move(compiled),
+            });
+
             material.emplace_back(descriptorMaterial(definition, descriptor));
             tools.emplace_back(ToolCatalogEntry{
-                .name        = std::string{definition.name},
-                .description = "Call the " + std::string{definition.name} + " Tool.",
-                .inputSchema = definition.argumentMaterial(),
-                .descriptor  = std::move(descriptor),
+                .name         = std::string{definition.name},
+                .description  = std::string{definition.description},
+                .inputSchema  = std::move(inputSchema),
+                .outputSchema = definition.outputMaterial(),
+                .descriptor   = std::move(descriptor),
             });
         }
         auto canonicalJcs = json::canonicalBytes(json::Value::ofObject({
+            // One shape for every answer, stated once. A caller reads it here
+            // and each Tool's own output_schema for the `result` inside it.
+            {"answer_envelope", answerEnvelopeMaterial()},
+
             // This material is deliberately internal until the execution
             // adapters and durable runtime can publish one atomic wire cut.
             {"internal_generation", json::Value::ofNumber(0.0)},
@@ -2652,6 +3199,7 @@ namespace uf::operator_runtime
             catalogHash,
             std::move(canonicalJcs),
             std::move(tools),
+            std::move(schemas),
         };
     }
 
@@ -2696,7 +3244,19 @@ namespace uf::operator_runtime
                 "Framework Tool Catalog declares no tool named " + toolName
             );
         }
-        UF_TRY(p_definition->validateArguments(canonicalArgs));
+        auto const compiled = std::ranges::find(
+            m_argumentSchemas,
+            toolName,
+            &CompiledArgumentSchema::name
+        );
+        // Every definition compiled its schema in create(), so a definition
+        // this found without a schema beside it would be a catalog that was
+        // built by something other than create().
+        UF_CHECK(compiled != m_argumentSchemas.end());
+        UF_TRY(adoptSchemaRefusal(
+            compiled->schema.validate(canonicalArgs.value()),
+            toolName
+        ));
         UF_TRY_VALUE(descriptor, describe(toolName));
         return ValidatedToolInvocation{
             ToolProviderIdentity{FrameworkToolProvider{

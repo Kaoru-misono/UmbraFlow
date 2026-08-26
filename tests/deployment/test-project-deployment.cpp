@@ -375,6 +375,50 @@ namespace uf::deployment
         REQUIRE_FALSE(declaredTwice.has_value());
         CHECK(why(declaredTwice).contains("twice"));
 
+        // output_schema is the one Tool member a Project may leave out, and the
+        // fixture leaves it out -- so the acceptance below is what says "absent
+        // is a legal declaration" rather than "nothing looked". Where it IS
+        // written it is compiled like any other schema, so a result shape this
+        // evaluator could never apply is refused where the Tool is declared
+        // instead of being published as a contract nobody can read.
+        auto const withResultShape = [&bundle](std::string_view declared)
+        {
+            auto rendered = bundle.tools();
+            auto inserted = std::string{};
+            auto rest     = std::string_view{rendered};
+            while (true)
+            {
+                auto const at = rest.find(R"("required_capabilities")");
+                if (at == std::string_view::npos)
+                {
+                    inserted += rest;
+                    break;
+                }
+                inserted += rest.substr(0U, at);
+                inserted += R"("output_schema":)";
+                inserted += declared;
+                inserted += ',';
+                rest.remove_prefix(at);
+                inserted += rest.substr(0U, 23U);
+                rest.remove_prefix(23U);
+            }
+            return inserted;
+        };
+
+        auto const readable = withResultShape(
+            R"({"properties":{"value":{"type":"integer"}},"type":"object"})"
+        );
+        auto readableSources  = bundle.sources();
+        readableSources.tools = readable;
+        CHECK(ProjectDeployment::create(readableSources).has_value());
+
+        auto const unreadable = withResultShape(R"({"multipleOf":2})");
+        auto unreadableSources  = bundle.sources();
+        unreadableSources.tools = unreadable;
+        auto const refusedShape = ProjectDeployment::create(unreadableSources);
+        REQUIRE_FALSE(refusedShape.has_value());
+        CHECK(why(refusedShape).contains("result schema of"));
+
         // And the unmodified sources do build one, so the refusals above are
         // about the rule that was broken.
         CHECK(ProjectDeployment::create(bundle.sources()).has_value());

@@ -102,6 +102,7 @@ namespace uf::json
             std::string_view{"allOf"},
             std::string_view{"anyOf"},
             std::string_view{"const"},
+            std::string_view{"default"},
             std::string_view{"description"},
             std::string_view{"else"},
             std::string_view{"enum"},
@@ -161,7 +162,6 @@ namespace uf::json
             std::string_view{"$dynamicRef"},
             std::string_view{"$vocabulary"},
             std::string_view{"definitions"},
-            std::string_view{"default"},
             std::string_view{"deprecated"},
             std::string_view{"examples"},
             std::string_view{"readOnly"},
@@ -474,6 +474,18 @@ namespace uf::json
     {
         CHECK(accepts(compiled(R"({"format":"date-time"})"), R"("not a date")"));
         CHECK(accepts(compiled(R"({"title":"t","description":"d","$comment":"c"})"), "1"));
+        // `default` states what an omitted property is understood to carry.
+        // It is information for a caller and never a check: a schema whose
+        // property has a default still refuses a present value of the wrong
+        // type, and still accepts one that disagrees with the default.
+        CHECK(accepts(
+            compiled(R"({"properties":{"a":{"default":"none","type":"string"}}})"),
+            R"({"a":"other"})"
+        ));
+        CHECK(rejects(
+            compiled(R"({"properties":{"a":{"default":"none","type":"string"}}})"),
+            R"({"a":1})"
+        ));
         CHECK(accepts(compiled(R"({"then":{"required":["x"]}})"), "{}"));
         CHECK(accepts(compiled(R"({"else":{"required":["x"]}})"), "{}"));
         // $defs holds subschemas that apply only where a $ref names one.
