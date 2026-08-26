@@ -69,10 +69,19 @@ namespace uf
         SadSearchOutcome outcome{};
 
         // Counts comparisons actually executed across every candidate, including
-        // the comparisons that trigger pruning or an exact-match return. A budget
-        // or poll stop excludes the comparison that was not executed. Valid for
-        // every outcome and starts at zero for each matcher call.
+        // the comparisons that trigger pruning or an exact-match return, and the
+        // ones a masked candidate's contrast probe spends before its score. A
+        // budget or poll stop excludes the comparison that was not executed.
+        // Valid for every outcome and starts at zero for each matcher call.
         uint64 completedPixelComparisons{};
+
+        // How many candidate positions the masked matcher refused for want of
+        // contrast outside the mask instead of scoring them. It is what tells a
+        // reader that a search missed because nothing in the region contrasted
+        // with the glyph, rather than because everything in it scored badly.
+        // Always zero for the unmasked matcher, which excludes no pixel and so
+        // carries no such evidence to weigh.
+        uint64 contrastRefusedCandidates{};
     };
 
     class GrayImage;
@@ -111,6 +120,10 @@ namespace uf
     // count exactly, because the constant 255 cancels out of the quotient and
     // out of every pruning comparison. Truncating division rounds the quotient
     // down. A mask whose weights sum to zero selects nothing and is rejected.
+    //
+    // A candidate must also CONTRAST with the glyph outside the mask before it
+    // is scored at all; see GrayImage::MaskContrastProbe for the rule and why a
+    // masked score alone is not enough to call a template present.
     [[nodiscard]]
     auto matchTemplateSad(
         GrayImage const& haystack,
@@ -133,8 +146,102 @@ namespace uf
     // every matcher call that uses it.
     class GrayImage final
     {
+        // A candidate whose surround carried no negative evidence, refused
+        // before it was scored. It is an outcome rather than a score because a
+        // refused candidate has no score: the comparison that would have
+        // produced one was never run.
+        struct ContrastRefused final
+        {
+        };
+
+        // The negative evidence a mask carries, taken once per search.
+        //
+        // A masked template states which of its pixels are the glyph and has
+        // never stated anything about the rest of its rectangle. So a mask that
+        // keeps a white tick and drops the button around it scores perfectly
+        // against any large enough field of white: every pixel the score reads
+        // is white on both sides. The mask that makes the template clean throws
+        // away the one piece of evidence that would have told the two apart.
+        // This is that evidence, sampled back.
+        //
+        // THE RULE. Let w be the mask weight at a pixel and c = 255 - w the
+        // weight the mask left there, and let `ink` be the mask-weighted mean
+        // grey of the template, which is the glyph the mask selected. At a fixed
+        // set of positions where c is non-zero, a candidate must sit at least
+        // half as far from `ink`, weighted by c, as the template's own pixels
+        // there do:
+        //
+        //     sum(c * |haystack - ink|) >= sum(c * |template - ink|) / 2
+        //
+        // A candidate that does not is refused rather than scored, because its
+        // mask separated nothing. The right-hand side is the template's own
+        // measurement of how much its crop's surround differed from its glyph,
+        // so the requirement is scaled by evidence the project supplied rather
+        // than by a contrast level this module invented; a template whose own
+        // surround looks like its glyph demands correspondingly little.
+        //
+        // Half is measured, not picked. Over the four colour-keyed templates and
+        // eight 1600x900 frames of the consuming project's battle corpus, a true
+        // hit reproduced 0.980 to 1.147 of its template's own contrast, while
+        // the plain field of the glyph's own colour that scores best against
+        // each template reproduced 0.011 to 0.082 of it. One half is a factor of
+        // two below every true hit and a factor of six above every plain field.
+        //
+        // Both sides are integer sums over the same sample set, so the
+        // comparison needs no division and no floating point at the candidate
+        // and reproduces byte for byte on every host. That matters because a
+        // match reaches durable records.
+        class MaskContrastProbe final
+        {
+            // One sampled position, as an offset inside the template rectangle,
+            // with the weight the mask left there and how far the template's own
+            // pixel sits from the glyph.
+            struct Sample final
+            {
+                std::size_t offsetX{};
+                std::size_t offsetY{};
+                uint64      complementWeight{};
+            };
+
+            std::vector<Sample> m_samples{};
+            uint64              m_ink{};
+            uint64              m_requiredContrast{};
+
+        public:
+            // An empty probe: no sampled position, and nothing required. It is
+            // what an unmasked search carries, because a template that excludes
+            // no pixel has no complement to sample and so nothing to refuse.
+            MaskContrastProbe() = default;
+
+            // `templateMask` must have `templateImage`'s exact extent and a
+            // non-zero weight sum; the masked search checks both before it gets
+            // here. Neither view is retained: every byte the probe needs is
+            // copied into it.
+            [[nodiscard]]
+            static auto create(
+                GrayImage const& templateImage,
+                GrayImage const& templateMask
+            ) -> MaskContrastProbe;
+
+            [[nodiscard]]
+            auto samples() const noexcept UF_LIFETIME_BOUND
+                -> std::span<Sample const>
+            {
+                return m_samples;
+            }
+
+            [[nodiscard]] auto ink() const noexcept -> uint64 { return m_ink; }
+
+            [[nodiscard]]
+            auto requiredContrast() const noexcept -> uint64
+            {
+                return m_requiredContrast;
+            }
+        };
+
         using CandidateOutcome = std::variant<
             uint64,
+            ContrastRefused,
             SadSearchStopReason
         >;
 
@@ -194,10 +301,17 @@ namespace uf
         // p_templateMask is an optional observation of a plane with the
         // template's extent; without one every pixel carries weight one, which
         // makes the accumulated sum the plain SAD.
+        //
+        // `probe` is walked BEFORE the score, so a candidate whose surround
+        // carries no contrast costs its sample count and nothing more, and
+        // `best` keeps meaning the best score a candidate was actually allowed
+        // to hold -- a refused candidate must not tighten the pruning bound, or
+        // it would prune the weaker true hit it was standing in front of.
         [[nodiscard]]
         auto candidateSad(
             GrayImage const& templateImage,
             GrayImage const* p_templateMask,
+            MaskContrastProbe const& probe,
             std::size_t candidateX,
             std::size_t candidateY,
             uint64 best,

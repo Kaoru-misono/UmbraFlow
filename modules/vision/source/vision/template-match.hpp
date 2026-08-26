@@ -192,6 +192,13 @@ namespace uf
         std::variant<std::optional<TemplateMatch>, SadSearchStopReason> result;
 
         uint64 completedPixelComparisons{};
+
+        // As SadSearchReport reports it: how many candidate positions a masked
+        // search refused for want of contrast outside the mask. A miss with a
+        // non-zero count here missed because nothing in the region stood apart
+        // from the glyph, which is a different answer from every position having
+        // scored badly, and the trace says which.
+        uint64 contrastRefusedCandidates{};
     };
 
     // Searches `searchRoi` of `frame` for `templateImage` and reports the best

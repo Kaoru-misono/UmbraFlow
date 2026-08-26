@@ -720,6 +720,15 @@ namespace uf::engine
                         .name  = "outcome",
                         .value = std::string{"absent"},
                     },
+                    // Present on a miss because it is the difference between
+                    // "every position scored badly" and "no position outside the
+                    // mask stood apart from the glyph at all", and a reader
+                    // asking why a Locator missed is owed the second answer by
+                    // name rather than a low score to guess from.
+                    trace::TraceField{
+                        .name  = "contrast_refused",
+                        .value = attempt->contrastRefusedCandidates,
+                    },
                 }
             );
             event.audit.references.emplace_back(
@@ -768,6 +777,10 @@ namespace uf::engine
                 trace::TraceField{
                     .name  = "matched_height",
                     .value = static_cast<uint64>(match->matchedRect.height()),
+                },
+                trace::TraceField{
+                    .name  = "contrast_refused",
+                    .value = attempt->contrastRefusedCandidates,
                 },
             }
         );

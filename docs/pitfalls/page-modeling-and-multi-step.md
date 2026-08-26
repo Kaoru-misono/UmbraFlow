@@ -289,6 +289,21 @@ unselected pixels for being wrong.
 This is inherent to masked matching on a monochrome glyph, not a defect in the
 mask.
 
+> **Corrected 2026-08-27: the last sentence of the paragraph above no longer
+> describes the matcher.** Something does penalise the unselected pixels now.
+> Before it is scored, a candidate must show that a fixed sample of the
+> positions the mask did NOT take sits at least half as far from the template's
+> glyph as the template's own pixels there do, or it is refused rather than
+> scored -- `GrayImage::MaskContrastProbe` in
+> `modules/vision/source/vision/sad.hpp`, and
+> `docs/pitfalls/colour-key-annotation.md` for the live defect that forced it.
+> That closes exactly the "sufficiently uniform bright region" half of this
+> entry, because a uniform region has nothing outside the mask to tell from the
+> glyph. It does not close the other half: a bright patch with ordinary dark
+> structure around it still contrasts, still passes, and is still separated only
+> by the threshold this section is about. Set the threshold from the measured
+> separation regardless.
+
 ### Fix
 
 Set the threshold from the measured separation rather than taking the default.

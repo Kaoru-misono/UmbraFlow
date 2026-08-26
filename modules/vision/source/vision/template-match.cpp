@@ -228,6 +228,7 @@ namespace uf
                     return TemplateMatchAttempt{
                         .result                    = *p_stop,
                         .completedPixelComparisons = report.completedPixelComparisons,
+                        .contrastRefusedCandidates = report.contrastRefusedCandidates,
                     };
                 }
 
@@ -237,6 +238,7 @@ namespace uf
                     return TemplateMatchAttempt{
                         .result                    = std::optional<TemplateMatch>{},
                         .completedPixelComparisons = report.completedPixelComparisons,
+                        .contrastRefusedCandidates = report.contrastRefusedCandidates,
                     };
                 }
 
@@ -258,6 +260,7 @@ namespace uf
                         },
                     },
                     .completedPixelComparisons = report.completedPixelComparisons,
+                    .contrastRefusedCandidates = report.contrastRefusedCandidates,
                 };
             }
         );

@@ -1280,6 +1280,205 @@ namespace uf
         }
     }
 
+    // The defect this rule exists for, on the one pair of real screenshots this
+    // file holds. A near-white glyph keyed out of its background scores
+    // perfectly against any large enough patch of near-white, because a mask
+    // that keeps only the glyph compares white against white and never looks at
+    // what surrounds it. Observed on a live game, where a white tick cut out of
+    // its button resolved a battle screen over a character's card list page and
+    // offered a click into it.
+    TEST_CASE("a masked template refuses a plain field of its own colour")
+    {
+        auto const& fixture      = test::k_sortieLabel;
+        auto const  width        = fixture.templateWidth;
+        auto const  height       = fixture.templateHeight;
+        auto const  pixelCount   = uint64{width} * uint64{height};
+        auto const  templateData = decodeHex(fixture.templateHex);
+        auto const  maskData     = nearWhiteMask(templateData);
+        auto const templateImage = grayImage(templateData, width, height, width);
+        auto const mask          = grayImage(maskData, width, height, width);
+
+        auto const fieldWidth  = fixture.haystackWidth;
+        auto const fieldHeight = fixture.haystackHeight;
+        auto const roi         = pixelRect(0, 0, fieldWidth, fieldHeight);
+        auto const candidates  = uint64{fieldWidth - width + 1U}
+            * uint64{fieldHeight - height + 1U};
+        auto const continueSearch = SadSearchPoll{
+            []() noexcept -> SadSearchControl
+            {
+                return SadSearchControl::Continue;
+            }
+        };
+        auto const searchField =
+            [&](std::vector<std::byte> const& field) -> SadSearchReport
+        {
+            auto const haystack = grayImage(
+                field,
+                fieldWidth,
+                fieldHeight,
+                fieldWidth
+            );
+            auto const report = matchTemplateSad(
+                haystack,
+                templateImage,
+                mask,
+                roi,
+                std::numeric_limits<uint64>::max(),
+                continueSearch
+            );
+            REQUIRE(report.has_value());
+            return *report;
+        };
+        auto const plainField = [&](uint8 level) -> std::vector<std::byte>
+        {
+            return build(
+                fieldWidth,
+                fieldHeight,
+                fieldWidth,
+                asByte(0),
+                [level](uint32, uint32) noexcept -> uint8
+                {
+                    return level;
+                }
+            );
+        };
+
+        // The real glyph over the real second background still wins, at the
+        // position it actually occupies. The rule refuses candidates; it does
+        // not refuse the answer.
+        auto const found  = searchField(decodeHex(fixture.haystackHex));
+        auto const origin = test::k_labelTemplateOrigin;
+        REQUIRE(std::holds_alternative<std::optional<SadMatch>>(found.outcome));
+        CHECK(
+            std::get<std::optional<SadMatch>>(found.outcome)
+            == std::optional{SadMatch{origin, origin, 1137}}
+        );
+        CHECK(found.contrastRefusedCandidates < candidates);
+
+        // A plain field of the glyph's own colour is refused outright rather
+        // than scored: with nothing outside the mask to tell it from the glyph,
+        // there is no position for the search to return at all.
+        auto const plainWhite = searchField(plainField(255));
+        REQUIRE(
+            std::holds_alternative<std::optional<SadMatch>>(plainWhite.outcome)
+        );
+        CHECK(!std::get<std::optional<SadMatch>>(plainWhite.outcome).has_value());
+        CHECK(plainWhite.contrastRefusedCandidates == candidates);
+
+        // The control that makes the refusal readable rather than universal: a
+        // plain field the glyph stands out against is not refused, and misses
+        // the ordinary way, with a score far past what any threshold accepts.
+        // Neither field holds the label; only one of them says so by refusing.
+        auto const plainBlack = searchField(plainField(0));
+        REQUIRE(
+            std::holds_alternative<std::optional<SadMatch>>(plainBlack.outcome)
+        );
+        auto const missed = std::get<std::optional<SadMatch>>(plainBlack.outcome);
+        REQUIRE(missed.has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
+        CHECK(missed->score() > uint64{255} * pixelCount / 100U);
+        CHECK(plainBlack.contrastRefusedCandidates == 0);
+    }
+
+    // The rule itself, on the smallest image that can state it: how much
+    // contrast is demanded, where the demand comes from, and how many positions
+    // are read to measure it.
+    TEST_CASE("a masked candidate must show half its template's own contrast")
+    {
+        auto constexpr extent  = uint32{8};
+        auto constexpr glyph   = uint8{200};
+        auto constexpr around  = uint8{100};
+        auto constexpr samples = uint64{32};
+
+        // One selected pixel and sixty-three excluded ones, so the complement is
+        // larger than the sample count and the probe has to choose.
+        auto const templateData = build(
+            extent,
+            extent,
+            extent,
+            asByte(0),
+            [](uint32 x, uint32 y) noexcept -> uint8
+            {
+                return x == 0 && y == 0 ? glyph : around;
+            }
+        );
+        auto const maskData = build(
+            extent,
+            extent,
+            extent,
+            asByte(0),
+            [](uint32 x, uint32 y) noexcept -> uint8
+            {
+                return x == 0 && y == 0 ? uint8{255} : uint8{0};
+            }
+        );
+        auto const templateImage  = grayImage(templateData, extent, extent, extent);
+        auto const mask           = grayImage(maskData, extent, extent, extent);
+        auto const roi            = pixelRect(0, 0, extent, extent);
+        auto const continueSearch = SadSearchPoll{
+            []() noexcept -> SadSearchControl
+            {
+                return SadSearchControl::Continue;
+            }
+        };
+
+        // The template's own surround sits 100 grey levels from its glyph, so
+        // half of that is 50: a candidate whose surround sits exactly 50 away is
+        // the last one accepted, and one level nearer is refused. The pair on
+        // either side of the glyph shows the requirement is a distance and not a
+        // direction.
+        struct SurroundCase final
+        {
+            uint8  surround{};
+            bool   accepted{};
+            uint64 expectedComparisons{};
+        };
+
+        auto constexpr rectangle = uint64{extent} * uint64{extent};
+        auto const cases = std::array{
+            SurroundCase{150, true, samples + rectangle},
+            SurroundCase{151, false, samples},
+            SurroundCase{250, true, samples + rectangle},
+            SurroundCase{249, false, samples},
+        };
+        for (auto const& testCase : cases)
+        {
+            auto const haystackData = build(
+                extent,
+                extent,
+                extent,
+                asByte(0),
+                [surround = testCase.surround](uint32 x, uint32 y) noexcept -> uint8
+                {
+                    return x == 0 && y == 0 ? glyph : surround;
+                }
+            );
+            auto const haystack = grayImage(haystackData, extent, extent, extent);
+            auto const report   = matchTemplateSad(
+                haystack,
+                templateImage,
+                mask,
+                roi,
+                std::numeric_limits<uint64>::max(),
+                continueSearch
+            );
+            REQUIRE(report.has_value());
+            REQUIRE(
+                std::holds_alternative<std::optional<SadMatch>>(report->outcome)
+            );
+            auto const match = std::get<std::optional<SadMatch>>(report->outcome);
+            CHECK(match.has_value() == testCase.accepted);
+            CHECK(
+                report->contrastRefusedCandidates == (testCase.accepted ? 0U : 1U)
+            );
+
+            // The probe reads a fixed sample of the complement rather than all
+            // sixty-three of it, so a refused candidate costs the sample count
+            // and an accepted one costs that plus its rectangle.
+            CHECK(report->completedPixelComparisons == testCase.expectedComparisons);
+        }
+    }
+
     TEST_CASE("masked scores normalize by the weight actually summed")
     {
         auto constexpr extent = uint32{8};
@@ -1371,8 +1570,12 @@ namespace uf
 
     TEST_CASE("a masked search keeps the budget, poll and cancellation contract")
     {
+        // The first haystack byte is the one the contrast probe reads, and it
+        // is far from the template's glyph so the first candidate is scored
+        // rather than refused; the second candidate sits next to the glyph's own
+        // value and is refused, which is what the last check below counts.
         auto const haystackData = std::vector<std::byte>{
-            asByte(0),
+            asByte(200),
             asByte(1),
             asByte(2),
         };
@@ -1391,7 +1594,9 @@ namespace uf
         };
 
         // An excluded pixel still consumes its comparison, so the budget keeps
-        // measuring the rectangle the search walked rather than the weight.
+        // measuring the work the search did rather than the weight: one
+        // comparison for the contrast probe's single sample, then one for each
+        // pixel of the rectangle.
         auto const budgets = std::array{
             BudgetCase{0, 0, 0},
             BudgetCase{1, 1, 1},
@@ -1443,9 +1648,10 @@ namespace uf
         REQUIRE(completed.has_value());
         CHECK(
             std::get<std::optional<SadMatch>>(completed->outcome)
-            == std::optional{SadMatch{1, 0, 10}}
+            == std::optional{SadMatch{0, 0, 12}}
         );
         CHECK(completed->completedPixelComparisons == 4);
+        CHECK(completed->contrastRefusedCandidates == 1);
 
         struct InterruptionCase final
         {

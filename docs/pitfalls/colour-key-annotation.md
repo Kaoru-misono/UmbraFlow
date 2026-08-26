@@ -20,7 +20,7 @@
 > so read the sections for what was measured and the current Tool declarations
 > for how to invoke.
 
-Failures in authoring a colour-keyed template. All three below share a shape: the
+Failures in authoring a colour-keyed template. All four below share a shape: the
 tool accepts the element, and the mistake surfaces either much later or never.
 
 Measurements come from annotating 卡厄思梦境 on 2026-07-30 with
@@ -268,6 +268,79 @@ is supposed to reject.
 For any element whose purpose is to distinguish two states, match it against a
 frame of each and require a hit on one and a miss on the other. An element that
 hits both is to be deleted, not tuned.
+
+## A masked template matches a plain field of its glyph's own colour
+
+> Measured 2026-08-27 against 卡厄思梦境, on the eight 1600x900 battle frames and
+> the four colour-keyed templates the consuming project carries.
+
+### Symptom
+
+A keyed element resolves on a screen it has nothing to do with, at a confidence
+no threshold can refuse. `battle.end-turn`, whose Locator is a white tick keyed
+out of its blue button at `[1399,760,53,39]`, resolved on a character's card list
+page, whose background is near-white. The model reported the `battle` surface and
+offered the `end-turn` action, which would have clicked into an unrelated screen.
+
+Raising the threshold cannot help. Over a plain field of the value that scores
+best against it, `end-turn` reached **0.9943** and `rewind` **0.9692**, against a
+declared threshold of 0.90 — and a true hit on a real battle frame scores 0.9959
+to 0.9999. There is no threshold between those two populations.
+
+### Root cause
+
+**A masked template says what should be present and never what must not surround
+it.** The mask that makes the template clean throws away every piece of negative
+evidence, and the matcher then skipped the excluded pixels entirely: an excluded
+pixel contributed nothing, so its bytes were never read. Only the glyph's own
+pixels were compared, so a white tick cut out of its button really does score
+near zero against a large enough patch of plain white.
+
+This is a different failure from the two above and is not fixed by either
+remedy for them. It is not about the mask being too small or too large — the
+`end-turn` mask selects 18.9% of its rectangle, squarely inside the 6.6%-25.8%
+band this file calls discriminating — and the falsification matrix only catches
+it if the corpus happens to contain a frame of the flat screen. The consuming
+project's corpus did not; the live game did.
+
+### Fix
+
+Landed 2026-08-27 in the matcher itself, so it holds for every masked template
+without anything being declared. Before a candidate is scored, a fixed
+spread-out sample of the positions the mask did **not** take must sit at least
+half as far from the template's glyph as the template's own pixels there do; a
+candidate that fails costs its sample count and is refused rather than scored.
+Deciding artifact: `GrayImage::MaskContrastProbe` in
+`modules/vision/source/vision/sad.hpp`, and the case
+`a masked template refuses a plain field of its own colour` in
+`tests/vision/test-sad.cpp`.
+
+The requirement is scaled by the template's own crop rather than by a contrast
+level the matcher picked, so a template whose surround already looks like its
+glyph demands correspondingly little. Measured: a true hit reproduces 0.980 to
+1.147 of its template's own contrast; the best plain field reproduces 0.011 to
+0.082. No true hit moved by a single point — every score above is unchanged —
+and the best plain field fell to 0.6253 (`end-turn`), 0.6768 (`rewind`), 0.8180
+(`confirm`) and 0.7822 (`cancel`), all under 0.90.
+
+A refusal is counted and reported: `SadSearchReport::contrastRefusedCandidates`
+rides through `TemplateMatchAttempt` to the `contrast_refused` field of the
+`engine.action_found` trace line. A miss carrying a non-zero count missed
+because nothing in the region stood apart from the glyph, which is a different
+answer from every position having scored badly.
+
+**What this does NOT fix**, and the reason the mask warning and the
+falsification matrix both stay: it refuses a flat field of the glyph's colour,
+not a busy one. Twenty-seven white pixels still find an offset on a card
+thumbnail where all of them land on white, because the rest of that rectangle is
+colourful and contrasts perfectly well. A mask that is 68% of its rectangle
+still matches any patch of that fill under any surround that is not the fill.
+
+### Regression check
+
+Match the element against a uniform field of its glyph's own colour and require
+a miss. It costs one synthetic frame and no capture session, and it is the one
+screen a corpus of real captures is least likely to contain.
 
 ## Unkeyed templates only match the one screen they were authored on
 
