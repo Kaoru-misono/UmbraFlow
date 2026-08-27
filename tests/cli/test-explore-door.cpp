@@ -115,6 +115,9 @@ namespace uf::cli
         constexpr auto k_readLinesTool = std::string_view{
             "framework.screen.read_lines"
         };
+        constexpr auto k_readSingleLineTool = std::string_view{
+            "framework.screen.read_single_line"
+        };
         constexpr auto k_probeTool = std::string_view{
             "framework.screen.probe"
         };
@@ -427,6 +430,107 @@ namespace uf::cli
             }
         };
 
+        [[nodiscard]]
+        auto pixelRectOf(uint32 x, uint32 y, uint32 width, uint32 height)
+            -> PixelRect
+        {
+            auto const created = PixelRect::create(x, y, width, height);
+            REQUIRE(created.has_value());
+            return *created;
+        }
+
+        // A reader over a rectangle that holds THREE stacked lines, answering
+        // the way a recogniser does under each layout, and recording which pass
+        // it was asked to run.
+        //
+        // Under block layout it reports what a detector found: three lines, each
+        // with its own box. Under single line it reports what a recogniser makes
+        // of the same strip when nobody told it there were three -- ONE run,
+        // scored high, that is none of the three lines and does not say so.
+        //
+        // It is not a stub standing in for a real engine. What the case is about
+        // is which pass framework.screen.read_single_line runs and what its
+        // answer can no longer tell its caller, and a real engine would make the
+        // text a fact about a PNG without making either assertion stronger. What
+        // this fixture cannot prove, and does not claim, is that a real
+        // recogniser garbles a stacked strip in this particular way; what it
+        // proves is that whatever the recogniser says arrives as one answer with
+        // no signal that the rectangle held more than one line.
+        class StackedTextReader final : public ocr::IOcrEngine
+        {
+            std::shared_ptr<std::vector<std::string>> m_layouts;
+
+        public:
+            explicit StackedTextReader(
+                std::shared_ptr<std::vector<std::string>> layouts
+            )
+                : m_layouts{std::move(layouts)}
+            {
+            }
+
+            [[nodiscard]] auto identity() const noexcept -> std::string_view override
+            {
+                return "test-stacked-text-reader";
+            }
+
+            [[nodiscard]]
+            auto read(BgraImage const&, ocr::ReadSpec const& spec)
+                -> Result<ocr::Readout> override
+            {
+                // One column of the fixture frame holds no ink, and a reader
+                // asked about it answers with no lines at all. That is a
+                // different answer from a line whose text is empty, and the
+                // reading Tools have to keep the two apart.
+                auto const blank = spec.rect.has_value()
+                    && spec.rect->width() == 1U;
+                if (spec.layout == ocr::TextLayout::SingleLine)
+                {
+                    m_layouts->emplace_back("single_line");
+                    if (blank)
+                    {
+                        return ocr::Readout{};
+                    }
+                    auto readout = ocr::Readout{};
+                    readout.lines.emplace_back(
+                        ocr::TextLine{
+                            .text   = "3fire1B",
+                            .bounds = pixelRectOf(0U, 0U, 1U, 1U),
+                            .confidenceBp = 9'400U,
+                        }
+                    );
+                    return readout;
+                }
+                m_layouts->emplace_back("block");
+                auto readout = ocr::Readout{};
+                if (blank)
+                {
+                    return readout;
+                }
+                readout.lines.emplace_back(
+                    ocr::TextLine{
+                        .text   = "3",
+                        .bounds = pixelRectOf(0U, 0U, 1U, 1U),
+                        .confidenceBp = 9'800U,
+                    }
+                );
+                readout.lines.emplace_back(
+                    ocr::TextLine{
+                        .text   = "fire",
+                        .bounds = pixelRectOf(1U, 0U, 1U, 1U),
+                        .confidenceBp = 9'700U,
+                    }
+                );
+                readout.lines.emplace_back(
+                    ocr::TextLine{
+                        .text   = "1B",
+                        .bounds = pixelRectOf(2U, 0U, 1U, 1U),
+                        .confidenceBp = 9'600U,
+                    }
+                );
+                return readout;
+            }
+        };
+
         // The exemplar project copied out of the repository, its RuntimeArtifact
         // installed into an Operator production root beside it, and NO policy
         // artifact written into that root.
@@ -540,7 +644,8 @@ namespace uf::cli
                 std::shared_ptr<uint32> captures = std::make_shared<uint32>(),
                 std::shared_ptr<HeldInputLog> held =
                     std::make_shared<HeldInputLog>(),
-                uint64 maximumPixelComparisons = k_defaultPixelComparisonBudget
+                uint64 maximumPixelComparisons = k_defaultPixelComparisonBudget,
+                std::unique_ptr<ocr::IOcrEngine> reader = nullptr
             ) const -> task::TaskRunConfig
             {
                 auto const fingerprint = ProjectFingerprint::create(
@@ -550,6 +655,11 @@ namespace uf::cli
                     k_recordedDpi
                 );
                 REQUIRE(fingerprint.has_value());
+                auto bound = reader == nullptr
+                    ? std::unique_ptr<ocr::IOcrEngine>{
+                          std::make_unique<SilentReader>(),
+                      }
+                    : std::move(reader);
                 return task::TaskRunConfig{
                     .frameSource = std::make_unique<CountingFrameSource>(
                         operator_runtime::conformance::observationFrame(
@@ -563,7 +673,7 @@ namespace uf::cli
                         std::move(delivered),
                         std::move(held)
                     ),
-                    .ocrEngine               = std::make_unique<SilentReader>(),
+                    .ocrEngine               = std::move(bound),
                     .liveFingerprint         = *fingerprint,
                     .maximumPixelComparisons = maximumPixelComparisons,
                     .recognitionTimeout      = k_defaultRecognitionTimeout,
@@ -686,6 +796,7 @@ namespace uf::cli
                             std::string{k_probeTool},
                             std::string{k_projectWriteFileTool},
                             std::string{k_readLinesTool},
+                            std::string{k_readSingleLineTool},
                         }
                     );
                 auto stream = std::ofstream{
@@ -2589,5 +2700,124 @@ namespace uf::cli
             "a chunk must be able to require the deployment's declared closure "
             "and call its pure entry"
         );
+    }
+
+    // WHAT framework.screen.read_single_line's DECLARATION WARNS ABOUT, RUN.
+    //
+    // The declaration tells a caller who has read nothing else three things:
+    // the caller is ASSERTING that the rectangle holds one line, nothing checks
+    // the assertion, and a rectangle that in fact holds several comes back as
+    // one run rather than as an error. Those are demonstrated here rather than
+    // asserted -- ONE rectangle is read by both Tools inside one session, and
+    // the two answers are put beside each other.
+    //
+    // The reader is scripted, so the exact garbled run is the fixture's and not
+    // a prediction about any real recogniser. What is the framework's, and what
+    // this case pins, is everything around it: read_lines runs the detecting
+    // pass and read_single_line runs the recognising one, the asserted read
+    // answers exactly once whatever the rectangle holds, and its answer carries
+    // no count, no boxes and nothing else a caller could use to notice that the
+    // rectangle held three lines.
+    TEST_CASE("one rectangle read as lines and asserted as one line")
+    {
+        auto const world     = ExploreDoorWorld{};
+        auto const delivered = std::make_shared<uint32>();
+        auto const layouts   = std::make_shared<std::vector<std::string>>();
+        static_cast<void>(world.authorizeAnnotation());
+
+        auto const scope = operator_runtime::ObservedInstanceWorldScope::run(
+            "window-0",
+            1
+        );
+        REQUIRE(scope.has_value());
+        auto lifecycle = service::ProductLifecycle::start(
+            service::ProductStart{
+                .projectDirectory          = world.project(),
+                .runtimeDirectory          = world.runtime(),
+                .authenticatedControllerId = "umbra-flow-explore",
+                .controllerCapabilities    = {},
+                .controlledTargetId        = "window-0",
+                .kind                      = operator_runtime::ControllerKind::Human,
+                .agentProfileJcs = std::string{
+                    operator_runtime::k_unboundedAgentProfileJcs
+                },
+                .worldScope = *scope,
+            }
+        );
+        REQUIRE(lifecycle.has_value());
+        auto session = lifecycle->startExplorationSession(
+            world.ports(
+                delivered,
+                "read-single-line-trace.jsonl",
+                std::make_shared<uint32>(),
+                std::make_shared<HeldInputLog>(),
+                k_defaultPixelComparisonBudget,
+                std::make_unique<StackedTextReader>(layouts)
+            ),
+            std::stop_token{}
+        );
+        REQUIRE(session.has_value());
+
+        auto const measured = (*session)->evaluate(
+            R"lua(
+                local screen = require("@umbraflow/screen")
+                local shot = screen.capture{}.screenshot_sha256
+                local stacked = {
+                    screenshot_sha256 = shot,
+                    x = 0, y = 0, width = 3, height = 1,
+                }
+                local block = screen.read_lines(stacked)
+                local one   = screen.read_single_line(stacked)
+                assert(one.text_found, "the reader produced a reading")
+                -- A garbled run is not a low-scoring one. The whole reason the
+                -- declaration has to carry the warning is that confidence
+                -- cannot: it scores the characters the reader emitted, and
+                -- says nothing about the caller's claim that there was one
+                -- line to emit them from.
+                assert(
+                    one.confidence > 0.9,
+                    "the single run carries a high confidence"
+                )
+                -- Looked, and saw nothing. An answer, not a failure, and told
+                -- apart from a reading that came back with no characters in it.
+                local blank = screen.read_single_line{
+                    screenshot_sha256 = shot,
+                    x = 0, y = 0, width = 1, height = 1,
+                }
+                assert(
+                    not blank.text_found,
+                    "a reader that saw nothing answers text_found false"
+                )
+                assert(
+                    blank.text == nil and blank.confidence == nil,
+                    "and states neither text nor confidence"
+                )
+                return #block.lines .. "|" .. one.text
+            )lua",
+            "read-single-line"
+        );
+        auto const why = measured.has_value()
+            ? std::string{}
+            : std::string{measured.error().message()};
+        REQUIRE_MESSAGE(measured.has_value(), why);
+        REQUIRE(measured->text() != nullptr);
+        CHECK_MESSAGE(
+            *measured->text() == "3|3fire1B",
+            "the same rectangle answers three located lines under read_lines "
+            "and one unlocated run under read_single_line"
+        );
+        auto const expectedLayouts = std::vector<std::string>{
+            "block",
+            "single_line",
+            "single_line",
+        };
+        CHECK_MESSAGE(
+            *layouts == expectedLayouts,
+            "which pass runs is the Tool's, never an argument: read_lines "
+            "detects and read_single_line does not"
+        );
+
+        session->reset();
+        CHECK(lifecycle->shutdown().has_value());
     }
 }

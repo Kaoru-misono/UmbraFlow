@@ -70,6 +70,9 @@ namespace uf::operator_runtime
         constexpr auto k_readLinesTool = std::string_view{
             "framework.screen.read_lines"
         };
+        constexpr auto k_readSingleLineTool = std::string_view{
+            "framework.screen.read_single_line"
+        };
         constexpr auto k_projectReadTextTool = std::string_view{
             "framework.project.read_text"
         };
@@ -1279,6 +1282,8 @@ namespace uf::operator_runtime
         { return argumentMaterial(k_screenshotRectangleMembers); }
         [[nodiscard]] auto readLinesArgumentMaterial() -> json::Value
         { return argumentMaterial(k_screenshotRectangleMembers); }
+        [[nodiscard]] auto readSingleLineArgumentMaterial() -> json::Value
+        { return argumentMaterial(k_screenshotRectangleMembers); }
         [[nodiscard]] auto probeArgumentMaterial() -> json::Value
         { return argumentMaterial(k_probeMembers); }
         [[nodiscard]] auto censusGridArgumentMaterial() -> json::Value
@@ -1404,6 +1409,20 @@ namespace uf::operator_runtime
                 {"description", json::Value::ofString(std::string{description})},
                 {"minimum", json::Value::ofNumber(0.0)},
                 {"type", json::Value::ofString("integer")},
+            });
+        }
+
+        // A score on the closed unit interval. Both reading Tools report an OCR
+        // confidence, and one spelling of the bounds keeps the two contracts
+        // from drifting into two ranges for one measurement.
+        [[nodiscard]]
+        auto unitResult(std::string_view description) -> json::Value
+        {
+            return json::Value::ofObject({
+                {"description", json::Value::ofString(std::string{description})},
+                {"maximum", json::Value::ofNumber(1.0)},
+                {"minimum", json::Value::ofNumber(0.0)},
+                {"type", json::Value::ofString("number")},
             });
         }
 
@@ -1742,19 +1761,10 @@ namespace uf::operator_runtime
                           objectResult(
                               {
                                   {"confidence",
-                                   json::Value::ofObject({
-                                       {"description",
-                                        json::Value::ofString(
-                                            "How confident the reader is in "
-                                            "this line, from 0 to 1."
-                                        )},
-                                       {"maximum",
-                                        json::Value::ofNumber(1.0)},
-                                       {"minimum",
-                                        json::Value::ofNumber(0.0)},
-                                       {"type",
-                                        json::Value::ofString("number")},
-                                   })},
+                                   unitResult(
+                                       "How confident the reader is in this "
+                                       "line, from 0 to 1."
+                                   )},
                                   {"height",
                                    countResult(
                                        "Height of the line's box, in "
@@ -1794,6 +1804,47 @@ namespace uf::operator_runtime
                      })},
                 },
                 {"lines"}
+            );
+        }
+
+        // ONE reading, and no rectangle beside it. Under single-line layout the
+        // host locates nothing, so the only box it could report back is the one
+        // the caller drew; echoing the question as an answer would read as a
+        // measurement and be none. text_found follows framework.session.get's
+        // `present`: a reader that looked and saw nothing is an answer, not a
+        // failure, and the two members it would otherwise have to invent for
+        // that case are absent instead.
+        [[nodiscard]]
+        auto readSingleLineOutputMaterial() -> json::Value
+        {
+            return objectResult(
+                {
+                    {"confidence",
+                     unitResult(
+                         "How confident the reader is in the text it produced, "
+                         "from 0 to 1. Present only when text_found is true. "
+                         "It scores the CHARACTERS, not the caller's claim "
+                         "that the rectangle held one line, so a rectangle "
+                         "holding several can score well here."
+                     )},
+                    {"text",
+                     typedResult(
+                         "string",
+                         "What the reader made of the rectangle, exactly as it "
+                         "produced it and with no trimming. Present only when "
+                         "text_found is true, and may be empty when the reader "
+                         "produced a reading with no characters in it."
+                     )},
+                    {"text_found",
+                     typedResult(
+                         "boolean",
+                         "Whether the reader produced a reading at all. False "
+                         "means it looked and found no text, which is an "
+                         "answer rather than a failure; text and confidence "
+                         "are then absent."
+                     )},
+                },
+                {"text_found"}
             );
         }
 
@@ -2477,6 +2528,30 @@ namespace uf::operator_runtime
                 &measuringDescriptor,
                 &readLinesArgumentMaterial,
                 &readLinesOutputMaterial,
+            },
+            FrameworkToolDefinition{
+                k_readSingleLineTool,
+                "Read one rectangle of a retained screenshot as EXACTLY ONE "
+                "LINE of text. THE CALLER ASSERTS THAT THE RECTANGLE HOLDS ONE "
+                "LINE AND NOTHING CHECKS THE ASSERTION: no line detection runs, "
+                "so a rectangle that in fact holds several lines comes back as "
+                "ONE run of nonsense rather than as an error, and that run can "
+                "carry a high confidence -- the score is the reader's certainty "
+                "about the characters it emitted, never about the layout claim. "
+                "Use this Tool where you drew the rectangle yourself and know "
+                "what is inside it: a label, a counter, a cost digit, one cell "
+                "you measured. Use framework.screen.read_lines instead for a "
+                "region nobody can draw a rectangle inside. A confirmed result "
+                "carries text_found, and -- when that is true -- text and "
+                "confidence; a reader that looked and saw nothing answers "
+                "text_found false rather than failing. A rectangle too large "
+                "for one recognition pass is refused by name, and that ceiling "
+                "is on cost alone: it is not a check that the rectangle holds "
+                "one line. Nothing is captured and nothing is written: the "
+                "rectangle is measured on the screenshot the caller named.",
+                &measuringDescriptor,
+                &readSingleLineArgumentMaterial,
+                &readSingleLineOutputMaterial,
             },
             FrameworkToolDefinition{
                 k_sessionGetTool,

@@ -127,6 +127,9 @@ namespace uf::service
         constexpr auto k_readLinesTool = std::string_view{
             "framework.screen.read_lines"
         };
+        constexpr auto k_readSingleLineTool = std::string_view{
+            "framework.screen.read_single_line"
+        };
         constexpr auto k_projectReadTextTool = std::string_view{
             "framework.project.read_text"
         };
@@ -936,11 +939,28 @@ namespace uf::service
             operator_runtime::ToolCallPositionIdentity const& call
         ) -> Result<operator_runtime::ToolCallCompletion>;
 
-        // The three measuring Tools. Each opens the immutable evidence artifact
+        // The four measuring Tools. Each opens the immutable evidence artifact
         // its required screenshot_sha256 member names; none captures or consults
         // dispatcher position state.
+
+        // The half the two reading Tools share: open the named screenshot,
+        // admit the rectangle, and read it under the layout THE TOOL fixes.
+        // The layout is a parameter here and never an argument out there --
+        // which of the two a caller wanted is the Tool it named, and this seam
+        // is below that choice rather than a place to make it.
+        [[nodiscard]]
+        auto readToolRectangle(
+            operator_runtime::ToolCallPositionIdentity const& call,
+            ocr::TextLayout layout
+        ) -> Result<std::vector<engine::TextReading>>;
+
         [[nodiscard]]
         auto answerReadLinesTool(
+            operator_runtime::ToolCallPositionIdentity const& call
+        ) -> Result<operator_runtime::ToolCallCompletion>;
+
+        [[nodiscard]]
+        auto answerReadSingleLineTool(
             operator_runtime::ToolCallPositionIdentity const& call
         ) -> Result<operator_runtime::ToolCallCompletion>;
 
@@ -2014,9 +2034,10 @@ namespace uf::service
         }));
     }
 
-    auto ProductLifecycle::Impl::answerReadLinesTool(
-        operator_runtime::ToolCallPositionIdentity const& call
-    ) -> Result<operator_runtime::ToolCallCompletion>
+    auto ProductLifecycle::Impl::readToolRectangle(
+        operator_runtime::ToolCallPositionIdentity const& call,
+        ocr::TextLayout layout
+    ) -> Result<std::vector<engine::TextReading>>
     {
         auto& context = activeContext();
         UF_TRY(openScreenshot(call));
@@ -2033,13 +2054,21 @@ namespace uf::service
         UF_TRY_VALUE(rect, admittedRectangle(arguments.value()));
         auto const ticket = context.openObservationFrame();
         UF_CHECK(ticket.has_value());
+        return context.cycleRead(*ticket, rect, layout);
+    }
 
+    auto ProductLifecycle::Impl::answerReadLinesTool(
+        operator_runtime::ToolCallPositionIdentity const& call
+    ) -> Result<operator_runtime::ToolCallCompletion>
+    {
         // Block layout and never the caller's choice: this Tool exists for the
         // region nobody can draw a rectangle inside, so a layout argument would
-        // offer the caller the one answer it came here to avoid.
+        // offer the caller the one answer it came here to avoid. A caller who
+        // CAN draw the rectangle names framework.screen.read_single_line, which
+        // is a different Tool because it is different behaviour.
         UF_TRY_VALUE(
             lines,
-            context.cycleRead(*ticket, rect, ocr::TextLayout::Block)
+            readToolRectangle(call, ocr::TextLayout::Block)
         );
 
         auto rendered = std::vector<json::Value>{};
@@ -2062,6 +2091,42 @@ namespace uf::service
         }
         return confirmedToolResult(json::Value::ofObject({
             {"lines", json::Value::ofArray(std::move(rendered))},
+        }));
+    }
+
+    auto ProductLifecycle::Impl::answerReadSingleLineTool(
+        operator_runtime::ToolCallPositionIdentity const& call
+    ) -> Result<operator_runtime::ToolCallCompletion>
+    {
+        // Single-line layout, asserted by the caller in the only place an
+        // assertion of this kind can be recorded: the name of the Tool it
+        // called. Nothing here verifies it, and nothing can -- how many lines a
+        // rectangle holds is a fact about ink, and the pass that would find out
+        // is the detection this layout exists to skip.
+        UF_TRY_VALUE(
+            lines,
+            readToolRectangle(call, ocr::TextLayout::SingleLine)
+        );
+
+        // At most one, by construction: nothing was located, so there is
+        // nothing for a second entry to be about. An empty list is a reader
+        // that looked and saw no text, and the answer says so rather than
+        // rendering an empty string that a caller could not tell apart from a
+        // reading with no characters in it.
+        if (lines.empty())
+        {
+            return confirmedToolResult(json::Value::ofObject({
+                {"text_found", json::Value::ofBoolean(false)},
+            }));
+        }
+        auto const& line = lines.front();
+        return confirmedToolResult(json::Value::ofObject({
+            {"confidence",
+             json::Value::ofNumber(
+                 static_cast<double>(line.confidenceBp) / 10'000.0
+             )},
+            {"text", json::Value::ofString(line.text)},
+            {"text_found", json::Value::ofBoolean(true)},
         }));
     }
 
@@ -2913,6 +2978,10 @@ namespace uf::service
         if (toolName == k_readLinesTool)
         {
             return answerReadLinesTool(call);
+        }
+        if (toolName == k_readSingleLineTool)
+        {
+            return answerReadSingleLineTool(call);
         }
         if (toolName == k_probeTool)
         {

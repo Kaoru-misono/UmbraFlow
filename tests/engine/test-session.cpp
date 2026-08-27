@@ -16,6 +16,8 @@
 
 #include <image/png.hpp>
 
+#include <ocr/engine.hpp>
+
 #include <trace/event.hpp>
 #include <trace/recorder.hpp>
 #include <trace/sink.hpp>
@@ -740,6 +742,32 @@ namespace uf::engine
             return *std::move(recorder);
         }
 
+        // A bound OCR adapter that answers nothing and counts the times it was
+        // reached. Present, not absent: readTextOnFrame refuses a null adapter
+        // before it measures anything, so a ceiling case run without one would
+        // pass for the wrong reason. The count is what says whether a refusal
+        // cost an inference or none.
+        class CountingReader final : public ocr::IOcrEngine
+        {
+            uint32 m_reads{};
+
+        public:
+            [[nodiscard]] auto identity() const noexcept -> std::string_view override
+            {
+                return "engine-test-counting-reader";
+            }
+
+            [[nodiscard]]
+            auto read(BgraImage const&, ocr::ReadSpec const&)
+                -> Result<ocr::Readout> override
+            {
+                ++m_reads;
+                return ocr::Readout{};
+            }
+
+            [[nodiscard]] auto reads() const noexcept -> uint32 { return m_reads; }
+        };
+
         // Declaration order is the lifetime order the trace contract requires:
         // the recorder outlives the session that borrows it, and the unique_ptr
         // keeps its address stable when this struct is moved out of makeSession.
@@ -769,7 +797,8 @@ namespace uf::engine
         auto makeSession(
             std::vector<Frame> frames,
             EngineSessionConfig config,
-            TargetWorld world = TargetWorld::Live
+            TargetWorld world = TargetWorld::Live,
+            std::unique_ptr<ocr::IOcrEngine> reader = nullptr
         ) -> SessionUnderTest
         {
             auto frameSource = std::make_unique<FakeFrameSource>(
@@ -788,7 +817,8 @@ namespace uf::engine
                 std::move(frameSource),
                 std::move(actionSink),
                 *recorder,
-                std::move(config)
+                std::move(config),
+                std::move(reader)
             );
             return SessionUnderTest{
                 .recorder = std::move(recorder),
@@ -2749,5 +2779,87 @@ namespace uf::engine
         // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(*p_source->deadline() <= *ceiling);
         CHECK(p_source->cancellable());
+    }
+
+    // THE ONLY SIZE RULE A SINGLE-LINE READ HAS, and what it is not.
+    //
+    // k_maximumSingleLineReadPixels bounds the AREA one recognition pass may be
+    // handed. It is arithmetic on the rectangle and nothing else: it does not
+    // know whether the rectangle holds one line, and it must not be read as a
+    // check that it does. What it does buy is that "read the whole screen as one
+    // line" is refused rather than attempted, and refused before any inference.
+    //
+    // framework.screen.read_single_line's declaration promises this refusal to
+    // callers who have only read the catalog, so it is pinned here, where the
+    // number lives.
+    TEST_CASE("a single-line read is refused above the host's area ceiling")
+    {
+        constexpr auto k_wideEnough = uint32{700};
+        constexpr auto k_tallEnough = uint32{500};
+        static_assert(
+            uint64{k_wideEnough} * uint64{k_tallEnough}
+                > k_maximumSingleLineReadPixels,
+            "the fixture frame must exceed the single-line ceiling to test it"
+        );
+        static_assert(
+            uint64{k_wideEnough} * uint64{k_tallEnough}
+                <= k_maximumBlockReadPixels,
+            "and stay inside the block ceiling, so the two answers differ"
+        );
+
+        auto const fingerprint = fingerprintOf(k_wideEnough, k_tallEnough, 96);
+        auto pixels = std::vector<std::byte>(
+            std::size_t{k_wideEnough} * std::size_t{k_tallEnough} * 4U,
+            asByte(k_presentGray)
+        );
+        auto frames = std::vector<Frame>{};
+        frames.emplace_back(
+            grayFrame(
+                fingerprint,
+                std::move(pixels),
+                FrameId{91},
+                MonotonicInstant::now()
+            )
+        );
+        auto reader          = std::make_unique<CountingReader>();
+        auto* const p_reader = reader.get();
+        auto under           = makeSession(
+            std::move(frames),
+            baseConfig(fingerprint),
+            TargetWorld::Live,
+            std::move(reader)
+        );
+        REQUIRE(under.session.has_value());
+        auto const observation = under.session->observe();
+        REQUIRE(observation.has_value());
+
+        auto const whole = pixelRectOf(0, 0, k_wideEnough, k_tallEnough);
+        auto const refused = under.session->readText(
+            *observation,
+            whole,
+            ocr::TextLayout::SingleLine,
+            8U
+        );
+        REQUIRE_FALSE(refused.has_value());
+        requireErrorKind(refused.error(), AutomationErrorKind::InvalidResource);
+        CHECK(
+            std::string{refused.error().message()}.find("single-line read")
+            != std::string::npos
+        );
+        // Refused by arithmetic, so it cost nothing. A ceiling that had to run
+        // the pass to find out would not be a ceiling.
+        CHECK(p_reader->reads() == 0U);
+
+        // The SAME rectangle is admitted under block layout, which is what makes
+        // the refusal above the single-line ceiling rather than a rectangle the
+        // frame cannot hold.
+        auto const admitted = under.session->readText(
+            *observation,
+            whole,
+            ocr::TextLayout::Block,
+            8U
+        );
+        REQUIRE(admitted.has_value());
+        CHECK(p_reader->reads() == 1U);
     }
 }

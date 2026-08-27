@@ -452,7 +452,7 @@ namespace uf::operator_runtime
         CHECK(*crossed == ObservationRefusal::Unminted);
     }
 
-    TEST_CASE("The Framework Tool Catalog declares twenty-eight built-in Tools")
+    TEST_CASE("The Framework Tool Catalog declares twenty-nine built-in Tools")
     {
         auto catalog = FrameworkToolCatalogOwner::create();
         REQUIRE(catalog.has_value());
@@ -560,6 +560,16 @@ namespace uf::operator_runtime
             },
             CatalogExpectation{
                 "framework.screen.read_lines",
+                ToolMutability::ReadOnly,
+                ToolSurface::Privileged,
+                ToolIdempotency::ReadSafe,
+            },
+            // The layout the caller ASSERTS, and the only thing that
+            // separates it from read_lines above. Same descriptor in every
+            // other respect: measuring a rectangle changes nothing whichever
+            // pass runs over it.
+            CatalogExpectation{
+                "framework.screen.read_single_line",
                 ToolMutability::ReadOnly,
                 ToolSurface::Privileged,
                 ToolIdempotency::ReadSafe,
@@ -747,7 +757,7 @@ namespace uf::operator_runtime
         // hash compared against itself pins nothing.
         CHECK(
             catalog->toolCatalogHash().hex()
-            == "c21c7dab066e7927a37848e005e5e0cc55f4b3c46f2398c9edbc0d3b13b14e48"
+            == "abdaf0c2009a45ac5837d1a2d745d0c3df3df590358400e4f54cd62d50635650"
         );
 
         auto material = CanonicalJson::parseExact(catalog->canonicalJcs());
@@ -950,6 +960,26 @@ namespace uf::operator_runtime
                 "framework.screen.read_lines",
                 R"({"height":20,"screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000","width":10,"x":1,"y":2})",
                 true,
+            },
+            // The two reading Tools take the SAME closed rectangle and
+            // differ only in which pass runs over it. A layout member is
+            // refused on both, from one argument contract: which of the two a
+            // caller wanted is the Tool it named, and a member offering the
+            // choice again would be a second answer to a settled question.
+            ArgumentCase{
+                "framework.screen.read_lines",
+                R"({"height":20,"layout":"single_line","screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000","width":10,"x":1,"y":2})",
+                false,
+            },
+            ArgumentCase{
+                "framework.screen.read_single_line",
+                R"({"height":20,"screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000","width":10,"x":1,"y":2})",
+                true,
+            },
+            ArgumentCase{
+                "framework.screen.read_single_line",
+                R"({"height":20,"layout":"block","screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000","width":10,"x":1,"y":2})",
+                false,
             },
             ArgumentCase{"framework.workflow.status", "{}", true},
             ArgumentCase{"framework.session.list", "{}", true},
