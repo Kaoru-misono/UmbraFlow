@@ -33,6 +33,7 @@ named path from running.
 | A schema file exists but no call applies it | File syntax at most | Name the producer, consumer, and executable assertion joining them |
 | A comment or gate name claims a semantic property | Nothing executable | Add a detector, or label the claim explicitly as review-only |
 | A fixture hands the subject an input its real caller cannot assemble | That the subject handles a shape nothing sends | Build the input from the producer's own envelope, or drive the subject through the boundary that assembles it |
+| A content-addressed fixture answers identical bytes every time | That some digest resolved, never that the RIGHT one did | Give the fixture a sequence of frames whose bytes differ, so two captures are two digests |
 
 Mutation is strongest for a local condition. Registration inspection is
 stronger for discovering tests that never run. Independent recomputation is
@@ -107,6 +108,29 @@ row each acquire and release writes, and that is what
 `tests/cli/test-observe.cpp` reads. The general shape: when a startup path
 normalizes the state a test wants to observe, assert on the append-only record
 of the transition, not on the state.
+
+### A single-frame capture fixture cannot fail a digest-identity case
+
+Measured 2026-08-27, while fixing `framework.input.hold`'s `return_screen`: the
+digest a hold answered with resolved to nothing, because the ledger recognised a
+committed screenshot receipt only in the confirmed result of the two Tools its
+SQL named. The first regression case was written against `ExploreDoorWorld::ports`,
+whose `CountingFrameSource` holds ONE frame and answers the same pixels to every
+capture.
+
+It passed with the fix deleted. Content addressing is why: the hold's frame was
+byte-identical to the `screen.capture` before it, so its digest was the digest
+that capture had already committed, and `read_lines`, `crop` and `probe` all
+resolved it happily. The case asserted "some retained screenshot" and read as
+"the frame the hold took".
+
+Re-run against `sequencePorts`, whose two frames differ in their first pixel, it
+went red at the measuring call with the exact production message. The general
+shape: **in a content-addressed system, a fixture that repeats its bytes erases
+the distinction the case is about.** Any case that claims a call answered with
+*its own* artifact needs a source that cannot produce the same digest twice, and
+an assertion that the two digests differ is the cheapest guard that the fixture
+still has that property.
 
 ## Checks that are review-only by design
 

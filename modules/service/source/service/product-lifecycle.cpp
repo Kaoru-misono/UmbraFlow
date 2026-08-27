@@ -12,6 +12,7 @@
 #include <operator/project-plugin.hpp>
 #include <operator/project-tool-dispatch.hpp>
 #include <operator/project-tool-program.hpp>
+#include <operator/session-state.hpp>
 #include <operator/snapshot-reference.hpp>
 #include <operator/tool-actor-adapters.hpp>
 #include <operator/tool-admission-request.hpp>
@@ -135,6 +136,15 @@ namespace uf::service
         constexpr auto k_projectWriteTextTool = std::string_view{
             "framework.project.write_text"
         };
+        constexpr auto k_sessionGetTool = std::string_view{
+            "framework.session.get"
+        };
+        constexpr auto k_sessionListTool = std::string_view{
+            "framework.session.list"
+        };
+        constexpr auto k_sessionSetTool = std::string_view{
+            "framework.session.set"
+        };
 
         enum class FrameworkInputKind : uint8
         {
@@ -207,45 +217,6 @@ namespace uf::service
         auto counterMember(uint64 value) -> json::Value
         {
             return json::Value::ofString(std::to_string(value));
-        }
-
-        [[nodiscard]]
-        auto evidenceReceiptValue(
-            operator_runtime::EvidenceArtifactReceipt const& receipt
-        ) -> json::Value
-        {
-            auto members = std::vector<json::Member>{
-                {"byte_count", counterMember(receipt.byteCount)},
-                {"created_at_unix_ms", counterMember(receipt.createdAtUnixMillis)},
-                {"frame_identity",
-                 json::Value::ofObject({
-                     {"capture_session_id",
-                      counterMember(receipt.frameIdentity.sessionId().value())},
-                     {"frame_id", counterMember(receipt.frameIdentity.frameId().value())},
-                     {"target_generation",
-                      counterMember(
-                          receipt.frameIdentity.targetGeneration().value()
-                      )},
-                 })},
-                {"height", json::Value::ofNumber(static_cast<double>(receipt.height))},
-                {"media_type", json::Value::ofString(receipt.mediaType)},
-                {std::string{operator_runtime::k_screenshotSha256Member},
-                 json::Value::ofString(receipt.contentHash.hex())},
-                {"width", json::Value::ofNumber(static_cast<double>(receipt.width))},
-            };
-            if (receipt.rectangle)
-            {
-                members.emplace_back(
-                    "rectangle",
-                    json::Value::ofObject({
-                        {"height", counterMember(receipt.rectangle->height())},
-                        {"width", counterMember(receipt.rectangle->width())},
-                        {"x", counterMember(receipt.rectangle->x())},
-                        {"y", counterMember(receipt.rectangle->y())},
-                    })
-                );
-            }
-            return json::Value::ofObject(std::move(members));
         }
 
         [[nodiscard]]
@@ -444,9 +415,17 @@ namespace uf::service
             };
         }
 
+        // Evidence is optional because most Framework Tools have nothing to
+        // prove beyond their own result. The one thing stated here rather than
+        // left to a caller is that a call which PUBLISHED a blob says so in its
+        // evidence: that member is how the ledger learns which blobs this run
+        // committed, so a screen answer without it is a retained blob nothing
+        // names and a digest the next call cannot resolve.
         [[nodiscard]]
-        auto confirmedToolResult(json::Value value)
-            -> Result<operator_runtime::ToolCallCompletion>
+        auto confirmedToolResult(
+            json::Value value,
+            std::optional<operator_runtime::CanonicalJson> evidence = std::nullopt
+        ) -> Result<operator_runtime::ToolCallCompletion>
         {
             UF_TRY_VALUE(
                 canonical,
@@ -455,7 +434,8 @@ namespace uf::service
                 )
             );
             return operator_runtime::ToolCallCompletion::confirmed(
-                std::move(canonical)
+                std::move(canonical),
+                std::move(evidence)
             );
         }
 
@@ -716,6 +696,15 @@ namespace uf::service
         // nothing else can resolve one.
         operator_runtime::SnapshotObservationAuthority observations{};
 
+        // What this session remembers between chunks. It sits here, beside the
+        // session id and the interactive request counter, because those three
+        // have one lifetime and the whole contract depends on it: an
+        // interactive root request key names THIS sessionId and this counter
+        // never issues one twice, so no position over this store can ever be
+        // replayed off a durable row -- and when this object dies, the id that
+        // could have addressed those rows dies with the state they described.
+        operator_runtime::SessionStateStore sessionState{};
+
         Impl(
             deployment::LoadedProject ownedLoaded,
             std::size_t ownedDeploymentIndex,
@@ -899,6 +888,34 @@ namespace uf::service
         auto captureOpenCycle()
             -> Result<operator_runtime::EvidenceArtifactReceipt>;
 
+        // Resolves the state on the cycle its caller left open and answers the
+        // framework.screen.observe result for it. Both callers open their own
+        // cycle and own its close: one from a retained screenshot the caller
+        // named, one from the live frame a hold took while still pressed.
+        [[nodiscard]]
+        auto observedOpenCycle(ContentHash const& screenshotSha256)
+            -> Result<operator_runtime::ToolCallCompletion>;
+
+        // What a screen-returning hold answers under `screen`, and the receipt
+        // that answer commits.
+        //
+        // It is one seam and not two inlined copies of the capture and observe
+        // bodies, because the promise the hold's declaration makes is that its
+        // frame is a framework.screen.capture receipt or a
+        // framework.screen.observe result -- and a promise about another Tool's
+        // answer is kept by producing it through that Tool's own code, not by
+        // rendering something that looks like it.
+        struct HeldScreen final
+        {
+            json::Value                               value;
+            operator_runtime::EvidenceArtifactReceipt receipt;
+        };
+
+        // returnScreen is `capture` or `observe`; a caller that was given
+        // `none` has nothing to ask for and does not call this.
+        [[nodiscard]]
+        auto heldScreen(std::string_view returnScreen) -> Result<HeldScreen>;
+
         [[nodiscard]]
         auto answerFrameworkTool(
             operator_runtime::ToolCallPositionIdentity const& call
@@ -958,6 +975,24 @@ namespace uf::service
         auto observedToolResult(
             ProductObservation observed,
             ContentHash screenshotSha256
+        ) -> Result<operator_runtime::ToolCallCompletion>;
+
+        // This session's own state. The three of them share the one store
+        // declared beside the session id above, because that is exactly the
+        // scope the state has: the object that mints `session-<hash>` is the
+        // object that remembers what was stored under it.
+        [[nodiscard]]
+        auto answerSessionGetTool(
+            operator_runtime::ToolCallPositionIdentity const& call
+        ) -> Result<operator_runtime::ToolCallCompletion>;
+
+        [[nodiscard]]
+        auto answerSessionListTool()
+            -> Result<operator_runtime::ToolCallCompletion>;
+
+        [[nodiscard]]
+        auto answerSessionSetTool(
+            operator_runtime::ToolCallPositionIdentity const& call
         ) -> Result<operator_runtime::ToolCallCompletion>;
 
         [[nodiscard]]
@@ -1619,24 +1654,26 @@ namespace uf::service
             }
         );
         UF_TRY_VALUE(receipt, captureOpenCycle());
-        return confirmedToolResult(evidenceReceiptValue(receipt));
+        UF_TRY_VALUE(
+            evidence,
+            operator_runtime::committedScreenshotEvidence(std::nullopt, receipt)
+        );
+        return confirmedToolResult(
+            operator_runtime::evidenceReceiptJson(receipt),
+            std::move(evidence)
+        );
     }
 
-    auto ProductLifecycle::Impl::answerObserveTool(
-        operator_runtime::ToolCallPositionIdentity const& call
+    auto ProductLifecycle::Impl::observedOpenCycle(
+        ContentHash const& screenshotSha256
     ) -> Result<operator_runtime::ToolCallCompletion>
     {
-        auto& context = activeContext();
-        UF_TRY_VALUE(source, openScreenshot(call));
-        auto const close = scopeExit(
-            [&context]() noexcept
-            {
-                static_cast<void>(context.sweepOpenCycle());
-            }
-        );
         UF_TRY_VALUE(
             observation,
-            operatorHost.host().resolveOpenObservationFrame(generation, context)
+            operatorHost.host().resolveOpenObservationFrame(
+                generation,
+                activeContext()
+            )
         );
         UF_TRY_VALUE(
             snapshot,
@@ -1653,8 +1690,50 @@ namespace uf::service
                 .snapshot = std::move(snapshot),
                 .ui       = std::move(observation),
             },
-            source.contentHash
+            screenshotSha256
         );
+    }
+
+    auto ProductLifecycle::Impl::answerObserveTool(
+        operator_runtime::ToolCallPositionIdentity const& call
+    ) -> Result<operator_runtime::ToolCallCompletion>
+    {
+        auto& context = activeContext();
+        UF_TRY_VALUE(source, openScreenshot(call));
+        auto const close = scopeExit(
+            [&context]() noexcept
+            {
+                static_cast<void>(context.sweepOpenCycle());
+            }
+        );
+        return observedOpenCycle(source.contentHash);
+    }
+
+    auto ProductLifecycle::Impl::heldScreen(std::string_view returnScreen)
+        -> Result<HeldScreen>
+    {
+        auto& context = activeContext();
+        UF_TRY(context.openCycle());
+        auto const close = scopeExit(
+            [&context]() noexcept
+            {
+                static_cast<void>(context.sweepOpenCycle());
+            }
+        );
+        UF_TRY_VALUE(receipt, captureOpenCycle());
+        if (returnScreen == "capture")
+        {
+            return HeldScreen{
+                .value   = operator_runtime::evidenceReceiptJson(receipt),
+                .receipt = receipt,
+            };
+        }
+        UF_CHECK(returnScreen == "observe");
+        UF_TRY_VALUE(observed, observedOpenCycle(receipt.contentHash));
+        return HeldScreen{
+            .value   = observed.payload().value(),
+            .receipt = receipt,
+        };
     }
 
     auto ProductLifecycle::Impl::answerCropTool(
@@ -1720,7 +1799,14 @@ namespace uf::service
             )
         );
         UF_CHECK(receipt.contentHash == cropped.hash);
-        return confirmedToolResult(evidenceReceiptValue(receipt));
+        UF_TRY_VALUE(
+            evidence,
+            operator_runtime::committedScreenshotEvidence(std::nullopt, receipt)
+        );
+        return confirmedToolResult(
+            operator_runtime::evidenceReceiptJson(receipt),
+            std::move(evidence)
+        );
     }
 
     auto ProductLifecycle::Impl::observedToolResult(
@@ -1797,6 +1883,8 @@ namespace uf::service
              reference.wire().value()},
             {"project_registration_hash",
              json::Value::ofString(generationHandle().projectRegistrationHash().hex())},
+            {std::string{operator_runtime::k_screenshotSha256Member},
+             json::Value::ofString(screenshotSha256.hex())},
             {"snapshot_identity_hash",
              json::Value::ofString(observed.snapshot.identityHash.hex())},
             {"snapshot_ref", json::Value::ofString(observed.snapshot.token)},
@@ -1805,6 +1893,91 @@ namespace uf::service
              json::Value::ofString(observed.ui.stateResolutionHash().hex())},
             {"target_generation",
              counterMember(observed.ui.targetGeneration().value())},
+        }));
+    }
+
+    auto ProductLifecycle::Impl::answerSessionGetTool(
+        operator_runtime::ToolCallPositionIdentity const& call
+    ) -> Result<operator_runtime::ToolCallCompletion>
+    {
+        UF_TRY_VALUE(
+            arguments,
+            operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
+        );
+        UF_TRY_VALUE(name, requiredStringArgument(arguments.value(), "name"));
+
+        auto const* const p_stored = sessionState.find(name);
+        auto members = std::vector<json::Member>{
+            {"name", json::Value::ofString(name)},
+            {"present", json::Value::ofBoolean(p_stored != nullptr)},
+        };
+        if (p_stored != nullptr)
+        {
+            // The value the caller stored, handed back from the bytes it was
+            // stored as rather than from anything this module re-derived. A
+            // CanonicalJson carries the value its bytes denote, so there is one
+            // parse for one document and no second reading of it.
+            members.emplace_back("value", p_stored->value());
+        }
+        return confirmedToolResult(json::Value::ofObject(std::move(members)));
+    }
+
+    auto ProductLifecycle::Impl::answerSessionListTool()
+        -> Result<operator_runtime::ToolCallCompletion>
+    {
+        auto names = std::vector<json::Value>{};
+        for (auto const& name : sessionState.names())
+        {
+            names.emplace_back(json::Value::ofString(name));
+        }
+        return confirmedToolResult(json::Value::ofObject({
+            {"maximum_bytes",
+             json::Value::ofNumber(
+                 static_cast<double>(
+                     operator_runtime::SessionStateStore::k_maximumBytes
+                 )
+             )},
+            {"maximum_names",
+             json::Value::ofNumber(
+                 static_cast<double>(
+                     operator_runtime::SessionStateStore::k_maximumEntries
+                 )
+             )},
+            {"names", json::Value::ofArray(std::move(names))},
+            {"stored_bytes",
+             json::Value::ofNumber(
+                 static_cast<double>(sessionState.storedBytes())
+             )},
+        }));
+    }
+
+    auto ProductLifecycle::Impl::answerSessionSetTool(
+        operator_runtime::ToolCallPositionIdentity const& call
+    ) -> Result<operator_runtime::ToolCallCompletion>
+    {
+        UF_TRY_VALUE(
+            arguments,
+            operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
+        );
+        UF_TRY_VALUE(name, requiredStringArgument(arguments.value(), "name"));
+        auto const* const p_value = arguments.value().find("value");
+        UF_CHECK(p_value != nullptr);
+
+        // Re-canonicalised out of the admitted arguments, so what is stored is
+        // exactly what the durable call row records the caller as having sent.
+        UF_TRY_VALUE(
+            stored,
+            operator_runtime::CanonicalJson::parseExact(
+                json::canonicalBytes(*p_value)
+            )
+        );
+        UF_TRY(sessionState.store(name, std::move(stored)));
+        return confirmedToolResult(json::Value::ofObject({
+            {"name", json::Value::ofString(std::move(name))},
+            {"stored_bytes",
+             json::Value::ofNumber(
+                 static_cast<double>(sessionState.storedBytes())
+             )},
         }));
     }
 
@@ -2296,55 +2469,15 @@ namespace uf::service
                 );
             }
 
-            auto screen = std::optional<json::Value>{};
+            auto screen       = std::optional<HeldScreen>{};
             auto screenResult = [&]() -> Status
             {
                 if (returnScreen == "none")
                 {
                     return ok();
                 }
-                UF_TRY(context.openCycle());
-                auto const closeScreen = scopeExit(
-                    [&context]() noexcept
-                    {
-                        static_cast<void>(context.sweepOpenCycle());
-                    }
-                );
-                UF_TRY_VALUE(receipt, captureOpenCycle());
-                if (returnScreen == "capture")
-                {
-                    screen = evidenceReceiptValue(receipt);
-                    return ok();
-                }
-
-                UF_TRY_VALUE(
-                    observation,
-                    operatorHost.host().resolveOpenObservationFrame(
-                        generation,
-                        context
-                    )
-                );
-                UF_TRY_VALUE(
-                    snapshot,
-                    operatorHost.coordinator().createSnapshot(
-                        controlLease(),
-                        deployment().generation,
-                        deployment().toolCatalogSchemaOwner,
-                        deployment().observedInstanceIdentitySchemas,
-                        observation
-                    )
-                );
-                UF_TRY_VALUE(
-                    observed,
-                    observedToolResult(
-                        ProductObservation{
-                            .snapshot = std::move(snapshot),
-                            .ui       = std::move(observation),
-                        },
-                        receipt.contentHash
-                    )
-                );
-                screen = observed.payload().value();
+                UF_TRY_VALUE(held, heldScreen(returnScreen));
+                screen = std::move(held);
                 return ok();
             }();
 
@@ -2375,9 +2508,22 @@ namespace uf::service
                 {"held", json::Value::ofBoolean(false)},
                 {"verdict", json::Value::ofString("delivered")},
             };
+            auto evidence = base.evidence();
             if (screen)
             {
-                result.emplace_back("screen", std::move(*screen));
+                result.emplace_back("screen", std::move(screen->value));
+                // The held frame is committed on the same terms as any other
+                // observation: the receipt the hold published is stated here,
+                // beside what the Host proved about the input, so the digest
+                // the caller is handed resolves and its blob is retained.
+                UF_TRY_VALUE(
+                    committed,
+                    operator_runtime::committedScreenshotEvidence(
+                        evidence,
+                        screen->receipt
+                    )
+                );
+                evidence = std::move(committed);
             }
             UF_TRY_VALUE(
                 payload,
@@ -2387,7 +2533,7 @@ namespace uf::service
             );
             return operator_runtime::ToolCallCompletion::confirmed(
                 std::move(payload),
-                base.evidence()
+                std::move(evidence)
             );
         }
 
@@ -2602,52 +2748,11 @@ namespace uf::service
                     );
                 }
 
-                auto screen = std::optional<json::Value>{};
+                auto screen = std::optional<HeldScreen>{};
                 if (returnScreen != "none")
                 {
-                    UF_TRY(context.openCycle());
-                    auto const closeScreen = scopeExit(
-                        [&context]() noexcept
-                        {
-                            static_cast<void>(context.sweepOpenCycle());
-                        }
-                    );
-                    UF_TRY_VALUE(receipt, captureOpenCycle());
-                    if (returnScreen == "capture")
-                    {
-                        screen = evidenceReceiptValue(receipt);
-                    }
-                    else
-                    {
-                        UF_TRY_VALUE(
-                            observation,
-                            operatorHost.host().resolveOpenObservationFrame(
-                                generation,
-                                context
-                            )
-                        );
-                        UF_TRY_VALUE(
-                            snapshot,
-                            operatorHost.coordinator().createSnapshot(
-                                controlLease(),
-                                deployment().generation,
-                                deployment().toolCatalogSchemaOwner,
-                                deployment().observedInstanceIdentitySchemas,
-                                observation
-                            )
-                        );
-                        UF_TRY_VALUE(
-                            observed,
-                            observedToolResult(
-                                ProductObservation{
-                                    .snapshot = std::move(snapshot),
-                                    .ui       = std::move(observation),
-                                },
-                                receipt.contentHash
-                            )
-                        );
-                        screen = observed.payload().value();
-                    }
+                    UF_TRY_VALUE(held, heldScreen(returnScreen));
+                    screen = std::move(held);
                 }
 
                 auto result = std::vector<json::Member>{
@@ -2659,12 +2764,27 @@ namespace uf::service
                      json::Value::ofNumber(static_cast<double>(durationMillis))},
                     {"held", json::Value::ofBoolean(false)},
                 };
+                auto evidence =
+                    std::optional<operator_runtime::CanonicalJson>{};
                 if (screen)
                 {
-                    result.emplace_back("screen", std::move(*screen));
+                    result.emplace_back("screen", std::move(screen->value));
+                    // The held frame is committed on the same terms as any
+                    // other observation. Without this the digest below names a
+                    // blob no receipt claims: unresolvable to every measuring
+                    // Tool, and swept by the next retention pass.
+                    UF_TRY_VALUE(
+                        committed,
+                        operator_runtime::committedScreenshotEvidence(
+                            std::nullopt,
+                            screen->receipt
+                        )
+                    );
+                    evidence = std::move(committed);
                 }
                 return confirmedToolResult(
-                    json::Value::ofObject(std::move(result))
+                    json::Value::ofObject(std::move(result)),
+                    std::move(evidence)
                 );
             }();
 
@@ -2813,6 +2933,18 @@ namespace uf::service
         if (toolName == k_projectWriteTextTool)
         {
             return answerProjectWriteTextTool(call);
+        }
+        if (toolName == k_sessionGetTool)
+        {
+            return answerSessionGetTool(call);
+        }
+        if (toolName == k_sessionListTool)
+        {
+            return answerSessionListTool();
+        }
+        if (toolName == k_sessionSetTool)
+        {
+            return answerSessionSetTool(call);
         }
         auto const raw = std::ranges::find(k_rawInputTools, toolName, &FrameworkInputTool::name);
         if (raw != k_rawInputTools.end())

@@ -452,7 +452,7 @@ namespace uf::operator_runtime
         CHECK(*crossed == ObservationRefusal::Unminted);
     }
 
-    TEST_CASE("The Framework Tool Catalog declares twenty-five built-in Tools")
+    TEST_CASE("The Framework Tool Catalog declares twenty-eight built-in Tools")
     {
         auto catalog = FrameworkToolCatalogOwner::create();
         REQUIRE(catalog.has_value());
@@ -563,6 +563,30 @@ namespace uf::operator_runtime
                 ToolMutability::ReadOnly,
                 ToolSurface::Privileged,
                 ToolIdempotency::ReadSafe,
+            },
+            // A session's own state is the caller's vocabulary, so Semantic,
+            // and it reaches no world outside the Operator process, so
+            // ReadOnly with no effect bound -- which is what makes remembering
+            // something a session under deny-all can still do. Only the write
+            // is DeliverySafe rather than ReadSafe: redelivering it costs the
+            // store it already made.
+            CatalogExpectation{
+                "framework.session.get",
+                ToolMutability::ReadOnly,
+                ToolSurface::Semantic,
+                ToolIdempotency::ReadSafe,
+            },
+            CatalogExpectation{
+                "framework.session.list",
+                ToolMutability::ReadOnly,
+                ToolSurface::Semantic,
+                ToolIdempotency::ReadSafe,
+            },
+            CatalogExpectation{
+                "framework.session.set",
+                ToolMutability::ReadOnly,
+                ToolSurface::Semantic,
+                ToolIdempotency::DeliverySafe,
             },
             CatalogExpectation{
                 "framework.ui.click",
@@ -723,7 +747,7 @@ namespace uf::operator_runtime
         // hash compared against itself pins nothing.
         CHECK(
             catalog->toolCatalogHash().hex()
-            == "2a3629d6534c4795e94ec256c889f8227d56a725846899e608acb5562ee34aac"
+            == "c21c7dab066e7927a37848e005e5e0cc55f4b3c46f2398c9edbc0d3b13b14e48"
         );
 
         auto material = CanonicalJson::parseExact(catalog->canonicalJcs());
@@ -928,6 +952,21 @@ namespace uf::operator_runtime
                 true,
             },
             ArgumentCase{"framework.workflow.status", "{}", true},
+            ArgumentCase{"framework.session.list", "{}", true},
+            ArgumentCase{
+                "framework.session.set",
+                R"({"name":"plan","value":{"turn":3}})",
+                true,
+            },
+            // Any JSON is a value, so the contract admits an array and a
+            // scalar exactly as it admits an object.
+            ArgumentCase{
+                "framework.session.set",
+                R"({"name":"plan","value":[1,2]})",
+                true,
+            },
+            ArgumentCase{"framework.session.set", R"({"name":"plan"})", false},
+            ArgumentCase{"framework.session.get", R"({"name":""})", false},
             ArgumentCase{"framework.workflow.status", R"({"verbose":true})", false},
             ArgumentCase{
                 "framework.audit.record",

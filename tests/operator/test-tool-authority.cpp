@@ -15,6 +15,7 @@
 #include <operator/ledger.hpp>
 #include <operator/policy.hpp>
 #include <operator/project-generation.hpp>
+#include <operator/session-state.hpp>
 #include <operator/tool-admission-request.hpp>
 #include <operator/tool-descriptor.hpp>
 #include <operator/tool-invocation.hpp>
@@ -220,21 +221,65 @@ namespace uf::operator_runtime
             controllerProfile(ControllerKind::Agent),
             noCapabilities
         );
-        REQUIRE(offered.size() == 14U);
+        REQUIRE(offered.size() == 17U);
         CHECK(offered[0].name == "framework.audit.record");
         CHECK(offered[1].name == "framework.project.read_text");
         CHECK(offered[2].name == "framework.project.write_text");
         CHECK(offered[3].name == "framework.screen.capture");
         CHECK(offered[4].name == "framework.screen.observe");
-        CHECK(offered[5].name == "framework.ui.click");
-        CHECK(offered[6].name == "framework.ui.drag");
-        CHECK(offered[7].name == "framework.ui.hold");
-        CHECK(offered[8].name == "framework.ui.key");
-        CHECK(offered[9].name == "framework.ui.move");
-        CHECK(offered[10].name == "framework.ui.scroll");
-        CHECK(offered[11].name == "framework.workflow.now");
-        CHECK(offered[12].name == "framework.workflow.status");
-        CHECK(offered[13].name == "framework.workflow.wait");
+        CHECK(offered[5].name == "framework.session.get");
+        CHECK(offered[6].name == "framework.session.list");
+        CHECK(offered[7].name == "framework.session.set");
+        CHECK(offered[8].name == "framework.ui.click");
+        CHECK(offered[9].name == "framework.ui.drag");
+        CHECK(offered[10].name == "framework.ui.hold");
+        CHECK(offered[11].name == "framework.ui.key");
+        CHECK(offered[12].name == "framework.ui.move");
+        CHECK(offered[13].name == "framework.ui.scroll");
+        CHECK(offered[14].name == "framework.workflow.now");
+        CHECK(offered[15].name == "framework.workflow.status");
+        CHECK(offered[16].name == "framework.workflow.wait");
+
+        // Remembering costs no grant, and the descriptor is the whole of why:
+        // read-only with no effect bound proposes no mutation, so no policy is
+        // consulted and the deny-all artifact has nothing to deny. A session
+        // that may not touch the screen must still be able to remember what it
+        // is doing across its chunks, and tests/cli/test-explore-door.cpp
+        // drives that end to end with no capability granted.
+        auto setArguments = CanonicalJson::parseExact(
+            R"({"name":"plan","value":{"turn":3}})"
+        );
+        REQUIRE(setArguments.has_value());
+        auto const stored = frameworkCatalog->validate(
+            "framework.session.set",
+            std::move(*setArguments)
+        );
+        REQUIRE(stored.has_value());
+        CHECK(stored->descriptor().effectBounds.empty());
+        CHECK(stored->descriptor().mutability == ToolMutability::ReadOnly);
+        CHECK(stored->descriptor().surface == ToolSurface::Semantic);
+
+        // A scalar is a value like any other: the store holds what the caller
+        // sent and the schema does not decide what a Project's state may be.
+        auto scalarArguments = CanonicalJson::parseExact(
+            R"({"name":"turn","value":3})"
+        );
+        REQUIRE(scalarArguments.has_value());
+        CHECK(
+            frameworkCatalog
+                ->validate("framework.session.set", std::move(*scalarArguments))
+                .has_value()
+        );
+
+        // An empty name is not a name. The closed argument object refuses a
+        // member nobody declared for the same reason.
+        auto emptyName = CanonicalJson::parseExact(R"({"name":"","value":1})");
+        REQUIRE(emptyName.has_value());
+        CHECK_FALSE(
+            frameworkCatalog
+                ->validate("framework.session.set", std::move(*emptyName))
+                .has_value()
+        );
 
         auto catalogMaterial = CanonicalJson::parseExact(
             frameworkCatalog->canonicalJcs()
@@ -1015,5 +1060,68 @@ namespace uf::operator_runtime
         CHECK(refused.error().message().contains(
             "tool_runtime_protocol_identity changed"
         ));
+    }
+
+    // The state one session keeps between its chunks, at the level where the
+    // ceilings and the overwrite rule are the whole subject. What a chunk sees
+    // through the Tool face is asserted end to end in
+    // tests/cli/test-explore-door.cpp.
+    TEST_CASE("a session state store overwrites by name and refuses past its ceilings")
+    {
+        auto const canonical = [](std::string_view exactJcs) -> CanonicalJson
+        {
+            auto parsed = CanonicalJson::parseExact(std::string{exactJcs});
+            REQUIRE(parsed.has_value());
+            return std::move(*parsed);
+        };
+
+        auto store = SessionStateStore{};
+        CHECK(store.storedBytes() == 0U);
+        CHECK(store.find("plan") == nullptr);
+        CHECK(store.names().empty());
+
+        REQUIRE(store.store("plan", canonical(R"({"turn":1})")).has_value());
+        REQUIRE(store.find("plan") != nullptr);
+        CHECK(store.find("plan")->bytes() == R"({"turn":1})");
+        CHECK(store.storedBytes() == 4U + 10U);
+
+        // Last write wins, and the store is charged for the new bytes alone
+        // rather than for both writes.
+        REQUIRE(store.store("plan", canonical("[1,2]")).has_value());
+        CHECK(store.find("plan")->bytes() == "[1,2]");
+        CHECK(store.storedBytes() == 4U + 5U);
+        CHECK(store.names() == std::vector<std::string>{"plan"});
+
+        REQUIRE(store.store("aim", canonical("true")).has_value());
+        CHECK(store.names() == std::vector<std::string>{"aim", "plan"});
+
+        // The byte ceiling. No single value can cross it on its own -- exact
+        // canonical JSON is bounded before it ever reaches this store -- so
+        // what the ceiling is for is ACCUMULATION, and two half-megabyte values
+        // are what drives it.
+        auto const half = '"' + std::string(524'286U, 'x') + '"';
+        REQUIRE(half.size() == 524'288U);
+        REQUIRE(store.store("a", canonical(half)).has_value());
+        auto const refusedBytes = store.store("b", canonical(half));
+        REQUIRE_FALSE(refusedBytes.has_value());
+        CHECK(refusedBytes.error().message().contains(
+            "past its ceiling of 1048576"
+        ));
+        CHECK(store.find("b") == nullptr);
+        CHECK(store.storedBytes() == 3U + 4U + 4U + 5U + 1U + 524'288U);
+
+        // The entry ceiling, which a further name crosses and an overwrite of
+        // an existing one never does.
+        while (store.names().size() < SessionStateStore::k_maximumEntries)
+        {
+            auto const name = "n" + std::to_string(store.names().size());
+            REQUIRE(store.store(name, canonical("0")).has_value());
+        }
+        auto const refusedEntry = store.store("one-more", canonical("0"));
+        REQUIRE_FALSE(refusedEntry.has_value());
+        CHECK(refusedEntry.error().message().contains(
+            "already holds 256 state entries"
+        ));
+        CHECK(store.store("plan", canonical("1")).has_value());
     }
 }

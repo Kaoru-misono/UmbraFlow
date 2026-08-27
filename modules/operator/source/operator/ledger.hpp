@@ -11,6 +11,8 @@
 #include "tool-invocation.hpp"
 #include "tool-runtime.hpp"
 
+#include <json/value.hpp>
+
 #include <task/host-delivery.hpp>
 #include <task/runtime-model-file.hpp>
 #include <task/ui-observation.hpp>
@@ -296,6 +298,39 @@ namespace uf::operator_runtime
     auto toolCallCompletionFor(task::HostDeliveryReport const& report)
         -> Result<ToolCallCompletion>;
 
+    // The evidence member a confirmed Tool call states the screenshot receipt
+    // it committed under.
+    //
+    // WHICH BLOB A RUN COMMITTED IS READ OFF THIS MEMBER AND NOWHERE ELSE. It
+    // used to be derived from the outcome payload of the two Tools named in
+    // one SQL IN-list, which made "a committed receipt" mean "the whole
+    // confirmed result of framework.screen.capture or framework.screen.crop".
+    // No third Tool could satisfy that rule, and a screen-returning
+    // framework.input.hold -- whose receipt is one member of a larger result --
+    // therefore handed back a digest that resolved to nothing and a blob the
+    // retention sweep would reclaim. A call now STATES the receipt it
+    // committed; no Tool name takes part.
+    inline constexpr auto k_committedScreenshotMember =
+        std::string_view{"screenshot_receipt"};
+
+    // The one rendering of a screenshot receipt. Its inverse is the ledger's
+    // own stored-receipt parser, so the bytes a Tool answers with and the bytes
+    // the ledger reads back are one shape rather than two spellings that can
+    // drift apart in separate modules.
+    [[nodiscard]]
+    auto evidenceReceiptJson(EvidenceArtifactReceipt const& receipt)
+        -> json::Value;
+
+    // The evidence a confirmed call attaches when it published a blob. Any
+    // evidence the call already had is carried through beside the receipt, so a
+    // Tool with something else to say about its effect -- a hold's host
+    // delivery -- says both in one object rather than choosing between them.
+    [[nodiscard]]
+    auto committedScreenshotEvidence(
+        std::optional<CanonicalJson> const& existing,
+        EvidenceArtifactReceipt const& receipt
+    ) -> Result<CanonicalJson>;
+
     // What one human takeover did: the lease the new controller now holds.
     struct ControlTakeover final
     {
@@ -527,8 +562,9 @@ namespace uf::operator_runtime
         auto publishEvidenceArtifact(EvidenceArtifactSpec const& spec)
             -> Result<EvidenceArtifactReceipt>;
 
-        // Resolves a receipt already committed by a confirmed screenshot Tool
-        // call. Ordinary absence means no retained receipt names this digest;
+        // Resolves a receipt a confirmed Framework Tool call stated under
+        // k_committedScreenshotMember in its evidence, whichever Tool that was.
+        // Ordinary absence means no retained receipt names this digest;
         // malformed durable receipt material is a failure.
         [[nodiscard]]
         auto evidenceArtifactReceipt(ContentHash const& hash)

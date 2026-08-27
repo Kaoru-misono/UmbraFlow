@@ -588,10 +588,14 @@ Both are deep-frozen at the end of the build. **Neither carries a click, a key
 press or any other input primitive**, and `math.random`/`math.randomseed` are
 nilled outright by `installSandbox` rather than offered here.
 
-**Screenshot artifact** — the immutable PNG value returned by
-`framework.screen.capture` or `framework.screen.crop`, identified by its
-`screenshot_sha256` receipt. Measuring Tools take that digest explicitly and
-never bind by call position. The bytes live in the Operator evidence store, not
+**Screenshot artifact** — the immutable PNG value a Framework Tool publishes
+into the Operator evidence store, identified by its `screenshot_sha256`
+receipt. `framework.screen.capture`, `framework.screen.crop` and a
+`framework.input.hold` or `framework.ui.hold` given `return_screen` all produce
+one; a confirmed call states the receipt it committed in its own evidence, and
+no Tool name takes part in deciding which blobs a run retains
+(`docs/decisions/2026-08-27-a-call-states-the-screenshot-it-committed.md`).
+Measuring Tools take that digest explicitly and never bind by call position. The bytes live in the Operator evidence store, not
 inline in the durable Tool row. Keeping the whole screenshot or a crop in the
 Project is a second call to `framework.project.write_file`, whose
 `file_sha256` names the already durable artifact; a failure between the two
@@ -730,10 +734,24 @@ this run's pinned catalog -- `@umbraflow/screen`, `@umbraflow/input` and one per
 Project Tool namespace -- and may call
 any Framework or Project Tool in the session's pinned combined catalog. The
 Operator's policy, not the transport name, decides which calls are admitted.
-Host state and ledger identity survive between chunks; Luau globals and module
-state do not.
+Host state, ledger identity and the session's own **session state** survive
+between chunks; Luau globals and module state do not.
 _Avoid_: exploration environment, explore mode, runtime mode, `explore` Luau
 global or module, authoring-only capability surface.
+
+**Session state (`framework.session.set` / `get` / `list`)** — what one Operator
+session remembers between the chunks that run inside it: a bounded map from a
+caller-chosen `name` to any JSON `value`, stored and returned byte for byte and
+never read into. Reached as three ordinary Tools through `@umbraflow/session`,
+so it is named, described, schema'd, admitted and recorded like every other
+call. Read-only with no effect bound, so it needs no Operator grant. It is
+memory: it dies with the session that stored it, and a later session starts
+empty. Bounded at 256 names and one mebibyte across names and values, which
+`framework.session.list` reports beside what is stored
+(`docs/decisions/2026-08-27-a-session-remembers-through-its-own-tools.md`).
+_Avoid_: session globals, writable environment table, chunk state, session
+scratch file, "the framework's project state" — the durable Project-owned
+channel is a different, still unimplemented thing.
 
 **CLI verbs** — the command table in `entry/cli/main.cpp` is the list; read it
 there rather than here, because a count copied into prose is the fact this

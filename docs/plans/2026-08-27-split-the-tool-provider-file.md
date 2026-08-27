@@ -3,7 +3,7 @@
 `modules/service/source/service/product-lifecycle.cpp` is 3335 lines and holds
 four unrelated kinds of work at once:
 
-- **fourteen `answer*Tool` providers**, from `answerNowTool` (read a clock,
+- **seventeen `answer*Tool` providers**, from `answerNowTool` (read a clock,
   three lines) to `answerRawInputTool` (the input-authority boundary that
   resolves an observation, spends it, judges the target and posts through the
   Host delivery seam),
@@ -49,6 +49,7 @@ Group by what a provider is allowed to touch, which is also its risk class:
 | screen | `screen.capture`, `observe`, `read_lines`, `census_grid`, `probe`, `crop` |
 | input | the six `input.*` and the six `ui.*` |
 | project store | `project.read_text`, `write_text`, `write_file` |
+| session state | `session.get`, `session.list`, `session.set` |
 
 Four files, and a dispatch **table** keyed by Tool name rather than an `if`
 chain, so adding a Tool is a row rather than a branch. The session lifecycle and
@@ -61,7 +62,7 @@ signed.
 
 ## Why this is not being done now
 
-It touches all twenty-five providers and the whole dispatch, and it has no
+It touches all twenty-eight providers and the whole dispatch, and it has no
 behavioural defect to fix — the shape is the problem. The branch already carries
 several large unreviewed changes; adding a refactor of this size on top would
 make the whole set unreadable. It wants its own change, on a clean tree, with

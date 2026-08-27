@@ -457,6 +457,19 @@ namespace uf::operator_runtime
             return static_cast<uint32>(p_value->number());
         }
 
+        // Counters render as decimal strings for SnapshotObservationReference's
+        // reason: RFC 8785 numbers are IEEE-754 doubles, so a byte count or an
+        // instant above 2^53 would round inside a durable Tool outcome.
+        // parseReceiptCounter above is the exact inverse and reads nothing else.
+        [[nodiscard]]
+        auto receiptCounter(uint64 value) -> json::Value
+        {
+            return json::Value::ofString(std::to_string(value));
+        }
+
+        // The inverse of evidenceReceiptJson below. The two are the only
+        // spelling of a receipt's bytes; a third one in another module is how a
+        // stored receipt and an answered receipt come to disagree.
         [[nodiscard]]
         auto parseEvidenceReceipt(json::Value const& value)
             -> Result<EvidenceArtifactReceipt>
@@ -558,6 +571,14 @@ namespace uf::operator_runtime
             };
         }
 
+        // Every screenshot receipt this root has committed, in the order the
+        // calls that committed them were recorded.
+        //
+        // The filter is `a confirmed Framework call whose evidence states a
+        // receipt` and deliberately names no Tool. provider_kind is the trust
+        // boundary and the whole of it: a Project-answered Tool cannot claim to
+        // have committed a blob, which is the property the retired IN-list gave
+        // by accident because the two Tool names it listed were reserved.
         [[nodiscard]]
         auto evidenceReceipts(sqlite3* database)
             -> Result<std::vector<EvidenceArtifactReceipt>>
@@ -566,12 +587,13 @@ namespace uf::operator_runtime
                 query,
                 prepare(
                     database,
-                    "SELECT history.outcome_payload, history.outcome_payload_hash "
+                    "SELECT history.evidence, history.evidence_hash "
                     "FROM tool_call_history history "
                     "JOIN tool_call_positions position "
                     "ON position.call_identity=history.call_identity "
-                    "WHERE history.state='confirmed' AND position.tool_name IN "
-                    "('framework.screen.capture','framework.screen.crop') "
+                    "WHERE history.state='confirmed' "
+                    "AND history.evidence IS NOT NULL "
+                    "AND position.provider_kind='framework' "
                     "ORDER BY position.rowid"
                 )
             );
@@ -579,17 +601,24 @@ namespace uf::operator_runtime
             auto step     = sqlite3_step(query.get());
             while (step == SQLITE_ROW)
             {
-                auto const payloadBytes = columnText(query.get(), 0);
-                auto const payloadHash  = columnText(query.get(), 1);
-                UF_TRY_VALUE(payload, CanonicalJson::parseExact(payloadBytes));
-                if (payload.contentHash().hex() != payloadHash)
+                auto const evidenceBytes = columnText(query.get(), 0);
+                auto const evidenceHash  = columnText(query.get(), 1);
+                UF_TRY_VALUE(evidence, CanonicalJson::parseExact(evidenceBytes));
+                if (evidence.contentHash().hex() != evidenceHash)
                 {
                     return fail(
                         AutomationErrorKind::InvalidResource,
-                        "Stored evidence receipt payload failed its ledger hash"
+                        "Stored Tool call evidence failed its ledger hash"
                     );
                 }
-                UF_TRY_VALUE(receipt, parseEvidenceReceipt(payload.value()));
+                auto const* const p_receipt =
+                    evidence.value().find(k_committedScreenshotMember);
+                if (p_receipt == nullptr)
+                {
+                    step = sqlite3_step(query.get());
+                    continue;
+                }
+                UF_TRY_VALUE(receipt, parseEvidenceReceipt(*p_receipt));
                 receipts.emplace_back(std::move(receipt));
                 step = sqlite3_step(query.get());
             }
@@ -10683,6 +10712,66 @@ namespace uf::operator_runtime
             activeAttempt,
             nextRevision,
         };
+    }
+
+    auto evidenceReceiptJson(EvidenceArtifactReceipt const& receipt)
+        -> json::Value
+    {
+        auto members = std::vector<json::Member>{
+            {"byte_count", receiptCounter(receipt.byteCount)},
+            {"created_at_unix_ms", receiptCounter(receipt.createdAtUnixMillis)},
+            {"frame_identity",
+             json::Value::ofObject({
+                 {"capture_session_id",
+                  receiptCounter(receipt.frameIdentity.sessionId().value())},
+                 {"frame_id",
+                  receiptCounter(receipt.frameIdentity.frameId().value())},
+                 {"target_generation",
+                  receiptCounter(receipt.frameIdentity.targetGeneration().value())},
+             })},
+            {"height", json::Value::ofNumber(static_cast<double>(receipt.height))},
+            {"media_type", json::Value::ofString(receipt.mediaType)},
+            {std::string{k_screenshotSha256Member},
+             json::Value::ofString(receipt.contentHash.hex())},
+            {"width", json::Value::ofNumber(static_cast<double>(receipt.width))},
+        };
+        if (receipt.rectangle)
+        {
+            members.emplace_back(
+                "rectangle",
+                json::Value::ofObject({
+                    {"height", receiptCounter(receipt.rectangle->height())},
+                    {"width", receiptCounter(receipt.rectangle->width())},
+                    {"x", receiptCounter(receipt.rectangle->x())},
+                    {"y", receiptCounter(receipt.rectangle->y())},
+                })
+            );
+        }
+        return json::Value::ofObject(std::move(members));
+    }
+
+    auto committedScreenshotEvidence(
+        std::optional<CanonicalJson> const& existing,
+        EvidenceArtifactReceipt const& receipt
+    ) -> Result<CanonicalJson>
+    {
+        auto members = std::vector<json::Member>{};
+        if (existing)
+        {
+            // A completion that already carried evidence carried an object;
+            // anything else is this file's own invariant broken rather than a
+            // caller's mistake, so it is checked rather than accommodated.
+            UF_CHECK(existing->value().kind() == json::ValueKind::Object);
+            auto const carried = existing->value().members();
+            members.assign(carried.begin(), carried.end());
+        }
+        members.emplace_back(
+            std::string{k_committedScreenshotMember},
+            evidenceReceiptJson(receipt)
+        );
+        return CanonicalJson::parseExact(
+            json::canonicalBytes(json::Value::ofObject(std::move(members)))
+        );
     }
 
     auto toolCallCompletionFor(task::HostDeliveryReport const& report)

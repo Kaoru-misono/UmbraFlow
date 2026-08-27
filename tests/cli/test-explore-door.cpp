@@ -572,10 +572,18 @@ namespace uf::cli
             }
 
             [[nodiscard]]
+            // Two frames whose bytes differ, so two captures in one session
+            // are two DIGESTS. A case about which frame a call answered with
+            // cannot be run against a source that answers the same pixels
+            // twice: every digest would already be committed by the first
+            // capture and the case could not fail.
             auto sequencePorts(
                 std::shared_ptr<uint32> delivered,
                 std::string_view trace,
-                std::shared_ptr<uint32> captures
+                std::shared_ptr<uint32> captures,
+                std::shared_ptr<HeldInputLog> held =
+                    std::make_shared<HeldInputLog>(),
+                uint64 maximumPixelComparisons = k_defaultPixelComparisonBudget
             ) const -> task::TaskRunConfig
             {
                 auto decoded = image::decodePng(m_probe, "sequence-frame.png");
@@ -628,7 +636,6 @@ namespace uf::cli
                     k_recordedDpi
                 );
                 REQUIRE(fingerprint.has_value());
-                auto held = std::make_shared<HeldInputLog>();
                 return task::TaskRunConfig{
                     .frameSource = std::make_unique<CountingFrameSource>(
                         std::move(frames),
@@ -641,7 +648,7 @@ namespace uf::cli
                     ),
                     .ocrEngine               = std::make_unique<SilentReader>(),
                     .liveFingerprint         = *fingerprint,
-                    .maximumPixelComparisons = k_defaultPixelComparisonBudget,
+                    .maximumPixelComparisons = maximumPixelComparisons,
                     .recognitionTimeout      = k_defaultRecognitionTimeout,
                     .tracePath               = path(trace),
                 };
@@ -1924,6 +1931,161 @@ namespace uf::cli
         CHECK(lifecycle->shutdown().has_value());
     }
 
+    // MEASURED LIVE 2026-08-27, against a real session. A hold DID answer with
+    // a digest before this case existed, and the digest resolved to nothing:
+    // every measuring Tool refused it as
+    // "screenshot_sha256 <digest> is missing or expired". The ledger recognised
+    // a committed receipt only in the confirmed result of the two Tools it
+    // named in one SQL IN-list, so a receipt that is one member of a larger
+    // result -- which is the only shape a hold's can have -- was invisible to
+    // resolution and to retention alike. The capability the declaration
+    // promises was therefore unreachable: a caller could learn a digest and do
+    // nothing with the frame.
+    //
+    // IT MUST RUN ON A TWO-FRAME SOURCE. Against a source that answers the same
+    // pixels twice the hold's frame is byte-identical to the capture before it,
+    // its digest is the one that capture already committed, and every
+    // assertion below passes with the fix removed. Falsified 2026-08-27 by
+    // deleting the commit and watching this case go red at the measuring call.
+    TEST_CASE("the frame a hold returns is a first-class retained screenshot")
+    {
+        auto const world     = ExploreDoorWorld{};
+        auto const delivered = std::make_shared<uint32>();
+        auto const captures  = std::make_shared<uint32>();
+        auto const held      = std::make_shared<HeldInputLog>();
+        static_cast<void>(world.authorizeAnnotation());
+
+        auto const scope = operator_runtime::ObservedInstanceWorldScope::run(
+            "window-0",
+            1
+        );
+        REQUIRE(scope.has_value());
+        auto lifecycle = service::ProductLifecycle::start(
+            service::ProductStart{
+                .projectDirectory          = world.project(),
+                .runtimeDirectory          = world.runtime(),
+                .authenticatedControllerId = "umbra-flow-explore",
+                .controllerCapabilities = {
+                    std::string{
+                        operator_runtime::conformance::k_operateCapability
+                    },
+                },
+                .controlledTargetId = "window-0",
+                .kind               = operator_runtime::ControllerKind::Human,
+                .agentProfileJcs = std::string{
+                    operator_runtime::k_unboundedAgentProfileJcs
+                },
+                .worldScope = *scope,
+            }
+        );
+        REQUIRE(lifecycle.has_value());
+        auto session = lifecycle->startExplorationSession(
+            world.sequencePorts(
+                delivered,
+                "hold-retained-frame-trace.jsonl",
+                captures,
+                held,
+                0U
+            ),
+            std::stop_token{}
+        );
+        REQUIRE(session.has_value());
+
+        // Neither measurement is checked for success: a call that did not
+        // confirm raises, so reaching the return IS the proof that the digest
+        // the hold answered with named a retained screenshot.
+        SUBCASE("a captured hold frame measures like any other screenshot")
+        {
+            auto const measured = (*session)->evaluate(
+                R"lua(
+                    local screen = require("@umbraflow/screen")
+                    local input  = require("@umbraflow/input")
+                    local first = screen.capture{}.screenshot_sha256
+                    local seen = input.hold{
+                        duration_ms = 0,
+                        return_screen = "capture",
+                        screenshot_sha256 = first,
+                        x = 0,
+                        y = 0,
+                    }.screen
+                    assert(
+                        seen.screenshot_sha256 ~= first,
+                        "the hold must answer with the frame it took while pressed"
+                    )
+                    screen.read_lines{
+                        screenshot_sha256 = seen.screenshot_sha256,
+                        x = 0, y = 0, width = 1, height = 1,
+                    }
+                    screen.crop{
+                        screenshot_sha256 = seen.screenshot_sha256,
+                        x = 0, y = 0, width = 1, height = 1,
+                    }
+                    screen.probe{
+                        screenshot_sha256 = seen.screenshot_sha256,
+                        x = 0, y = 0, width = 1, height = 1,
+                        colour_red = 0, colour_green = 0,
+                        colour_blue = 0, tolerance = 12, removes = false,
+                    }
+                    return seen.screenshot_sha256
+                )lua",
+                "hold-capture-frame-measures"
+            );
+            auto const why = measured.has_value()
+                ? std::string{}
+                : std::string{measured.error().message()};
+            REQUIRE_MESSAGE(measured.has_value(), why);
+            REQUIRE(measured->text() != nullptr);
+            CHECK_MESSAGE(
+                !measured->text()->empty(),
+                "read_lines, crop and probe must all accept the digest a hold returned"
+            );
+            CHECK(held->observedWhileHeld);
+            CHECK(held->released == 1U);
+        }
+
+        SUBCASE("an observing hold names the frame it resolved")
+        {
+            auto const measured = (*session)->evaluate(
+                R"lua(
+                    local screen = require("@umbraflow/screen")
+                    local input  = require("@umbraflow/input")
+                    local first = screen.capture{}.screenshot_sha256
+                    local seen = input.hold{
+                        duration_ms = 0,
+                        return_screen = "observe",
+                        screenshot_sha256 = first,
+                        x = 0,
+                        y = 0,
+                    }.screen
+                    assert(
+                        seen.screenshot_sha256 ~= first,
+                        "the hold must observe the frame it took while pressed"
+                    )
+                    screen.read_lines{
+                        screenshot_sha256 = seen.screenshot_sha256,
+                        x = 0, y = 0, width = 1, height = 1,
+                    }
+                    return seen.observation_id
+                )lua",
+                "hold-observe-frame-measures"
+            );
+            auto const why = measured.has_value()
+                ? std::string{}
+                : std::string{measured.error().message()};
+            REQUIRE_MESSAGE(measured.has_value(), why);
+            REQUIRE(measured->text() != nullptr);
+            CHECK_MESSAGE(
+                !measured->text()->empty(),
+                "an observing hold must name the retained frame it resolved"
+            );
+            CHECK(held->observedWhileHeld);
+            CHECK(held->released == 1U);
+        }
+
+        session->reset();
+        CHECK(lifecycle->shutdown().has_value());
+    }
+
     // WHAT THIS CASE ACTUALLY PROVES, restated 2026-08-26. It was named for a
     // failing internal observation and asserted only that evaluate() errored --
     // which it did for the wrong reason: the chunk returned the answer TABLE and
@@ -2091,6 +2253,137 @@ namespace uf::cli
             *copiedHash == *artifactHash,
             "framework.project.write_file must write exactly the bytes held by "
             "file_sha256"
+        );
+    }
+
+    // THE WHOLE REASON framework.session.* EXISTS. Each chunk runs in a VM
+    // built for it and destroyed after it, so nothing a chunk assigns survives
+    // into the next one -- which is why a consumer had to write a long piece of
+    // work as one enormous chunk. Two chunks of ONE session are what this case
+    // drives, and then a second session over the SAME Operator root, because
+    // the lifetime claim has two halves and only one of them is about
+    // remembering.
+    TEST_CASE("session state crosses chunks of one session and no further")
+    {
+        // No policy artifact is written and no controller capability is
+        // granted, so this world is the Operator's deny-all throughout.
+        // Remembering is therefore something a session can do with no grant at
+        // all, which is what declaring the store read-only with no effect bound
+        // buys and the reason it is asserted here rather than in a world that
+        // authorized anything.
+        auto const world = ExploreDoorWorld{};
+
+        auto const runChunks = [&world](
+                                   std::vector<std::string_view> const& chunks,
+                                   std::string_view trace
+                               ) -> std::vector<std::string>
+        {
+            auto const scope = operator_runtime::ObservedInstanceWorldScope::run(
+                "window-0",
+                1
+            );
+            REQUIRE(scope.has_value());
+            auto lifecycle = service::ProductLifecycle::start(
+                service::ProductStart{
+                    .projectDirectory          = world.project(),
+                    .runtimeDirectory          = world.runtime(),
+                    .authenticatedControllerId = "umbra-flow-explore",
+                    .controllerCapabilities    = {},
+                    .controlledTargetId        = "window-0",
+                    .kind                      = operator_runtime::ControllerKind::Human,
+                    .agentProfileJcs = std::string{
+                        operator_runtime::k_unboundedAgentProfileJcs
+                    },
+                    .worldScope = *scope,
+                }
+            );
+            auto const why = lifecycle.has_value()
+                ? std::string{}
+                : std::string{lifecycle.error().message()};
+            REQUIRE_MESSAGE(lifecycle.has_value(), why);
+
+            auto const delivered = std::make_shared<uint32>();
+            auto session = lifecycle->startExplorationSession(
+                world.ports(delivered, trace),
+                std::stop_token{}
+            );
+            REQUIRE(session.has_value());
+
+            auto answers = std::vector<std::string>{};
+            for (auto const chunk : chunks)
+            {
+                auto const evaluated = (*session)->evaluate(chunk, trace);
+                if (!evaluated)
+                {
+                    answers.emplace_back(evaluated.error().message());
+                    continue;
+                }
+                REQUIRE(evaluated->text() != nullptr);
+                answers.emplace_back(*evaluated->text());
+            }
+            session->reset();
+            CHECK(lifecycle->shutdown().has_value());
+            return answers;
+        };
+
+        auto const remembered = runChunks(
+            {
+                R"lua(
+                    local session = require("@umbraflow/session")
+                    return session.set{
+                        name = "battle",
+                        value = { turn = 3, cards = { "strike", "guard" } },
+                    }.name
+                )lua",
+                R"lua(
+                    local session = require("@umbraflow/session")
+                    local held = session.get{ name = "battle" }
+                    if not held.present then
+                        return "the second chunk saw nothing"
+                    end
+                    local missing = session.get{ name = "never-stored" }
+                    local listed = session.list{}
+                    return table.concat({
+                        tostring(held.value.turn),
+                        held.value.cards[2],
+                        tostring(missing.present),
+                        table.concat(listed.names, ","),
+                        tostring(listed.maximum_names),
+                    }, "|")
+                )lua",
+            },
+            "session-state-remembered.jsonl"
+        );
+        REQUIRE(remembered.size() == 2U);
+        CHECK_MESSAGE(remembered[0] == "battle", remembered[0]);
+        CHECK_MESSAGE(
+            remembered[1] == "3|guard|false|battle|256",
+            "a later chunk of the same session must read back exactly what an "
+            "earlier one stored: ",
+            remembered[1]
+        );
+
+        // The same Operator root, the same project, a second session. Its
+        // durable ledger still holds every call the first one made, and none of
+        // that is state: a session's store dies with the session id it was
+        // written under.
+        auto const forgotten = runChunks(
+            {
+                R"lua(
+                    local session = require("@umbraflow/session")
+                    local held = session.get{ name = "battle" }
+                    return tostring(held.present)
+                        .. "|"
+                        .. tostring(#session.list{}.names)
+                )lua",
+            },
+            "session-state-forgotten.jsonl"
+        );
+        REQUIRE(forgotten.size() == 1U);
+        CHECK_MESSAGE(
+            forgotten[0] == "false|0",
+            "a new session must start with an empty store: ",
+            forgotten[0]
         );
     }
 

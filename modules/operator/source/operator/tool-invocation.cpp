@@ -79,6 +79,15 @@ namespace uf::operator_runtime
         constexpr auto k_projectWriteTextTool = std::string_view{
             "framework.project.write_text"
         };
+        constexpr auto k_sessionGetTool = std::string_view{
+            "framework.session.get"
+        };
+        constexpr auto k_sessionListTool = std::string_view{
+            "framework.session.list"
+        };
+        constexpr auto k_sessionSetTool = std::string_view{
+            "framework.session.set"
+        };
         constexpr auto k_nowTool = std::string_view{
             "framework.workflow.now"
         };
@@ -117,6 +126,7 @@ namespace uf::operator_runtime
         constexpr auto k_maximumCaptureMillis = uint64{10'000U};
         constexpr auto k_maximumMeasureMillis = uint64{10'000U};
         constexpr auto k_maximumProjectMillis = uint64{10'000U};
+        constexpr auto k_maximumSessionMillis = uint64{1'000U};
         constexpr auto k_maximumWaitMillis = uint64{60'000U};
         constexpr auto k_maximumAuditMillis = uint64{1'000U};
         constexpr auto k_maximumNowMillis = uint64{1'000U};
@@ -318,6 +328,7 @@ namespace uf::operator_runtime
             Text,
             Sha256,
             JsonObject,
+            JsonValue,
         };
 
         struct ArgumentMember final
@@ -404,6 +415,14 @@ namespace uf::operator_runtime
                 "enter, f1 or a.",
             },
             ArgumentMember{
+                "name",
+                ArgumentMemberKind::Name,
+                "Name of one entry in this session's own state. It is the "
+                "caller's vocabulary and nothing the framework reads into: any "
+                "non-empty string is a name, and the same one always addresses "
+                "the same entry.",
+            },
+            ArgumentMember{
                 "notches",
                 ArgumentMemberKind::SignedCount,
                 "Signed wheel-detent count. The sign is the direction: "
@@ -479,6 +498,13 @@ namespace uf::operator_runtime
                 ArgumentMemberKind::Name,
                 "UiTarget identifier the named observation resolved on this "
                 "frame.",
+            },
+            ArgumentMember{
+                "value",
+                ArgumentMemberKind::JsonValue,
+                "The value to store, as any JSON the caller passes -- an "
+                "object, an array, a string, a number or a boolean. Its exact "
+                "canonical bytes are stored and returned unchanged.",
             },
             ArgumentMember{
                 "width",
@@ -591,6 +617,13 @@ namespace uf::operator_runtime
             std::string_view{"content"},
             std::string_view{"path"},
         };
+        constexpr auto k_sessionEntryMembers = std::array{
+            std::string_view{"name"},
+        };
+        constexpr auto k_sessionSetMembers = std::array{
+            std::string_view{"name"},
+            std::string_view{"value"},
+        };
 
         [[nodiscard]]
         auto argumentMember(std::string_view member) -> ArgumentMember const&
@@ -680,6 +713,27 @@ namespace uf::operator_runtime
                 break;
             case ArgumentMemberKind::JsonObject:
                 fields.emplace_back("type", json::Value::ofString("object"));
+                break;
+            case ArgumentMemberKind::JsonValue:
+                // Every JSON type BUT null, spelled out rather than left to an
+                // absent `type` keyword: a caller filling this call in reads
+                // the properties entry, and one that says only what the member
+                // is for has told it nothing about what it may send.
+                //
+                // Null is left out because this contract already spells absence
+                // once. A stored null and a name that was never stored would be
+                // the same answer read two ways, and the reading Tool's
+                // `present` is the one that survives.
+                fields.emplace_back(
+                    "type",
+                    json::Value::ofArray({
+                        json::Value::ofString("array"),
+                        json::Value::ofString("boolean"),
+                        json::Value::ofString("number"),
+                        json::Value::ofString("object"),
+                        json::Value::ofString("string"),
+                    })
+                );
                 break;
             }
             return json::Value::ofObject(std::move(fields));
@@ -988,6 +1042,70 @@ namespace uf::operator_runtime
             );
         }
 
+        // THIS SESSION'S OWN STATE, and the whole of why it is three Tools
+        // rather than a writable environment. A chunk runs in a VM that is
+        // built for it and destroyed after it, so a global it assigns is gone
+        // before the next chunk compiles; what survives a chunk is what the
+        // HOST owns. Making the environment table writable would only move the
+        // problem, because the table dies with the VM as well -- and a
+        // per-session table that did survive would be state no name, no schema
+        // and no ledger row describes, which is the ambient authority
+        // docs/ARCHITECTURE.md refuses project code. A Tool is the shape that
+        // is already named, described, schema'd, admitted and recorded.
+        //
+        // ReadOnly with no effect bound, on exactly the terms
+        // framework.audit.record is: read-only here means no external-world
+        // effect requiring plan authority and approval grants, and a store that
+        // dies with the process reaches no world at all. So a session under the
+        // deny-all artifact can still remember what it is doing, which is the
+        // point -- an annotator forced to re-derive its state every chunk would
+        // be no better off than one holding it in a single enormous chunk.
+        //
+        // Semantic, because a name and a value are the caller's own vocabulary
+        // rather than the machine's; nothing here is a pixel, a receipt or a
+        // key code.
+        [[nodiscard]]
+        auto sessionReadDescriptor() -> Result<ToolDescriptor>
+        {
+            return ToolDescriptor{
+                .toolVersion          = std::string{k_frameworkToolVersion},
+                .requiredCapabilities = {},
+                .effectBounds         = {},
+                .uiActionBounds       = {},
+                .timeout = TimeoutPolicy{
+                    .maximumElapsedMillis = k_maximumSessionMillis,
+                    .onTimeout            = TimeoutAction::Stop,
+                },
+                .mutability  = ToolMutability::ReadOnly,
+                .surface     = ToolSurface::Semantic,
+                .idempotency = ToolIdempotency::ReadSafe,
+            };
+        }
+
+        // DeliverySafe rather than ReadSafe, which is the one thing that
+        // separates this descriptor from the reading one: redelivering a store
+        // costs exactly the store, because the same name and the same bytes
+        // leave the map where the first write left it -- the same reading
+        // framework.project.write_text's idempotency has of writing one path
+        // twice.
+        [[nodiscard]]
+        auto sessionSetDescriptor() -> Result<ToolDescriptor>
+        {
+            return ToolDescriptor{
+                .toolVersion          = std::string{k_frameworkToolVersion},
+                .requiredCapabilities = {},
+                .effectBounds         = {},
+                .uiActionBounds       = {},
+                .timeout = TimeoutPolicy{
+                    .maximumElapsedMillis = k_maximumSessionMillis,
+                    .onTimeout            = TimeoutAction::Stop,
+                },
+                .mutability  = ToolMutability::ReadOnly,
+                .surface     = ToolSurface::Semantic,
+                .idempotency = ToolIdempotency::DeliverySafe,
+            };
+        }
+
         // Reading the Operator's wall clock. Semantic and ReadOnly with no
         // effect bound, for status's reasons: it observes no frame, spends no
         // observation and changes nothing outside the Operator, so no policy
@@ -1171,6 +1289,10 @@ namespace uf::operator_runtime
         { return argumentMaterial(k_projectWriteFileMembers); }
         [[nodiscard]] auto projectWriteTextArgumentMaterial() -> json::Value
         { return argumentMaterial(k_projectWriteTextMembers); }
+        [[nodiscard]] auto sessionEntryArgumentMaterial() -> json::Value
+        { return argumentMaterial(k_sessionEntryMembers); }
+        [[nodiscard]] auto sessionSetArgumentMaterial() -> json::Value
+        { return argumentMaterial(k_sessionSetMembers); }
         [[nodiscard]] auto inputClickArgumentMaterial() -> json::Value
         { return argumentMaterial(k_inputClickMembers); }
         [[nodiscard]] auto inputDragArgumentMaterial() -> json::Value
@@ -1464,6 +1586,16 @@ namespace uf::operator_runtime
                          "The Project registration this reading was resolved "
                          "under."
                      )},
+                    {std::string{k_screenshotSha256Member},
+                     digestResult(
+                         "The retained screenshot this reading was resolved "
+                         "on, usable anywhere a screenshot reference is "
+                         "taken. An observation names its own frame rather "
+                         "than assuming the caller supplied it: a "
+                         "framework.input.hold that observed while pressed "
+                         "captured that frame itself, and this is the only "
+                         "name its caller has for it."
+                     )},
                     {"snapshot_identity_hash",
                      digestResult("Identity of the frame that was read.")},
                     {"snapshot_ref",
@@ -1499,6 +1631,7 @@ namespace uf::operator_runtime
                     "observation_id",
                     std::string_view{k_observationReferenceArgument},
                     "project_registration_hash",
+                    std::string_view{k_screenshotSha256Member},
                     "snapshot_identity_hash",
                     "snapshot_ref",
                     "state_resolution",
@@ -1701,6 +1834,108 @@ namespace uf::operator_runtime
             );
         }
 
+        [[nodiscard]]
+        auto sessionSetOutputMaterial() -> json::Value
+        {
+            return objectResult(
+                {
+                    {"name",
+                     typedResult(
+                         "string",
+                         "The name the value was stored under."
+                     )},
+                    {"stored_bytes",
+                     countResult(
+                         "What this session's whole state weighs after the "
+                         "write, in bytes."
+                     )},
+                },
+                {"name", "stored_bytes"}
+            );
+        }
+
+        // ABSENCE IS SPELLED ONCE, and `present` is where. `value` is left
+        // out of a miss rather than answered as null, which is the same
+        // decision the argument contract takes when it admits every JSON type
+        // but null: with null admitted on either side, a stored null and a name
+        // this session never saw would be one answer read two ways.
+        //
+        // `value` therefore carries the same five types the stored argument
+        // did, so a caller reads what it may get back where it reads what it
+        // may send.
+        [[nodiscard]]
+        auto sessionGetOutputMaterial() -> json::Value
+        {
+            return objectResult(
+                {
+                    {"name",
+                     typedResult("string", "The name that was read.")},
+                    {"present",
+                     typedResult(
+                         "boolean",
+                         "Whether this session has stored anything under that "
+                         "name."
+                     )},
+                    {"value",
+                     json::Value::ofObject({
+                         {"description",
+                          json::Value::ofString(
+                              "The exact value that was stored, present only "
+                              "when present is true."
+                          )},
+                         {"type",
+                          json::Value::ofArray({
+                              json::Value::ofString("array"),
+                              json::Value::ofString("boolean"),
+                              json::Value::ofString("number"),
+                              json::Value::ofString("object"),
+                              json::Value::ofString("string"),
+                          })},
+                     })},
+                },
+                {"name", "present"}
+            );
+        }
+
+        [[nodiscard]]
+        auto sessionListOutputMaterial() -> json::Value
+        {
+            return objectResult(
+                {
+                    {"maximum_bytes",
+                     countResult(
+                         "The most this session's state may weigh in total. A "
+                         "framework.session.set past it is refused."
+                     )},
+                    {"maximum_names",
+                     countResult(
+                         "The most names this session's state may hold. A "
+                         "framework.session.set of a further name past it is "
+                         "refused."
+                     )},
+                    {"names",
+                     json::Value::ofObject({
+                         {"description",
+                          json::Value::ofString(
+                              "Every name this session has stored, in UTF-8 "
+                              "order."
+                          )},
+                         {"items",
+                          json::Value::ofObject({
+                              {"type", json::Value::ofString("string")},
+                          })},
+                         {"type", json::Value::ofString("array")},
+                     })},
+                    {"stored_bytes",
+                     countResult(
+                         "What those names and their values weigh together, in "
+                         "bytes."
+                     )},
+                },
+                {"maximum_bytes", "maximum_names", "names", "stored_bytes"}
+            );
+        }
+
         // ONE UNIX-MILLISECOND INSTANT, SPELLED THE WAY THIS CATALOG ALREADY
         // SPELLS ONE. The unit, the epoch and the decimal-string rendering are
         // exactly a screenshot receipt's created_at_unix_ms; what varies is the
@@ -1802,7 +2037,10 @@ namespace uf::operator_runtime
                      "What was on screen while the input was still engaged. It "
                      "is a framework.screen.capture receipt when return_screen "
                      "was capture, and a framework.screen.observe result when "
-                     "it was observe. Absent when return_screen was none."
+                     "it was observe. Absent when return_screen was none. "
+                     "Either way its screenshot_sha256 names a RETAINED "
+                     "screenshot: pass it to read_lines, crop or probe exactly "
+                     "as you would one framework.screen.capture answered."
                  )},
                 {"oneOf",
                  json::Value::ofArray({
@@ -2071,7 +2309,9 @@ namespace uf::operator_runtime
                 "held. Set return_screen to capture or observe to learn what "
                 "was on screen WHILE STILL PRESSED; the result then carries "
                 "screen, which is a framework.screen.capture receipt or a "
-                "framework.screen.observe result. A confirmed result carries "
+                "framework.screen.observe result, and whose screenshot_sha256 "
+                "names a retained screenshot every framework.screen measuring "
+                "Tool accepts. A confirmed result carries "
                 "action, controlled_target_id, delivered, duration_ms and "
                 "held, which is always false because the press and the release "
                 "are one call's business.",
@@ -2239,6 +2479,54 @@ namespace uf::operator_runtime
                 &readLinesOutputMaterial,
             },
             FrameworkToolDefinition{
+                k_sessionGetTool,
+                "Read back what an earlier chunk of THIS SESSION stored under "
+                "name with framework.session.set. A confirmed result carries "
+                "name and present, and -- when present is true -- value, the "
+                "exact value that was stored. A name this session never stored "
+                "answers present false rather than failing, so a chunk can ask "
+                "whether its state exists without treating the answer as an "
+                "error.",
+                &sessionReadDescriptor,
+                &sessionEntryArgumentMaterial,
+                &sessionGetOutputMaterial,
+            },
+            FrameworkToolDefinition{
+                k_sessionListTool,
+                "Report what this session's own state holds. Takes no "
+                "arguments. A confirmed result carries names, every name "
+                "stored so far in UTF-8 order; stored_bytes, what they weigh "
+                "together; and maximum_names and maximum_bytes, the two "
+                "ceilings a further framework.session.set is refused past. Use "
+                "it to find out what an earlier chunk left behind when the "
+                "names are not already known.",
+                &sessionReadDescriptor,
+                &noArgumentsMaterial,
+                &sessionListOutputMaterial,
+            },
+            FrameworkToolDefinition{
+                k_sessionSetTool,
+                "Store value under name in this session's own state, so a "
+                "LATER CHUNK OF THE SAME SESSION can read it back with "
+                "framework.session.get. This is how one piece of work is "
+                "written as several chunks: each chunk runs in a VM built for "
+                "it and destroyed after it, so a global a chunk assigns is gone "
+                "before the next chunk compiles, and this state is not. The "
+                "value is any JSON but null and is stored byte for byte; the "
+                "framework never reads into it, and the last write under a "
+                "name wins. "
+                "THE STATE IS THE SESSION'S AND DIES WITH IT: nothing is "
+                "written to disk, and the next session starts empty -- use "
+                "framework.project.write_text for something that must outlive "
+                "this run. A confirmed result carries name and stored_bytes; a "
+                "call that would take this session past a ceiling "
+                "framework.session.list reports is refused, naming what was "
+                "exceeded and what the limit was.",
+                &sessionSetDescriptor,
+                &sessionSetArgumentMaterial,
+                &sessionSetOutputMaterial,
+            },
+            FrameworkToolDefinition{
                 k_uiClickTool,
                 "Click what one observation resolved, in the project's own "
                 "vocabulary rather than in coordinates. observation_reference "
@@ -2268,7 +2556,9 @@ namespace uf::operator_runtime
                 "Engage what one observation resolved and hold it, releasing "
                 "on every exit path. Set return_screen to capture or observe "
                 "to learn what was on screen WHILE STILL ENGAGED; the result "
-                "then carries screen. observation_reference is spent by this "
+                "then carries screen, whose screenshot_sha256 names a retained "
+                "screenshot every framework.screen measuring Tool accepts. "
+                "observation_reference is spent by this "
                 "call. A confirmed result carries action, delivered, held -- "
                 "always false, because the release is part of the call -- and "
                 "the Host's verdict.",
