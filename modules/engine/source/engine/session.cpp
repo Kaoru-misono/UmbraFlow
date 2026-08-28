@@ -413,6 +413,7 @@ namespace uf::engine
                     .text         = std::move(line.text),
                     .rect         = lineRect,
                     .confidenceBp = line.confidenceBp,
+                    .characters   = std::move(line.characters),
                 }
             );
         }
@@ -606,6 +607,21 @@ namespace uf::engine
         auto const identity = FrameIdentity::fromFrame(frame);
         UF_TRY(emit(engineEvent("engine.observed", identity)));
         return Observation{std::move(frame), lease, identity, m_identity};
+    }
+
+    auto EngineSession::matchShapes(
+        Observation const& observation,
+        std::span<ShapeTemplate const> templates,
+        PixelRect searchRoi,
+        ShapeSearchOptions const& options
+    ) -> Result<ShapeSearchReport>
+    {
+        UF_TRY(ensureUsable(observation, "matchShapes"));
+        auto const& frame = observation.m_frame;
+        UF_TRY(
+            ensureCompatibleFrame(frame, m_config.liveFingerprint, m_config.projectFingerprint)
+        );
+        return matchShapesOnFrame(frame, templates, searchRoi, makeRecognitionPolicy(), options);
     }
 
     auto EngineSession::matchTemplate(

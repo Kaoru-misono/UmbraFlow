@@ -11,4 +11,4 @@ unity_build = false
 # authority; Task owns activation, observation and delivery.
 [dependencies]
 public = core deployment operator task
-private = domain engine image ocr schema trace
+private = domain engine image ocr schema trace vision

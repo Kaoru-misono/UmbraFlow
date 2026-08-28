@@ -25,6 +25,7 @@
 #include <trace/recorder.hpp>
 
 #include <vision/frame-analysis.hpp>
+#include <vision/shape-match.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -388,6 +389,17 @@ namespace uf::task
             PixelRect searchRoi
         ) -> Result<std::optional<engine::MatchFound>>;
 
+        // One bounded multi-template shape search on the explicitly selected
+        // retained frame. No recapture or input is performed, and failures are
+        // propagated rather than interpreted as an empty hand or a miss.
+        [[nodiscard]]
+        auto cycleMatchShapes(
+            CycleTicket ticket,
+            std::span<ShapeTemplate const> templates,
+            PixelRect searchRoi,
+            ShapeSearchOptions const& options
+        ) -> Result<ShapeSearchReport>;
+
         // Reads the text in `rect` of the frame `ticket`'s cycle retains, under
         // the layout the caller asserts that rectangle has, and hands back one
         // entry per line. An empty list is a completed read that found no text.
@@ -443,6 +455,7 @@ namespace uf::task
         //     than about the host or the target, nothing in this repository reads
         //     it back, and recovering it would need a per-primitive event this
         //     tree does not have.
+        // Empty decoded text is omitted after accounting for every inference.
         [[nodiscard]]
         auto cycleRead(
             CycleTicket ticket,

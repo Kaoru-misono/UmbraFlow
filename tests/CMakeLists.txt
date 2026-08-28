@@ -737,7 +737,7 @@ if(TARGET ${PROJECT_NAME}_operator)
     # beside it.
     uf_shard_doctest_gates(
         TARGET test-operator
-        TOTAL_CASES 147
+        TOTAL_CASES 148
         SHARDS 6
     )
 
@@ -842,6 +842,7 @@ if(WIN32)
 endif()
 cpp_add_test(
     NAME test-cli
+    NO_CTEST
     SOURCES
         ${CLI_TEST_SOURCES}
     LIBS
@@ -873,6 +874,26 @@ target_compile_definitions(test-cli PRIVATE
 if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
     cpp_stage_runtime_libraries(test-cli ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
 endif()
+
+# test-cli drives real Luau chunks, a real Operator root and real template
+# search, and at 54 seconds it no longer held one 60-second gate with five
+# siblings taking the machine beside it. Runtime is lumpy across the index
+# range -- four shards still left one at 34 seconds -- so it is cut six ways,
+# which is the shard count and the margin test-operator was cut for.
+#
+# The count is per-platform because CLI_TEST_SOURCES is: modules/cli's
+# candidate-selection.cpp is [sources.windows], so its five cases exist only
+# there and a single pin would fail ${TARGET}-case-count everywhere else.
+if(WIN32)
+    set(UF_CLI_TEST_CASES 95)
+else()
+    set(UF_CLI_TEST_CASES 90)
+endif()
+uf_shard_doctest_gates(
+    TARGET test-cli
+    TOTAL_CASES ${UF_CLI_TEST_CASES}
+    SHARDS 6
+)
 
 # task is linked so the fixtures can write the genesis RuntimeArtifact every
 # project declaration names. The kit's own verbs now RUN the trusted parser
@@ -1658,6 +1679,12 @@ if(TARGET ${PROJECT_NAME}_controller)
             ${PROJECT_NAME}_controller
     )
 endif()
+
+cpp_add_test(
+    NAME test-ocr
+    SOURCES ocr/test-ctc-decode.cpp
+    LIBS ${PROJECT_NAME}_ocr
+)
 
 # What the OCR adapter reads off a real frame. The fixture directory holds real
 # game screenshots that are never committed, so the target is registered only

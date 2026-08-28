@@ -9,12 +9,19 @@
 
 namespace uf::ocr
 {
-    // One run of text a read produced, and where it sat.
-    //
-    // A line rather than a word or a character, because that is the unit the
-    // recognition model actually scores: it consumes a strip of pixels and emits
-    // a string, and a per-character box would be this layer inventing detail the
-    // model does not report.
+    // One emitted CTC dictionary token (or the appended space class), with the
+    // selected timestep's probability rounded to basis points. Unicode tokens
+    // are retained whole; this is not a UTF-8 byte and carries no invented box.
+    struct TextCharacter final
+    {
+        std::string text{};
+        uint32      confidenceBp{};
+
+        auto operator==(TextCharacter const&) const -> bool = default;
+    };
+
+    // One run of text a read produced, and where it sat. The model consumes a
+    // strip and reports character scores but no individual character boxes.
     struct TextLine final
     {
         std::string text{};
@@ -29,11 +36,13 @@ namespace uf::ocr
 
         // The model's own confidence, in basis points, matching how this project
         // already spells a similarity threshold. It is the mean over the
-        // characters the line decoded to, so a long line with one uncertain
-        // glyph does not read as uncertain overall -- a caller that needs the
-        // weakest glyph needs a different number, and this layer does not
-        // pretend to be it.
+        // raw emitted character probabilities, rounded only after averaging.
+        // It is not an average of the already rounded character confidences.
         uint32 confidenceBp{};
+
+        // In emission order after blank removal and repeat collapse. Joining
+        // these tokens reproduces text exactly, including emitted spaces.
+        std::vector<TextCharacter> characters{};
 
         auto operator==(TextLine const&) const -> bool = default;
     };

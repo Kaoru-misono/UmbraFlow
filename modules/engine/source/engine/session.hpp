@@ -14,11 +14,13 @@
 #include <domain/space.hpp>
 
 #include <ocr/engine.hpp>
+#include <ocr/text.hpp>
 
 #include <trace/event.hpp>
 #include <trace/recorder.hpp>
 
 #include <vision/template-match.hpp>
+#include <vision/shape-match.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -148,6 +150,8 @@ namespace uf::engine
 
         // Basis points, as ocr::TextLine reports it.
         uint32 confidenceBp{};
+
+        std::vector<ocr::TextCharacter> characters{};
     };
 
     // A single-use, move-only handle over one captured frame, vended only by
@@ -529,6 +533,17 @@ namespace uf::engine
             GrayTemplateImage const& templateImage,
             PixelRect searchRoi
         ) -> Result<std::optional<MatchFound>>;
+
+        // Searches this retained frame for caller-supplied grayscale shapes.
+        // Uses the same observation fence and per-search recognition policy as
+        // matchTemplate; a stopped or bounded-out search never returns hits.
+        [[nodiscard]]
+        auto matchShapes(
+            Observation const& observation,
+            std::span<ShapeTemplate const> templates,
+            PixelRect searchRoi,
+            ShapeSearchOptions const& options
+        ) -> Result<ShapeSearchReport>;
 
         // Reads the text in `rect` of the frame `observation` holds, under the
         // layout the CALLER asserts that rectangle has, and hands back one entry

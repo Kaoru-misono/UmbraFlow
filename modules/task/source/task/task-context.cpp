@@ -540,6 +540,17 @@ namespace uf::task
         return found;
     }
 
+    auto TaskContext::cycleMatchShapes(
+        CycleTicket ticket,
+        std::span<ShapeTemplate const> templates,
+        PixelRect searchRoi,
+        ShapeSearchOptions const& options
+    ) -> Result<ShapeSearchReport>
+    {
+        UF_TRY(m_cycles.requireOpen(ticket));
+        return m_session.matchShapes(m_cycles.observation(), templates, searchRoi, options);
+    }
+
     auto TaskContext::cycleRead(
         CycleTicket ticket,
         PixelRect rect,
@@ -601,6 +612,15 @@ namespace uf::task
             m_cycles.chargeReads(static_cast<uint32>(lines.size()));
             break;
         }
+        // Empty decodes still consumed recognition work. Charge them above,
+        // then omit them from both public results and the per-frame cache.
+        std::erase_if(
+            lines,
+            [](engine::TextReading const& line)
+            {
+                return line.text.empty();
+            }
+        );
         m_answers.rememberRead(ticket.ordinal, rect, layout, lines);
         return lines;
     }

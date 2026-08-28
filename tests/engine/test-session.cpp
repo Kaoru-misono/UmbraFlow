@@ -23,6 +23,7 @@
 #include <trace/sink.hpp>
 
 #include <vision/template-match.hpp>
+#include <vision/shape-match.hpp>
 
 #include <doctest/doctest.h>
 
@@ -30,6 +31,7 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -176,6 +178,46 @@ namespace uf::engine
         auto missingPixels() -> std::vector<std::byte>
         {
             return std::vector<std::byte>{asByte(0), asByte(k_absentGray), asByte(0)};
+        }
+
+        [[nodiscard]]
+        auto shapeTemplate(std::string identity = "shape") -> ShapeTemplate
+        {
+            return ShapeTemplate{
+                .image = GrayTemplateImage{
+                    .identity = std::move(identity),
+                    .width    = 3,
+                    .height   = 2,
+                    .pixels   = {asByte(10), asByte(40), asByte(90), asByte(80), asByte(20), asByte(50)},
+                },
+                .minimumScore = 0.999999,
+            };
+        }
+
+        [[nodiscard]]
+        auto shapeFrame(bool constant = false) -> Frame
+        {
+            auto pixels = std::vector<std::byte>(40, asByte(7));
+            if (!constant)
+            {
+                // Independent positive affine transforms of the same shape:
+                // twice as bright plus 20, and half as bright plus 20.
+                pixels[11] = asByte(40);
+                pixels[12] = asByte(100);
+                pixels[13] = asByte(200);
+                pixels[21] = asByte(180);
+                pixels[22] = asByte(60);
+                pixels[23] = asByte(120);
+                pixels[16] = asByte(25);
+                pixels[17] = asByte(40);
+                pixels[18] = asByte(65);
+                pixels[26] = asByte(60);
+                pixels[27] = asByte(30);
+                pixels[28] = asByte(45);
+            }
+            return grayFrame(
+                fingerprintOf(10, 4, 96), std::move(pixels), FrameId{17}, MonotonicInstant::now()
+            );
         }
 
         // Replays a fixed sequence of frames. Once the sequence is exhausted the
@@ -742,16 +784,22 @@ namespace uf::engine
             return *std::move(recorder);
         }
 
-        // A bound OCR adapter that answers nothing and counts the times it was
+        // A bound OCR adapter that counts the times it was
         // reached. Present, not absent: readTextOnFrame refuses a null adapter
         // before it measures anything, so a ceiling case run without one would
         // pass for the wrong reason. The count is what says whether a refusal
         // cost an inference or none.
         class CountingReader final : public ocr::IOcrEngine
         {
-            uint32 m_reads{};
+            uint32       m_reads{};
+            ocr::Readout m_readout;
 
         public:
+            explicit CountingReader(ocr::Readout readout = {})
+                : m_readout{std::move(readout)}
+            {
+            }
+
             [[nodiscard]] auto identity() const noexcept -> std::string_view override
             {
                 return "engine-test-counting-reader";
@@ -762,7 +810,7 @@ namespace uf::engine
                 -> Result<ocr::Readout> override
             {
                 ++m_reads;
-                return ocr::Readout{};
+                return m_readout;
             }
 
             [[nodiscard]] auto reads() const noexcept -> uint32 { return m_reads; }
@@ -2861,5 +2909,273 @@ namespace uf::engine
         );
         REQUIRE(admitted.has_value());
         CHECK(p_reader->reads() == 1U);
+    }
+
+    TEST_CASE("text reads preserve emitted character scores in both layouts")
+    {
+        auto const fingerprint = fingerprintOf(100, 100, 96);
+        auto frames = std::vector<Frame>{};
+        frames.emplace_back(
+            grayFrame(
+                fingerprint, std::vector<std::byte>(100U * 100U * 4U),
+                FrameId{91}, MonotonicInstant::now()
+            )
+        );
+        auto const characters = std::vector<ocr::TextCharacter>{
+            {.text = "水", .confidenceBp = 9900},
+            {.text = "之", .confidenceBp = 9600},
+            {.text = "相", .confidenceBp = 4500},
+        };
+        auto const bounds = pixelRectOf(12, 14, 30, 10);
+        auto reader = std::make_unique<CountingReader>(
+            ocr::Readout{
+                .lines = {
+                    {
+                        .text         = "水之相",
+                        .bounds       = bounds,
+                        .confidenceBp = 8000,
+                        .characters   = characters,
+                    },
+                },
+            }
+        );
+        auto under = makeSession(
+            std::move(frames), baseConfig(fingerprint),
+            TargetWorld::Live, std::move(reader)
+        );
+        REQUIRE(under.session.has_value());
+        auto const observation = under.session->observe();
+        REQUIRE(observation.has_value());
+        auto const roi = pixelRectOf(10, 10, 50, 20);
+        for (auto const layout : {ocr::TextLayout::Block, ocr::TextLayout::SingleLine})
+        {
+            auto const result = under.session->readText(*observation, roi, layout, 8U);
+            REQUIRE(result.has_value());
+            REQUIRE(result->size() == 1);
+            auto const& line = result->front();
+            CHECK(line.text == "水之相");
+            CHECK(line.confidenceBp == 8000);
+            CHECK(line.characters == characters);
+            CHECK(line.rect == (layout == ocr::TextLayout::Block ? bounds : roi));
+        }
+    }
+
+    TEST_CASE("shape search is brightness invariant and suppresses across templates")
+    {
+        auto const frame = shapeFrame();
+        auto const templates = std::array{shapeTemplate("a"), shapeTemplate("z")};
+        auto const roi = pixelRectOf(1, 1, 8, 2);
+        auto const policy = RecognitionPolicy{.maximumPixelComparisons = 72};
+        auto const found = matchShapesOnFrame(frame, templates, roi, policy, {});
+        REQUIRE(found.has_value());
+        REQUIRE(found->matches.size() == 1);
+        CHECK(found->matches.front().templateIdentity == "a");
+
+        auto const separated = matchShapesOnFrame(
+            frame, templates, roi, policy,
+            ShapeSearchOptions{.maximumMatches = 2, .suppressionRadius = 0}
+        );
+        REQUIRE(separated.has_value());
+        REQUIRE(separated->matches.size() == 2);
+        CHECK(separated->imageWidth == 10);
+        CHECK(separated->imageHeight == 4);
+        CHECK(separated->completedPixelComparisons == 72);
+        CHECK(separated->matches.front().matchedRect == pixelRectOf(1, 1, 3, 2));
+        CHECK(separated->matches.back().matchedRect == pixelRectOf(6, 1, 3, 2));
+        for (auto const& match : separated->matches)
+        {
+            CHECK(match.templateIdentity == "a");
+            CHECK(match.score == doctest::Approx(1));
+        }
+
+        auto const empty = matchShapesOnFrame(shapeFrame(true), templates, roi, policy, {});
+        REQUIRE(empty.has_value());
+        CHECK(empty->matches.empty());
+        CHECK(empty->completedPixelComparisons == 0);
+    }
+
+    TEST_CASE("shape search refuses invalid banks and options before scanning")
+    {
+        auto const frame = shapeFrame();
+        auto const roi = pixelRectOf(1, 1, 8, 2);
+        auto const policy = RecognitionPolicy{.maximumPixelComparisons = 1000};
+        auto bank    = std::vector{shapeTemplate()};
+        auto options = ShapeSearchOptions{};
+        SUBCASE("constant")
+        {
+            bank.front().image.pixels.assign(6, asByte(7));
+        }
+        SUBCASE("mask")
+        {
+            bank.front().image.mask.assign(6, asByte(255));
+        }
+        SUBCASE("pixel count")
+        {
+            bank.front().image.pixels.pop_back();
+        }
+        SUBCASE("NaN score")
+        {
+            bank.front().minimumScore = std::numeric_limits<double>::quiet_NaN();
+        }
+        SUBCASE("duplicate identity")
+        {
+            bank.emplace_back(shapeTemplate());
+        }
+        SUBCASE("too tall for ROI")
+        {
+            bank.front().image.width = 2;
+            bank.front().image.height = 3;
+        }
+        SUBCASE("empty bank")
+        {
+            bank.clear();
+        }
+        SUBCASE("zero output limit")
+        {
+            options.maximumMatches = 0;
+        }
+        SUBCASE("excessive radius")
+        {
+            options.suppressionRadius = 65;
+        }
+        auto const refused = matchShapesOnFrame(frame, bank, roi, policy, options);
+        REQUIRE_FALSE(refused.has_value());
+        requireErrorKind(refused.error(), AutomationErrorKind::InvalidResource);
+    }
+
+    TEST_CASE("shape search budget output and control stops never return partial matches")
+    {
+        auto const frame = shapeFrame();
+        auto const templates = std::array{shapeTemplate()};
+        auto const roi = pixelRectOf(1, 1, 8, 2);
+        auto policy = RecognitionPolicy{.maximumPixelComparisons = 36};
+        auto options = ShapeSearchOptions{.maximumMatches = 2, .suppressionRadius = 0};
+        auto expected     = AutomationErrorKind::RecognitionIncomplete;
+        auto cancellation = std::stop_source{};
+        SUBCASE("comparison bound after first valid hit")
+        {
+            policy.maximumPixelComparisons = 6;
+        }
+        SUBCASE("match bound")
+        {
+            options.maximumMatches = 1;
+        }
+        SUBCASE("cancelled")
+        {
+            REQUIRE(cancellation.request_stop());
+            policy.cancellation = cancellation.get_token();
+            expected            = AutomationErrorKind::Cancelled;
+        }
+        SUBCASE("deadline")
+        {
+            policy.deadline = MonotonicInstant::now();
+            expected        = AutomationErrorKind::Timeout;
+        }
+        auto const refused = matchShapesOnFrame(frame, templates, roi, policy, options);
+        REQUIRE_FALSE(refused.has_value());
+        requireErrorKind(refused.error(), expected);
+    }
+
+    TEST_CASE("engine shape search uses the retained frame and observation owner fence")
+    {
+        auto const fingerprint = fingerprintOf(10, 4, 96);
+        auto under = makeSession({shapeFrame()}, baseConfig(fingerprint));
+        auto other = makeSession({shapeFrame(true)}, baseConfig(fingerprint));
+        REQUIRE(under.session.has_value());
+        REQUIRE(other.session.has_value());
+        auto observation = under.session->observe();
+        REQUIRE(observation.has_value());
+        auto const templates = std::array{shapeTemplate()};
+        auto const roi = pixelRectOf(1, 1, 8, 2);
+        auto const found = under.session->matchShapes(*observation, templates, roi, {});
+        REQUIRE(found.has_value());
+        REQUIRE(found->matches.size() == 1);
+        CHECK(found->matches.front().matchedRect == pixelRectOf(1, 1, 3, 2));
+        auto const wrongOwner = other.session->matchShapes(*observation, templates, roi, {});
+        REQUIRE_FALSE(wrongOwner.has_value());
+        requireErrorKind(wrongOwner.error(), AutomationErrorKind::InternalInvariant);
+        CHECK(under.clicks->clickCount() == 0);
+        CHECK(other.clicks->clickCount() == 0);
+    }
+
+    TEST_CASE("shape search converts BGRA once and preserves frame coordinates")
+    {
+        auto const gray = shapeFrame();
+        auto bgra = std::vector<std::byte>{};
+        for (auto byte : gray.pixels()->bytes())
+        {
+            bgra.emplace_back(byte);
+            bgra.emplace_back(byte);
+            bgra.emplace_back(byte);
+            bgra.emplace_back(asByte(255));
+        }
+        auto const frame = Frame::create(
+            gray.id(), gray.sessionId(), gray.targetGeneration(), gray.capturedAt(),
+            gray.width(), gray.height(), 40, PixelFormat::Bgra8,
+            std::make_shared<FrameBuffer const>(std::move(bgra)), gray.transform()
+        );
+        REQUIRE(frame.has_value());
+        auto const templates = std::array{shapeTemplate()};
+        auto const result = matchShapesOnFrame(
+            *frame, templates, pixelRectOf(6, 1, 3, 2),
+            RecognitionPolicy{.maximumPixelComparisons = 6}, {}
+        );
+        REQUIRE(result.has_value());
+        REQUIRE(result->matches.size() == 1);
+        CHECK(result->matches.front().matchedRect == pixelRectOf(6, 1, 3, 2));
+        CHECK(result->matches.front().score == doctest::Approx(1));
+    }
+
+    TEST_CASE("shape search excludes outside ROI hits and candidates crossing its edge")
+    {
+        auto const frame = shapeFrame();
+        auto const templates = std::array{shapeTemplate()};
+        auto const policy = RecognitionPolicy{.maximumPixelComparisons = 1000};
+        auto const inside = matchShapesOnFrame(
+            frame, templates, pixelRectOf(6, 1, 3, 2), policy, {}
+        );
+        REQUIRE(inside.has_value());
+        REQUIRE(inside->matches.size() == 1);
+        CHECK(inside->matches.front().matchedRect == pixelRectOf(6, 1, 3, 2));
+
+        // Both exact shapes exist in the frame, but this region clips a column
+        // from each one. A whole-frame search filtered by centre would leak one.
+        auto const clipped = matchShapesOnFrame(
+            frame, templates, pixelRectOf(2, 1, 6, 2), policy, {}
+        );
+        REQUIRE(clipped.has_value());
+        CHECK(clipped->matches.empty());
+    }
+
+    TEST_CASE("shape search refuses excessive raw candidates before suppression")
+    {
+        auto pixels = std::vector<std::byte>{};
+        pixels.reserve(514 * 258);
+        for (auto index = 0; index < 514 * 258; ++index)
+        {
+            pixels.emplace_back(index % 2 == 0 ? asByte(0) : asByte(255));
+        }
+        auto const frame = grayFrame(
+            fingerprintOf(514, 258, 96), std::move(pixels), FrameId{17}, MonotonicInstant::now()
+        );
+        auto const templates = std::array{
+            ShapeTemplate{
+                .image = GrayTemplateImage{
+                    .identity = "stripe",
+                    .width    = 2,
+                    .height   = 1,
+                    .pixels   = {asByte(0), asByte(255)},
+                },
+                .minimumScore = 1,
+            },
+        };
+        auto const refused = matchShapesOnFrame(
+            frame, templates, pixelRectOf(0, 0, 514, 258),
+            RecognitionPolicy{.maximumPixelComparisons = 1'000'000},
+            ShapeSearchOptions{.suppressionRadius = 64}
+        );
+        REQUIRE_FALSE(refused.has_value());
+        requireErrorKind(refused.error(), AutomationErrorKind::RecognitionIncomplete);
+        CHECK(refused.error().message().find("candidate bound") != std::string::npos);
     }
 }

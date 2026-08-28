@@ -1,4 +1,5 @@
 #include <ocr/onnx-engine.hpp>
+#include <ocr/ctc-decode.hpp>
 
 // This adapter exists only where the ONNX Runtime payload does. The manifest
 // keeps ocr_onnxruntime under [dependencies.windows] and the committed payload
@@ -72,15 +73,6 @@ namespace uf::ocr
         // which the runtime would allocate without bound on a caller's rect.
         constexpr auto k_minimumRecognitionWidth = uint32{16};
         constexpr auto k_maximumRecognitionWidth = uint32{3200};
-
-        // Basis points, matching how this project already spells a similarity
-        // threshold, so a confidence and a threshold are read on one scale.
-        constexpr auto k_basisPointScale = double{10000.0};
-
-        // The CTC blank occupies class 0, so a dictionary entry at index i is
-        // class i + 1. This is the models' convention rather than a choice made
-        // here, and decode below depends on it.
-        constexpr auto k_ctcBlankClass = std::size_t{0};
 
         // Every detection number below is copied from the detection model's own
         // inference config at
@@ -371,69 +363,6 @@ namespace uf::ocr
                 }
             }
             return input;
-        }
-
-        struct DecodedLine final
-        {
-            std::string text{};
-            uint32      confidenceBp{};
-        };
-
-        // Greedy CTC decode: take each timestep's most likely class, drop the
-        // blank, and collapse a run of one class into one character.
-        //
-        // Greedy rather than beam search: this reads short UI labels a model
-        // scores at 0.99 and above; revisit against a measured case where the
-        // top path is wrong and a lower one is right.
-        [[nodiscard]]
-        auto decodeCtc(
-            std::span<float const> scores,
-            std::size_t timesteps,
-            std::size_t classes,
-            std::vector<std::string> const& characters
-        ) -> DecodedLine
-        {
-            auto decoded    = DecodedLine{};
-            auto confidence = double{0.0};
-            auto emitted    = std::size_t{0};
-            auto previous   = classes;
-
-            for (auto step = std::size_t{0}; step < timesteps; ++step)
-            {
-                auto const row = scores.subspan(step * classes, classes);
-                auto const best =
-                    static_cast<std::size_t>(
-                        std::ranges::distance(row.begin(), std::ranges::max_element(row))
-                    );
-
-                if (best != k_ctcBlankClass && best != previous)
-                {
-                    auto const entry = best - 1U;
-                    if (entry < characters.size())
-                    {
-                        decoded.text += characters[entry];
-                    }
-                    else
-                    {
-                        // The class past the dictionary is the space the models
-                        // append. Spelling it here rather than padding the
-                        // dictionary keeps the file on disk equal to the file
-                        // the release published.
-                        decoded.text += ' ';
-                    }
-                    confidence += static_cast<double>(row[best]);
-                    ++emitted;
-                }
-                previous = best;
-            }
-
-            if (emitted != 0U)
-            {
-                auto const mean = confidence / static_cast<double>(emitted);
-                decoded.confidenceBp =
-                    static_cast<uint32>(std::lround(mean * k_basisPointScale));
-            }
-            return decoded;
         }
 
         // One region of pixels prepared for the detection model: BGR planar
@@ -921,11 +850,12 @@ namespace uf::ocr
                     timesteps * classes,
                 };
 
-                auto decoded = decodeCtc(scores, timesteps, classes, m_characters);
+                UF_TRY_VALUE(decoded, detail::decodeCtc(scores, timesteps, classes, m_characters));
                 return TextLine{
                     .text         = std::move(decoded.text),
                     .bounds       = rect,
                     .confidenceBp = decoded.confidenceBp,
+                    .characters   = std::move(decoded.characters),
                 };
             }
 

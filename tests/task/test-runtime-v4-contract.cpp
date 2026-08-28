@@ -127,10 +127,8 @@ namespace uf::task
             }
         };
 
-        // A Reader that looked and found nothing. It is the only way to reach
-        // the third reading outcome, because EngineSession::readText reports "no
-        // text here" as an empty line list and never as an empty string: a line
-        // whose text is "" is still a line the recogniser produced.
+        // No detected boxes. Empty decodes are covered separately at the
+        // cycle boundary, where inference costs precede output filtering.
         class SilentReader final : public ocr::IOcrEngine
         {
             uint32 m_calls{};
@@ -2708,6 +2706,48 @@ identity = ["screen.anchor"]
         // Absent is not unknown: it carries no reason, because there is nothing
         // undecided about a rectangle that was read and held no text.
         CHECK(observed->canonicalJcs().find(R"("reason")") == std::string::npos);
+    }
+
+    TEST_CASE("cycleRead omits empty decodes without refunding recognition work")
+    {
+        for (auto const text : {std::string_view{""}, std::string_view{" "}, std::string_view{"fire"}})
+        {
+            auto const rect = *PixelRect::create(0U, 0U, 1U, 1U);
+            auto lines = std::vector<ocr::TextLine>{
+                {.text = "", .bounds = rect},
+                {.text = std::string{text}, .bounds = rect, .confidenceBp = 9'000},
+                {.text = "", .bounds = rect},
+            };
+            auto runtime = RuntimeContext{
+                frame({std::byte{0}, std::byte{0}, std::byte{0}}, FrameId{36}),
+                1'000,
+                std::make_unique<ScriptedBlockReader>(std::move(lines)),
+                4
+            };
+            auto& context = runtime.context();
+            auto const ticket = context.openCycle();
+            REQUIRE(ticket.has_value());
+            auto const reading = context.cycleRead(*ticket, rect, ocr::TextLayout::Block);
+            REQUIRE(reading.has_value());
+            REQUIRE(reading->size() == (text.empty() ? 0U : 1U));
+            if (!text.empty())
+            {
+                CHECK(reading->front().text == text);
+                CHECK(reading->front().rect == rect);
+                CHECK(reading->front().confidenceBp == 9'000);
+            }
+            auto const cached = context.cycleRead(*ticket, rect, ocr::TextLayout::Block);
+            REQUIRE(cached.has_value());
+            CHECK(cached->size() == reading->size());
+            auto const other = context.cycleRead(
+                *ticket,
+                *PixelRect::create(1U, 0U, 1U, 1U),
+                ocr::TextLayout::SingleLine
+            );
+            REQUIRE_FALSE(other.has_value());
+            CHECK(automationErrorKind(other.error()) == AutomationErrorKind::RecognitionIncomplete);
+            CHECK(context.closeCycle(*ticket));
+        }
     }
 
     // A Host that stopped on its own read budget did not look, and must not say

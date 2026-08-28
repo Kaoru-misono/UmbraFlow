@@ -142,6 +142,13 @@ namespace uf::ocr
             // when the engine was chosen, so a drop past it means the pipeline
             // changed, not the frame.
             CHECK(line.confidenceBp >= 9000U);
+            auto joined = std::string{};
+            for (auto const& character : line.characters)
+            {
+                CHECK(character.confidenceBp <= 10000U);
+                joined += character.text;
+            }
+            CHECK(joined == line.text);
         }
     }
 

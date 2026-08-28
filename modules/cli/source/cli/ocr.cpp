@@ -39,7 +39,18 @@ namespace uf::cli
         lines.reserve(text.lines.size());
         for (auto const& line : text.lines)
         {
+            if (line.text.empty()) continue;
+            auto characters = std::vector<json::Value>{};
+            characters.reserve(line.characters.size());
+            for (auto const& character : line.characters)
+            {
+                characters.emplace_back(json::Value::ofObject({
+                    {"confidenceBp", ofCount(character.confidenceBp)},
+                    {"text", json::Value::ofString(character.text)},
+                }));
+            }
             auto members = std::vector<json::Member>{};
+            members.emplace_back("characters", json::Value::ofArray(std::move(characters)));
             members.emplace_back("text", json::Value::ofString(line.text));
             members.emplace_back("rect", rectValue(line.bounds));
             members.emplace_back("confidenceBp", ofCount(line.confidenceBp));

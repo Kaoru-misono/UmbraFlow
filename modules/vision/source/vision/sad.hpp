@@ -341,6 +341,15 @@ namespace uf
         [[nodiscard]] constexpr auto width() const noexcept -> uint32 { return m_width; }
         [[nodiscard]] constexpr auto height() const noexcept -> uint32 { return m_height; }
         [[nodiscard]] constexpr auto stride() const noexcept -> std::size_t { return m_stride; }
+
+        // The validated plane's row, excluding stride padding. The caller must
+        // keep this view's backing pixel owner alive while using the row.
+        [[nodiscard]]
+        auto row(uint32 y) const noexcept UF_LIFETIME_BOUND
+            -> std::optional<std::span<std::byte const>>
+        {
+            return rowSegment(y, 0, m_width);
+        }
     };
 
     [[nodiscard]]

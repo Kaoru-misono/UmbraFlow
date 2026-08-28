@@ -33,6 +33,10 @@
 
 #include <image/png.hpp>
 
+#include <ocr/text.hpp>
+
+#include <vision/shape-match.hpp>
+
 #include <trace/file-sink.hpp>
 #include <trace/recorder.hpp>
 
@@ -44,6 +48,7 @@
 #include <core/numeric/checked-cast.hpp>
 #include <core/safety/annotations.hpp>
 #include <core/text/utf8.hpp>
+#include <core/types/integer.hpp>
 #include <core/utility/scope-exit.hpp>
 
 #include <domain/content-hash.hpp>
@@ -129,6 +134,9 @@ namespace uf::service
         };
         constexpr auto k_readSingleLineTool = std::string_view{
             "framework.screen.read_single_line"
+        };
+        constexpr auto k_matchShapesTool = std::string_view{
+            "framework.screen.match_shapes"
         };
         constexpr auto k_projectReadTextTool = std::string_view{
             "framework.project.read_text"
@@ -424,6 +432,25 @@ namespace uf::service
         // evidence: that member is how the ledger learns which blobs this run
         // committed, so a screen answer without it is a retained blob nothing
         // names and a digest the next call cannot resolve.
+        [[nodiscard]]
+        auto textCharactersValue(std::span<ocr::TextCharacter const> characters)
+            -> json::Value
+        {
+            auto values = std::vector<json::Value>{};
+            values.reserve(characters.size());
+            for (auto const& character : characters)
+            {
+                values.emplace_back(json::Value::ofObject({
+                    {"confidence",
+                     json::Value::ofNumber(
+                         static_cast<double>(character.confidenceBp) / 10'000.0
+                     )},
+                    {"text", json::Value::ofString(character.text)},
+                }));
+            }
+            return json::Value::ofArray(std::move(values));
+        }
+
         [[nodiscard]]
         auto confirmedToolResult(
             json::Value value,
@@ -939,7 +966,7 @@ namespace uf::service
             operator_runtime::ToolCallPositionIdentity const& call
         ) -> Result<operator_runtime::ToolCallCompletion>;
 
-        // The four measuring Tools. Each opens the immutable evidence artifact
+        // Each measuring Tool opens the immutable evidence artifact
         // its required screenshot_sha256 member names; none captures or consults
         // dispatcher position state.
 
@@ -971,6 +998,11 @@ namespace uf::service
 
         [[nodiscard]]
         auto answerCensusGridTool(
+            operator_runtime::ToolCallPositionIdentity const& call
+        ) -> Result<operator_runtime::ToolCallCompletion>;
+
+        [[nodiscard]]
+        auto answerMatchShapesTool(
             operator_runtime::ToolCallPositionIdentity const& call
         ) -> Result<operator_runtime::ToolCallCompletion>;
 
@@ -2076,6 +2108,7 @@ namespace uf::service
         for (auto const& line : lines)
         {
             rendered.emplace_back(json::Value::ofObject({
+                {"characters", textCharactersValue(line.characters)},
                 {"confidence",
                  json::Value::ofNumber(
                      static_cast<double>(line.confidenceBp) / 10'000.0
@@ -2094,6 +2127,95 @@ namespace uf::service
         }));
     }
 
+    auto ProductLifecycle::Impl::answerMatchShapesTool(
+        operator_runtime::ToolCallPositionIdentity const& call
+    ) -> Result<operator_runtime::ToolCallCompletion>
+    {
+        auto& context = activeContext();
+        UF_TRY(openScreenshot(call));
+        auto const close = scopeExit(
+            [&context]() noexcept
+            {
+                static_cast<void>(context.sweepOpenCycle());
+            }
+        );
+        UF_TRY_VALUE(
+            arguments,
+            operator_runtime::CanonicalJson::parseExact(call.canonicalArgs())
+        );
+        auto const& value = arguments.value();
+        UF_TRY_VALUE(rect, admittedRectangle(value));
+        auto const* const p_templates = value.find("templates");
+        UF_CHECK(p_templates != nullptr);
+        auto templates = std::vector<ShapeTemplate>{};
+        templates.reserve(p_templates->items().size());
+        for (auto const& source : p_templates->items())
+        {
+            UF_TRY_VALUE(identity, requiredStringArgument(source, "id"));
+            auto const width  = admittedPixel(source, "width");
+            auto const height = admittedPixel(source, "height");
+            auto const* const p_pixels = source.find("pixels");
+            UF_CHECK(p_pixels != nullptr);
+            if (p_pixels->items().size() != std::size_t{width} * height)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "shape template pixels must contain width times height Gray8 values"
+                );
+            }
+            auto pixels = std::vector<std::byte>{};
+            pixels.reserve(p_pixels->items().size());
+            for (auto const& pixel : p_pixels->items())
+            {
+                pixels.emplace_back(std::byte{static_cast<uint8>(pixel.number())});
+            }
+            templates.emplace_back(ShapeTemplate{
+                .image = GrayTemplateImage{
+                    .identity = std::move(identity),
+                    .width    = width,
+                    .height   = height,
+                    .pixels   = std::move(pixels),
+                    .mask     = {},
+                },
+                .minimumScore = admittedNumber(source, "minimum_score"),
+            });
+        }
+        auto const options = ShapeSearchOptions{
+            .maximumMatches    = admittedPixel(value, "maximum_matches"),
+            .suppressionRadius = admittedPixel(value, "suppression_radius"),
+        };
+        auto const ticket = context.openObservationFrame();
+        UF_CHECK(ticket.has_value());
+        UF_TRY_VALUE(report, context.cycleMatchShapes(*ticket, templates, rect, options));
+        if (report.completedPixelComparisons > uint64{9'007'199'254'740'991})
+        {
+            return fail(
+                AutomationErrorKind::RecognitionIncomplete,
+                "shape search comparison count exceeds the exact JSON integer range"
+            );
+        }
+        auto matches = std::vector<json::Value>{};
+        matches.reserve(report.matches.size());
+        for (auto const& match : report.matches)
+        {
+            matches.emplace_back(json::Value::ofObject({
+                {"height", json::Value::ofNumber(match.matchedRect.height())},
+                {"score", json::Value::ofNumber(match.score)},
+                {"template_id", json::Value::ofString(match.templateIdentity)},
+                {"width", json::Value::ofNumber(match.matchedRect.width())},
+                {"x", json::Value::ofNumber(match.matchedRect.x())},
+                {"y", json::Value::ofNumber(match.matchedRect.y())},
+            }));
+        }
+        return confirmedToolResult(json::Value::ofObject({
+            {"completed_pixel_comparisons",
+             json::Value::ofNumber(static_cast<double>(report.completedPixelComparisons))},
+            {"image_height", json::Value::ofNumber(report.imageHeight)},
+            {"image_width", json::Value::ofNumber(report.imageWidth)},
+            {"matches", json::Value::ofArray(std::move(matches))},
+        }));
+    }
+
     auto ProductLifecycle::Impl::answerReadSingleLineTool(
         operator_runtime::ToolCallPositionIdentity const& call
     ) -> Result<operator_runtime::ToolCallCompletion>
@@ -2109,10 +2231,8 @@ namespace uf::service
         );
 
         // At most one, by construction: nothing was located, so there is
-        // nothing for a second entry to be about. An empty list is a reader
-        // that looked and saw no text, and the answer says so rather than
-        // rendering an empty string that a caller could not tell apart from a
-        // reading with no characters in it.
+        // nothing for a second entry to be about. Empty decodes have already
+        // been omitted by cycleRead, so absence has one public representation.
         if (lines.empty())
         {
             return confirmedToolResult(json::Value::ofObject({
@@ -2121,6 +2241,7 @@ namespace uf::service
         }
         auto const& line = lines.front();
         return confirmedToolResult(json::Value::ofObject({
+            {"characters", textCharactersValue(line.characters)},
             {"confidence",
              json::Value::ofNumber(
                  static_cast<double>(line.confidenceBp) / 10'000.0
@@ -2955,65 +3076,53 @@ namespace uf::service
     ) -> Result<operator_runtime::ToolCallCompletion>
     {
         auto const& toolName = call.toolName();
-        if (toolName == k_captureTool)
+        using ArgumentAnswer = Result<operator_runtime::ToolCallCompletion> (Impl::*)(
+            operator_runtime::ToolCallPositionIdentity const&
+        );
+        struct ArgumentHandler final
         {
-            return answerCaptureTool(call);
+            std::string_view name{};
+            ArgumentAnswer   answer{};
+        };
+        auto constexpr argumentHandlers = std::array{
+            ArgumentHandler{k_captureTool, &Impl::answerCaptureTool},
+            ArgumentHandler{k_observeTool, &Impl::answerObserveTool},
+            ArgumentHandler{k_cropTool, &Impl::answerCropTool},
+            ArgumentHandler{k_readLinesTool, &Impl::answerReadLinesTool},
+            ArgumentHandler{k_readSingleLineTool, &Impl::answerReadSingleLineTool},
+            ArgumentHandler{k_probeTool, &Impl::answerProbeTool},
+            ArgumentHandler{k_censusGridTool, &Impl::answerCensusGridTool},
+            ArgumentHandler{k_matchShapesTool, &Impl::answerMatchShapesTool},
+            ArgumentHandler{k_projectReadTextTool, &Impl::answerProjectReadTextTool},
+            ArgumentHandler{k_projectWriteFileTool, &Impl::answerProjectWriteFileTool},
+            ArgumentHandler{k_projectWriteTextTool, &Impl::answerProjectWriteTextTool},
+            ArgumentHandler{k_sessionGetTool, &Impl::answerSessionGetTool},
+            ArgumentHandler{k_sessionSetTool, &Impl::answerSessionSetTool},
+        };
+        auto const argumentHandler = std::ranges::find(
+            argumentHandlers, toolName, &ArgumentHandler::name
+        );
+        if (argumentHandler != argumentHandlers.end())
+        {
+            return (this->*argumentHandler->answer)(call);
         }
-        if (toolName == k_observeTool)
+        using EmptyAnswer = Result<operator_runtime::ToolCallCompletion> (Impl::*)();
+        struct EmptyHandler final
         {
-            return answerObserveTool(call);
-        }
-        if (toolName == k_cropTool)
+            std::string_view name{};
+            EmptyAnswer      answer{};
+        };
+        auto constexpr emptyHandlers = std::array{
+            EmptyHandler{k_statusTool, &Impl::answerStatusTool},
+            EmptyHandler{k_nowTool, &Impl::answerNowTool},
+            EmptyHandler{k_sessionListTool, &Impl::answerSessionListTool},
+        };
+        auto const emptyHandler = std::ranges::find(
+            emptyHandlers, toolName, &EmptyHandler::name
+        );
+        if (emptyHandler != emptyHandlers.end())
         {
-            return answerCropTool(call);
-        }
-        if (toolName == k_statusTool)
-        {
-            return answerStatusTool();
-        }
-        if (toolName == k_nowTool)
-        {
-            return answerNowTool();
-        }
-        if (toolName == k_readLinesTool)
-        {
-            return answerReadLinesTool(call);
-        }
-        if (toolName == k_readSingleLineTool)
-        {
-            return answerReadSingleLineTool(call);
-        }
-        if (toolName == k_probeTool)
-        {
-            return answerProbeTool(call);
-        }
-        if (toolName == k_censusGridTool)
-        {
-            return answerCensusGridTool(call);
-        }
-        if (toolName == k_projectReadTextTool)
-        {
-            return answerProjectReadTextTool(call);
-        }
-        if (toolName == k_projectWriteFileTool)
-        {
-            return answerProjectWriteFileTool(call);
-        }
-        if (toolName == k_projectWriteTextTool)
-        {
-            return answerProjectWriteTextTool(call);
-        }
-        if (toolName == k_sessionGetTool)
-        {
-            return answerSessionGetTool(call);
-        }
-        if (toolName == k_sessionListTool)
-        {
-            return answerSessionListTool();
-        }
-        if (toolName == k_sessionSetTool)
-        {
-            return answerSessionSetTool(call);
+            return (this->*emptyHandler->answer)();
         }
         auto const raw = std::ranges::find(k_rawInputTools, toolName, &FrameworkInputTool::name);
         if (raw != k_rawInputTools.end())

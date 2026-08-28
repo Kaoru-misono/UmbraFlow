@@ -1308,7 +1308,7 @@ namespace uf::task
             auto index = 1;
             for (auto const& line : *reading)
             {
-                lua_createtable(state, 0, 3);
+                lua_createtable(state, 0, 4);
                 lua_pushlstring(state, line.text.data(), line.text.size());
                 lua_setfield(state, -2, "text");
                 lua_createtable(state, 4, 0);
@@ -1326,6 +1326,24 @@ namespace uf::task
                     static_cast<double>(line.confidenceBp) / 10'000.0
                 );
                 lua_setfield(state, -2, "confidence");
+                auto const characterCount = checkedCast<int>(line.characters.size());
+                UF_CHECK(characterCount.has_value());
+                lua_createtable(state, *characterCount, 0);
+                auto characterIndex = 1;
+                for (auto const& character : line.characters)
+                {
+                    lua_createtable(state, 0, 2);
+                    lua_pushlstring(state, character.text.data(), character.text.size());
+                    lua_setfield(state, -2, "text");
+                    lua_pushnumber(
+                        state,
+                        static_cast<double>(character.confidenceBp) / 10'000.0
+                    );
+                    lua_setfield(state, -2, "confidence");
+                    lua_rawseti(state, -2, characterIndex);
+                    ++characterIndex;
+                }
+                lua_setfield(state, -2, "characters");
                 lua_rawseti(state, -2, index);
                 ++index;
             }

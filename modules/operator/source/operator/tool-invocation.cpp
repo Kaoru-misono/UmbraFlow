@@ -64,6 +64,9 @@ namespace uf::operator_runtime
         constexpr auto k_cropTool = std::string_view{
             "framework.screen.crop"
         };
+        constexpr auto k_matchShapesTool = std::string_view{
+            "framework.screen.match_shapes"
+        };
         constexpr auto k_probeTool = std::string_view{
             "framework.screen.probe"
         };
@@ -1456,6 +1459,177 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
+        auto shapeIntegerSchema(
+            std::string_view description,
+            double minimum,
+            double maximum
+        ) -> json::Value
+        {
+            return json::Value::ofObject({
+                {"description", json::Value::ofString(std::string{description})},
+                {"maximum", json::Value::ofNumber(maximum)},
+                {"minimum", json::Value::ofNumber(minimum)},
+                {"type", json::Value::ofString("integer")},
+            });
+        }
+
+        [[nodiscard]]
+        auto matchShapesArgumentMaterial() -> json::Value
+        {
+            auto templateSchema = objectResult(
+                {
+                    {"height",
+                     shapeIntegerSchema("Template height in pixels.", 1.0, 64.0)},
+                    {"id",
+                     json::Value::ofObject({
+                         {"description",
+                          json::Value::ofString(
+                              "Caller-owned opaque identifier, unique within "
+                              "this templates array."
+                          )},
+                         {"maxLength", json::Value::ofNumber(128.0)},
+                         {"minLength", json::Value::ofNumber(1.0)},
+                         {"type", json::Value::ofString("string")},
+                     })},
+                    {"minimum_score",
+                     unitResult(
+                         "Inclusive minimum normalized grayscale correlation; "
+                         "this is a similarity score, not a probability."
+                     )},
+                    {"pixels",
+                     json::Value::ofObject({
+                         {"description",
+                          json::Value::ofString(
+                              "Opaque grayscale pixels in row-major order, "
+                              "exactly width times height entries. No alpha "
+                              "mask; constant templates are refused."
+                          )},
+                         {"items",
+                          shapeIntegerSchema("Grayscale intensity.", 0.0, 255.0)},
+                         {"maxItems", json::Value::ofNumber(4096.0)},
+                         {"minItems", json::Value::ofNumber(1.0)},
+                         {"type", json::Value::ofString("array")},
+                     })},
+                    {"width",
+                     shapeIntegerSchema("Template width in pixels.", 1.0, 64.0)},
+                },
+                {"height", "id", "minimum_score", "pixels", "width"}
+            );
+            return objectResult(
+                {
+                    {"height", memberSchema(argumentMember("height"))},
+                    {"maximum_matches",
+                     shapeIntegerSchema(
+                         "Maximum number of matches after cross-template "
+                         "suppression. Exceeding it refuses the whole search; "
+                         "results are never silently truncated.",
+                         1.0,
+                         512.0
+                     )},
+                    {std::string{k_screenshotSha256Member},
+                     memberSchema(argumentMember(k_screenshotSha256Member))},
+                    {"suppression_radius",
+                     shapeIntegerSchema(
+                         "Suppress weaker candidates within this Chebyshev "
+                         "distance (maximum axis difference) across all "
+                         "templates. Centers are x + floor(width/2), "
+                         "y + floor(height/2) in screenshot pixels. Zero "
+                         "suppresses only coincident centers.",
+                         0.0,
+                         64.0
+                     )},
+                    {"templates",
+                     json::Value::ofObject({
+                         {"description",
+                          json::Value::ofString(
+                              "Grayscale templates prepared by the caller at "
+                              "the desired sizes and angles. Duplicate ids "
+                              "and templates larger than the search region "
+                              "are refused."
+                          )},
+                         {"items", std::move(templateSchema)},
+                         {"maxItems", json::Value::ofNumber(64.0)},
+                         {"minItems", json::Value::ofNumber(1.0)},
+                         {"type", json::Value::ofString("array")},
+                     })},
+                    {"width", memberSchema(argumentMember("width"))},
+                    {"x", memberSchema(argumentMember("x"))},
+                    {"y", memberSchema(argumentMember("y"))},
+                },
+                {
+                    "height", "maximum_matches", k_screenshotSha256Member,
+                    "suppression_radius", "templates", "width", "x", "y",
+                }
+            );
+        }
+
+        [[nodiscard]]
+        auto matchShapesOutputMaterial() -> json::Value
+        {
+            return objectResult(
+                {
+                    {"completed_pixel_comparisons",
+                     shapeIntegerSchema(
+                         "Number of template-pixel comparisons completed by "
+                         "this search, represented exactly as a JSON integer.",
+                         0.0,
+                         9'007'199'254'740'991.0
+                     )},
+                    {"image_height",
+                     countResult("Height of the retained screenshot in pixels.")},
+                    {"image_width",
+                     countResult("Width of the retained screenshot in pixels.")},
+                    {"matches",
+                     json::Value::ofObject({
+                         {"description",
+                          json::Value::ofString(
+                              "Matches after cross-template suppression, "
+                              "strongest score first, then template id, y, x "
+                              "to break ties. Empty means the complete search "
+                              "found no match."
+                          )},
+                         {"items",
+                          objectResult(
+                              {
+                                  {"height", countResult("Matched height.")},
+                                  {"score",
+                                   json::Value::ofObject({
+                                       {"description",
+                                        json::Value::ofString(
+                                            "Normalized grayscale correlation, "
+                                            "not a probability."
+                                        )},
+                                       {"maximum", json::Value::ofNumber(1.0)},
+                                       {"minimum", json::Value::ofNumber(-1.0)},
+                                       {"type", json::Value::ofString("number")},
+                                   })},
+                                  {"template_id",
+                                   typedResult(
+                                       "string", "The matched template's id."
+                                   )},
+                                  {"width", countResult("Matched width.")},
+                                  {"x",
+                                   countResult(
+                                       "Left edge in screenshot pixels, not "
+                                       "relative to the search rectangle."
+                                   )},
+                                  {"y",
+                                   countResult(
+                                       "Top edge in screenshot pixels, not "
+                                       "relative to the search rectangle."
+                                   )},
+                              },
+                              {"height", "score", "template_id", "width", "x", "y"}
+                          )},
+                         {"maxItems", json::Value::ofNumber(512.0)},
+                         {"type", json::Value::ofString("array")},
+                     })},
+                },
+                {"completed_pixel_comparisons", "image_height", "image_width", "matches"}
+            );
+        }
+
+        [[nodiscard]]
         auto auditOutputMaterial() -> json::Value
         {
             return objectResult(
@@ -1746,6 +1920,58 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
+        auto textCharactersResult() -> json::Value
+        {
+            return json::Value::ofObject({
+                {"description",
+                 json::Value::ofString(
+                     "Characters in emitted text order, each with its own "
+                     "decoder confidence from 0 to 1, not the line average. "
+                     "Their text concatenates to the line text; no character "
+                     "boxes are inferred."
+                 )},
+                {"items",
+                 objectResult(
+                     {
+                         {"confidence",
+                          unitResult("Decoder confidence for this character.")},
+                         {"text",
+                          typedResult("string", "The emitted character's UTF-8 text.")},
+                     },
+                     {"confidence", "text"}
+                 )},
+                {"type", json::Value::ofString("array")},
+            });
+        }
+
+        [[nodiscard]]
+        auto recognizedTextResult() -> json::Value
+        {
+            return json::Value::ofObject({
+                {"description", json::Value::ofString(
+                    "Nonempty recognised text, preserved without trimming. "
+                    "Empty decodes are omitted."
+                )},
+                {"minLength", json::Value::ofNumber(1.0)},
+                {"type", json::Value::ofString("string")},
+            });
+        }
+
+        [[nodiscard]]
+        auto textFoundResult(bool found) -> json::Value
+        {
+            return json::Value::ofObject({
+                {"const", json::Value::ofBoolean(found)},
+                {"description",
+                 json::Value::ofString(
+                     "Whether the reader produced a reading. A false answer "
+                     "carries no text, confidence or characters."
+                 )},
+                {"type", json::Value::ofString("boolean")},
+            });
+        }
+
+        [[nodiscard]]
         auto readLinesOutputMaterial() -> json::Value
         {
             return objectResult(
@@ -1760,6 +1986,7 @@ namespace uf::operator_runtime
                          {"items",
                           objectResult(
                               {
+                                  {"characters", textCharactersResult()},
                                   {"confidence",
                                    unitResult(
                                        "How confident the reader is in this "
@@ -1770,11 +1997,7 @@ namespace uf::operator_runtime
                                        "Height of the line's box, in "
                                        "screenshot pixels."
                                    )},
-                                  {"text",
-                                   typedResult(
-                                       "string",
-                                       "The text of this line."
-                                   )},
+                                  {"text", recognizedTextResult()},
                                   {"width",
                                    countResult(
                                        "Width of the line's box, in screenshot "
@@ -1792,6 +2015,7 @@ namespace uf::operator_runtime
                                    )},
                               },
                               {
+                                  "characters",
                                   "confidence",
                                   "height",
                                   "text",
@@ -1812,13 +2036,14 @@ namespace uf::operator_runtime
         // the caller drew; echoing the question as an answer would read as a
         // measurement and be none. text_found follows framework.session.get's
         // `present`: a reader that looked and saw nothing is an answer, not a
-        // failure, and the two members it would otherwise have to invent for
+        // failure, and the reading members it would otherwise have to invent for
         // that case are absent instead.
         [[nodiscard]]
         auto readSingleLineOutputMaterial() -> json::Value
         {
-            return objectResult(
+            auto found = objectResult(
                 {
+                    {"characters", textCharactersResult()},
                     {"confidence",
                      unitResult(
                          "How confident the reader is in the text it produced, "
@@ -1827,25 +2052,22 @@ namespace uf::operator_runtime
                          "that the rectangle held one line, so a rectangle "
                          "holding several can score well here."
                      )},
-                    {"text",
-                     typedResult(
-                         "string",
-                         "What the reader made of the rectangle, exactly as it "
-                         "produced it and with no trimming. Present only when "
-                         "text_found is true, and may be empty when the reader "
-                         "produced a reading with no characters in it."
-                     )},
-                    {"text_found",
-                     typedResult(
-                         "boolean",
-                         "Whether the reader produced a reading at all. False "
-                         "means it looked and found no text, which is an "
-                         "answer rather than a failure; text and confidence "
-                         "are then absent."
-                     )},
+                    {"text", recognizedTextResult()},
+                    {"text_found", textFoundResult(true)},
                 },
-                {"text_found"}
+                {"characters", "confidence", "text", "text_found"}
             );
+            return json::Value::ofObject({
+                {"oneOf",
+                 json::Value::ofArray({
+                     std::move(found),
+                     objectResult(
+                         {{"text_found", textFoundResult(false)}},
+                         {"text_found"}
+                     ),
+                 })},
+                {"type", json::Value::ofString("object")},
+            });
         }
 
         [[nodiscard]]
@@ -2486,6 +2708,27 @@ namespace uf::operator_runtime
                 &evidenceReceiptOutputMaterial,
             },
             FrameworkToolDefinition{
+                k_matchShapesTool,
+                "Find caller-supplied grayscale shapes inside one rectangle "
+                "of a retained screenshot using normalized cross-correlation. "
+                "No colour gate, OCR, semantic classification, automatic "
+                "scaling or rotation is applied; prepare each desired size "
+                "and angle as its own template with a unique id. All templates "
+                "measure the same immutable screenshot. A confirmed result "
+                "carries matches with template_id, absolute screenshot x and "
+                "y, width, height and score, plus completed_pixel_comparisons "
+                "and the full screenshot dimensions image_width and "
+                "image_height. "
+                "A complete search with no matches answers an empty array. "
+                "Invalid templates, exhausted work budget, timeout, cancellation "
+                "or more than maximum_matches surviving suppression refuses "
+                "the call instead of returning partial results. Nothing is "
+                "captured, written or clicked.",
+                &measuringDescriptor,
+                &matchShapesArgumentMaterial,
+                &matchShapesOutputMaterial,
+            },
+            FrameworkToolDefinition{
                 k_observeTool,
                 "Resolve one retained screenshot into the project's own "
                 "vocabulary: the surfaces, ui_targets, bindings and action "
@@ -2522,7 +2765,10 @@ namespace uf::operator_runtime
                 "Read the text inside one rectangle of a retained screenshot "
                 "with OCR. A confirmed result carries lines, one entry per "
                 "recognised line, each with its text, its x, y, width and "
-                "height in screenshot pixels, and a confidence from 0 to 1. "
+                "height in screenshot pixels, a confidence from 0 to 1, and "
+                "characters in text order, each with text and its own decoder "
+                "confidence from 0 to 1. Character confidence is not copied "
+                "from the line average and no character boxes are inferred. "
                 "Nothing is captured and nothing is written: the rectangle is "
                 "measured on the screenshot the caller named.",
                 &measuringDescriptor,
@@ -2543,7 +2789,8 @@ namespace uf::operator_runtime
                 "you measured. Use framework.screen.read_lines instead for a "
                 "region nobody can draw a rectangle inside. A confirmed result "
                 "carries text_found, and -- when that is true -- text and "
-                "confidence; a reader that looked and saw nothing answers "
+                "confidence and characters with individual text and decoder "
+                "confidence from 0 to 1; a reader that looked and saw nothing answers "
                 "text_found false rather than failing. A rectangle too large "
                 "for one recognition pass is refused by name, and that ceiling "
                 "is on cost alone: it is not a check that the rectangle holds "

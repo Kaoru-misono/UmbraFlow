@@ -452,7 +452,7 @@ namespace uf::operator_runtime
         CHECK(*crossed == ObservationRefusal::Unminted);
     }
 
-    TEST_CASE("The Framework Tool Catalog declares twenty-nine built-in Tools")
+    TEST_CASE("The Framework Tool Catalog declares its built-in Tools")
     {
         auto catalog = FrameworkToolCatalogOwner::create();
         REQUIRE(catalog.has_value());
@@ -542,6 +542,12 @@ namespace uf::operator_runtime
             },
             CatalogExpectation{
                 "framework.screen.crop",
+                ToolMutability::ReadOnly,
+                ToolSurface::Privileged,
+                ToolIdempotency::ReadSafe,
+            },
+            CatalogExpectation{
+                "framework.screen.match_shapes",
                 ToolMutability::ReadOnly,
                 ToolSurface::Privileged,
                 ToolIdempotency::ReadSafe,
@@ -757,7 +763,7 @@ namespace uf::operator_runtime
         // hash compared against itself pins nothing.
         CHECK(
             catalog->toolCatalogHash().hex()
-            == "abdaf0c2009a45ac5837d1a2d745d0c3df3df590358400e4f54cd62d50635650"
+            == "2cb77bbbf1658e143fe6b7372863089da9cc33f48e4cd4062047d6c71b4fbfac"
         );
 
         auto material = CanonicalJson::parseExact(catalog->canonicalJcs());
@@ -872,6 +878,64 @@ namespace uf::operator_runtime
             return *found;
         };
 
+        struct ReadingCase final
+        {
+            std::string_view tool{};
+            std::string_view result{};
+            bool             admitted{};
+        };
+        constexpr auto k_readings = std::array{
+            ReadingCase{
+                "framework.screen.read_lines",
+                R"({"lines":[{"characters":[{"confidence":0.75,"text":"x"}],"confidence":0.75,"height":1,"text":"x","width":1,"x":0,"y":0}]})",
+                true,
+            },
+            ReadingCase{
+                "framework.screen.read_lines",
+                R"({"lines":[{"confidence":0.75,"height":1,"text":"x","width":1,"x":0,"y":0}]})",
+                false,
+            },
+            ReadingCase{
+                "framework.screen.read_lines",
+                R"({"lines":[{"characters":[{"confidence":1.1,"text":"x"}],"confidence":0.75,"height":1,"text":"x","width":1,"x":0,"y":0}]})",
+                false,
+            },
+            ReadingCase{
+                "framework.screen.read_single_line",
+                R"({"characters":[{"confidence":0.75,"text":"x"}],"confidence":0.75,"text":"x","text_found":true})",
+                true,
+            },
+            ReadingCase{
+                "framework.screen.read_single_line",
+                R"({"confidence":0.75,"text":"x","text_found":true})",
+                false,
+            },
+            ReadingCase{
+                "framework.screen.read_single_line",
+                R"({"text_found":false})",
+                true,
+            },
+            ReadingCase{
+                "framework.screen.read_single_line",
+                R"({"characters":[],"text_found":false})",
+                false,
+            },
+        };
+        for (auto const& reading : k_readings)
+        {
+            CAPTURE(reading.tool);
+            CAPTURE(reading.result);
+            auto const& entry = named(reading.tool);
+            auto output = json::Schema::compile(json::Schema::Document{
+                .label      = reading.tool,
+                .exactBytes = json::canonicalBytes(entry.outputSchema),
+            });
+            REQUIRE(output.has_value());
+            auto value = json::parse(reading.result);
+            REQUIRE(value.has_value());
+            CHECK(output->validate(*value).has_value() == reading.admitted);
+        }
+
         // THE WAIT CEILING IS IN ONE PLACE, AND IT IS THE STANDARD ONE. It
         // used to sit under an invented top-level keyword that no schema
         // evaluator and no model reading the catalog could find.
@@ -919,6 +983,70 @@ namespace uf::operator_runtime
         auto const material = json::parse(catalog->canonicalJcs());
         REQUIRE(material.has_value());
         CHECK(material->find("answer_envelope") != nullptr);
+    }
+
+    TEST_CASE("Shape matching arguments are closed and bound caller pixel data")
+    {
+        auto catalog = FrameworkToolCatalogOwner::create();
+        REQUIRE(catalog.has_value());
+        auto const valid = std::string{
+            R"({"height":20,"maximum_matches":32,"screenshot_sha256":"0000000000000000000000000000000000000000000000000000000000000000","suppression_radius":10,"templates":[{"height":2,"id":"shape","minimum_score":0.65,"pixels":[0,255,255,0],"width":2}],"width":30,"x":1,"y":2})"
+        };
+        struct ReplacementCase final
+        {
+            std::string_view before{};
+            std::string_view after{};
+            bool             admitted{};
+        };
+        constexpr auto k_cases = std::array{
+            ReplacementCase{"", "", true},
+            ReplacementCase{"\"maximum_matches\":32", "\"maximum_matches\":512", true},
+            ReplacementCase{"\"suppression_radius\":10", "\"suppression_radius\":0", true},
+            ReplacementCase{"\"minimum_score\":0.65", "\"minimum_score\":1", true},
+            ReplacementCase{"\"maximum_matches\":32", "\"maximum_matches\":0", false},
+            ReplacementCase{"\"maximum_matches\":32", "\"maximum_matches\":513", false},
+            ReplacementCase{"\"suppression_radius\":10", "\"suppression_radius\":-1", false},
+            ReplacementCase{"\"suppression_radius\":10", "\"suppression_radius\":65", false},
+            ReplacementCase{"\"id\":\"shape\"", "\"id\":\"\"", false},
+            ReplacementCase{"\"width\":2", "\"width\":0", false},
+            ReplacementCase{"\"width\":2", "\"width\":65", false},
+            ReplacementCase{"\"height\":2,", "\"height\":1.5,", false},
+            ReplacementCase{"\"minimum_score\":0.65", "\"minimum_score\":-0.1", false},
+            ReplacementCase{"\"minimum_score\":0.65", "\"minimum_score\":1.1", false},
+            ReplacementCase{
+                R"({"height":2,"id":"shape","minimum_score":0.65,"pixels":[0,255,255,0],"width":2})",
+                "",
+                false,
+            },
+            ReplacementCase{"[0,255,255,0]", "[]", false},
+            ReplacementCase{"[0,255,255,0]", "[0,256,255,0]", false},
+            ReplacementCase{"[0,255,255,0]", "[0,0.5,255,0]", false},
+            ReplacementCase{"[0,255,255,0]", "[0,-1,255,0]", false},
+            ReplacementCase{"\"height\":2,", "\"colour\":\"red\",\"height\":2,", false},
+            ReplacementCase{"\"height\":20,", "\"height\":20,\"layout\":\"block\",", false},
+            ReplacementCase{"\"maximum_matches\":32,", "", false},
+        };
+        for (auto const& replacement : k_cases)
+        {
+            CAPTURE(replacement.before);
+            CAPTURE(replacement.after);
+            auto bytes    = valid;
+            auto position = bytes.find(replacement.before);
+            REQUIRE(position != std::string::npos);
+            bytes.replace(position, replacement.before.size(), replacement.after);
+            auto value = json::parse(bytes);
+            REQUIRE(value.has_value());
+            auto canonical = CanonicalJson::parseExact(json::canonicalBytes(*value));
+            REQUIRE(canonical.has_value());
+            auto invocation = catalog->validate(
+                "framework.screen.match_shapes", std::move(*canonical)
+            );
+            CHECK(invocation.has_value() == replacement.admitted);
+            if (invocation)
+            {
+                CHECK_FALSE(proposedToolMutation(*invocation, "target").has_value());
+            }
+        }
     }
 
     TEST_CASE("Framework Tool arguments are exact and bounded")

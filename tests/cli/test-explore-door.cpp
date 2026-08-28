@@ -42,6 +42,7 @@
 
 #include <json/value.hpp>
 
+#include <image/pixels.hpp>
 #include <image/png.hpp>
 
 #include <ocr/engine.hpp>
@@ -117,6 +118,9 @@ namespace uf::cli
         };
         constexpr auto k_readSingleLineTool = std::string_view{
             "framework.screen.read_single_line"
+        };
+        constexpr auto k_matchShapesTool = std::string_view{
+            "framework.screen.match_shapes"
         };
         constexpr auto k_probeTool = std::string_view{
             "framework.screen.probe"
@@ -477,10 +481,8 @@ namespace uf::cli
             auto read(BgraImage const&, ocr::ReadSpec const& spec)
                 -> Result<ocr::Readout> override
             {
-                // One column of the fixture frame holds no ink, and a reader
-                // asked about it answers with no lines at all. That is a
-                // different answer from a line whose text is empty, and the
-                // reading Tools have to keep the two apart.
+                // Empty decodes exercise the public absence contract even
+                // when the native adapter returned a detected box.
                 auto const blank = spec.rect.has_value()
                     && spec.rect->width() == 1U;
                 if (spec.layout == ocr::TextLayout::SingleLine)
@@ -488,7 +490,10 @@ namespace uf::cli
                     m_layouts->emplace_back("single_line");
                     if (blank)
                     {
-                        return ocr::Readout{};
+                        return ocr::Readout{.lines = {ocr::TextLine{
+                            .text   = "",
+                            .bounds = pixelRectOf(0U, 0U, 1U, 1U),
+                        }}};
                     }
                     auto readout = ocr::Readout{};
                     readout.lines.emplace_back(
@@ -496,12 +501,19 @@ namespace uf::cli
                             .text   = "3fire1B",
                             .bounds = pixelRectOf(0U, 0U, 1U, 1U),
                             .confidenceBp = 9'400U,
+                            .characters = {
+                                {"3", 9'800}, {"f", 9'000}, {"i", 9'200},
+                                {"r", 9'500}, {"e", 9'600}, {"1", 9'300}, {"B", 9'400},
+                            },
                         }
                     );
                     return readout;
                 }
                 m_layouts->emplace_back("block");
-                auto readout = ocr::Readout{};
+                auto readout = ocr::Readout{.lines = {ocr::TextLine{
+                    .text   = "",
+                    .bounds = pixelRectOf(0U, 0U, 1U, 1U),
+                }}};
                 if (blank)
                 {
                     return readout;
@@ -511,6 +523,7 @@ namespace uf::cli
                         .text   = "3",
                         .bounds = pixelRectOf(0U, 0U, 1U, 1U),
                         .confidenceBp = 9'800U,
+                        .characters = {{"3", 9'800}},
                     }
                 );
                 readout.lines.emplace_back(
@@ -518,6 +531,9 @@ namespace uf::cli
                         .text   = "fire",
                         .bounds = pixelRectOf(1U, 0U, 1U, 1U),
                         .confidenceBp = 9'700U,
+                        .characters = {
+                            {"f", 9'500}, {"i", 9'700}, {"r", 9'800}, {"e", 9'800},
+                        },
                     }
                 );
                 readout.lines.emplace_back(
@@ -525,6 +541,7 @@ namespace uf::cli
                         .text   = "1B",
                         .bounds = pixelRectOf(2U, 0U, 1U, 1U),
                         .confidenceBp = 9'600U,
+                        .characters = {{"1", 9'700}, {"B", 9'500}},
                     }
                 );
                 return readout;
@@ -793,6 +810,7 @@ namespace uf::cli
                             std::string{k_deliverInputTool},
                             std::string{k_holdInputTool},
                             std::string{k_cropTool},
+                            std::string{k_matchShapesTool},
                             std::string{k_probeTool},
                             std::string{k_projectWriteFileTool},
                             std::string{k_readLinesTool},
@@ -1291,6 +1309,31 @@ namespace uf::cli
             refused.error().message()
         );
 
+        auto const shapeRefused = (*session)->evaluate(
+            R"lua(
+                local screen = require("@umbraflow/screen")
+                local shot = screen.capture{}.screenshot_sha256
+                return screen.match_shapes{
+                    screenshot_sha256 = shot,
+                    x = 0, y = 0, width = 3, height = 1,
+                    templates = {{
+                        id = "shape", width = 2, height = 1,
+                        pixels = {5, 0}, minimum_score = 0.9,
+                    }},
+                    maximum_matches = 8, suppression_radius = 0,
+                }
+            )lua",
+            "shape-matching-under-deny-all"
+        );
+        REQUIRE_FALSE(shapeRefused.has_value());
+        CHECK_MESSAGE(
+            std::string_view{shapeRefused.error().message()}.contains(
+                "Operator policy grants no Privileged surface to tool "
+                "framework.screen.match_shapes"
+            ),
+            shapeRefused.error().message()
+        );
+
         // Read-only screen observation carries no effect bounds, so deny-all
         // admits it. This is the half that would be lost if annotation answered
         // deny-all by refusing the session outright.
@@ -1602,6 +1645,143 @@ namespace uf::cli
             oneScreenshot,
             "two measurements passed the same hash measure one screenshot"
         );
+    }
+
+    TEST_CASE("Luau shape matching measures only its retained screenshot rectangle")
+    {
+        auto const world     = ExploreDoorWorld{};
+        auto const delivered = std::make_shared<uint32>();
+        auto const captures  = std::make_shared<uint32>();
+        static_cast<void>(world.authorizeAnnotation());
+        auto const decoded = image::decodePng(world.probePng(), "shape-fixture.png");
+        REQUIRE(decoded.has_value());
+        auto const grayAt = [&decoded](std::size_t pixel)
+        {
+            auto const offset = pixel * 4U;
+            return image::rgb8ToGray8(
+                std::to_integer<uint8>(decoded->pixels.at(offset)),
+                std::to_integer<uint8>(decoded->pixels.at(offset + 1U)),
+                std::to_integer<uint8>(decoded->pixels.at(offset + 2U))
+            );
+        };
+        REQUIRE(grayAt(1U) > grayAt(2U));
+        auto chunk = (
+            std::string{R"lua(
+                local screen = require("@umbraflow/screen")
+                local shot = screen.capture{}.screenshot_sha256
+                local args = {
+                    screenshot_sha256 = shot,
+                    x = 1, y = 0, width = 2, height = 1,
+                    templates = {{
+                        id = "shape", width = 2, height = 1,
+                        minimum_score = 0.99, pixels = {
+            )lua"}
+            + std::to_string(grayAt(1U)) + "," + std::to_string(grayAt(2U))
+            + R"lua(
+                        },
+                    }},
+                    maximum_matches = 8, suppression_radius = 0,
+                }
+            )lua"
+        );
+        auto expectedRefusal = std::string{};
+        SUBCASE("a matching shape outside the rectangle is excluded")
+        {
+            chunk += R"lua(
+                local result = screen.match_shapes(args)
+                assert(result.image_width == 3 and result.image_height == 1)
+                assert(#result.matches == 1)
+                local found = result.matches[1]
+                assert(found.template_id == "shape")
+                assert(found.x == 1 and found.y == 0)
+                assert(found.width == 2 and found.height == 1)
+                assert(found.score > 0.999)
+                assert(result.completed_pixel_comparisons == 2)
+                args.templates[1].pixels = {0, 255}
+                local absent = screen.match_shapes(args)
+                assert(#absent.matches == 0)
+                return true
+            )lua";
+        }
+        SUBCASE("the pixel array must fill the declared template")
+        {
+            chunk += R"lua(
+                args.templates[1].pixels = {0}
+                return screen.match_shapes(args)
+            )lua";
+            expectedRefusal = "shape template pixels must contain width times height";
+        }
+        SUBCASE("template ids must be unique")
+        {
+            chunk += R"lua(
+                args.templates[2] = table.clone(args.templates[1])
+                return screen.match_shapes(args)
+            )lua";
+            expectedRefusal = "shape template identities must be unique";
+        }
+        SUBCASE("constant templates are not shape evidence")
+        {
+            chunk += R"lua(
+                args.templates[1].pixels = {5, 5}
+                return screen.match_shapes(args)
+            )lua";
+            expectedRefusal = "constant shape template has no normalized correlation";
+        }
+        SUBCASE("the match ceiling refuses instead of truncating")
+        {
+            chunk += R"lua(
+                args.x, args.width = 0, 3
+                args.maximum_matches = 1
+                return screen.match_shapes(args)
+            )lua";
+            expectedRefusal = "shape search match bound exceeded";
+        }
+
+        auto const scope = operator_runtime::ObservedInstanceWorldScope::run(
+            "window-0", 1
+        );
+        REQUIRE(scope.has_value());
+        auto lifecycle = service::ProductLifecycle::start(
+            service::ProductStart{
+                .projectDirectory          = world.project(),
+                .runtimeDirectory          = world.runtime(),
+                .authenticatedControllerId = "umbra-flow-explore",
+                .controllerCapabilities    = {},
+                .controlledTargetId        = "window-0",
+                .kind                      = operator_runtime::ControllerKind::Human,
+                .agentProfileJcs = std::string{
+                    operator_runtime::k_unboundedAgentProfileJcs
+                },
+                .worldScope = *scope,
+            }
+        );
+        REQUIRE(lifecycle.has_value());
+        auto session = lifecycle->startExplorationSession(
+            world.sequencePorts(delivered, "shape-matching-trace.jsonl", captures),
+            std::stop_token{}
+        );
+        REQUIRE(session.has_value());
+        auto const measured = (*session)->evaluate(chunk, "retained-shape-matching");
+        if (expectedRefusal.empty())
+        {
+            auto const why = measured.has_value()
+                ? std::string{}
+                : std::string{measured.error().message()};
+            REQUIRE_MESSAGE(measured.has_value(), why);
+            CHECK(measured->boolean() == std::optional<bool>{true});
+        }
+        else
+        {
+            REQUIRE_FALSE(measured.has_value());
+            CHECK_MESSAGE(
+                std::string_view{measured.error().message()}.contains(expectedRefusal),
+                measured.error().message()
+            );
+        }
+        CHECK(*captures == 1U);
+        CHECK(*delivered == 0U);
+        session->reset();
+        CHECK(lifecycle->shutdown().has_value());
     }
 
     TEST_CASE("a measurement against a screenshot hash measures that screenshot")
@@ -2768,6 +2948,19 @@ namespace uf::cli
                 }
                 local block = screen.read_lines(stacked)
                 local one   = screen.read_single_line(stacked)
+                assert(#block.lines[2].characters == 4)
+                assert(block.lines[2].characters[1].text == "f")
+                assert(block.lines[2].characters[1].confidence == 0.95)
+                assert(block.lines[2].characters[4].confidence == 0.98)
+                assert(#one.characters == 7)
+                assert(one.characters[2].text == "f")
+                assert(one.characters[2].confidence == 0.9)
+                assert(one.characters[7].text == "B")
+                local joined = ""
+                for _, character in one.characters do
+                    joined ..= character.text
+                end
+                assert(joined == one.text)
                 assert(one.text_found, "the reader produced a reading")
                 -- A garbled run is not a low-scoring one. The whole reason the
                 -- declaration has to carry the warning is that confidence
@@ -2778,8 +2971,7 @@ namespace uf::cli
                     one.confidence > 0.9,
                     "the single run carries a high confidence"
                 )
-                -- Looked, and saw nothing. An answer, not a failure, and told
-                -- apart from a reading that came back with no characters in it.
+                -- A detected box with an empty decode is also no text.
                 local blank = screen.read_single_line{
                     screenshot_sha256 = shot,
                     x = 0, y = 0, width = 1, height = 1,
@@ -2789,9 +2981,18 @@ namespace uf::cli
                     "a reader that saw nothing answers text_found false"
                 )
                 assert(
-                    blank.text == nil and blank.confidence == nil,
-                    "and states neither text nor confidence"
+                    blank.text == nil and blank.confidence == nil
+                        and blank.characters == nil,
+                    "and states no text, confidence or characters"
                 )
+                local emptyBlock = screen.read_lines{
+                    screenshot_sha256 = shot,
+                    x = 0, y = 0, width = 1, height = 1,
+                }
+                assert(#emptyBlock.lines == 0, "empty decoded boxes are omitted")
+                for _, line in block.lines do
+                    assert(line.text ~= "", "block outputs contain text")
+                end
                 return #block.lines .. "|" .. one.text
             )lua",
             "read-single-line"
@@ -2810,6 +3011,7 @@ namespace uf::cli
             "block",
             "single_line",
             "single_line",
+            "block",
         };
         CHECK_MESSAGE(
             *layouts == expectedLayouts,
