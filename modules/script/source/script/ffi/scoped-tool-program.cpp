@@ -54,6 +54,45 @@
 
 namespace uf::script
 {
+    class ProjectToolBudget::State final
+    {
+    public:
+        MemoryQuota                   quota{.limitBytes = PureDataProgram::k_memoryQuotaBytes};
+        uint64                        calls{};
+        std::vector<MonotonicInstant> deadlines{};
+    };
+
+    ProjectToolBudget::ProjectToolBudget(MonotonicInstant::Duration maximumRuntime)
+        : m_state{std::make_unique<State>()}
+    {
+        auto const now = MonotonicInstant::now();
+        m_state->deadlines.push_back(
+            maximumRuntime <= MonotonicInstant::Duration::zero()
+                ? now
+                : now.checkedAdd(maximumRuntime).value_or(k_maximumInstant)
+        );
+    }
+
+    ProjectToolBudget::~ProjectToolBudget() = default;
+
+    auto ProjectToolBudget::deadline() const noexcept -> MonotonicInstant
+    {
+        return m_state->deadlines.back();
+    }
+
+    auto ProjectToolBudget::chargeToolCall() -> Status
+    {
+        if (m_state->calls == ScopedToolProgram::k_maximumProjectToolCalls)
+        {
+            return detail::refuse(
+                "one outer Project Tool invocation exceeded its fixed "
+                "descendant Tool call ceiling"
+            );
+        }
+        ++m_state->calls;
+        return ok();
+    }
+
     namespace
     {
         // The two static scoped modules, each spelled once and referred to by
@@ -344,7 +383,7 @@ namespace uf::script
         }
 
         // The run context the ONE VM primitive borrows. Registered handlers
-        // refuse every Tool name; interactive chunks reach their root caller.
+        // reach their child issuing door; interactive chunks reach their root.
         class ScopedVmRun
         {
         public:
@@ -366,25 +405,39 @@ namespace uf::script
             ) -> Result<json::Value> = 0;
         };
 
-        // One registered Project Tool leaf run. The VM is declared last so it
+        // One registered Project Tool run. The VM is declared last so it
         // dies before every object its native closure can reach.
         class ScopedToolRun final : public ScopedVmRun
         {
-            ContentHash m_budgetPosition;
-            std::string m_budgetOwner;
-            uint64      m_maximumElapsedMillis;
+            ContentHash                        m_budgetPosition;
+            std::string                        m_budgetOwner;
+            uint64                             m_maximumElapsedMillis;
+            std::shared_ptr<ProjectToolBudget> m_budget;
+
+            // Borrowed only by invoke()'s stack-local run; its caller owns the
+            // callback until the run and its VM are destroyed.
+            ToolRuntimeInvoke& m_invokeTool;
 
             detail::QuotaBoundVm m_vm;
 
         public:
             ScopedToolRun(
                 ScopedRunRequest const& request,
-                MonotonicInstant::Duration runtimeCeiling
+                MonotonicInstant::Duration runtimeCeiling,
+                MemoryQuota& sharedQuota,
+                ToolRuntimeInvoke& invokeTool
             )
                 : m_budgetPosition{request.callIdentity}
                 , m_budgetOwner{request.budgetOwner}
                 , m_maximumElapsedMillis{request.maximumElapsedMillis}
-                , m_vm{runtimeCeiling, request.cancellation}
+                , m_budget{request.budget}
+                , m_invokeTool{invokeTool}
+                , m_vm{
+                      runtimeCeiling,
+                      request.cancellation,
+                      sharedQuota,
+                      request.budget->deadline(),
+                  }
             {
             }
 
@@ -398,13 +451,41 @@ namespace uf::script
             [[nodiscard]]
             auto callTool(
                 std::string_view toolName,
-                json::Value const&
+                json::Value const& arguments
             ) -> Result<json::Value> override
             {
-                return detail::refuse(
-                    "Project Tool handler " + m_budgetOwner
-                    + " may not issue Tool call " + std::string{toolName}
-                );
+                UF_TRY(checkBudget());
+                UF_TRY(m_budget->chargeToolCall());
+                auto result = m_invokeTool(toolName, arguments);
+                UF_TRY(checkBudget());
+                return result;
+            }
+
+            [[nodiscard]] auto checkBudget() -> Status
+            {
+                if (m_vm.control().cancellation.stop_requested())
+                {
+                    return fail(
+                        AutomationErrorKind::Cancelled,
+                        "Project Tool " + m_budgetOwner + " was cancelled"
+                    );
+                }
+                if (MonotonicInstant::now() >= m_budget->deadline())
+                {
+                    return fail(
+                        AutomationErrorKind::Cancelled,
+                        "Project Tool " + m_budgetOwner
+                            + " exceeded its shared ancestor elapsed deadline"
+                    );
+                }
+                if (m_vm.memoryCeilingRefused())
+                {
+                    return detail::refuse(
+                        "Project Tool " + m_budgetOwner
+                            + " exhausted its shared Luau memory ceiling"
+                    );
+                }
+                return ok();
             }
 
             [[nodiscard]] auto budgetOwner() const -> std::string_view
@@ -937,7 +1018,8 @@ namespace uf::script
     auto ScopedToolProgram::invoke(
         std::string_view entryPoint,
         json::Value const& immutableInput,
-        ScopedRunRequest const& request
+        ScopedRunRequest const& request,
+        ToolRuntimeInvoke& invokeTool
     ) const -> Result<json::Value>
     {
         if (!std::ranges::binary_search(m_state->closure.entryPoints, entryPoint))
@@ -949,10 +1031,18 @@ namespace uf::script
         {
             return detail::refuse("a scoped run must name its outer budget owner");
         }
+        if (!request.budget || !invokeTool)
+        {
+            return detail::refuse(
+                "a scoped run requires its shared Project budget and child issuing door"
+            );
+        }
+        auto const representable = std::chrono::duration_cast<std::chrono::milliseconds>(
+            MonotonicInstant::Duration::max()
+        );
         if (
             request.maximumElapsedMillis == 0U
-            || request.maximumElapsedMillis
-                > static_cast<uint64>(std::numeric_limits<int64>::max())
+            || std::cmp_greater(request.maximumElapsedMillis, representable.count())
         )
         {
             return detail::refuse(
@@ -961,17 +1051,41 @@ namespace uf::script
             );
         }
 
+        // The initial deadline belongs to the budget itself. Every additional
+        // entry is one active handler; reject before constructing another VM.
+        if (request.budget->m_state->deadlines.size() > k_maximumProjectToolDepth)
+        {
+            return detail::refuse("Project Tool call depth exceeds 16 active handlers");
+        }
         auto const runtimeCeiling = std::chrono::milliseconds{
             static_cast<int64>(request.maximumElapsedMillis)
         };
-        auto run = ScopedToolRun{request, runtimeCeiling};
-        return detail::invokeClosure(
+        auto const localDeadline = (
+            MonotonicInstant::now().checkedAdd(runtimeCeiling)
+                .value_or(k_maximumInstant)
+        );
+        request.budget->m_state->deadlines.push_back(
+            std::min(localDeadline, request.budget->deadline())
+        );
+        auto restoreDeadline = ScopeExit{
+            [budget = request.budget]() noexcept
+            {
+                budget->m_state->deadlines.pop_back();
+            }
+        };
+        auto run = ScopedToolRun{
+            request, runtimeCeiling, request.budget->m_state->quota, invokeTool,
+        };
+        UF_TRY(run.checkBudget());
+        auto result = detail::invokeClosure(
             run.vm(),
             m_state->closure,
             capabilityInstaller(run),
             entryPoint,
             immutableInput
         );
+        UF_TRY(run.checkBudget());
+        return result;
     }
 
     ScopedToolSession::ScopedToolSession(
@@ -1225,6 +1339,10 @@ namespace uf::script
 
         output += ",\"scoped_limits\":{\"interactive_tool_calls\":";
         output += std::to_string(ScopedToolProgram::k_maximumInteractiveToolCalls);
+        output += ",\"project_tool_calls\":";
+        output += std::to_string(ScopedToolProgram::k_maximumProjectToolCalls);
+        output += ",\"project_tool_depth\":";
+        output += std::to_string(ScopedToolProgram::k_maximumProjectToolDepth);
         output += ",\"tool_name_bytes\":";
         output += std::to_string(ScopedToolProgram::k_maximumToolNameBytes);
         output += ",\"tool_name_segment_bytes\":";
@@ -1269,6 +1387,11 @@ namespace uf::script
         appendJsonString(output, k_generatedModuleContract);
         output += ",\"generated_module_depth\":";
         output += std::to_string(k_generatedModuleDepth);
+        output += ",\"handler_composition\":";
+        appendJsonString(
+            output,
+            "durable_children_shared_live_vm_quota_ancestor_deadlines_v1"
+        );
         output += ",\"invoke_arity\":";
         output += std::to_string(k_toolInvokeArity);
         output += ",\"result_shape\":";

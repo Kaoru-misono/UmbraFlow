@@ -104,7 +104,8 @@ namespace uf::operator_runtime
     auto ProjectGenerationHandle::invokeBoundTool(
         std::string_view toolName,
         json::Value const& canonicalArguments,
-        script::ScopedRunRequest const& request
+        script::ScopedRunRequest const& request,
+        script::ToolRuntimeInvoke& invokeTool
     ) const -> Result<json::Value>
     {
         UF_TRY_VALUE(entryPoint, m_state->bindings.entryPointFor(toolName));
@@ -112,7 +113,8 @@ namespace uf::operator_runtime
             m_state->toolProgram.invoke(
                 entryPoint,
                 canonicalArguments,
-                request
+                request,
+                invokeTool
             ),
             "running the Project entry bound to " + std::string{toolName}
         );

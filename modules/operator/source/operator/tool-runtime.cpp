@@ -198,8 +198,8 @@ namespace uf::operator_runtime
                  json::Value::ofString(std::string{answerer.providerKind})},
                 {"reaches_world_through",
                  json::Value::ofString(std::string{
-                     answerer.composition == ToolEffectComposition::PureLeaf
-                         ? "pure_leaf"
+                     answerer.composition == ToolEffectComposition::RecordedChildren
+                         ? "recorded_children"
                          : "direct_leaf",
                  })},
             }));
@@ -419,9 +419,9 @@ namespace uf::operator_runtime
         if (!toolCallStateHasOutcome(replay.state))
         {
             return fail(
-                AutomationErrorKind::InternalInvariant,
-                "a synchronous Tool call reached the answer boundary before "
-                "a terminal delivery value was recorded"
+                AutomationErrorKind::ActionRejected,
+                "Tool call has no terminal answer; its recorded child frontier "
+                "must resolve before the enclosing handler can complete"
             );
         }
         if (!replay.payload)

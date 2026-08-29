@@ -56,8 +56,8 @@
 -- session builds for one run and then drops. This is the ONLY module handed it,
 -- and it is the only module Project code cannot resolve -- it carries no public
 -- name, so the sole route to the Tool Runtime is a generated module the host
--- built from the pinned catalog. Project Tool handlers are leaves and therefore
--- never receive the capability at all. It carries exactly one primitive,
+-- built from the pinned catalog. Registered handlers receive the same capability
+-- through their own child issuing context. It carries exactly one primitive,
 -- `invoke(toolName, argumentsObject)`, which runs the Tool to completion and
 -- answers one frozen decoded JSON value. Two facts about it shape everything
 -- below. It is synchronous, so nothing here yields, polls in the background, or

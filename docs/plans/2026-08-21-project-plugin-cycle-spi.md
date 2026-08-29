@@ -17,13 +17,18 @@ followed; WP11, WP12 and the remaining obligations of section 14 are open**
 
 > **Superseded in part, 2026-08-26, by
 > [a Tool is a flat call over an explicit reference](../decisions/2026-08-26-a-tool-is-a-flat-call-over-an-explicit-reference.md).**
-> Every clause below about Tool bodies, child effects, nested handler issuance,
+> Every clause below about Tool bodies, child-effect declarations,
 > call-position observation frames or the accessor-based answer envelope is
-> historical. Current Project handlers are leaves over explicit inputs; a Tool
+> historical. A Tool
 > is one name plus one flat object schema; screenshots are explicit artifact
 > references; and a synchronous call returns its terminal answer directly. The
 > experiments below retain their measurements, but those retired mechanisms no
 > longer own work.
+
+Handler composition and its replay and resource obligations are governed by
+[Project handlers compose recorded Tool calls](../decisions/2026-08-29-project-handlers-compose-recorded-tool-calls.md).
+The historical child-effect declaration and delegation model below is not the
+current authoring contract.
 
 The ruling is frozen in
 [`tools are the shared game-driving boundary`](../decisions/2026-08-21-tools-are-the-shared-game-driving-boundary.md).
@@ -94,8 +99,8 @@ Project automation -----+              |
 ```
 
 Framework and Project are both tool providers. Project automation is a tool
-caller, not a privileged Host callback. A Project may also provide leaf Tool
-handlers, and a handler receives no Tool-call seam.
+caller, not a privileged Host callback. A Project may also publish a handler
+that composes recorded Tool calls under the composition decision above.
 
 The shared call mechanics do not flatten authority. The actor identity and
 profile, Tool Catalog descriptor, policy, approvals, EffectivePlan, lease,
@@ -471,9 +476,9 @@ root and outside `tool_catalog_hash`, pins the closure entry that answers it.
 A registration carries one tool closure compiled on `ScopedToolProgram`. Its
 export statement and the binding union remain independent sources joined at
 registration. The closure receives explicit arguments, has no ambient
-filesystem, network, process, clock, randomness, Host FFI or Tool-call seam,
-and returns one value. Dispatch invokes that leaf and writes the admitted call's
-terminal durable row.
+filesystem, network, process, clock, randomness or Host FFI, and returns one
+value. Its Tool calls pass through child admission and durable recording;
+dispatch writes the admitted call's terminal durable row.
 
 None of that is a grant. Actor/session authority, the descriptor, policy,
 approvals and runtime limits are still judged at the one admission boundary
@@ -1294,21 +1299,18 @@ the old identity before reopening.
   asserted rather than ignored. The caveat is that only the read-only fixture
   drives all four; the mutating one drives the three adapters. E2, E4, E6's cross-platform half, E7 and E8 have no runner.
 
-  E4 is closed by deletion: Project handlers are leaves, declarations refuse
-  `child_effects`, and `tests/operator/test-tool-nested-calls.cpp` was removed
-  with the nested admission path. There is no consumer-side child-effect
-  envelope left to test.
+  E4's historical child-effect envelope remains deleted. Current child-call
+  admission, ancestor bounds and replay are governed by
+  [the composition decision](../decisions/2026-08-29-project-handlers-compose-recorded-tool-calls.md).
 
   E7 belongs in conformance beside the existing Journal-prefix fold case, but
   its subject is WP9's: there is no `commit_context` and no call-bound
   provisional proposal to prove parity against yet.
 
-  **E8's blocker is upstream of the `terminally_unresolved` item below.** No
-  `possible` outcome has any producer a conformance run can reach:
-  `toolCallEffectMayBeUnrecorded(RecordedChildren, Mutating)` is false, so a
-  Project handler never goes uncertain, and only a mutating Framework leaf can —
-  which needs the Framework provider a conformance run does not have. E8 has no
-  starting state, not merely no exit.
+  E8's replay and uncertainty requirements are governed by
+  [the composition decision](../decisions/2026-08-29-project-handlers-compose-recorded-tool-calls.md):
+  a composed handler must inherit a mutating leaf's unresolved delivery rather
+  than duplicate it. Its coverage belongs with the child-call replay fixtures.
 
 ### 14.4 Runtime obligations
 

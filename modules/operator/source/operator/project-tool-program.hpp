@@ -50,9 +50,9 @@ namespace uf::operator_runtime
     // must be identical on replay: these bytes are fixed at program
     // construction, so a description cannot move under a running script.
     //
-    // It carries BOTH catalogs, because both are callable from a scoped run:
-    // the Framework's Tools are how a handler reaches the world, and the
-    // Project's own are how one Tool composes another.
+    // Both catalogs are rendered for handlers and interactive chunks. The
+    // issuing context determines their durable parent and budget; discovery
+    // grants no authority to call a discovered Tool.
     //
     // It is a free function of the two catalogs rather than a step inside one
     // loader because both loaders of a scoped closure need exactly these bytes.

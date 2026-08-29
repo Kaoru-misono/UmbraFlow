@@ -3607,8 +3607,9 @@ namespace uf::operator_runtime
     // Section 5.3 item 3: a deterministic-replay divergence terminates the RUN,
     // not only the call that noticed it. This case is the whole definition of
     // what terminated means, in both directions: the root takes no new work,
-    // and everything already recorded stays readable, rejoinable and
-    // completable. It also carries both arms of the coordinate-miss read, which
+    // and everything already terminal stays readable and rejoinable. A frame
+    // still dispatching when the divergence lands cannot publish an outcome.
+    // It also carries both arms of the coordinate-miss read, which
     // is what tells a changed parent from an ordinal past the frontier.
     TEST_CASE("a replay divergence stops the run and closes it to new work")
     {
@@ -3729,9 +3730,9 @@ namespace uf::operator_runtime
         REQUIRE_MESSAGE(rejoined.has_value(), rejoined.error().message());
         CHECK(rejoined->lookup == ToolIdentityLookup::Existing);
 
-        // And a dispatch already across its boundary still records what it did,
-        // because refusing that would drop the record of an effect rather than
-        // prevent one.
+        // A dispatch still in flight cannot publish an outcome after the run's
+        // hard refusal. Otherwise an enclosing handler could consume that
+        // outcome as an ordinary failure and claim success for the root.
         auto const late = CanonicalJson::parseExact(
             R"({"snapshot_ref":"mid-flight"})"
         );
@@ -3740,7 +3741,10 @@ namespace uf::operator_runtime
             *inFlightDispatch,
             ToolCallCompletion::confirmed(*late)
         );
-        REQUIRE_MESSAGE(completedLate.has_value(), completedLate.error().message());
+        REQUIRE_FALSE(completedLate.has_value());
+        CHECK(completedLate.error().message().contains(
+            "was stopped by deterministic-replay divergence"
+        ));
 
         // What terminated does close: every door that starts new work.
         auto const refusedPosition =
@@ -3763,10 +3767,13 @@ namespace uf::operator_runtime
             "was stopped by deterministic-replay divergence"
         ));
         auto const refusedReentry = prepared.store.reenterToolCallDispatch(
-            prepared.controller,
-            prepared.lease,
-            *root,
-            *recorded
+            ToolAdmissionRequest{
+                .controller      = prepared.controller,
+                .lease           = prepared.lease,
+                .root            = *root,
+                .call            = *recorded,
+                .policyAuthority = prepared.policyAuthority,
+            }
         );
         REQUIRE_FALSE(refusedReentry.has_value());
         CHECK(refusedReentry.error().message().contains(
@@ -4385,10 +4392,13 @@ namespace uf::operator_runtime
         // incarnation continues the dispatch the dead one began, and its answer
         // is the call's first and only recorded outcome.
         auto reentered = restarted->reenterToolCallDispatch(
-            *resumed,
-            *lease,
-            *root,
-            *call
+            ToolAdmissionRequest{
+                .controller      = *resumed,
+                .lease           = *lease,
+                .root            = *root,
+                .call            = *call,
+                .policyAuthority = prepared.policyAuthority,
+            }
         );
         REQUIRE_MESSAGE(reentered.has_value(), reentered.error().message());
         auto observedFrame = CanonicalJson::parseExact(
@@ -4403,10 +4413,8 @@ namespace uf::operator_runtime
         CHECK(answered->state == ToolCallState::Confirmed);
     }
 
-    // A Project Tool handler is a pure leaf: its fresh VM receives immutable
-    // inputs and resources but no Tool or external-effect capability. Its
-    // interrupted dispatch is therefore replayable even when the declaration
-    // is mutating, and re-entry releases its target-wide barrier.
+    // A Project handler's effects are recorded children, so its interrupted
+    // dispatch remains replayable even when the descriptor is mutating.
     TEST_CASE(
         "restart keeps an unanswered mutating handler dispatching and barring its target"
     )
@@ -4519,9 +4527,8 @@ namespace uf::operator_runtime
         REQUIRE_FALSE(blocked.has_value());
         CHECK(blocked.error().message().contains("state dispatching"));
 
-        // Nothing may reconcile it, because no effect can escape the handler:
-        // it is a dispatch waiting to be replayed, not a delivery nobody can
-        // classify.
+        // The handler frame is replayed; any uncertain delivery belongs to a
+        // recorded Framework child and must be reconciled at that child.
         auto explanation = CanonicalJson::parseExact(
             R"({"reason":"a query has no business here"})"
         );
@@ -4551,10 +4558,13 @@ namespace uf::operator_runtime
         // Re-entry is the door, and the terminal row it writes releases the
         // barrier.
         auto reentered = restarted->reenterToolCallDispatch(
-            *resumed,
-            *lease,
-            *root,
-            *call
+            ToolAdmissionRequest{
+                .controller      = *resumed,
+                .lease           = *lease,
+                .root            = *root,
+                .call            = *call,
+                .policyAuthority = prepared.policyAuthority,
+            }
         );
         REQUIRE_MESSAGE(reentered.has_value(), reentered.error().message());
         auto result = CanonicalJson::parseExact(R"({"delivered":true})");

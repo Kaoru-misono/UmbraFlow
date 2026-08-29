@@ -16,8 +16,7 @@
 // the derived registration is what the registrar is handed. Nothing between the
 // author and the compiled program is written by a test.
 //
-// All of it stays production-unreachable: ProductLifecycle registers no Project
-// Tool program, and these cases are the only callers.
+// ProductLifecycle uses this same registration path for production dispatch.
 
 #include "umbraflow/project-schemas.hpp"
 
@@ -40,6 +39,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
@@ -103,9 +103,8 @@ namespace uf::deployment
         // judges what either of them returns: the framework records an answer's
         // bytes and never reads their meaning.
         //
-        // A Project Tool is a LEAF, so `dismiss` is refused by name when it
-        // calls; the face existing in a handler's context is not the same as a
-        // handler being able to use it.
+        // The same face forwards `dismiss`'s sibling call through its issuing
+        // context, without a separate child declaration.
         constexpr auto k_pluginSource = std::string_view{R"LUAU(
 local chaos = require("@umbraflow/chaos/project")
 local catalog = require("@umbraflow/catalog")
@@ -149,7 +148,7 @@ return {
         {
             auto tool = std::string{R"json({"argument_schema":)json"};
             tool += umbraflow::k_toolArgumentSchema;
-            tool += R"json(,"description":"A fixture Project Tool leaf.",)json";
+            tool += R"json(,"description":"A fixture Project Tool.",)json";
             tool += R"json("effect_bounds":[],"idempotency":"read_safe",)json";
             tool += R"json("mutability":"read_only","name":")json";
             tool += name;
@@ -381,12 +380,29 @@ return {
             .callIdentity = hashOf("authored-run-position"),
             .budgetOwner  = std::string{k_dismissTool},
             .maximumElapsedMillis   = 5'000U,
-            .cancellation           = {},
+            .budget       = std::make_shared<script::ProjectToolBudget>(std::chrono::seconds{5}),
+            .cancellation = {},
+        };
+        auto runtime = script::ToolRuntimeInvoke{
+            [](std::string_view name, json::Value const& arguments) -> Result<json::Value>
+            {
+                CHECK(name == k_sweepTool);
+                CHECK(json::canonicalBytes(arguments) == R"({"value":1})");
+                return json::Value::ofObject({
+                    {"ok", json::Value::ofBoolean(true)},
+                    {"call_identity", json::Value::ofString(hashOf("child").hex())},
+                    {"delivery", json::Value::ofString("confirmed")},
+                    {"result", json::Value::ofObject({
+                        {"outcome", json::Value::ofString("swept")},
+                    })},
+                });
+            }
         };
         auto const swept = loaded->invokeBoundTool(
             k_sweepTool,
             json::Value::ofObject({{"value", json::Value::ofNumber(1)}}),
-            request
+            request,
+            runtime
         );
         INFO(why(swept));
         REQUIRE(swept.has_value());
@@ -395,16 +411,12 @@ return {
         auto const dismissed = loaded->invokeBoundTool(
             k_dismissTool,
             json::Value::ofObject({{"value", json::Value::ofNumber(1)}}),
-            request
+            request,
+            runtime
         );
         INFO(why(dismissed));
-        REQUIRE_FALSE(dismissed.has_value());
-        CHECK_MESSAGE(
-            std::string{dismissed.error().message()}.contains(
-                "Project Tool handler chaos.project.dismiss may not issue Tool call chaos.project.sweep"
-            ),
-            "Project Tool handler chaos.project.dismiss must refuse Tool call chaos.project.sweep by name"
-        );
+        REQUIRE(dismissed.has_value());
+        CHECK(json::canonicalBytes(*dismissed) == R"({"outcome":"swept"})");
     }
 
     // The binding is inside the registration root, which is what stops a

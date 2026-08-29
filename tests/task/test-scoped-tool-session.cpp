@@ -634,15 +634,10 @@ namespace uf::task
         CHECK(calls->empty());
     }
 
-    // Capability is a property of the ISSUING RUN and never of the module, and
-    // this is the case that says so with one set of bytes: the identical module
-    // reaches the Tool Runtime from a chunk and is refused by name from a
-    // handler. It is why admitting the Project closure into a session needs no
-    // new mechanism to keep handlers leaves -- ScopedToolRun's callTool refuses
-    // every name, whatever required it.
+    // One set of Project module bytes composes Tools from either issuing run;
+    // the host supplies the root or parent-bound child issuing callback.
     TEST_CASE(
-        "one declared Project module calls a Tool from a chunk and is refused "
-        "from a handler"
+        "one declared Project module calls a Tool from both a chunk and a handler"
     )
     {
         auto const strategy = script::PureDataProgram::Module{
@@ -706,6 +701,17 @@ namespace uf::task
             catalogResources()
         );
         REQUIRE(handler.has_value());
+        auto handlerRuntime = script::ToolRuntimeInvoke{[calls](
+            std::string_view name, json::Value const&
+        ) -> Result<json::Value> {
+            calls->emplace_back(name);
+            return json::Value::ofObject({
+                {"ok", json::Value::ofBoolean(true)},
+                {"call_identity", json::Value::ofString(digestOf(name).hex())},
+                {"delivery", json::Value::ofString("confirmed")},
+                {"result", json::Value::ofObject({})},
+            });
+        }};
         auto const fromHandler = handler->invoke(
             "play",
             json::Value{},
@@ -713,16 +719,16 @@ namespace uf::task
                 .callIdentity = digestOf("strategy-leaf"),
                 .budgetOwner  = "fixture.strategy.play",
                 .maximumElapsedMillis = 5'000U,
-            }
+                .budget = std::make_shared<script::ProjectToolBudget>(std::chrono::seconds{5}),
+            },
+            handlerRuntime
         );
-        REQUIRE_FALSE(fromHandler.has_value());
+        REQUIRE(fromHandler.has_value());
         CHECK_MESSAGE(
-            std::string{fromHandler.error().message()}.contains(
-                "Project Tool handler fixture.strategy.play may not issue Tool "
-                "call framework.screen.capture"
-            ),
-            "the same Project module required by a handler must be refused by "
-            "name at the leaf"
+            (*calls == std::vector<std::string>{
+                "framework.screen.capture", "framework.screen.capture",
+            }),
+            "the same Project module required by a handler reaches its child issuing door"
         );
     }
 

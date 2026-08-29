@@ -325,6 +325,8 @@ namespace uf::operator_runtime
     // strictly outlived by the run it belongs to.
     class ToolCallIssuingContext final
     {
+        friend class OperatorCoordinator;
+
         ContentHash           m_rootIdentity;
         ToolCallParent        m_parent;
         ToolExecutionIdentity m_executionIdentity;
@@ -352,6 +354,14 @@ namespace uf::operator_runtime
             ToolRootRequestIdentity const& root,
             ToolExecutionIdentity executionIdentity
         ) -> ToolCallIssuingContext;
+
+        // A fresh issuing sequence on every handler entry, including replay.
+        // Admission independently verifies this parent's durable authority.
+        [[nodiscard]]
+        static auto forHandler(ToolCallPositionIdentity const& parent)
+            -> ToolCallIssuingContext;
+
+        [[nodiscard]] auto issuedCalls() const noexcept -> uint32;
 
         [[nodiscard]]
         auto issue(ValidatedToolInvocation const& invocation)

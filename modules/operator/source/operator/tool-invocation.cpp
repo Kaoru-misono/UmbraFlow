@@ -3489,6 +3489,22 @@ namespace uf::operator_runtime
         };
     }
 
+    auto ToolCallIssuingContext::forHandler(
+        ToolCallPositionIdentity const& parent
+    ) -> ToolCallIssuingContext
+    {
+        return ToolCallIssuingContext{
+            parent.rootIdentity(),
+            ToolCallParent{parent.rootIdentity(), parent.identity()},
+            parent.executionIdentity(),
+        };
+    }
+
+    auto ToolCallIssuingContext::issuedCalls() const noexcept -> uint32
+    {
+        return m_issuedCalls;
+    }
+
     auto ToolCallIssuingContext::issueNext(
         ValidatedToolInvocation const& invocation,
         std::optional<ContentHash> observationReference

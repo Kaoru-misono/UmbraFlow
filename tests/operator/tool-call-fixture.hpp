@@ -20,9 +20,7 @@
 
 namespace uf::operator_runtime::test_support
 {
-    // One root position at a chosen ordinal, reached by walking the run's
-    // issuing context to it. Project Tool handlers are leaves, so there is no
-    // parent-positioned fixture form.
+    // A position at a chosen ordinal, reached through the runtime's issuer.
     [[nodiscard]]
     inline auto toolCallAt(
         ToolRootRequestIdentity const& root,
@@ -33,14 +31,9 @@ namespace uf::operator_runtime::test_support
     ) -> Result<ToolCallPositionIdentity>
     {
         REQUIRE(ordinal > 0U);
-        if (parent != nullptr)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Project Tool handlers are leaves"
-            );
-        }
-        auto context  = ToolCallIssuingContext::forRoot(root, executionIdentity);
+        auto context = parent != nullptr
+            ? ToolCallIssuingContext::forHandler(*parent)
+            : ToolCallIssuingContext::forRoot(root, executionIdentity);
         auto position = context.issue(invocation);
         for (auto index = uint32{1}; index < ordinal; ++index)
         {

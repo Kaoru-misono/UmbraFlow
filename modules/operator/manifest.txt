@@ -14,7 +14,7 @@ unity_build = false
 #
 # script is public because this module's own headers name its types now:
 # project-tool-program.hpp takes a script::PureDataProgram::Resource, and
-# project-tool-dispatch.hpp hands one leaf run a script::ScopedRunRequest. It
+# project-tool-dispatch.hpp hands each handler a script::ScopedRunRequest. It
 # compiled while it was private only through the
 # transitive `public = task` -> `public = script` edge, which made a real part of
 # this module's public surface a fact about task's dependency list.

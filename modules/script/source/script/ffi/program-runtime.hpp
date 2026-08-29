@@ -339,15 +339,20 @@ return {
     // why "cannot be retained into another run" needs no runtime check.
     //
     // Neither copyable nor movable: the accounting allocator holds the address
-    // of `m_quota` for the life of the VM and reads it again during lua_close,
+    // of its own or borrowed quota through lua_close,
     // and the interrupt callback holds the address of `m_control`, so both
     // ledgers must stay put.
     class QuotaBoundVm final
     {
         MonotonicInstant::Duration m_runtimeCeiling;
         MemoryQuota                m_quota;
-        InterruptState             m_control;
-        lua_State*                 m_state;
+
+        // Own ledger by default, or a synchronous tree ledger whose owning
+        // ProjectToolBudget outlives this VM including lua_close.
+        MemoryQuota*     m_activeQuota;
+        MonotonicInstant m_ancestorDeadline{k_maximumInstant};
+        InterruptState   m_control;
+        lua_State*       m_state;
 
     public:
         // `runtimeCeiling` is the wall-clock ceiling on this one run and
@@ -360,6 +365,14 @@ return {
             std::stop_token cancellation,
             std::size_t memoryQuotaBytes = PureDataProgram::k_memoryQuotaBytes,
             uint64 interruptBudgetTicks = k_interruptBudgetTicks
+        );
+
+        // Mutates the shared allocator ledger for this VM's entire lifetime.
+        QuotaBoundVm(
+            MonotonicInstant::Duration runtimeCeiling,
+            std::stop_token cancellation,
+            MemoryQuota& sharedQuota,
+            MonotonicInstant ancestorDeadline
         );
 
         QuotaBoundVm(QuotaBoundVm const&)                    = delete;

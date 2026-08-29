@@ -2,6 +2,7 @@
 
 #include "ledger.hpp"
 #include "project-generation.hpp"
+#include "snapshot-reference.hpp"
 #include "tool-admission-request.hpp"
 #include "tool-executor.hpp"
 #include "tool-runtime.hpp"
@@ -13,10 +14,9 @@
 
 namespace uf::operator_runtime
 {
-    // Runs one admitted Project Tool leaf handler. A terminal row replays
-    // without invoking the handler; every nonterminal entry starts the pure
-    // handler again from its immutable input. The handler's Tool primitive is
-    // a terminal named refusal, so there is no child-call admission path.
+    // Runs a Project handler and its recorded child calls under one outer VM
+    // budget. Every child reaches the same admission and replay boundary.
+    // The coordinator must outlive this dispatcher and every dispatch.
     class ProjectToolDispatcher final
     {
         class State;
@@ -42,6 +42,8 @@ namespace uf::operator_runtime
         auto dispatch(
             ProjectGenerationHandle const& program,
             ToolAdmissionRequest const& request,
+            ToolProvider const& frameworkProvider,
+            SnapshotObservationAuthority const& observations,
             std::stop_token cancellation
         ) -> Result<ToolCallReplay>;
     };

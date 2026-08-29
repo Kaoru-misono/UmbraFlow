@@ -73,6 +73,64 @@ namespace uf::operator_runtime
         UF_UNREACHABLE_MSG("Unknown TimeoutAction value");
     }
 
+    auto childToolWithinBounds(
+        ToolDescriptor const& ancestor,
+        ToolDescriptor const& child
+    ) -> Status
+    {
+        if (
+            ancestor.mutability == ToolMutability::ReadOnly
+            && child.mutability == ToolMutability::Mutating
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "A read-only Project Tool cannot call a mutating child"
+            );
+        }
+        for (auto const& capability : child.requiredCapabilities)
+        {
+            if (
+                std::ranges::find(ancestor.requiredCapabilities, capability)
+                == ancestor.requiredCapabilities.end()
+            )
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Child Tool exceeds ancestor required_capabilities: " + capability
+                );
+            }
+        }
+        for (auto const& bound : child.effectBounds)
+        {
+            UF_TRY(effectWithinBounds(
+                ancestor,
+                ProposedEffect{
+                    .namespacedType       = bound.namespacedType,
+                    .risk                 = bound.maximumRisk,
+                    .scopeKind            = bound.scopeKind,
+                    .scopeKey             = {},
+                    .payloadSchemaHash    = bound.payloadSchemaHash,
+                    .opaqueProjectPayload = {},
+                }
+            ));
+        }
+        for (auto const& action : child.uiActionBounds)
+        {
+            if (
+                std::ranges::find(ancestor.uiActionBounds, action)
+                == ancestor.uiActionBounds.end()
+            )
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Child Tool exceeds ancestor ui_action_bounds: " + action
+                );
+            }
+        }
+        return ok();
+    }
+
     auto effectWithinBounds(
         ToolDescriptor const& descriptor,
         ProposedEffect const& effect

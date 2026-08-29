@@ -23,9 +23,11 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <span>
 #include <stop_token>
@@ -626,6 +628,13 @@ return {
 
     TEST_CASE("a generation loads its closure and runs the entries it bound")
     {
+        auto runtime = script::ToolRuntimeInvoke{
+            [](std::string_view, json::Value const&) -> Result<json::Value>
+            {
+                FAIL_CHECK("this fixture handler must not call a Tool");
+                return json::Value{};
+            }
+        };
         SUBCASE("a generation that binds Tools")
         {
             auto const generation = generationOver(
@@ -668,7 +677,9 @@ return {
                     .callIdentity = runPosition(),
                     .budgetOwner  = std::string{k_dismissTool},
                     .maximumElapsedMillis   = 5'000U,
-                }
+                    .budget = std::make_shared<script::ProjectToolBudget>(std::chrono::seconds{5}),
+                },
+                runtime
             );
             REQUIRE(dismissed.has_value());
             CHECK(
@@ -686,7 +697,9 @@ return {
                     .callIdentity = runPosition(),
                     .budgetOwner  = std::string{k_sweepTool},
                     .maximumElapsedMillis   = 5'000U,
-                }
+                    .budget = std::make_shared<script::ProjectToolBudget>(std::chrono::seconds{5}),
+                },
+                runtime
             );
             REQUIRE(swept.has_value());
             CHECK(memberOf(*swept, "knows_sibling").boolean());
@@ -712,7 +725,9 @@ return {
                     .callIdentity = runPosition(),
                     .budgetOwner  = "chaos.project.unknown",
                     .maximumElapsedMillis   = 5'000U,
-                }
+                    .budget = std::make_shared<script::ProjectToolBudget>(std::chrono::seconds{5}),
+                },
+                runtime
             );
             REQUIRE_FALSE(unknown.has_value());
             CHECK(unknown.error().message().contains("binds no Tool named"));
@@ -786,7 +801,9 @@ return {
                     .callIdentity = runPosition(),
                     .budgetOwner  = std::string{k_dismissTool},
                     .maximumElapsedMillis   = 5'000U,
-                }
+                    .budget = std::make_shared<script::ProjectToolBudget>(std::chrono::seconds{5}),
+                },
+                runtime
             );
             REQUIRE_FALSE(refused.has_value());
             CHECK(refused.error().message().contains("binds no Tool named"));

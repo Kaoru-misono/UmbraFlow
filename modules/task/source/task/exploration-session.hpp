@@ -32,8 +32,8 @@ namespace uf::task
     // IT IS NOT A SECOND ENVIRONMENT, and there is no trust split here. Each
     // chunk is an interactive scoped Tool session: it imports the scoped SDK
     // modules and can call any Framework or Project Tool in the session's pinned
-    // combined catalog. Project Tool handlers are leaves and receive no such
-    // call capability. Every interactive call is recorded in the same
+    // combined catalog. Handlers use the same capability under their own
+    // parent coordinate. Every interactive call is recorded in the same
     // ledger under this session's own identity and admitted or refused by the
     // same Operator policy. What differs between callers is which grants that
     // policy carries -- nothing else, and in particular no property of this type

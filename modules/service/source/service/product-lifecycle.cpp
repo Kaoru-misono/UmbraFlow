@@ -3201,6 +3201,12 @@ namespace uf::service
     {
         auto const active = ActiveContext{*this, context};
 
+        auto* const p_self = this;
+        auto provider = [p_self](
+                            operator_runtime::ToolCallPositionIdentity const& call
+                        ) -> Result<operator_runtime::ToolCallCompletion>
+        { return p_self->answerFrameworkTool(call); };
+
         // Which code answers a call is decided by the name's owner and by
         // nothing else. A Tool this generation bound runs on its own scoped
         // program through the dispatcher; every other admitted name belongs to
@@ -3221,6 +3227,8 @@ namespace uf::service
                 return dispatcher().dispatch(
                     generationHandle(),
                     request,
+                    provider,
+                    observations,
                     context.cancellation()
                 );
             }
@@ -3228,12 +3236,6 @@ namespace uf::service
             auto executor = operator_runtime::ToolRuntimeExecutor{
                 operatorHost.coordinator(),
             };
-            auto* const p_self = this;
-            auto provider = [p_self](
-                                operator_runtime::ToolCallPositionIdentity const&
-                                    admittedCall
-                            ) -> Result<operator_runtime::ToolCallCompletion>
-            { return p_self->answerFrameworkTool(admittedCall); };
             return executor.invoke(request, provider);
         }();
 

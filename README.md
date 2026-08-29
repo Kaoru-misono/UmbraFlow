@@ -30,9 +30,10 @@ They are not three code paths. Each has a *translator* —
 `AgentToolAdapter`, `HumanToolAdapter`, `ProjectAutomationAdapter` in
 `modules/operator/source/operator/tool-actor-adapters.hpp` — and each translator
 builds one `ToolAdmissionRequest`, the only value `OperatorCoordinator::admitToolCall`
-accepts. A Project Tool handler is a leaf and is refused if it attempts to issue
-another Tool call. An adapter can construct nothing that is executable: the call
-coordinate is minted privately by the issuing seam. So a new caller cannot
+accepts. A Project Tool handler may issue recorded child calls through that same
+admission path; every child is independently checked under its durable ancestry.
+An adapter can construct nothing that is executable: the call coordinate is
+minted privately by the issuing seam. So a new caller cannot
 acquire a second execution path — the worst mistake it can make is
 translating its own transport badly, which is one class of bug rather than a
 whole second authority evaluation.

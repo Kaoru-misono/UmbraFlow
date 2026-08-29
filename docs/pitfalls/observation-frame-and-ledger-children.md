@@ -1,13 +1,14 @@
 # The retired observation body and ledger call tree
 
-This entry records the failure analysis of the retired nested-call design.
-Project Tool handlers are now leaves, screenshots and observations are explicit
-values, and no current handler opens a body or records child Tool calls.
+This entry records the failure analysis of the retired observation-body design.
+Current handler composition is governed by
+[Project handlers compose recorded Tool calls](../decisions/2026-08-29-project-handlers-compose-recorded-tool-calls.md);
+it does not restore observation bodies or implicit screenshot scope.
 
 > **Historical mechanism; transferable findings.** The body, child-effect
 > declaration, delegation grant and caller-visible observation-frame scope in
 > the first two sections no longer exist. What still transfers is: a durable
-> relationship needs an independently admitted declaration; the operation that
+> relationship needs independently checked admission authority; the operation that
 > acquires a resource owns its close on every exit; sequential work must not be
 > mistaken for concurrent work; one refused interactive call must not poison a
 > later independent call; and fixtures must take sentinel and initial values
@@ -225,3 +226,32 @@ The general lesson is the one in
 [checks that cannot fail](checks-that-cannot-fail.md): a fixture that spells a
 value the real producer would never spell is a test that cannot fail at the
 place it matters. Take the value from the producer.
+
+## Recorded observations are not live observation authority
+
+### Symptom
+
+A handler restarting at a recorded observation-consuming child can be refused
+before reaching the child's durable replay row: the new process does not
+recognize the reference issued by the old process.
+
+### Root cause
+
+Constructing a child coordinate through the live observation mint first
+confuses two operations. Replaying a recorded identity needs its recorded
+observation hash; delivering a new action needs current observation authority.
+The latter must not be a prerequisite for reading the former.
+
+### Fix
+
+`OperatorCoordinator::issueToolChild` reads the next recorded coordinate's
+observation hash before issuing the child. Ordinary replay then compares its
+full fingerprint. This does not mint or revive the reference. A new coordinate
+still goes through the current observation authority, and a provider that must
+consume an observation still checks its current validity.
+
+### Regression check
+
+The observation replay case in `tests/operator/test-tool-dispatch.cpp` issues a
+recorded child through a fresh, empty authority, verifies identical identity,
+and refuses the same stale reference at the next, unrecorded coordinate.

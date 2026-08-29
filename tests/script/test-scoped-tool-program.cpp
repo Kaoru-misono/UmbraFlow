@@ -14,10 +14,13 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <memory>
 #include <span>
 #include <stop_token>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -90,7 +93,8 @@ return {}
                 .callIdentity = *identity,
                 .budgetOwner  = "fixture.project.leaf",
                 .maximumElapsedMillis = 5'000U,
-                .cancellation         = cancellation,
+                .budget       = std::make_shared<ProjectToolBudget>(std::chrono::seconds{5}),
+                .cancellation = cancellation,
             };
         }
 
@@ -179,7 +183,7 @@ return {}
         }
     }
 
-    TEST_CASE("a Project Tool handler that issues a Tool call is refused by name")
+    TEST_CASE("a Project Tool handler can call Framework and Project Tools")
     {
         auto const program = scopedProgram(
             "fixture.project.leaf",
@@ -187,23 +191,240 @@ return {}
                 "fixture.project.leaf",
                 "",
                 "        local tools = require(\"@umbraflow/screen\")\n"
+                "        local first = tools.call(\"framework.screen.observe\", {})\n"
+                "        return tools.call(\"fixture.project.child\", first)"
+            )
+        );
+        auto calls = std::make_shared<std::vector<std::string>>();
+        auto runtime = ToolRuntimeInvoke{
+            [calls](
+                std::string_view name, json::Value const& arguments
+            ) -> Result<json::Value>
+            {
+                calls->emplace_back(name);
+                CHECK(arguments.kind() == json::ValueKind::Object);
+                return parsed(R"({"observed":true})");
+            }
+        };
+        auto const answer = program.invoke(
+            "derive", json::Value{}, runRequest(), runtime
+        );
+        REQUIRE(answer.has_value());
+        CHECK(json::canonicalBytes(*answer) == R"({"observed":true})");
+        CHECK(*calls == std::vector<std::string>{
+            "framework.screen.observe", "fixture.project.child",
+        });
+    }
+
+    TEST_CASE("nested handlers share one descendant call ceiling across fresh VMs")
+    {
+        auto const child = scopedProgram(
+            "fixture.child",
+            pluginSource(
+                "fixture.child", "",
+                "        local tools = require(\"@umbraflow/screen\")\n"
+                "        for i = 1, 512 do\n"
+                "            tools.call(\"framework.screen.observe\", {})\n"
+                "        end\n"
+                "        return {}"
+            )
+        );
+        auto const parent = scopedProgram(
+            "fixture.parent",
+            pluginSource(
+                "fixture.parent", "",
+                "        local tools = require(\"@umbraflow/screen\")\n"
                 "        local caught = pcall(function()\n"
-                "            return tools.call(\"framework.screen.observe\", {})\n"
+                "            tools.call(\"fixture.project.child\", {})\n"
+                "            tools.call(\"fixture.project.child\", {})\n"
                 "        end)\n"
                 "        return { caught = caught }"
             )
         );
-        auto const answer = program.invoke("derive", json::Value{}, runRequest());
+        auto request = runRequest();
+        auto calls   = std::make_shared<uint64>(0U);
+        auto runtime = ToolRuntimeInvoke{
+            [child, request, calls](
+                std::string_view, json::Value const& arguments
+            ) -> Result<json::Value>
+            {
+                ++*calls;
+                auto nestedRuntime = ToolRuntimeInvoke{
+                    [calls](std::string_view, json::Value const&) -> Result<json::Value>
+                    {
+                        ++*calls;
+                        return parsed("{}");
+                    }
+                };
+                return child.invoke("derive", arguments, request, nestedRuntime);
+            }
+        };
+        auto const answer = parent.invoke("derive", parsed("{}"), request, runtime);
         REQUIRE_FALSE(answer.has_value());
-        auto const message = std::string{answer.error().message()};
-        CHECK_MESSAGE(
-            message.contains(
-                "Project Tool handler fixture.project.leaf may not issue Tool call "
-                "framework.screen.observe"
-            ),
-            "Project Tool handler fixture.project.leaf must refuse Tool call "
-            "framework.screen.observe by name"
+        CHECK(*calls == ScopedToolProgram::k_maximumProjectToolCalls);
+        CHECK(std::string{answer.error().message()}.contains("descendant Tool call ceiling"));
+    }
+
+    TEST_CASE("fresh handler VMs stop at the shared active depth boundary")
+    {
+        auto depth = ScopedToolProgram::k_maximumProjectToolDepth;
+        SUBCASE("sixteen active handlers") {}
+        SUBCASE("seventeenth handler refused")
+        {
+            ++depth;
+        }
+        auto const program = scopedProgram(
+            "fixture.depth",
+            pluginSource(
+                "fixture.depth", "",
+                "        return require(\"@umbraflow/screen\").call(\"fixture.next\", {})"
+            )
         );
+        auto const request = runRequest();
+        auto runtime = ToolRuntimeInvoke{
+            [](std::string_view, json::Value const&) -> Result<json::Value>
+            {
+                return parsed("{}");
+            }
+        };
+        for (auto index = std::size_t{}; index < depth; ++index)
+        {
+            runtime = [program, request, child = std::move(runtime)](
+                std::string_view, json::Value const& input
+            ) mutable -> Result<json::Value>
+            {
+                return program.invoke("derive", input, request, child);
+            };
+        }
+        auto answer = runtime("fixture.first", parsed("{}"));
+        if (depth == ScopedToolProgram::k_maximumProjectToolDepth)
+        {
+            REQUIRE_MESSAGE(answer.has_value(), (answer ? "" : answer.error().message()));
+        }
+        else
+        {
+            REQUIRE_FALSE(answer.has_value());
+            CHECK(std::string{answer.error().message()}.contains("depth exceeds 16"));
+        }
+    }
+
+    TEST_CASE("nested handler VMs share live allocation with their suspended parent")
+    {
+        auto const child = scopedProgram(
+            "fixture.child",
+            pluginSource(
+                "fixture.child", "",
+                "        local held = table.create(600000, true)\n"
+                "        return #held"
+            )
+        );
+        auto leafRuntime = ToolRuntimeInvoke{
+            [](std::string_view, json::Value const& arguments) -> Result<json::Value>
+            {
+                return arguments;
+            }
+        };
+        auto const alone = child.invoke("derive", parsed("{}"), runRequest(), leafRuntime);
+        REQUIRE(alone.has_value());
+        CHECK(alone->number() == 600000);
+
+        auto const parent = scopedProgram(
+            "fixture.parent",
+            pluginSource(
+                "fixture.parent", "",
+                "        local tools = require(\"@umbraflow/screen\")\n"
+                "        local held = table.create(600000, true)\n"
+                "        return #held + tools.call(\"fixture.project.child\", {})"
+            )
+        );
+        auto request = runRequest();
+        auto runtime = ToolRuntimeInvoke{
+            [child, request](
+                std::string_view, json::Value const& arguments
+            ) -> Result<json::Value>
+            {
+                auto nestedRuntime = ToolRuntimeInvoke{
+                    [](std::string_view, json::Value const& input) -> Result<json::Value>
+                    {
+                        return input;
+                    }
+                };
+                return child.invoke("derive", arguments, request, nestedRuntime);
+            }
+        };
+        auto const answer = parent.invoke("derive", parsed("{}"), request, runtime);
+        REQUIRE_FALSE(answer.has_value());
+        CHECK(std::string{answer.error().message()}.contains("shared Luau memory ceiling"));
+        // Closing the failed tree must not poison a later root invocation.
+        CHECK(child.invoke("derive", parsed("{}"), runRequest(), leafRuntime).has_value());
+    }
+
+    TEST_CASE("a child native call cannot outlive its ancestor deadline and keep calling")
+    {
+        auto const program = scopedProgram(
+            "fixture.parent",
+            pluginSource(
+                "fixture.parent", "",
+                "        local tools = require(\"@umbraflow/screen\")\n"
+                "        local caught = pcall(function()\n"
+                "            tools.call(\"framework.screen.observe\", {})\n"
+                "        end)\n"
+                "        tools.call(\"framework.screen.observe\", {})\n"
+                "        return { caught = caught }"
+            )
+        );
+        auto request   = runRequest();
+        request.budget = std::make_shared<ProjectToolBudget>(std::chrono::milliseconds{200});
+        auto calls     = std::make_shared<uint64>(0U);
+        auto runtime = ToolRuntimeInvoke{
+            [calls](std::string_view, json::Value const& arguments) -> Result<json::Value>
+            {
+                ++*calls;
+                std::this_thread::sleep_for(std::chrono::milliseconds{250});
+                return arguments;
+            }
+        };
+        auto const answer = program.invoke("derive", parsed("{}"), request, runtime);
+        REQUIRE_FALSE(answer.has_value());
+        CHECK(*calls == 1U);
+        CHECK(std::string{answer.error().message()}.contains("shared ancestor elapsed deadline"));
+    }
+
+    TEST_CASE("a nested fresh VM inherits the earlier ancestor deadline")
+    {
+        auto const child = scopedProgram(
+            "fixture.child",
+            pluginSource("fixture.child", "", "        while true do end")
+        );
+        auto const parent = scopedProgram(
+            "fixture.parent",
+            pluginSource(
+                "fixture.parent", "",
+                "        local tools = require(\"@umbraflow/screen\")\n"
+                "        return tools.call(\"fixture.project.child\", {})"
+            )
+        );
+        auto request                 = runRequest();
+        request.maximumElapsedMillis = 20U;
+        auto runtime = ToolRuntimeInvoke{
+            [child, request](
+                std::string_view, json::Value const& arguments
+            ) -> Result<json::Value>
+            {
+                auto childRequest                 = request;
+                childRequest.maximumElapsedMillis = 5000U;
+                auto nestedRuntime = ToolRuntimeInvoke{
+                    [](std::string_view, json::Value const& input) -> Result<json::Value>
+                    {
+                        return input;
+                    }
+                };
+                return child.invoke("derive", arguments, childRequest, nestedRuntime);
+            }
+        };
+        auto const answer = parent.invoke("derive", parsed("{}"), request, runtime);
+        REQUIRE_FALSE(answer.has_value());
+        CHECK(std::string{answer.error().message()}.contains("shared ancestor elapsed deadline"));
     }
 
     TEST_CASE("a Tool call while the Project closure is admitted is refused")
@@ -229,7 +450,7 @@ return {}
         );
     }
 
-    TEST_CASE("malformed Tool primitive calls stay catchable inside a leaf")
+    TEST_CASE("malformed Tool primitive calls stay catchable inside a handler")
     {
         auto const program = scopedProgram(
             "fixture.project.malformed",
@@ -251,7 +472,10 @@ return {}
                 "            shaped = shaped, shapedError = tostring(shapedError) }"
             )
         );
-        auto const answer = program.invoke("derive", json::Value{}, runRequest());
+        auto runtime = ToolRuntimeInvoke{[](
+            std::string_view, json::Value const& arguments
+        ) -> Result<json::Value> { return arguments; }};
+        auto const answer = program.invoke("derive", json::Value{}, runRequest(), runtime);
         REQUIRE(answer.has_value());
         auto const bytes = json::canonicalBytes(*answer);
         CHECK(bytes.contains(R"("arity":false)"));
@@ -341,7 +565,10 @@ return {}
             {jsonResource("umbraflow.fixture-catalog", R"({"pinned":"framework"})")}
         );
         REQUIRE(supplied.has_value());
-        auto const answer = supplied->invoke("derive", parsed("{}"), runRequest());
+        auto runtime = ToolRuntimeInvoke{[](
+            std::string_view, json::Value const& arguments
+        ) -> Result<json::Value> { return arguments; }};
+        auto const answer = supplied->invoke("derive", parsed("{}"), runRequest(), runtime);
         REQUIRE(answer.has_value());
         CHECK(json::canonicalBytes(*answer) == R"({"pinned":"framework"})");
     }
@@ -364,9 +591,10 @@ return {}
         // note. Changing it is the point at which the change becomes a break.
         CHECK(
             scoped->hex()
-            == "f2acab246b56b6348344048cbd440ce4598eab92fcc47ff1ea06ca6961a5058a"
+            == "5decfcbe3d03ceedeb80292e2f6fd631a9bc6e3a5cfcdd5cf24f2d4ad83b81f1"
         );
         CHECK(material.contains(R"("interactive_tool_calls":1024)"));
+        CHECK(material.contains(R"("project_tool_calls":1024)"));
         CHECK(material.contains(
             R"("failure_behaviour":"runtime_refusal_is_terminal_uncatchable_vm_teardown_v1")"
         ));

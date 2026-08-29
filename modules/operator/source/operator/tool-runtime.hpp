@@ -17,13 +17,11 @@ namespace uf::operator_runtime
 {
     class OperatorCoordinator;
 
-    // How a call reaches the world at all. A Project handler is a pure leaf: its
-    // VM has immutable inputs and resources, and its Tool primitive terminates
-    // the handler instead of issuing a call. A Framework provider is a direct
-    // leaf whose implementation may reach the world.
+    // How a call reaches the world: a Project handler's effects are recorded
+    // children; a Framework provider is a leaf that may act directly.
     enum class ToolEffectComposition : uint8
     {
-        PureLeaf,
+        RecordedChildren,
         DirectLeaf,
     };
 
@@ -39,7 +37,7 @@ namespace uf::operator_runtime
 
     inline constexpr auto k_toolAnswerers = std::array{
         ToolAnswerer{"framework", ToolEffectComposition::DirectLeaf},
-        ToolAnswerer{"project", ToolEffectComposition::PureLeaf},
+        ToolAnswerer{"project", ToolEffectComposition::RecordedChildren},
     };
 
     // The same lookup from the two spellings a call's answerer arrives in: the
@@ -61,8 +59,8 @@ namespace uf::operator_runtime
     // refuses, whether a completion may report terminal failure, and whether an
     // executor may convert a provider's failure to uncertainty.
     //
-    // A pure leaf can be re-entered because no external effect can escape its
-    // handler. A read-only direct leaf declares no effect for a delivery to be
+    // A composed handler re-enters through its recorded children; no external
+    // effect escapes that ledger. A read-only direct leaf declares no effect to be
     // uncertain about. Only a mutating direct leaf in flight is the
     // non-replayable atom: the world may or may not have moved and no record can
     // say.

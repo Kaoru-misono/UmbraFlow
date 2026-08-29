@@ -82,7 +82,7 @@ rather than stored.
 | Top-level member | Meaning |
 | --- | --- |
 | `schema` | the manifest's own wire tag |
-| `release` | milestone name, e.g. `m0-acceptance` |
+| `release` | immutable release name chosen by the publisher |
 | `contract_versions` | the format versions this release's tooling understands |
 | `artifacts` | one row per shipped binary or runtime payload file |
 
@@ -192,6 +192,34 @@ Every Tool member below is mandatory:
 
 A Project Tool entry point takes only its declared arguments. Tool
 calls have no caller-supplied body or callback protocol.
+
+A registered handler may call Framework and Project Tools through
+the generated scoped modules. Every child is independently admitted
+under the same session and policy. Its descriptor must fit every
+ancestor's existing `required_capabilities`, `ui_action_bounds` and
+`effect_bounds`; a read-only ancestor cannot call a mutating child.
+No child-name list or additional declaration member is required.
+A controller's surface profile restricts its direct calls. A handler
+may use privileged child Tools only with explicit Operator policy
+grants; this does not expose those Tools to an Agent's direct calls.
+
+One outer Project invocation shares the scoped call ceiling across
+all descendants, including replay. Active Tool-name cycles and
+excessive Project depth are refused. Nested fresh VMs share the live
+Luau allocation ceiling and the earliest active ancestor deadline.
+Native provider allocations are outside that VM quota. See the
+`scoped_limits` emitted by `scopedToolEnvironmentMaterial()` for
+the release's numeric bounds.
+Recorded descendants retain their cost even when a terminal Project
+subtree replays without starting its handlers.
+
+Re-entry replays exact recorded children without live redispatch;
+changed or shortened prefixes refuse. An unresolved child leaves
+the parent dispatching and blocks it with `ActionRejected`; it
+cannot be caught to turn the parent into a successful call.
+Recorded observation-reference hashes reconstruct replay identities
+without minting live authority. New calls still require references
+recognized by the current observation authority.
 
 Each entry carries `description` and `argument_schema` as mandatory
 members. `argument_schema` is the Tool's flat inline JSON Schema --
@@ -635,7 +663,7 @@ envelope, which a `pcall` recovers unchanged.
 | Reserved scoped module | Exports | Source SHA-256 |
 | --- | --- | --- |
 | `@umbraflow/catalog` | `describe`, `hash`, `names` | `13806be8e96826c60dafeadc4da9207a7eb6e979b32cb6da4abae9c1e6d3aadd` |
-| `@umbraflow/internal/render` | `module` | `46cc3b47e74149691242bf83b2a75bf13d988af504d83670b971192780893946` |
+| `@umbraflow/internal/render` | `module` | `52f19fce5144133232a8b0d8e4e17171e5f15c7c82d3d44cebbe431360837b0c` |
 
 ### 4.2 Identity preimage
 

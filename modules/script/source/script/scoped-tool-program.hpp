@@ -6,6 +6,7 @@
 #include <json/value.hpp>
 
 #include <core/error/result.hpp>
+#include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/content-hash.hpp>
@@ -20,6 +21,30 @@
 
 namespace uf::script
 {
+    // Shared by every fresh VM in one synchronous Project Tool invocation tree.
+    // The issuing thread alone mutates it; sharing keeps the allocator ledger
+    // alive until every nested VM has closed. Native Framework allocations are
+    // outside this Luau quota. A non-positive duration is immediately expired.
+    class ProjectToolBudget final
+    {
+        class State;
+        friend class ScopedToolProgram;
+
+        std::unique_ptr<State> m_state;
+
+    public:
+        explicit ProjectToolBudget(MonotonicInstant::Duration maximumRuntime);
+        ProjectToolBudget(ProjectToolBudget const&) = delete;
+        ProjectToolBudget(ProjectToolBudget&&) = delete;
+        auto operator=(ProjectToolBudget const&) -> ProjectToolBudget& = delete;
+        auto operator=(ProjectToolBudget&&) -> ProjectToolBudget& = delete;
+        ~ProjectToolBudget();
+
+        // Includes the earlier deadline of any currently suspended ancestor.
+        [[nodiscard]] auto deadline() const noexcept -> MonotonicInstant;
+        [[nodiscard]] auto chargeToolCall() -> Status;
+    };
+
     // What one scoped run is started under.
     //
     // No in-class initializer for the call identity: ContentHash has no absent
@@ -36,6 +61,10 @@ namespace uf::script
         // The wall-clock ceiling that Tool's registration declared. Zero is
         // invalid rather than a spelling of an unlimited or default budget.
         uint64 maximumElapsedMillis{};
+
+        // Required shared tree budget; children reuse the outer invocation's
+        // exact object rather than starting another allocation or call allowance.
+        std::shared_ptr<ProjectToolBudget> budget;
 
         // Hard cancellation. Armed on the Luau interrupt as well as handed to
         // every Tool call, because a script can spin in pure computation without
@@ -66,12 +95,14 @@ namespace uf::script
     class ScopedToolProgram final
     {
     public:
-        // Bounded like every other name this boundary admits. The call ceiling
-        // belongs only to an interactive session; a Project handler is a leaf.
+        // Independent ceilings: roots issued by a chunk and descendants issued
+        // by one outer Project invocation never reset each other's counters.
         static constexpr auto k_maximumToolNameBytes        = std::size_t{128U};
         static constexpr auto k_maximumToolNameSegments     = std::size_t{8U};
         static constexpr auto k_maximumToolNameSegmentBytes = std::size_t{64U};
         static constexpr auto k_maximumInteractiveToolCalls = uint64{1024U};
+        static constexpr auto k_maximumProjectToolCalls     = uint64{1024U};
+        static constexpr auto k_maximumProjectToolDepth     = std::size_t{16U};
 
     private:
         class State;
@@ -104,8 +135,8 @@ namespace uf::script
             -> std::span<std::string_view const>;
 
         // `frameworkModules` must carry every name scopedModuleNames() states,
-        // and may carry pure Framework modules besides. The Tool primitive is
-        // installed as a terminal named refusal: a Project handler is a leaf.
+        // and may carry pure Framework modules besides. Admission cannot issue
+        // Tools; invocation installs its caller's durable child issuing door.
         //
         // The pinned Tool catalog the scoped facades read is a Framework
         // resource and belongs in `frameworkResources`, whose names must all sit
@@ -123,12 +154,15 @@ namespace uf::script
             std::vector<PureDataProgram::Resource> frameworkResources
         ) -> Result<ScopedToolProgram>;
 
-        // One leaf handler run in one fresh VM.
+        // One handler in one fresh VM. invokeTool is a synchronous, non-escaping
+        // borrow: the caller owns it until invoke returns. Its mutable reference
+        // invokes the stateful issuing callback, never returns an output through it.
         [[nodiscard]]
         auto invoke(
             std::string_view entryPoint,
             json::Value const& immutableInput,
-            ScopedRunRequest const& request
+            ScopedRunRequest const& request,
+            ToolRuntimeInvoke& invokeTool
         ) const -> Result<json::Value>;
     };
 
@@ -143,10 +177,9 @@ namespace uf::script
     // module graph ScopedToolProgram::compile is given for a registered
     // handler, so a Project's own decision logic is written once and required
     // from either side. What separates the two sides is the RUN, not the
-    // module: ScopedSessionRun admits a Tool call through the session's root
-    // and counts it, ScopedToolRun refuses every Tool name because a handler is
-    // a leaf, and one module required from both places is subject to whichever
-    // run it is executing inside.
+    // module: ScopedSessionRun counts roots through the session's issuing door;
+    // ScopedToolRun counts descendants in the outer Project invocation's shared
+    // budget and reaches its durable child issuing door.
     //
     // Each evaluate() owns one fresh VM and one elapsed-time window. The
     // release-owned Framework module views must outlive this object; the task

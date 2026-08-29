@@ -183,10 +183,7 @@ namespace uf::operator_runtime
         // time.
         auto dispatched = replay.state == ToolCallState::Dispatching
             ? m_coordinator.reenterToolCallDispatch(
-                  request.controller,
-                  request.lease,
-                  root,
-                  call
+                  request
               )
             : [this, &request]() -> Result<ToolCallDispatch>
               {
@@ -219,6 +216,14 @@ namespace uf::operator_runtime
         auto const startedAt     = MonotonicInstant::now();
         auto provided            = provider(call);
         auto const elapsedMillis = elapsedMillisSince(startedAt);
+        UF_TRY(m_coordinator.ensureToolRunIsLive(call));
+        UF_TRY_VALUE(unresolved, m_coordinator.hasUnresolvedToolDescendants(call));
+        if (unresolved)
+        {
+            // The child owns uncertainty; the enclosing frame remains
+            // replayable and cannot hide it behind success or failure.
+            return m_coordinator.replayToolCall(root, call);
+        }
         auto const& timeout      = call.descriptor().timeout;
         auto const overran       = elapsedMillis > timeout.maximumElapsedMillis;
 

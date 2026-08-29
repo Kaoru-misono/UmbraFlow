@@ -9,10 +9,12 @@ struct lua_State;
 namespace uf::script
 {
     // Memory ledger backing the accounting allocator. Lives in the heap-pinned
-    // Engine::Impl, which keeps the pointer handed to lua_newstate valid and
+    // Engine::Impl or a ProjectToolBudget shared by synchronous nested VMs,
+    // which keeps the pointer handed to lua_newstate valid and
     // address-stable and destroys it only after lua_close, so the frees Luau
     // runs during teardown still see a live ledger. The allocator runs only on
-    // the VM's owning thread, GC included, so no field needs synchronization.
+    // the owning thread (including all nested VMs and GC), so no field needs
+    // synchronization.
     struct MemoryQuota final
     {
         // Hard ceiling in bytes: the allocator refuses (returns null) any growth
@@ -21,7 +23,7 @@ namespace uf::script
         std::size_t limitBytes{0};
 
         // Live bytes currently vended by the allocator. Frees and shrinks lower
-        // it; it returns to zero once the VM is closed.
+        // it; it returns to zero once every VM sharing this ledger is closed.
         std::size_t used{0};
 
         // High-water mark of `used` across the VM's life. Diagnostic only.

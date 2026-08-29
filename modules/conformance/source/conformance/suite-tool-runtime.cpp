@@ -22,7 +22,9 @@
 //   field that diverged; and
 // - a handler of this project re-entered after a crash mid-dispatch answers
 //   exactly what it answered when it ran uninterrupted, which is false for a
-//   handler that is a function of anything but its canonical arguments.
+//   handler that depends on anything but its canonical arguments and recorded
+//   child answers. This offline harness has no live Framework provider;
+//   requests for native work are explicit refusals, never fabricated answers.
 
 #include "suite-support.hpp"
 
@@ -38,6 +40,8 @@
 #include <json/value.hpp>
 
 #include <core/error/result.hpp>
+
+#include <domain/error.hpp>
 
 #include <doctest/doctest.h>
 
@@ -59,6 +63,19 @@ namespace uf::operator_runtime::conformance
         constexpr auto k_scriptPrincipal = std::string_view{"controller-1"};
         constexpr auto k_agentPrincipal  = std::string_view{"controller-agent"};
         constexpr auto k_humanPrincipal  = std::string_view{"controller-human"};
+
+        // These offline replay cases supply no live controller. A composition
+        // requiring one must use a fixture-backed provider in its integration
+        // test; manufacturing successful world answers here would prove nothing.
+        [[nodiscard]]
+        auto unavailableFrameworkTool(ToolCallPositionIdentity const& call)
+            -> Result<ToolCallCompletion>
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "offline conformance has no Framework provider for " + call.toolName()
+            );
+        }
 
         template <typename T>
         [[nodiscard]]
@@ -139,6 +156,8 @@ namespace uf::operator_runtime::conformance
             auto const replay = runtime.dispatcher.dispatch(
                 runtime.program,
                 *produced,
+                unavailableFrameworkTool,
+                *runtime.observations,
                 std::stop_token{}
             );
             REQUIRE_MESSAGE(replay.has_value(), failureText(replay));
@@ -280,9 +299,8 @@ namespace uf::operator_runtime::conformance
                 CHECK(start.request.controller.controllerId() == start.principal);
                 CHECK(start.request.controller.kind() == start.kind);
 
-                // Every one of the three is a call the run's own context
-                // issued. Project Tool handlers are leaves, so there is no
-                // delegated child-call position to compare against.
+                // Each actor starts at a root; calls its handler makes will
+                // have that handler's durable coordinate as their parent.
                 CHECK(start.request.isRootPositioned());
 
                 CHECK(start.state == ToolCallState::Confirmed);
@@ -521,6 +539,8 @@ namespace uf::operator_runtime::conformance
             auto const answered = runtime.dispatcher.dispatch(
                 runtime.program,
                 *started,
+                unavailableFrameworkTool,
+                *runtime.observations,
                 std::stop_token{}
             );
             REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
@@ -643,6 +663,8 @@ namespace uf::operator_runtime::conformance
         auto const answered = runtime.dispatcher.dispatch(
             runtime.program,
             *completed,
+            unavailableFrameworkTool,
+            *runtime.observations,
             std::stop_token{}
         );
         REQUIRE_MESSAGE(answered.has_value(), failureText(answered));
@@ -710,6 +732,8 @@ namespace uf::operator_runtime::conformance
         auto const reentered = runtime.dispatcher.dispatch(
             runtime.program,
             *interrupted,
+            unavailableFrameworkTool,
+            *runtime.observations,
             std::stop_token{}
         );
         REQUIRE_MESSAGE(reentered.has_value(), failureText(reentered));
@@ -727,6 +751,8 @@ namespace uf::operator_runtime::conformance
         auto const again = runtime.dispatcher.dispatch(
             runtime.program,
             *interrupted,
+            unavailableFrameworkTool,
+            *runtime.observations,
             std::stop_token{}
         );
         REQUIRE_MESSAGE(again.has_value(), failureText(again));

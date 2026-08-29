@@ -70,13 +70,16 @@ namespace uf::operator_runtime
 
         std::optional<Mutation> mutation{};
 
+        // Catalog-backed coordinates, ordered outermost to immediate parent.
+        // Admission independently matches every entry to the durable active
+        // chain; these values provide bounds, never authority by themselves.
+        std::vector<ToolCallPositionIdentity> ancestors{};
+
         // Read off the descriptor inside the coordinate, never stated beside
         // it. A second spelling of the mutability is a second thing that can be
         // wrong, and the catalog is already the one that decides.
         [[nodiscard]] auto requiredMutability() const noexcept -> ToolMutability;
 
-        // Project handlers are leaves, so every admitted call must be anchored
-        // directly on the run's root request.
         [[nodiscard]] auto isRootPositioned() const -> bool;
     };
 

@@ -37,6 +37,8 @@
 
 namespace uf::operator_runtime
 {
+    class SnapshotObservationAuthority;
+
     enum class SessionMode : uint8
     {
         Read,
@@ -769,6 +771,17 @@ namespace uf::operator_runtime
             ToolCallPositionIdentity const& call
         ) -> Result<StoredToolCallPosition>;
 
+        // Advances the handler's issuing context. Recorded coordinates retain
+        // their observation hash even after the process-local mint has died;
+        // replay still compares the entire fingerprint before any dispatch.
+        // Only a new position requires a currently minted observation.
+        [[nodiscard]]
+        auto issueToolChild(
+            ToolCallIssuingContext& issuing,
+            ValidatedToolInvocation const& invocation,
+            SnapshotObservationAuthority const& observations
+        ) -> Result<ToolCallPositionIdentity>;
+
         // The one admission function, and the only door to an admitted call.
         //
         // Per `caller independence is structural` every producer -- the Agent
@@ -789,8 +802,8 @@ namespace uf::operator_runtime
         //
         // Which of the two a call is comes from the descriptor inside the
         // coordinate rather than from the producer, and the request's mutation
-        // must agree with it. A non-root coordinate is refused because Project
-        // handlers are leaves.
+        // must agree with it. A child supplies its complete catalog-backed
+        // ancestry, checked against durable dispatching rows and every bound.
         [[nodiscard]]
         auto admitToolCall(
             ToolAdmissionRequest const& request
@@ -826,11 +839,10 @@ namespace uf::operator_runtime
         // Its `dispatching` row is resolved by classifying it uncertain and
         // asking a reconciliation query, never by dispatching it twice.
         //
-        // Nothing else is refused. A bound Project entry is a pure leaf with
-        // immutable inputs and resources and no Tool or external-effect
-        // capability, so re-running it is replay however its descriptor labels
-        // mutability. A read-only Framework leaf declares no effect for a
-        // delivery to be uncertain about, so running its provider again
+        // A bound Project entry replays recorded child coordinates; its own
+        // provider never delivers an unrecorded effect. A read-only Framework
+        // leaf declares no effect for a delivery to be uncertain about,
+        // so running its provider again
         // delivers nothing twice.
         //
         // The presented binding and lease are the CURRENT ones and are re-read
@@ -846,10 +858,7 @@ namespace uf::operator_runtime
         // move.
         [[nodiscard]]
         auto reenterToolCallDispatch(
-            ControllerBinding const& controller,
-            ControlLease const& lease,
-            ToolRootRequestIdentity const& root,
-            ToolCallPositionIdentity const& call
+            ToolAdmissionRequest const& request
         ) -> Result<ToolCallDispatch>;
 
         // The one mint of Host delivery authority, over a Tool call that is
@@ -892,6 +901,30 @@ namespace uf::operator_runtime
             ToolCallDispatch const& dispatch,
             ToolCallCompletion const& completion
         ) -> Result<StoredToolCallOutcome>;
+
+        // Successful handler return must consume the whole recorded direct
+        // child sequence. A shortened replay durably terminates its root.
+        [[nodiscard]]
+        auto validateToolCallChildren(
+            ToolRootRequestIdentity const& root,
+            ToolCallPositionIdentity const& call,
+            uint64 consumedChildren
+        ) -> Status;
+
+        // An unresolved descendant prevents the enclosing Project frame from
+        // completing, even when its handler caught the child failure.
+        [[nodiscard]]
+        auto hasUnresolvedToolDescendants(
+            ToolCallPositionIdentity const& call
+        ) -> Result<bool>;
+
+        // A provider can discover replay divergence while an ancestor still
+        // sees its child as dispatching. Check the root before that unresolved
+        // frontier is returned, so termination propagates as a hard refusal.
+        [[nodiscard]]
+        auto ensureToolRunIsLive(
+            ToolCallPositionIdentity const& call
+        ) -> Status;
 
         // Reads durable history only. It never consults a live lease and never
         // executes a provider, which is why terminal replay survives restart.

@@ -185,6 +185,10 @@ namespace uf::operator_runtime::test_support
         // needs them, because such an owner is bound to their hash.
         std::string toolCatalogBytes;
 
+        // Exact source pinned by this fixture's registration, also used when
+        // loading it again for crash/replay tests.
+        std::string toolSource;
+
         // One of this project's declared names, from the local half a case
         // knows it by. A fixture tool's namespace is this registration's
         // plugin_id, so a case that spelled the full name itself would be
@@ -402,7 +406,8 @@ namespace uf::operator_runtime::test_support
     inline auto makeProject(
         std::string pluginId,
         std::string_view argumentSchema = k_toolArgumentSchema,
-        std::optional<ContentHash> environmentOverride = std::nullopt
+        std::optional<ContentHash> environmentOverride = std::nullopt,
+        std::optional<std::string> toolSource = std::nullopt
     ) -> ProjectFixture
     {
         auto const bundle   = DeploymentBundle{pluginId, argumentSchema};
@@ -416,9 +421,8 @@ namespace uf::operator_runtime::test_support
             REQUIRE(deployed.has_value());
         }
 
-        auto const toolManifestHash = closureManifestHash(
-            toolClosureSource(pluginId)
-        );
+        auto const source = toolSource.value_or(toolClosureSource(pluginId));
+        auto const toolManifestHash = closureManifestHash(source);
         auto environmentHash = currentProjectPluginEnvironmentHash();
         REQUIRE(environmentHash.has_value());
         if (environmentOverride)
@@ -502,6 +506,7 @@ namespace uf::operator_runtime::test_support
                 *registration
             ),
             .toolCatalogBytes = bundle.tools(),
+            .toolSource       = source,
         };
     }
 
@@ -570,7 +575,7 @@ namespace uf::operator_runtime::test_support
             ProjectGenerationRegistrar::ClosureModules{
                 .entryModule = "main",
                 .modules     = closureModules(
-                    toolClosureSource(project.registration.pluginId())
+                    project.toolSource
                 ),
             },
             {}
@@ -1203,7 +1208,9 @@ identity = ["fixture.panel.anchor"]
     inline auto prepareStore(
         std::filesystem::path const& path,
         std::string const& pluginId = "fixture.control",
-        std::span<std::string const> privilegedSurfaceTools = {}
+        std::span<std::string const> privilegedSurfaceTools = {},
+        std::optional<std::string> toolSource = std::nullopt,
+        ControllerKind kind = ControllerKind::Script
     ) -> PreparedStore
     {
         auto const release = runtimeRelease(path / "session-source");
@@ -1226,7 +1233,9 @@ identity = ["fixture.panel.anchor"]
         REQUIRE_MESSAGE(installed.has_value(), installMessage);
         auto const artifactRootHash    = installed->rootHash();
         auto const installedGeneration = installed->installedGeneration();
-        auto const project = makeProject(pluginId);
+        auto const project = makeProject(
+            pluginId, k_toolArgumentSchema, std::nullopt, std::move(toolSource)
+        );
         auto const policyArtifact = policyArtifactBytes(privilegedSurfaceTools);
         auto const agentProfile = agentProfileBytes(k_unconstrainedAgentBudget);
         auto const manifest     = sessionManifest(
@@ -1263,7 +1272,7 @@ identity = ["fixture.panel.anchor"]
                 .controlledTargetId        = "target-1",
                 .projectInstanceKey        = "instance-1",
                 .mode                      = SessionMode::Write,
-                .kind                      = ControllerKind::Script,
+                .kind                      = kind,
                 .worldScope                = *worldScope,
             },
             manifest,

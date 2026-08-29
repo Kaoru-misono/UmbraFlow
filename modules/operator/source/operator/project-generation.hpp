@@ -94,7 +94,8 @@ namespace uf::operator_runtime
         auto invokeBoundTool(
             std::string_view toolName,
             json::Value const& canonicalArguments,
-            script::ScopedRunRequest const& request
+            script::ScopedRunRequest const& request,
+            script::ToolRuntimeInvoke& invokeTool
         ) const -> Result<json::Value>;
     };
 

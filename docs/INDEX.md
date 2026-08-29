@@ -36,6 +36,7 @@ could only be kept true by hand.
   what the removed member *was*, not only what is new: a note that describes a
   new capability and omits the deletion it replaced sends a consumer into a wall
   its own release notes never mentioned.
+  - [2026-08-29 — Project handlers may call Tools](release-notes/2026-08-29-project-handler-tool-calls.md)
   - [2026-08-26 — A Tool is a flat call over an explicit reference](release-notes/2026-08-26-a-tool-is-a-flat-call.md)
   - [2026-08-25 — One Tool vocabulary](release-notes/2026-08-25-one-tool-vocabulary.md)
   - [2026-08-23 — The Project-side upgrade path](release-notes/2026-08-23-project-upgrade-path.md)

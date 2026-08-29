@@ -6,6 +6,10 @@ removed member *was*. The reasoning lives in
 [`docs/decisions/2026-08-26-a-tool-is-a-flat-call-over-an-explicit-reference.md`](../decisions/2026-08-26-a-tool-is-a-flat-call-over-an-explicit-reference.md);
 the published surface is [`docs/PUBLIC-CONTRACT.md`](../PUBLIC-CONTRACT.md).
 
+> **Later upgrade:** [Project handlers may call Tools](2026-08-29-project-handler-tool-calls.md)
+> supersedes this release's leaf-handler restriction. The removed `body`,
+> `child_effects` and `workflow_limits` members stay removed.
+
 The release is `2026-08-26-a-tool-is-a-flat-call`. The name is a date and what
 the build did, not a milestone tier: this project declares no milestone until
 the first game is stably automated end to end.

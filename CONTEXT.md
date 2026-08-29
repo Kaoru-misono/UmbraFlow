@@ -259,12 +259,13 @@ in `schema/umbraflow-project-v3.schema.json`.
 
 **Tool call** — one Tool name plus one flat JSON object whose schema describes
 every property. Different behaviours have different names. Calls do not take a
-caller callback, select a tagged arm, open an implicit observation scope, or
-nest under another Tool call. A Project Tool handler is a leaf transform over
-its explicit arguments; sequencing and references between calls belong to the
-caller.
-_Avoid_: Tool body, body arm, `body`, `child_effects`, child Tool, nested Tool
-call, observation frame as a caller-visible scope, "innermost open frame".
+caller callback, select a tagged arm, or open an implicit observation scope.
+A Project Tool handler may compose Framework and Project Tools as recorded
+child calls. Its caller still supplies one flat argument object and receives
+one answer; screenshot and observation dependencies remain explicit values.
+See [Project handlers compose recorded Tool calls](docs/decisions/2026-08-29-project-handlers-compose-recorded-tool-calls.md).
+_Avoid_: Tool body, body arm, `body`, `child_effects`, observation frame as a
+caller-visible scope, "innermost open frame".
 
 **Tool answer** — the direct frozen value returned by one synchronous Tool call:
 `ok`, `call_identity`, a terminal `delivery`, and exactly one of `result` or
@@ -574,11 +575,11 @@ projection lists in prose.
 release-owned module closure can reach. It has no global name: the host gives it
 to the closure at boot and drops its own script-visible reference.
 
-- scoped Tool code — `ScopedToolProgram` runs a registered Project handler as a
-  pure leaf, while `ScopedToolSession` installs the `invoke` primitive for an
-  interactive chunk. A handler attempt to issue a Tool call is refused by the
-  requested Tool's name. Each handler invocation or interactive chunk owns one
-  fresh VM and its own execution window.
+- scoped Tool code — `ScopedToolProgram` and `ScopedToolSession` share the
+  Tool invocation primitive. A registered handler issues recorded child calls;
+  an interactive chunk issues independent root calls. Neither gains an ambient
+  channel to the world outside Tool admission. The resource ownership rules
+  live in [the composition decision](docs/decisions/2026-08-29-project-handlers-compose-recorded-tool-calls.md).
 - trusted RuntimeModel resolution, `RuntimeNativeState::install` —
   `runtime_model_bytes`,
   `runtime_semantic_hash`, `runtime_model_finalize`, `runtime_asset`,

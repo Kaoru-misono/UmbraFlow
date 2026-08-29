@@ -2,6 +2,7 @@
 
 #include "evidence-store.hpp"
 #include "runtime-installation.hpp"
+#include "snapshot-reference.hpp"
 #include "tool-admission-request.hpp"
 
 #include <core/error/contracts.hpp>
@@ -13,6 +14,8 @@
 #include <domain/error.hpp>
 
 #include <json/value.hpp>
+
+#include <script/scoped-tool-program.hpp>
 
 #include <task/platform/confined-file.hpp>
 #include <task/runtime-model-file.hpp>
@@ -1015,6 +1018,184 @@ namespace uf::operator_runtime
             ));
             UF_TRY(bindInteger(database, query.get(), 3, call.sequence()));
             return query;
+        }
+
+        // The bounds arrive in unforgeable catalog-backed coordinates; their
+        // relationship and authority are proved again from durable rows.
+        [[nodiscard]]
+        auto admittedToolAncestors(
+            sqlite3* database,
+            ToolAdmissionRequest const& request
+        ) -> Result<std::vector<std::string>>
+        {
+            auto const& call = request.call;
+            auto const projectCall = std::holds_alternative<ProjectToolProvider>(
+                call.provider()
+            );
+            if (
+                request.ancestors.size() + (projectCall ? 1U : 0U)
+                > script::ScopedToolProgram::k_maximumProjectToolDepth
+            )
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Project Tool call depth exceeds 16 active handlers"
+                );
+            }
+            auto chain          = std::vector<std::string>{call.identity().hex()};
+            auto expectedParent = request.root.identity();
+            auto names          = std::set<std::string>{};
+            for (auto const& ancestor : request.ancestors)
+            {
+                auto const& execution = ancestor.executionIdentity();
+                auto const& childExecution = call.executionIdentity();
+                if (
+                    ancestor.rootIdentity() != request.root.identity()
+                    || ancestor.parentIdentity() != expectedParent
+                    || !std::holds_alternative<ProjectToolProvider>(ancestor.provider())
+                    || execution.runIdentity != childExecution.runIdentity
+                    || execution.frameworkReleaseIdentity
+                        != childExecution.frameworkReleaseIdentity
+                    || execution.toolRuntimeProtocolIdentity
+                        != childExecution.toolRuntimeProtocolIdentity
+                    || execution.environmentIdentity != childExecution.environmentIdentity
+                    || !names.insert(ancestor.toolName()).second
+                    || (projectCall && ancestor.toolName() == call.toolName())
+                )
+                {
+                    return fail(
+                        AutomationErrorKind::ActionRejected,
+                        "Tool ancestry is cyclic or differs from its root and execution"
+                    );
+                }
+                UF_TRY_VALUE(position, prepareToolCallCoordinateQuery(database, ancestor));
+                if (
+                    sqlite3_step(position.get()) != SQLITE_ROW
+                    || divergedToolCallField(position.get(), ancestor).has_value()
+                )
+                {
+                    return fail(
+                        AutomationErrorKind::ActionRejected,
+                        "Tool ancestor does not match its durable coordinate"
+                    );
+                }
+                UF_TRY_VALUE(
+                    authority,
+                    prepare(
+                        database,
+                        "SELECT history.state, attempt.session_id, "
+                        "attempt.execution_principal_id, attempt.execution_principal_kind, "
+                        "attempt.controlled_target_id, attempt.project_registration_hash, "
+                        "attempt.policy_hash, attempt.capability_profile_hash "
+                        "FROM tool_call_history history JOIN tool_admission_attempts attempt "
+                        "ON attempt.call_identity=history.call_identity AND "
+                        "attempt.attempt_number=history.active_admission_attempt "
+                        "WHERE history.call_identity=?1"
+                    )
+                );
+                UF_TRY(bindText(database, authority.get(), 1, ancestor.identity().hex()));
+                if (
+                    sqlite3_step(authority.get()) != SQLITE_ROW
+                    || columnText(authority.get(), 0) != "dispatching"
+                    || columnText(authority.get(), 1) != request.controller.sessionId()
+                    || columnText(authority.get(), 2) != request.controller.controllerId()
+                    || columnText(authority.get(), 3)
+                        != controllerKindWireName(request.controller.kind())
+                    || columnText(authority.get(), 4)
+                        != request.controller.controlledTargetId()
+                    || columnText(authority.get(), 5)
+                        != request.policyAuthority.projectRegistrationHash().hex()
+                    || columnText(authority.get(), 6)
+                        != request.policyAuthority.policyHash().hex()
+                    || columnText(authority.get(), 7)
+                        != request.controller.capabilityProfileHash().hex()
+                )
+                {
+                    return fail(
+                        AutomationErrorKind::ActionRejected,
+                        "Tool ancestor must be a dispatching Project handler under the same authority"
+                    );
+                }
+                // Admission/re-entry verifies the CURRENT live lease outside
+                // this helper. The historical attempt keeps its original
+                // epoch/fence, including after a legitimate restart takeover.
+                UF_TRY(childToolWithinBounds(ancestor.descriptor(), call.descriptor()));
+                expectedParent = ancestor.identity();
+                chain.emplace_back(expectedParent.hex());
+            }
+            if (call.parentIdentity() != expectedParent)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Tool admission requires the complete durable Project ancestry"
+                );
+            }
+            if (!request.ancestors.empty())
+            {
+                // Count the persisted tree as well as the VM's current-attempt
+                // counter: a terminal Project child can replay without running
+                // its own descendants, but cannot refund their durable cost.
+                UF_TRY_VALUE(
+                    count,
+                    prepare(
+                        database,
+                        "WITH RECURSIVE descendants(call_identity) AS ("
+                        "SELECT call_identity FROM tool_call_positions WHERE parent_call_identity=?1 "
+                        "UNION SELECT child.call_identity FROM tool_call_positions child "
+                        "JOIN descendants ON child.parent_call_identity=descendants.call_identity) "
+                        "SELECT COUNT(*) FROM descendants"
+                    )
+                );
+                UF_TRY(bindText(database, count.get(), 1, request.ancestors.front().identity().hex()));
+                if (sqlite3_step(count.get()) != SQLITE_ROW)
+                {
+                    return databaseFailure(database, "could not count the Project Tool call tree");
+                }
+                if (
+                    sqlite3_column_int64(count.get(), 0)
+                    > static_cast<int64>(script::ScopedToolProgram::k_maximumProjectToolCalls)
+                )
+                {
+                    return fail(
+                        AutomationErrorKind::ActionRejected,
+                        "Project Tool durable descendant call ceiling is exhausted"
+                    );
+                }
+            }
+            return chain;
+        }
+
+        [[nodiscard]]
+        auto unresolvedToolDescendants(
+            sqlite3* database,
+            ContentHash const& callIdentity
+        ) -> Result<bool>
+        {
+            UF_TRY_VALUE(
+                query,
+                prepare(
+                    database,
+                    "WITH RECURSIVE descendants(call_identity) AS ("
+                    "SELECT call_identity FROM tool_call_positions WHERE parent_call_identity=?1 "
+                    "UNION SELECT position.call_identity FROM tool_call_positions position "
+                    "JOIN descendants ON position.parent_call_identity=descendants.call_identity) "
+                    "SELECT 1 FROM descendants JOIN tool_call_history history "
+                    "ON history.call_identity=descendants.call_identity "
+                    "WHERE history.state IN ('admitted','dispatching','possible',"
+                    "'terminally_unresolved') LIMIT 1"
+                )
+            );
+            UF_TRY(bindText(database, query.get(), 1, callIdentity.hex()));
+            auto const step = sqlite3_step(query.get());
+            if (step == SQLITE_ROW)
+            {
+                return true;
+            }
+            if (step != SQLITE_DONE)
+            {
+                return databaseFailure(database, "could not inspect unresolved Tool descendants");
+            }
+            return false;
         }
 
         [[nodiscard]]
@@ -6824,10 +7005,10 @@ namespace uf::operator_runtime
     // query can resolve it afterwards.
     //
     // Everything else survives as dispatching and is re-entered. A Project
-    // handler is a pure leaf: immutable inputs and resources enter its fresh VM,
-    // and no Tool or external-effect capability can escape it. Re-running it is
-    // therefore replay, even when its declaration is mutating. A read-only
-    // Framework leaf declares no effect for a delivery to be uncertain about,
+    // handler can affect the world only through recorded children. Re-running
+    // it rejoins those exact coordinates and refuses divergence, including a
+    // shortened child sequence. An unresolved child keeps the frame dispatching.
+    // A read-only Framework leaf declares no effect for delivery to be uncertain about,
     // so re-running its provider delivers nothing twice. Classifying either
     // uncertain would invent a barrier nothing can resolve.
     //
@@ -9186,15 +9367,6 @@ namespace uf::operator_runtime
             ? std::span<ToolApprovalGrant const>{mutation->approvals}
             : std::span<ToolApprovalGrant const>{};
 
-        if (!request.isRootPositioned())
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Tool admission refuses a nested call because Project Tool "
-                "handlers are leaves"
-            );
-        }
-
         // The catalog decides whether a Tool mutates, so the request cannot
         // state a mutability of its own; what it can get wrong is bringing a
         // mutation proposal to a read-only Tool, or bringing none to a mutating
@@ -9298,7 +9470,7 @@ namespace uf::operator_runtime
         }
         auto const projectRegistrationHash = columnText(sessionQuery.get(), 2);
 
-        auto liveMutationChain    = std::vector<std::string>{call.identity().hex()};
+        UF_TRY_VALUE(liveMutationChain, admittedToolAncestors(database, request));
         auto executionPrincipalId = controller.controllerId();
         auto executionPrincipalKind =
             std::string{controllerKindWireName(controller.kind())};
@@ -9335,15 +9507,14 @@ namespace uf::operator_runtime
                 "Tool admission authority differs from the active session"
             );
         }
-        // The two questions a top-level surface raises are asked together
-        // because they are one decision about one call. The first is the
-        // controller's own profile. The second is the Operator's: a Project
-        // classifies its own Tool `privileged` honestly, and that label is
-        // a declaration rather than a permission, so reaching the machine
-        // surface at the top of a run needs a grant from the party the
-        // machine belongs to. Absent that grant the artifact denies, which
-        // is what every other unstated policy question here does.
-        if (!toolSurfaceAllowed(controller.profile(), call.descriptor().surface))
+        // The controller profile bounds its direct vocabulary. A registered
+        // handler may use the machine vocabulary internally, but every such
+        // child still needs the Operator's explicit grant and ancestor bounds.
+        // A Project's surface label is a declaration, never a permission.
+        if (
+            request.isRootPositioned()
+            && !toolSurfaceAllowed(controller.profile(), call.descriptor().surface)
+        )
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
@@ -9877,7 +10048,7 @@ namespace uf::operator_runtime
         ));
         UF_TRY(bindText(database, admissionInsert.get(), 5, kindName));
 
-        // A leaf is executed for the same principal that originated the root.
+        // Every call executes for the principal that originated the root.
         UF_TRY(bindText(
             database,
             admissionInsert.get(),
@@ -10553,12 +10724,13 @@ namespace uf::operator_runtime
     }
 
     auto OperatorCoordinator::reenterToolCallDispatch(
-        ControllerBinding const& controller,
-        ControlLease const& lease,
-        ToolRootRequestIdentity const& root,
-        ToolCallPositionIdentity const& call
+        ToolAdmissionRequest const& request
     ) -> Result<ToolCallDispatch>
     {
+        auto const& controller = request.controller;
+        auto const& lease      = request.lease;
+        auto const& root       = request.root;
+        auto const& call       = request.call;
         if (
             toolCallEffectMayBeUnrecorded(
                 toolEffectComposition(call.provider()),
@@ -10608,6 +10780,7 @@ namespace uf::operator_runtime
             lease,
             "Tool dispatch re-entry control lease was superseded"
         ));
+        UF_TRY(admittedToolAncestors(database, request));
         UF_TRY_VALUE(
             historyQuery,
             prepare(
@@ -10937,6 +11110,17 @@ namespace uf::operator_runtime
         auto const& evidence     = completion.evidence();
         UF_TRY_VALUE(transaction, Transaction::begin(database));
         UF_TRY_VALUE(
+            unresolved,
+            unresolvedToolDescendants(database, dispatch.callIdentity())
+        );
+        if (unresolved)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "A Project Tool cannot complete while a descendant remains unresolved"
+            );
+        }
+        UF_TRY_VALUE(
             historyQuery,
             prepare(
                 database,
@@ -10947,7 +11131,7 @@ namespace uf::operator_runtime
                 "history.active_admission_attempt, history.outcome_payload, "
                 "history.outcome_payload_hash, history.evidence, "
                 "history.evidence_hash, history.mutating, "
-                "position.provider_kind "
+                "position.provider_kind, position.root_identity "
                 "FROM tool_call_history history "
                 "JOIN tool_call_positions position "
                 "ON position.call_identity=history.call_identity "
@@ -10967,6 +11151,10 @@ namespace uf::operator_runtime
                 "Tool dispatch names no durable call history"
             );
         }
+        // A replay divergence terminates the whole root. No frame may turn
+        // that hard refusal into a terminal value which an ancestor handler
+        // could catch and replace with a successful result.
+        UF_TRY(requireLiveToolRun(database, columnText(historyQuery.get(), 9)));
         UF_TRY_VALUE(
             state,
             parseToolCallState(columnText(historyQuery.get(), 0))
@@ -11122,6 +11310,103 @@ namespace uf::operator_runtime
             .lookup   = ToolOutcomeLookup::Created,
             .revision = nextRevision,
         };
+    }
+
+    auto OperatorCoordinator::issueToolChild(
+        ToolCallIssuingContext& issuing,
+        ValidatedToolInvocation const& invocation,
+        SnapshotObservationAuthority const& observations
+    ) -> Result<ToolCallPositionIdentity>
+    {
+        auto* const database = m_impl->database.get();
+        UF_TRY_VALUE(
+            query,
+            prepare(
+                database,
+                "SELECT observation_reference_hash FROM tool_call_positions "
+                "WHERE root_identity=?1 AND parent_call_identity=?2 AND call_sequence=?3"
+            )
+        );
+        UF_TRY(bindText(database, query.get(), 1, issuing.rootIdentity().hex()));
+        UF_TRY(bindText(database, query.get(), 2, issuing.parent().identity().hex()));
+        UF_TRY(bindInteger(database, query.get(), 3, uint64{issuing.issuedCalls()} + 1U));
+        auto const step = sqlite3_step(query.get());
+        if (step == SQLITE_ROW)
+        {
+            auto observation = std::optional<ContentHash>{};
+            if (sqlite3_column_type(query.get(), 0) != SQLITE_NULL)
+            {
+                UF_TRY_VALUE(hash, parseHashColumn(columnText(query.get(), 0)));
+                observation = hash;
+            }
+            return issuing.issueNext(invocation, observation);
+        }
+        if (step != SQLITE_DONE)
+        {
+            return databaseFailure(database, "could not inspect the next Tool child");
+        }
+        UF_TRY_VALUE(presented, observations.presented(invocation.canonicalArgs()));
+        return presented
+            ? issuing.issueAgainstObservation(invocation, *presented)
+            : issuing.issue(invocation);
+    }
+
+    auto OperatorCoordinator::validateToolCallChildren(
+        ToolRootRequestIdentity const& root,
+        ToolCallPositionIdentity const& call,
+        uint64 consumedChildren
+    ) -> Status
+    {
+        if (call.rootIdentity() != root.identity())
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool child replay belongs to a different root"
+            );
+        }
+        auto* const database = m_impl->database.get();
+        UF_TRY_VALUE(
+            query,
+            prepare(
+                database,
+                "SELECT COUNT(*), COALESCE(MAX(call_sequence),0) "
+                "FROM tool_call_positions WHERE root_identity=?1 AND parent_call_identity=?2"
+            )
+        );
+        UF_TRY(bindText(database, query.get(), 1, root.identity().hex()));
+        UF_TRY(bindText(database, query.get(), 2, call.identity().hex()));
+        if (sqlite3_step(query.get()) != SQLITE_ROW)
+        {
+            return databaseFailure(database, "could not inspect recorded Tool children");
+        }
+        auto const recorded = static_cast<uint64>(sqlite3_column_int64(query.get(), 0));
+        auto const last = static_cast<uint64>(sqlite3_column_int64(query.get(), 1));
+        if (recorded != consumedChildren || last != consumedChildren)
+        {
+            auto const reason = std::format(
+                "Tool handler child replay diverged: consumed {} children, recorded {} through ordinal {}",
+                consumedChildren,
+                recorded,
+                last
+            );
+            UF_TRY(terminateToolRun(database, root.identity().hex(), reason));
+            return fail(AutomationErrorKind::ActionRejected, reason);
+        }
+        return ok();
+    }
+
+    auto OperatorCoordinator::hasUnresolvedToolDescendants(
+        ToolCallPositionIdentity const& call
+    ) -> Result<bool>
+    {
+        return unresolvedToolDescendants(m_impl->database.get(), call.identity());
+    }
+
+    auto OperatorCoordinator::ensureToolRunIsLive(
+        ToolCallPositionIdentity const& call
+    ) -> Status
+    {
+        return requireLiveToolRun(m_impl->database.get(), call.rootIdentity().hex());
     }
 
     auto OperatorCoordinator::replayToolCall(

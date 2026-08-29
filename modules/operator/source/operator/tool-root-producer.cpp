@@ -63,10 +63,8 @@ namespace uf::operator_runtime
         ToolCallPositionIdentity call
     ) const -> Result<ToolAdmissionRequest>
     {
-        // No delegation grant. This is a call the run's own context issued, and
-        // a grant exists only for a child call under a dispatching handler --
-        // which admission decides from the coordinate rather than from anything
-        // stated here.
+        // Root calls carry no ancestors. Child admission proves its complete
+        // active ancestry separately; neither form carries a delegation grant.
         return ToolAdmissionRequest{
             .controller      = start.controller,
             .lease           = start.lease,

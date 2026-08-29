@@ -1600,11 +1600,30 @@ namespace uf::script::detail
     )
         : m_runtimeCeiling{runtimeCeiling}
         , m_quota{.limitBytes = memoryQuotaBytes}
+        , m_activeQuota{&m_quota}
         , m_control{
               .cancellation = std::move(cancellation),
               .budgetTicks  = interruptBudgetTicks,
           }
-        , m_state{createStateWithQuota(&m_quota)}
+        , m_state{createStateWithQuota(m_activeQuota)}
+    {
+    }
+
+    QuotaBoundVm::QuotaBoundVm(
+        MonotonicInstant::Duration runtimeCeiling,
+        std::stop_token cancellation,
+        MemoryQuota& sharedQuota,
+        MonotonicInstant ancestorDeadline
+    )
+        : m_runtimeCeiling{runtimeCeiling}
+        , m_quota{}
+        , m_activeQuota{&sharedQuota}
+        , m_ancestorDeadline{ancestorDeadline}
+        , m_control{
+              .cancellation = std::move(cancellation),
+              .budgetTicks  = k_interruptBudgetTicks,
+          }
+        , m_state{createStateWithQuota(m_activeQuota)}
     {
     }
 
@@ -1628,12 +1647,13 @@ namespace uf::script::detail
 
     auto QuotaBoundVm::memoryCeilingRefused() const noexcept -> bool
     {
-        return m_quota.ceilingRefused;
+        return m_activeQuota->ceilingRefused;
     }
 
     auto QuotaBoundVm::beginUnitOfScript() noexcept -> void
     {
         m_control.beginUnitOfScript(m_runtimeCeiling);
+        m_control.deadline = std::min(m_control.deadline, m_ancestorDeadline);
     }
 
     auto refuse(std::string message) -> std::unexpected<Error>

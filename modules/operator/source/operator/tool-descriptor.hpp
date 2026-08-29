@@ -48,8 +48,10 @@ namespace uf::operator_runtime
     // coordinate tool Semantic is not contained by p03; it is attributable,
     // because the catalog bytes are inside the ProjectRegistration root, which is inside
     // project_registration_hash, which pins the session. What p03 enforces is
-    // that the Operator never offers or accepts a Privileged tool for an online
-    // Agent. It is the same limit the Operator accepts for a plugin that
+    // that the Operator never offers or accepts a Privileged root Tool for an
+    // online Agent. A registered handler may use machine vocabulary internally
+    // only with an explicit Operator policy grant and ancestor bounds. It is
+    // the same limit the Operator accepts for a plugin that
     // under-declares its own effects, and it is deliberate: a second trust
     // model beside ToolMutability's would be worse than one documented limit.
     enum class ToolSurface : uint8
@@ -145,10 +147,10 @@ namespace uf::operator_runtime
     // What one Tool Catalog descriptor says about a tool. Returned by the
     // catalog owner; there is no path by which a request proposes it.
     //
-    // Every bound here is static and per tool. There is deliberately no second,
-    // compiled-in ceiling beside them: a limit stated per tool and another
-    // stated in C++ are two authorities over one number, and only one of them
-    // is inside tool_catalog_hash.
+    // These bounds cover the whole Project handler subtree. Every child must
+    // fit every ancestor's capabilities, UI actions and effect bounds; actual
+    // calls are recorded by the ledger without a separate child declaration.
+    // Framework structural call-count and depth ceilings apply independently.
     struct ToolDescriptor final
     {
         std::string toolVersion{};
@@ -188,5 +190,13 @@ namespace uf::operator_runtime
     auto effectWithinBounds(
         ToolDescriptor const& descriptor,
         ProposedEffect const& effect
+    ) -> Status;
+
+    // Both descriptors are call-scoped catalog-owned values. A child cannot
+    // widen any existing ancestor bound, including read-only mutability.
+    [[nodiscard]]
+    auto childToolWithinBounds(
+        ToolDescriptor const& ancestor,
+        ToolDescriptor const& child
     ) -> Status;
 }

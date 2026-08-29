@@ -17,9 +17,11 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -290,6 +292,13 @@ namespace uf::operator_runtime
         ) -> void
         {
             CHECK(program.pluginId() == project.registration.pluginId());
+            auto runtime = script::ToolRuntimeInvoke{
+                [](std::string_view, json::Value const&) -> Result<json::Value>
+                {
+                    FAIL_CHECK("this fixture handler must not call a Tool");
+                    return json::Value{};
+                }
+            };
             CHECK(
                 program.projectRegistrationHash() == project.registration.hash()
             );
@@ -301,7 +310,9 @@ namespace uf::operator_runtime
                     .callIdentity = hashOf("product-p05-position"),
                     .budgetOwner  = std::string{project.toolName("command-1")},
                     .maximumElapsedMillis   = 5'000U,
-                }
+                    .budget = std::make_shared<script::ProjectToolBudget>(std::chrono::seconds{5}),
+                },
+                runtime
             );
             REQUIRE(own.has_value());
 
@@ -312,7 +323,9 @@ namespace uf::operator_runtime
                     .callIdentity = hashOf("product-p05-position"),
                     .budgetOwner  = std::string{foreignToolName},
                     .maximumElapsedMillis   = 5'000U,
-                }
+                    .budget = std::make_shared<script::ProjectToolBudget>(std::chrono::seconds{5}),
+                },
+                runtime
             );
             REQUIRE_FALSE(foreign.has_value());
             CHECK(foreign.error().message().contains("binds no Tool named"));
