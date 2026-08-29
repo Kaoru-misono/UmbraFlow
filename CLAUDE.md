@@ -152,8 +152,15 @@ only a human can trigger, adapt a copy of `scripts/hitl-loop.template.sh`.
 ## Agent dispatch economy
 
 Measured 2026-08-17: large agents plus repeated full gates dominate token
-spend. These four rules are the levers:
+spend. Apply these rules:
 
+- Choose and strictly control each agent's effort according to the actual
+  task's complexity, risk, and uncertainty. Use the lowest effort that can
+  reliably complete the task; never default to high or maximum effort. State
+  the concrete task need before raising effort.
+- Never dispatch Claude Code's `fable` agent casually or by default. Use it
+  only when a concrete task requirement cannot be met by a lighter agent, and
+  explain that requirement before dispatch.
 - An iterating agent runs targeted checks (`ctest --test-dir build/<preset> -R
   <test>` on the failing test) until the failure set is empty; the full
   `scripts/ci-local.ps1` gate runs exactly once, last, before the report.
@@ -170,6 +177,10 @@ spend. These four rules are the levers:
 
 ## Workflow red lines
 
+- Never start, enable, dispatch, or rerun a Claude Code workflow without
+  explicit user approval. First explain the intended workflow and its scope,
+  ask the user for approval, and wait for an affirmative response. General
+  task authorization is not approval to start a Claude Code workflow.
 - Use the `manage-git-changes` skill for every Git mutation.
 - Never delete, revert, overwrite, or discard unfamiliar files or uncommitted work without explicit approval.
 - Never create a worktree without explicit approval.
